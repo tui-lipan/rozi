@@ -72,6 +72,7 @@ impl OutputStyles {
             OutputTone::Plain => (false, None),
             OutputTone::Accent => (false, Some(palette::ROSE)),
             OutputTone::Heading => (true, Some(palette::ROSE)),
+            OutputTone::Key => (true, Some(palette::ROSE.mix(palette::LAVENDER, 1, 2))),
             OutputTone::Success => (false, Some(palette::SUCCESS)),
             OutputTone::Warning => (false, Some(palette::WARNING)),
             OutputTone::Error => (false, Some(palette::ERROR)),
@@ -104,6 +105,9 @@ pub(super) enum OutputTone {
     Accent,
     /// A section title or table column header, styled like the headings in `--help`.
     Heading,
+    /// The first column of a table row, which names the row. Rose softened halfway toward
+    /// lavender, so it stays in the heading's family without merging into the header above it.
+    Key,
     Success,
     Warning,
     Error,
@@ -230,7 +234,7 @@ pub(super) fn format_panes_text(data: Option<&serde_json::Value>, styles: Output
                     value_u64(pane, "id")
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "—".to_string()),
-                    OutputTone::Accent,
+                    OutputTone::Key,
                 ),
                 TableCell::plain(
                     value_u64(pane, "workspace")
@@ -314,7 +318,7 @@ pub(super) fn metric_row(
             .unwrap_or_else(|| "—".to_string())
     };
     vec![
-        TableCell::new(label, OutputTone::Accent),
+        TableCell::new(label, OutputTone::Key),
         TableCell::plain(bytes("current_bytes")),
         TableCell::plain(bytes("high_water_bytes")),
         TableCell::plain(bytes("capacity_bytes")),
@@ -402,7 +406,7 @@ pub(super) fn format_metrics_text(
     ];
     if let Some(seed) = attach_seed {
         rows.push(vec![
-            TableCell::new("Attach seed", OutputTone::Accent),
+            TableCell::new("Attach seed", OutputTone::Key),
             TableCell::plain(format_bytes(value_u64(seed, "queued_bytes").unwrap_or(0))),
             TableCell::plain(format_bytes(
                 value_u64(seed, "peak_queued_bytes").unwrap_or(0),
@@ -417,7 +421,7 @@ pub(super) fn format_metrics_text(
             )),
         ]);
         rows.push(vec![
-            TableCell::new("Attach catch-up", OutputTone::Accent),
+            TableCell::new("Attach catch-up", OutputTone::Key),
             TableCell::plain(format_bytes(
                 value_u64(seed, "live_catch_up_bytes").unwrap_or(0),
             )),
@@ -434,7 +438,7 @@ pub(super) fn format_metrics_text(
             )),
         ]);
         rows.push(vec![
-            TableCell::new("Attach duration", OutputTone::Accent),
+            TableCell::new("Attach duration", OutputTone::Key),
             TableCell::plain(format_micros(
                 value_u64(seed, "last_duration_us").unwrap_or(0),
             )),
@@ -454,7 +458,7 @@ pub(super) fn format_metrics_text(
         let successes = value_u64(snapshot, "successes").unwrap_or(0);
         let failures = value_u64(snapshot, "failures").unwrap_or(0);
         rows.push(vec![
-            TableCell::new("Snapshot total", OutputTone::Accent),
+            TableCell::new("Snapshot total", OutputTone::Key),
             TableCell::plain(format_micros(
                 value_u64(snapshot, "last_duration_us").unwrap_or(0),
             )),
@@ -472,7 +476,7 @@ pub(super) fn format_metrics_text(
             ),
         ]);
         rows.push(vec![
-            TableCell::new("Snapshot block", OutputTone::Accent),
+            TableCell::new("Snapshot block", OutputTone::Key),
             TableCell::plain(format_micros(
                 value_u64(snapshot, "last_blocking_us").unwrap_or(0),
             )),

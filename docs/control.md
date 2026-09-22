@@ -79,7 +79,6 @@ to a UI or session:
   "capabilities": [
     "agent-waits",
     "pane-control",
-    "picker-tabs",
     "published-activity",
     "remote-control",
     "session-control"
@@ -366,9 +365,7 @@ first shown:
 ```
 
 Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
-An older Rozi ignores `tabs` and shows every snapshot in one list, so check that
-`rozi api describe` lists `picker-tabs` before declaring them. See
-[Picker protocol](control-protocol.md#picker-stream).
+See [Picker protocol](control-protocol.md#picker-stream).
 
 ## Published activity
 

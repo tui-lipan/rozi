@@ -237,9 +237,6 @@ each tab's rows as `{"tab":"tags","rows":[…]}`. Opening `rows` fill the tab na
 first. Each tab keeps its own filter. Replies from a tabbed picker carry `"tab"`, and a bare
 `{"tab":"tags"}` reports a switch, so load expensive tabs lazily on their first switch. Row IDs only
 need to be unique within a tab. Actions are shared by every tab; read `tab` to act on the right one.
-An older Rozi ignores `tabs` and merges every snapshot into one list, so gate tabbed pickers on
-`picker-tabs` in `rozi api describe` capabilities, or set `min_rozi` to the first release that
-advertises it, and fall back to one list with `group` otherwise.
 
 ### Publish
 

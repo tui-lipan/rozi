@@ -323,9 +323,6 @@ has its own rows, filter text, and highlight, so switching away and back keeps w
 repeated `id` are omitted, and Rozi keeps at most 32. Actions, `placeholder`, `empty`, and `width`
 apply to every tab.
 
-A Rozi without tab support ignores `tabs` and `tab`, so every snapshot would replace one shared
-list. Check for the `picker-tabs` capability in `rozi api describe` before declaring tabs.
-
 ```json
 {"cmd":"pick","title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"tab":"branches"}
 ```

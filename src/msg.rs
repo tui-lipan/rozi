@@ -473,7 +473,7 @@ pub enum Msg {
         tabs: Vec<crate::state::PickTab>,
         tab: Option<String>,
         extension: Option<crate::config::ExtensionProvenance>,
-        sender: std::sync::mpsc::SyncSender<String>,
+        sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
     /// The picker's filter text changed; mirrored so a rebuild can restore it.

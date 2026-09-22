@@ -1174,7 +1174,91 @@ pub struct PickState {
     pub pages: Vec<PickPage>,
     /// Index into `pages`.
     pub active: usize,
-    pub reply: std::sync::mpsc::SyncSender<String>,
+    pub reply: PickReply,
+}
+
+/// Reply lines a picker may queue while the stream's writer waits on a slow reader. Actions and
+/// tab switches report without closing, so a burst of them has to fit. Past this the newest
+/// non-terminal line is dropped; the terminal line never is, see [`PickReply`].
+pub const PICK_REPLY_BACKLOG: usize = 64;
+
+/// Most tabs one picker keeps. A strip past this is unusable anyway, and tabs are held on the UI
+/// thread, so a malformed producer must not get to declare thousands.
+pub const MAX_PICK_TABS: usize = 32;
+
+/// The tab ids a picker actually keeps, in order: nonempty, first occurrence only, at most
+/// [`MAX_PICK_TABS`]. Shared by the UI and the CLI bridge so both agree on where opening rows go.
+pub fn usable_pick_tabs(tabs: &[PickTab]) -> Vec<&PickTab> {
+    let mut seen = std::collections::HashSet::new();
+    tabs.iter()
+        .filter(|tab| !tab.id.is_empty() && seen.insert(tab.id.as_str()))
+        .take(MAX_PICK_TABS)
+        .collect()
+}
+
+/// Where a picker writes to its caller.
+///
+/// Events that keep the picker open go through a bounded queue and may be dropped when the caller
+/// stops reading. The one terminal line - a selection, a cancellation, or a closing action - has
+/// a slot of its own, so it is never lost to a full queue: once rozi closes a picker, the caller
+/// hears why. The UI thread never blocks on either.
+///
+/// `Clone` only because it travels inside `Msg`; the one held by `PickState` is the one that
+/// reports.
+#[derive(Clone)]
+pub struct PickReply {
+    events: std::sync::mpsc::SyncSender<String>,
+    terminal: std::sync::mpsc::SyncSender<String>,
+}
+
+/// The stream side of a [`PickReply`], yielding lines in the order they were sent.
+pub struct PickReplyReceiver {
+    events: std::sync::mpsc::Receiver<String>,
+    terminal: std::sync::mpsc::Receiver<String>,
+}
+
+impl PickReply {
+    pub fn channel() -> (Self, PickReplyReceiver) {
+        let (events, events_rx) = std::sync::mpsc::sync_channel(PICK_REPLY_BACKLOG);
+        let (terminal, terminal_rx) = std::sync::mpsc::sync_channel(1);
+        (
+            Self { events, terminal },
+            PickReplyReceiver {
+                events: events_rx,
+                terminal: terminal_rx,
+            },
+        )
+    }
+
+    /// Report something that leaves the picker open. Dropped if the queue is full.
+    pub fn event(&self, payload: &serde_json::Value) {
+        let _ = self.events.try_send(format!("{payload}\n"));
+    }
+
+    /// Report how the picker ended. Consumes the reply: nothing can follow a terminal line.
+    pub fn finish(self, payload: &serde_json::Value) {
+        // Only ever sent once into an empty slot of one, so this cannot find it full.
+        let _ = self.terminal.try_send(format!("{payload}\n"));
+    }
+}
+
+impl PickReplyReceiver {
+    /// The next line, blocking. Events drain first; the terminal line follows once the picker has
+    /// dropped its [`PickReply`], which is after every event it sent. `None` once both are done.
+    pub fn recv(&self) -> Option<String> {
+        self.events
+            .recv()
+            .ok()
+            .or_else(|| self.terminal.recv().ok())
+    }
+
+    /// The next line already sent, without blocking, in the same order as [`Self::recv`].
+    pub fn try_recv(&self) -> Option<String> {
+        self.events
+            .try_recv()
+            .ok()
+            .or_else(|| self.terminal.try_recv().ok())
+    }
 }
 
 /// One tab of a picker: its own rows, filter, and highlight.

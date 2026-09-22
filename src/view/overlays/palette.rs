@@ -200,7 +200,8 @@ impl OverlayTabs {
         }
     }
 
-    /// Tab and Shift+Tab step through the pages, wrapping, as they do on every tabbed picker.
+    /// Tab and Shift+Tab, or Left and Right, step through the pages, wrapping, as they do on every
+    /// tabbed picker.
     fn interceptor(&self, ctx: &Context<AppRoot>) -> KeyHandler {
         let count = self.labels.len();
         let active = self.active;
@@ -213,6 +214,8 @@ impl OverlayTabs {
             match key.code {
                 KeyCode::Tab if !key.mods.shift => Some(select((active + 1) % count)),
                 KeyCode::BackTab | KeyCode::Tab => Some(select((active + count - 1) % count)),
+                KeyCode::Right if !key.mods.shift => Some(select((active + 1) % count)),
+                KeyCode::Left if !key.mods.shift => Some(select((active + count - 1) % count)),
                 _ => None,
             }
         })

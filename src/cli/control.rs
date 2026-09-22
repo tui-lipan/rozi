@@ -304,14 +304,11 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
 /// The tab the picker opens on, mirroring the UI: the requested one when it names a usable tab,
 /// otherwise the first usable one.
 fn opening_tab<'a>(tabs: &'a [crate::state::PickTab], requested: Option<&str>) -> Option<&'a str> {
-    let mut usable = tabs
-        .iter()
-        .map(|tab| tab.id.as_str())
-        .filter(|id| !id.is_empty());
-    let first = usable.clone().next();
+    let usable = crate::state::usable_pick_tabs(tabs);
     requested
-        .and_then(|requested| usable.find(|id| *id == requested))
-        .or(first)
+        .and_then(|requested| usable.iter().find(|tab| tab.id == requested))
+        .or(usable.first())
+        .map(|tab| tab.id.as_str())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -544,5 +541,15 @@ mod tests {
         assert_eq!(opening_tab(&tabs, Some("missing")), Some("branches"));
         assert_eq!(opening_tab(&tabs, None), Some("branches"));
         assert_eq!(opening_tab(&[], Some("tags")), None);
+
+        // A tab past the cap does not exist to the UI, so its opening rows go to the first tab.
+        let many: Vec<_> = (0..=crate::state::MAX_PICK_TABS)
+            .map(|index| crate::state::PickTab {
+                id: format!("t{index}"),
+                label: None,
+            })
+            .collect();
+        let last = format!("t{}", crate::state::MAX_PICK_TABS);
+        assert_eq!(opening_tab(&many, Some(&last)), Some("t0"));
     }
 }

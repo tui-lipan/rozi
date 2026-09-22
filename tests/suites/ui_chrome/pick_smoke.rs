@@ -6,12 +6,12 @@ use std::sync::mpsc;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
-fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>) {
+fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReplyReceiver) {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
 
-    let (tx, rx) = mpsc::sync_channel(1);
+    let (tx, rx) = rozi::state::PickReply::channel();
     let (ack_tx, _ack_rx) = mpsc::channel();
     backend
         .dispatch(rozi::Msg::PickStreamOpen {
@@ -167,7 +167,7 @@ fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
             w: 80,
             h: 24,
         });
-        let (tx, _rx) = mpsc::sync_channel(1);
+        let (tx, _rx) = rozi::state::PickReply::channel();
         let (ack_tx, _ack_rx) = mpsc::channel();
         backend
             .dispatch(rozi::Msg::PickStreamOpen {
@@ -218,7 +218,7 @@ fn a_masked_prompt_hides_its_seed_value() {
             w: 80,
             h: 24,
         });
-        let (tx, _rx) = mpsc::sync_channel(1);
+        let (tx, _rx) = rozi::state::PickReply::channel();
         let (ack_tx, _ack_rx) = mpsc::channel();
         backend
             .dispatch(rozi::Msg::PickStreamOpen {
@@ -274,7 +274,7 @@ fn a_long_description_never_costs_a_row_its_label() {
             w: 100,
             h: 30,
         });
-        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        let (tx, _rx) = rozi::state::PickReply::channel();
         let (ack_tx, _ack_rx) = std::sync::mpsc::channel();
         backend
             .dispatch(rozi::Msg::PickStreamOpen {
@@ -355,12 +355,12 @@ fn a_picker_takes_the_keyboard_from_app_chords() {
     });
 }
 
-fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>) {
+fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReplyReceiver) {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
 
-    let (tx, rx) = mpsc::sync_channel(8);
+    let (tx, rx) = rozi::state::PickReply::channel();
     let (ack_tx, _ack_rx) = mpsc::channel();
     backend
         .dispatch(rozi::Msg::PickStreamOpen {
@@ -454,6 +454,12 @@ fn a_tabbed_picker_switches_pages_and_keeps_each_filter() {
             !frame.contains("main"),
             "the first page's filter came back with it:\n{frame}"
         );
+
+        // Left and Right step pages too, as on every other tabbed picker.
+        press(&mut backend, KeyCode::Right);
+        assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"worktrees"}"#);
+        press(&mut backend, KeyCode::Left);
+        assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"branches"}"#);
 
         press(&mut backend, KeyCode::Enter);
         assert_eq!(

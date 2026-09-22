@@ -27,6 +27,9 @@ pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
 pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
+/// `pick` accepts `tabs`, and row snapshots and replies carry `tab`. A binary without it ignores
+/// both, so every snapshot would land on one list; check before declaring tabs.
+pub const PICKER_TABS_CAPABILITY: &str = "picker-tabs";
 /// This binary can both forward a control command to a session on another host and serve one
 /// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
 /// relying on it.
@@ -53,6 +56,7 @@ impl ApiDescription {
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
+                PICKER_TABS_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
@@ -616,10 +620,6 @@ pub const MAX_CONTROL_MESSAGE: usize = 1024 * 1024;
 
 const OVERSIZED_CONTROL_MESSAGE: &str = "control message exceeds maximum size";
 pub(crate) const MAX_PICK_ROWS: usize = 512;
-/// Reply lines a `pick` stream may queue while its writer waits on a slow reader. Tab switches and
-/// open-ended actions report without closing, so a burst of them has to fit; a terminal line that
-/// found the queue full would leave the caller waiting on a picker that is already gone.
-const PICK_REPLY_BACKLOG: usize = 64;
 
 pub(crate) fn read_control_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     read_delimited_line(reader, Some(MAX_CONTROL_MESSAGE))
@@ -859,7 +859,7 @@ fn run_pick_stream(
     };
 
     let (ack_tx, ack_rx) = mpsc::channel();
-    let (reply_tx, reply_rx) = mpsc::sync_channel::<String>(PICK_REPLY_BACKLOG);
+    let (reply_tx, reply_rx) = crate::state::PickReply::channel();
 
     link.send(Msg::PickStreamOpen {
         id,
@@ -891,9 +891,10 @@ fn run_pick_stream(
     let _ = stream.set_read_timeout(None);
 
     // Every reply line goes out, not just the first: actions and tab switches keep the picker
-    // open and report again later. The loop ends when the picker drops its sender.
+    // open and report again later. The loop ends after the terminal line, or when the picker is
+    // dropped without one.
     let writer = std::thread::spawn(move || {
-        while let Ok(line) = reply_rx.recv() {
+        while let Some(line) = reply_rx.recv() {
             if writer_stream.write_all(line.as_bytes()).is_err() {
                 break;
             }
@@ -1339,6 +1340,16 @@ mod tests {
                 "title",
                 "workspace",
             ]
+        );
+    }
+
+    /// A caller cannot tell tabs were ignored from the rows it gets back, so it has to ask first.
+    #[test]
+    fn api_description_advertises_picker_tabs() {
+        assert!(
+            ApiDescription::current()
+                .capabilities
+                .contains(&PICKER_TABS_CAPABILITY)
         );
     }
 

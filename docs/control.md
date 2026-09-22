@@ -79,6 +79,7 @@ to a UI or session:
   "capabilities": [
     "agent-waits",
     "pane-control",
+    "picker-tabs",
     "published-activity",
     "remote-control",
     "session-control"
@@ -355,8 +356,9 @@ list while the filter is empty; a filter miss always says `No matches`. `prompt`
 string or an object with `title`, `placeholder`, `value`, and `masked`.
 
 Declare `tabs` to show several related lists under one picker. Each tab keeps its own rows, filter,
-and highlight; `Tab` and `Shift+Tab` switch between them. Row snapshots name their tab, and JSON
-mode prints `{"tab":"…"}` on each switch so the producer can load a tab when it is first shown:
+and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch between them. Row snapshots name their
+tab, and JSON mode prints `{"tab":"…"}` on each switch so the producer can load a tab when it is
+first shown:
 
 ```json
 {"title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"rows":[{"id":"main","label":"main"}]}
@@ -364,7 +366,9 @@ mode prints `{"tab":"…"}` on each switch so the producer can load a tab when i
 ```
 
 Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
-See [Picker protocol](control-protocol.md#picker-stream).
+An older Rozi ignores `tabs` and shows every snapshot in one list, so check that
+`rozi api describe` lists `picker-tabs` before declaring them. See
+[Picker protocol](control-protocol.md#picker-stream).
 
 ## Published activity
 

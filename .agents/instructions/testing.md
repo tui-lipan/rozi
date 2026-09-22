@@ -20,6 +20,10 @@ live-reloads config. An unisolated test can alter the UI the developer is using.
   the same thread reuse it.
 - An integration helper that builds `AppRoot` must call
   `rozi::test_support::isolate_user_dirs()` before constructing its `TestBackend`.
+- Every test in one binary shares one scratch config file, and Settings actions save into it. A
+  test that reads the saved config back, writes the file itself, or needs it in a known state holds
+  `rozi::test_support::lock_config_file()` for the whole sequence, on the thread that dispatches.
+  Saves made by that thread's own dispatches go through; other tests' saves wait.
 - Never redirect an in-process test with `std::env::set_var` for `HOME`, `XDG_*`, `APPDATA`, or
   `ROZI_CONFIG`; parallel mutation is unsound.
 - Passing environment variables to an isolated child process is a separate, safe mechanism.

@@ -308,6 +308,17 @@ pub(crate) fn with_persisted_state<T>(f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Hold the isolated config file for a whole save-then-assert sequence.
+///
+/// Every test in one binary shares one scratch config file, and preference saves from the UI write
+/// it. A test that saves through the UI and then reads the file back, or that needs the file in a
+/// known state, holds this for that whole span on the thread that dispatches: other tests' saves
+/// wait for it, while the saves this test's own dispatches make go straight through. A test that
+/// only saves and never inspects the file does not need it.
+pub fn lock_config_file() -> crate::config::ConfigEditGuard {
+    crate::config::config_edit_lock()
+}
+
 /// Build the real configured root with a live control endpoint inside the isolated test
 /// environment. Integration tests use this when `AppRoot::default()` would intentionally be too
 /// inert: the default root has no filesystem config, startup tasks, or listener.

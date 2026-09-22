@@ -642,6 +642,8 @@ fn picker_border_style_changes_settings_frame_glyphs() {
 fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
     on_large_stack(|| {
         use rozi::state::SettingsAction::ToggleWorkspaceAnimation;
+        // Reads the saved config back, so hold the file this binary's tests share.
+        let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(90, 30);
         backend.state_mut().config.animations.enabled = true;
         backend.state_mut().config.animations.workspace = true;
@@ -869,6 +871,8 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
 fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
     on_large_stack(|| {
         use rozi::layout::anim::SessionAnimationStyle;
+        // Reads the saved config back, so hold the file this binary's tests share.
+        let _config = rozi::test_support::lock_config_file();
         use rozi::state::SettingsAction::CycleSessionAnimation;
         let mut backend = settings_backend(90, 30);
         backend.state_mut().config.animations.enabled = true;
@@ -980,6 +984,8 @@ fn settings_empty_search_does_not_edit_a_stale_selection() {
 fn merged_visibility_rows_render_save_and_restore_on_cancel() {
     on_large_stack(|| {
         use rozi::state::{PaneTitlebarMode, SettingsAction};
+        // Reads the saved config back, so hold the file this binary's tests share.
+        let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 80);
         backend.state_mut().config.pane.show_titles = false;
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;

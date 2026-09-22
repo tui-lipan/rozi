@@ -54,6 +54,15 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let root = rozi::test_support::isolate_user_dirs();
+            // Every test in this binary shares one config file, and other tests save preferences
+            // into it. This one writes the file itself and asserts what it contains, so hold it for
+            // the whole test and start from no file, which is the state the assertions expect.
+            let _config = rozi::test_support::lock_config_file();
+            match std::fs::remove_file(rozi::config::config_path()) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => panic!("clear the shared config file: {err}"),
+            }
             let extensions = extensions_root(root);
             // Keep filesystem order different from display-group order so selection must be
             // restored by entry identity rather than by the raw scan index.

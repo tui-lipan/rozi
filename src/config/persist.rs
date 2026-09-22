@@ -6,18 +6,47 @@ use super::ExtensionSettingValue;
 use super::file::{config_home, config_path, note_config_text};
 use super::schema::ProfileEntry;
 
+static CONFIG_EDIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static CONFIG_EDIT_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Exclusive use of the config file within this process, released on drop.
+///
+/// Re-entrant per thread: while a thread holds one, the saves it makes itself go straight
+/// through instead of deadlocking on it. That is what lets a test hold the file across "save
+/// through the UI, then read the file back" (see [`crate::test_support::lock_config_file`]).
+#[must_use = "the config file is only held while the guard is alive"]
+pub struct ConfigEditGuard {
+    lock: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl Drop for ConfigEditGuard {
+    fn drop(&mut self) {
+        if self.lock.is_some() {
+            CONFIG_EDIT_HELD.with(|held| held.set(false));
+        }
+    }
+}
+
 /// Serializes in-app edits of the config file within this process.
 ///
 /// Every edit reads the file, rewrites its text, and writes it back. Two of those interleaving lose
 /// one edit: the second writer never saw the first one's change. The UI saves preferences on one
 /// thread, but nothing else makes edits take turns - tests that save settings in parallel do not,
 /// and neither would a save that moved off the UI thread. Held from the read to the write.
-fn config_edit_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) fn config_edit_lock() -> ConfigEditGuard {
+    if CONFIG_EDIT_HELD.with(std::cell::Cell::get) {
+        return ConfigEditGuard { lock: None };
+    }
     // An edit that panicked left the file either untouched or fully replaced, so the next one can
     // proceed.
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    let lock = CONFIG_EDIT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    CONFIG_EDIT_HELD.with(|held| held.set(true));
+    ConfigEditGuard { lock: Some(lock) }
 }
 
 /// Writes an updated config text, creating the config directory when needed, and records the

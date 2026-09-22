@@ -43,7 +43,7 @@ pub(super) fn launcher_rows(
             .title_style(super::super::fg_only(&ctx.state.theme.primary))
             .glyph(
                 Text::new(glyph)
-                    .style(super::super::rozi_fg(&ctx.state.theme))
+                    .style(super::super::fg_only(&ctx.state.theme.accent))
                     .height(Length::Px(1)),
             )
             // The second line says what the entry actually does — the launcher equivalent of the

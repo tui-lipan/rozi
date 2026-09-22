@@ -190,13 +190,13 @@ fn empty_row(ctx: &Context<AppRoot>, text: &str) -> SidebarRow {
 
 /// A child-level "＋ …" action row within a session group.
 fn session_action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::rozi_fg(&ctx.state.theme);
+    let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
 }
 
 /// A group-level "＋ …" action row (connect a host).
 fn action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::rozi_fg(&ctx.state.theme);
+    let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(
         Row::new(label)
             .glyph(Text::new("+").style(style))

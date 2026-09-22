@@ -52,7 +52,7 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 
 /// A child-level "+ New pane" action row, matching the Sessions tab's "+ New session".
 fn new_pane_row(ctx: &Context<AppRoot>, workspace: usize) -> SidebarRow {
-    let style = super::super::rozi_fg(&ctx.state.theme);
+    let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(
         Row::new("+ New pane").title_style(style),
         RowTarget::NewPane { workspace },

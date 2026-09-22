@@ -164,7 +164,7 @@ impl AppRoot {
         else {
             return;
         };
-        match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
+        match ThemeWatcher::new(path, config::custom_theme_base()) {
             Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
             Err(err) => {
                 crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());

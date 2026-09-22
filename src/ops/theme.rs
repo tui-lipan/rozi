@@ -4,7 +4,7 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
-use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset, ensure_rozi_color};
+use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ensure_rozi_color};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
@@ -236,7 +236,7 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     ctx.state.theme_watcher = None;
     let mut start_tick = false;
     if let Some(path) = &resolved.watch_path {
-        match ThemeWatcher::new(path.clone(), ThemePreset::Lipan.theme()) {
+        match ThemeWatcher::new(path.clone(), crate::config::custom_theme_base()) {
             Ok(watcher) => {
                 ctx.state.theme_watcher = Some(watcher);
                 start_tick = !had_watcher;
@@ -603,7 +603,7 @@ fn fallback_text_color(background: Color) -> Color {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{Pane, PaneId};
+    use crate::state::{Pane, PaneId, ThemePreset};
 
     #[test]
     fn chrome_color_snaps_palette_colors_but_fades_truecolor() {

@@ -88,12 +88,28 @@ pub struct ResolvedTheme {
     pub warnings: Vec<String>,
 }
 
+/// Lipan with no chrome extension.
+///
+/// Custom theme files and the hot-reload watcher overlay TOML onto this. [`ThemePreset::Lipan`]'s
+/// theme already carries a chrome color copied from Lipan's accent, and a later `[accent]` overlay
+/// leaves that extension in place.
+pub(crate) fn custom_theme_base() -> Theme {
+    Theme::lipan()
+}
+
+/// Overlay a custom theme file onto [`custom_theme_base`], then copy chrome from the finished accent.
+fn load_custom_theme(path: &std::path::Path) -> std::result::Result<Theme, String> {
+    load_theme_from_toml(path, custom_theme_base())
+        .map(ensure_rozi_color)
+        .map_err(|err| err.to_string())
+}
+
 /// Resolve a `[theme].name` to a concrete theme. `system_theme` supplies the host-derived
 /// theme for the reserved `system` name; an unknown name falls back to the default theme and a
 /// custom file that fails to load falls back to Lipan, the base its `extends` defaults to, both
 /// with a warning.
 pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme {
-    let fallback = ThemePreset::Lipan.theme();
+    let fallback = custom_theme_base();
     let mut warnings = Vec::new();
     let choice = match resolve_choice(name) {
         Some(choice) => choice,
@@ -123,13 +139,13 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
             warnings,
         },
         ThemeChoice::Custom { path, .. } => {
-            let theme = ensure_rozi_color(match load_theme_from_toml(&path, fallback.clone()) {
+            let theme = match load_custom_theme(&path) {
                 Ok(theme) => theme,
                 Err(err) => {
                     warnings.push(format!("Theme load failed for {}: {err}", path.display()));
-                    fallback
+                    ensure_rozi_color(fallback)
                 }
-            });
+            };
             ResolvedTheme {
                 theme,
                 watch_path: Some(path),
@@ -204,6 +220,25 @@ mod tests {
         assert_eq!(resolved.theme, ThemePreset::Rozi.theme());
         assert!(!resolved.warnings.is_empty());
         assert!(resolved.watch_path.is_none());
+    }
+
+    #[test]
+    fn custom_theme_without_extends_takes_chrome_from_its_accent() {
+        let dir = std::env::temp_dir().join(format!("rozi-theme-accent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("green.toml");
+        std::fs::write(&path, "[accent]\nfg = \"#00FF00\"\n").unwrap();
+
+        let theme = load_custom_theme(&path).unwrap_or_else(|err| panic!("{err}"));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let green = Some(Color::hex_u24(0x00FF00).into());
+        assert_eq!(theme.accent.fg, green);
+        assert_eq!(crate::state::rozi_style(&theme).fg, green);
+        assert_ne!(
+            crate::state::rozi_style(&theme).fg,
+            crate::state::rozi_style(&ThemePreset::Lipan.theme()).fg
+        );
     }
 
     #[test]

@@ -129,7 +129,7 @@ fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
                 floating_border[0]
             );
             assert!(
-                floating_border[0].contains("· floating═╗"),
+                floating_border[0].contains("═floating═╗"),
                 "floating border status: {}",
                 floating_border[0]
             );

@@ -1053,7 +1053,7 @@ pub(crate) fn pane_element(
                     .style(border_title_text_style)
                     .padding(1);
                 if let Some(badge) = badge {
-                    labels = labels.right(format!("· {badge}"));
+                    labels = labels.right(badge);
                 }
                 body = body.header(labels);
             }
@@ -1139,7 +1139,7 @@ pub(crate) fn pane_element(
                     .child(title_text);
                 if let Some(badge) = badge {
                     title_row = title_row.child(
-                        Text::new(format!("· {badge}"))
+                        Text::new(badge)
                             .style(border_title_text_style)
                             .height(Length::Px(1)),
                     );

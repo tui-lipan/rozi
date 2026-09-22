@@ -1206,13 +1206,12 @@ fn short_revision(revision: &str) -> &str {
     &revision[..revision.len().min(SHORT_REVISION_LEN)]
 }
 
-/// The Installed tab's label, which counts known updates, or says a check is still running
-/// until one is known.
+/// The Installed tab's label, which counts known updates. A running check spins on its own row.
 pub(crate) fn installed_tab_label(state: &ExtensionsState) -> String {
     let label = ExtensionsTab::Installed.label();
-    let checks = state.update_checks.values();
-    let updates = checks
-        .clone()
+    let updates = state
+        .update_checks
+        .values()
         .filter(|check| matches!(check, ExtensionUpdateCheck::Available { .. }))
         .count();
     if updates > 0 {
@@ -1220,11 +1219,6 @@ pub(crate) fn installed_tab_label(state: &ExtensionsState) -> String {
             "{label} · {updates} update{}",
             if updates == 1 { "" } else { "s" }
         )
-    } else if checks
-        .into_iter()
-        .any(|check| *check == ExtensionUpdateCheck::Checking)
-    {
-        format!("{label} · checking…")
     } else {
         label.to_string()
     }

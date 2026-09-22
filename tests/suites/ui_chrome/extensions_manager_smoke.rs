@@ -116,7 +116,18 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 );
             }
             let checking = frame(&mut backend);
-            assert!(checking.contains("Installed · checking…"), "{checking}");
+            // The running check spins on its row beside the version; the tab only counts results.
+            assert!(!checking.contains("Installed ·"), "{checking}");
+            let row = checking
+                .lines()
+                .find(|line| line.contains("fixture-direct"))
+                .expect("fixture row");
+            assert!(
+                ['◐', '◓', '◑', '◒']
+                    .iter()
+                    .any(|glyph| row.contains(&format!("{glyph} 0.2.1 · git"))),
+                "{row}"
+            );
             backend
                 .dispatch(rozi::Msg::ExtensionUpdateChecked {
                     epoch,

@@ -113,12 +113,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
         settings_group(
             "Titlebar",
             vec![
-                (
-                    "Show titlebar",
-                    enabled_status(pane.show_titles),
-                    ToggleTitles,
-                ),
-                ("Layout", pane.titlebar.label().to_string(), CycleTitlebar),
+                ("Layout", choice_status(ctx, ChooseTitlebar), ChooseTitlebar),
                 (
                     "Style",
                     cap_style_label(pane.title_style).to_string(),
@@ -129,21 +124,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
         settings_group(
             "Workbar",
             vec![
-                (
-                    "Show workbar",
-                    enabled_status(pane.show_workbar),
-                    ToggleWorkbar,
-                ),
-                (
-                    "Position",
-                    if pane.workbar_at_bottom {
-                        "Bottom"
-                    } else {
-                        "Top"
-                    }
-                    .to_string(),
-                    ToggleWorkbarPosition,
-                ),
+                ("Position", choice_status(ctx, ChooseWorkbar), ChooseWorkbar),
                 ("Gap", enabled_status(pane.workbar_gap), ToggleWorkbarGap),
                 (
                     "Background",
@@ -1007,6 +988,14 @@ pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::SettingsChoiceCancel))
         .child(palette)
         .key(settings_choice_key())
+}
+
+fn choice_status(ctx: &Context<AppRoot>, action: SettingsAction) -> String {
+    action
+        .choice_ring(&ctx.state.config)
+        .and_then(|ring| ring.options.get(ring.index).copied())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn enabled_status(enabled: bool) -> String {

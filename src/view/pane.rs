@@ -1246,9 +1246,10 @@ pub(crate) fn pane_element(
         .bubble_mouse_down(true)
         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
 
-    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it. For every
-    // other style, opacity follows the pane lifecycle; animation gates only choose timed or instant
-    // transition policy.
+    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it. Off is
+    // already fully visible while opening and fully hidden while closing, with an instant
+    // transition. Every other style follows the pane lifecycle; animation gates only choose timed
+    // or instant transition policy.
     let animations = ctx.state.config.animations;
     let opacity = crate::layout::anim::pane_opacity_target(animations, pane);
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))

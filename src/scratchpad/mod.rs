@@ -1023,6 +1023,110 @@ mod tests {
             .expect("closing pane test thread panicked");
     }
 
+    /// The last scratch pane is retained for the dropdown retract. Off must stay hidden at its
+    /// full rect for that whole window, instead of snapping to the Scale close inset.
+    #[test]
+    fn an_off_last_scratch_pane_stays_full_size_and_hidden_while_retained() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                crate::test_support::isolate_user_dirs();
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                backend.set_viewport(VIEWPORT);
+                let generation = {
+                    let state = backend.state_mut();
+                    state.config.animations.pane_style =
+                        crate::layout::anim::PaneAnimationStyle::Off;
+                    state.config.animations.geometry_duration =
+                        std::time::Duration::from_millis(220);
+                    state.config.pane.show_titles = false;
+                    let mut pane = crate::state::Pane::new(1 << 31, 100, FloatRect::default());
+                    pane.opening = false;
+                    pane.opening_animation = None;
+                    pane.terminal_active = true;
+                    let _ = pane
+                        .terminal
+                        .process_server_output(b"OFF-SCRATCH-HIDDEN\r\n");
+                    state.scratch.panes.push(pane);
+                    crate::layout::tiling::append_tiled_window(&mut state.scratch, 1 << 31);
+                    state.scratch.focused_pane = Some(1 << 31);
+                    state.scratch_visible = true;
+                    state.scratch.panes[0].pty_generation
+                };
+                backend.render();
+                backend.advance(std::time::Duration::from_millis(400));
+                let live = backend
+                    .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
+                    .expect("deployed scratch pane");
+                assert!(
+                    marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                    "the settled Off pane should be readable before close"
+                );
+
+                backend
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                    .expect("close the last scratch pane");
+                backend.render();
+
+                let pane = backend
+                    .state()
+                    .scratch
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == 1 << 31)
+                    .expect("the last scratch pane stays retained for the dropdown retract");
+                assert!(pane.closing);
+                let closing = backend
+                    .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
+                    .expect("retained Off pane is still described");
+                assert!(
+                    closing.w + 1 >= live.w && closing.h + 1 >= live.h,
+                    "Off close snapped to the inset: closing {closing:?} from {live:?}"
+                );
+                assert!(
+                    !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                    "a retained Off pane stayed visible on the close frame"
+                );
+
+                backend.advance(std::time::Duration::from_millis(40));
+                assert!(
+                    backend
+                        .state()
+                        .scratch
+                        .panes
+                        .iter()
+                        .any(|pane| pane.id == 1 << 31 && pane.closing),
+                    "scratch retention should outlast a zero-delay prune"
+                );
+                assert!(
+                    !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                    "a retained Off pane became visible during the dropdown retract"
+                );
+            })
+            .expect("spawn off scratch close test thread")
+            .join()
+            .expect("off scratch close test thread panicked");
+    }
+
+    fn marker_visible(backend: &tui_lipan::TestBackend<AppRoot>, marker: &str) -> bool {
+        let frame = backend.capture_frame();
+        for y in 0..VIEWPORT.h {
+            let row = frame.row(y);
+            let line: String = row.iter().map(|cell| cell.symbol.as_str()).collect();
+            let Some(start) = line.find(marker) else {
+                continue;
+            };
+            let end = start + marker.len();
+            if row
+                .get(start..end)
+                .is_some_and(|cells| cells.iter().any(|cell| cell.fg != cell.bg))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     #[test]
     fn a_floating_only_scratch_pane_stays_mounted_for_its_close_animation() {
         std::thread::Builder::new()

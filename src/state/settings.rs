@@ -105,11 +105,9 @@ pub enum SettingsAction {
     ToggleOsc52,
     ToggleFocusOnHover,
     ToggleBackgroundFollowsTerminal,
-    ToggleTitles,
-    CycleTitlebar,
+    ChooseTitlebar,
     CycleTitleStyle,
-    ToggleWorkbar,
-    ToggleWorkbarPosition,
+    ChooseWorkbar,
     ToggleWorkbarGap,
     ToggleWorkbarBackground,
     CycleWorkbarStyle,
@@ -184,12 +182,10 @@ impl SettingsAction {
             Self::CyclePickerTabStyle,
             Self::CyclePickerSelectionStyle,
             // Titlebar
-            Self::ToggleTitles,
-            Self::CycleTitlebar,
+            Self::ChooseTitlebar,
             Self::CycleTitleStyle,
             // Workbar
-            Self::ToggleWorkbar,
-            Self::ToggleWorkbarPosition,
+            Self::ChooseWorkbar,
             Self::ToggleWorkbarGap,
             Self::ToggleWorkbarBackground,
             Self::CycleWorkbarStyle,
@@ -288,12 +284,8 @@ impl SettingsAction {
                 pane.picker_selection_style,
                 cap_style_label,
             )),
-            Self::CycleTitlebar => Some(choice_ring(
-                "Titlebar layout",
-                PaneTitlebarMode::all(),
-                pane.titlebar,
-                PaneTitlebarMode::label,
-            )),
+            Self::ChooseTitlebar => Some(titlebar_choice_ring(pane)),
+            Self::ChooseWorkbar => Some(workbar_choice_ring(pane)),
             Self::CycleTitleStyle => Some(choice_ring(
                 "Titlebar style",
                 CapStyle::all(),
@@ -439,9 +431,8 @@ impl SettingsAction {
                 index,
                 &mut config.pane.picker_selection_style,
             ),
-            Self::CycleTitlebar => {
-                assign_choice(PaneTitlebarMode::all(), index, &mut config.pane.titlebar)
-            }
+            Self::ChooseTitlebar => apply_titlebar_choice(config, index),
+            Self::ChooseWorkbar => apply_workbar_choice(config, index),
             Self::CycleTitleStyle => {
                 assign_choice(CapStyle::all(), index, &mut config.pane.title_style)
             }
@@ -514,9 +505,7 @@ impl SettingsAction {
     pub fn disabled_reason(self, config: &Config) -> Option<&'static str> {
         let pane = &config.pane;
         match self {
-            Self::CycleTitlebar | Self::CycleTitleStyle if !pane.show_titles => {
-                Some("Needs titlebar")
-            }
+            Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
             Self::CycleTitleStyle if !pane.titlebar.fills_strip() => {
                 Some("Unsupported in this layout")
             }
@@ -542,8 +531,7 @@ impl SettingsAction {
             {
                 Some("Needs animations")
             }
-            Self::ToggleWorkbarPosition
-            | Self::ToggleWorkbarGap
+            Self::ToggleWorkbarGap
             | Self::ToggleWorkbarBackground
             | Self::CycleWorkbarStyle
             | Self::CycleWorkbarBadgeStyle
@@ -596,6 +584,77 @@ fn assign_choice<T: Copy>(all: &[T], index: usize, slot: &mut T) -> bool {
     true
 }
 
+fn titlebar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing {
+    let index = if pane.show_titles {
+        PaneTitlebarMode::all()
+            .iter()
+            .position(|mode| *mode == pane.titlebar)
+            .map(|index| index + 1)
+            .unwrap_or(1)
+    } else {
+        0
+    };
+    SettingsChoiceRing {
+        title: "Layout",
+        options: ["Hidden", "Bar", "Border", "Integrated", "Inset"]
+            .into_iter()
+            .collect(),
+        index,
+    }
+}
+
+fn workbar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing {
+    let index = if !pane.show_workbar {
+        0
+    } else if pane.workbar_at_bottom {
+        2
+    } else {
+        1
+    };
+    SettingsChoiceRing {
+        title: "Position",
+        options: vec!["Hidden", "Top", "Bottom"],
+        index,
+    }
+}
+
+fn apply_titlebar_choice(config: &mut Config, index: usize) -> bool {
+    match index {
+        0 => {
+            config.pane.show_titles = false;
+            true
+        }
+        n => {
+            let Some(&mode) = PaneTitlebarMode::all().get(n - 1) else {
+                return false;
+            };
+            config.pane.show_titles = true;
+            config.pane.titlebar = mode;
+            true
+        }
+    }
+}
+
+fn apply_workbar_choice(config: &mut Config, index: usize) -> bool {
+    match index {
+        0 => {
+            config.pane.show_workbar = false;
+            true
+        }
+        1 => {
+            config.pane.show_workbar = true;
+            config.pane.workbar_at_bottom = false;
+            true
+        }
+        2 => {
+            config.pane.show_workbar = true;
+            config.pane.workbar_at_bottom = true;
+            true
+        }
+        _ => false,
+    }
+}
+
 fn choice_ring<T: Copy + PartialEq>(
     title: &'static str,
     all: &[T],
@@ -613,23 +672,102 @@ fn choice_ring<T: Copy + PartialEq>(
     }
 }
 
-/// Pending multi-value choice. Highlight previews; Enter persists; Esc restores `original_index`.
+/// Backing config captured when a choice picker opens. Esc restores this exactly.
+///
+/// A single-field row stores its original index. A composite row stores every key it can change,
+/// because Hidden is one visible choice that must not overwrite the remembered layout or position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsChoiceSnapshot {
+    Index(usize),
+    Titlebar {
+        show_titles: bool,
+        titlebar: PaneTitlebarMode,
+    },
+    Workbar {
+        show_workbar: bool,
+        workbar_at_bottom: bool,
+    },
+}
+
+impl SettingsChoiceSnapshot {
+    fn capture(action: SettingsAction, config: &Config) -> Self {
+        match action {
+            SettingsAction::ChooseTitlebar => Self::Titlebar {
+                show_titles: config.pane.show_titles,
+                titlebar: config.pane.titlebar,
+            },
+            SettingsAction::ChooseWorkbar => Self::Workbar {
+                show_workbar: config.pane.show_workbar,
+                workbar_at_bottom: config.pane.workbar_at_bottom,
+            },
+            _ => Self::Index(
+                action
+                    .choice_ring(config)
+                    .map(|ring| ring.index)
+                    .unwrap_or(0),
+            ),
+        }
+    }
+
+    fn unchanged(self, editor_index: usize, config: &Config) -> bool {
+        match self {
+            Self::Index(original) => editor_index == original,
+            Self::Titlebar {
+                show_titles,
+                titlebar,
+            } => config.pane.show_titles == show_titles && config.pane.titlebar == titlebar,
+            Self::Workbar {
+                show_workbar,
+                workbar_at_bottom,
+            } => {
+                config.pane.show_workbar == show_workbar
+                    && config.pane.workbar_at_bottom == workbar_at_bottom
+            }
+        }
+    }
+
+    fn restore(self, action: SettingsAction, config: &mut Config) {
+        match self {
+            Self::Index(index) => {
+                action.apply_choice(config, index);
+            }
+            Self::Titlebar {
+                show_titles,
+                titlebar,
+            } => {
+                config.pane.show_titles = show_titles;
+                config.pane.titlebar = titlebar;
+            }
+            Self::Workbar {
+                show_workbar,
+                workbar_at_bottom,
+            } => {
+                config.pane.show_workbar = show_workbar;
+                config.pane.workbar_at_bottom = workbar_at_bottom;
+            }
+        }
+    }
+}
+
+/// Pending multi-value choice. Highlight previews; Enter persists; Esc restores [`SettingsChoiceSnapshot`].
 pub struct SettingsChoiceEditor {
     pub action: SettingsAction,
     pub title: &'static str,
     pub options: Vec<&'static str>,
     pub index: usize,
     pub original_index: usize,
+    pub snapshot: SettingsChoiceSnapshot,
 }
 
 impl SettingsChoiceEditor {
-    pub fn from_ring(action: SettingsAction, ring: SettingsChoiceRing) -> Self {
+    pub fn from_ring(action: SettingsAction, ring: SettingsChoiceRing, config: &Config) -> Self {
         Self {
             action,
             title: ring.title,
             options: ring.options,
             index: ring.index,
             original_index: ring.index,
+            snapshot: SettingsChoiceSnapshot::capture(action, config),
         }
     }
 }
@@ -637,12 +775,10 @@ impl SettingsChoiceEditor {
 /// Drop a live-preview picker and restore the value from before it opened.
 pub fn abandon_settings_choice(state: &mut super::State) -> Option<std::time::Duration> {
     let editor = state.settings_choice.take()?;
-    if editor.index == editor.original_index {
+    if editor.snapshot.unchanged(editor.index, &state.config) {
         return None;
     }
-    editor
-        .action
-        .apply_choice(&mut state.config, editor.original_index);
+    editor.snapshot.restore(editor.action, &mut state.config);
     matches!(editor.action, SettingsAction::CycleWhichKey)
         .then(|| state.config.input.which_key.reveal_delay())
 }
@@ -718,9 +854,10 @@ mod tests {
         assert!(SettingsAction::CycleMiddleClickPaste.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleRightClickClipboard.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CyclePaneAnimation.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::ChooseTitlebar.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::ChooseWorkbar.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleStartupMode.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::ToggleAnimations.shows_choice_ellipsis(&config));
-        assert!(!SettingsAction::ToggleWorkbarPosition.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::CycleWorkbarAlertPaint.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::Theme.shows_choice_ellipsis(&config));
     }
@@ -785,5 +922,75 @@ mod tests {
             SettingsAction::ToggleWorkbarBackground.disabled_reason(&config),
             None
         );
+    }
+
+    #[test]
+    fn hidden_titlebar_and_workbar_choices_keep_the_remembered_value() {
+        let mut config = Config::default();
+        config.pane.show_titles = true;
+        config.pane.titlebar = PaneTitlebarMode::Inset;
+        assert!(SettingsAction::ChooseTitlebar.apply_choice(&mut config, 0));
+        assert!(!config.pane.show_titles);
+        assert_eq!(config.pane.titlebar, PaneTitlebarMode::Inset);
+        let hidden = SettingsAction::ChooseTitlebar
+            .choice_ring(&config)
+            .expect("titlebar choices");
+        assert_eq!(
+            hidden.options,
+            ["Hidden", "Bar", "Border", "Integrated", "Inset"]
+        );
+        assert_eq!(hidden.index, 0);
+
+        assert!(SettingsAction::ChooseTitlebar.apply_choice(&mut config, 3));
+        assert!(config.pane.show_titles);
+        assert_eq!(config.pane.titlebar, PaneTitlebarMode::Integrated);
+        assert!(SettingsAction::ChooseTitlebar.apply_choice(&mut config, 0));
+        assert!(!config.pane.show_titles);
+        assert_eq!(config.pane.titlebar, PaneTitlebarMode::Integrated);
+
+        config.pane.show_workbar = true;
+        config.pane.workbar_at_bottom = true;
+        assert!(SettingsAction::ChooseWorkbar.apply_choice(&mut config, 0));
+        assert!(!config.pane.show_workbar);
+        assert!(config.pane.workbar_at_bottom);
+        let workbar = SettingsAction::ChooseWorkbar
+            .choice_ring(&config)
+            .expect("workbar choices");
+        assert_eq!(workbar.options, ["Hidden", "Top", "Bottom"]);
+        assert_eq!(workbar.index, 0);
+
+        assert!(SettingsAction::ChooseWorkbar.apply_choice(&mut config, 1));
+        assert!(config.pane.show_workbar);
+        assert!(!config.pane.workbar_at_bottom);
+        assert!(SettingsAction::ChooseWorkbar.apply_choice(&mut config, 2));
+        assert!(config.pane.show_workbar);
+        assert!(config.pane.workbar_at_bottom);
+    }
+
+    #[test]
+    fn cancelling_a_hidden_choice_preview_restores_both_keys() {
+        let mut config = Config::default();
+        config.pane.show_titles = false;
+        config.pane.titlebar = PaneTitlebarMode::Inset;
+        config.pane.show_workbar = false;
+        config.pane.workbar_at_bottom = true;
+        let mut state = crate::state::State::new(config, Default::default());
+
+        for (action, preview) in [
+            (SettingsAction::ChooseTitlebar, 1),
+            (SettingsAction::ChooseWorkbar, 1),
+        ] {
+            let ring = action.choice_ring(&state.config).expect("choice ring");
+            state.settings_choice =
+                Some(SettingsChoiceEditor::from_ring(action, ring, &state.config));
+            assert!(action.apply_choice(&mut state.config, preview));
+            state.settings_choice.as_mut().expect("editor").index = preview;
+            abandon_settings_choice(&mut state);
+        }
+
+        assert!(!state.config.pane.show_titles);
+        assert_eq!(state.config.pane.titlebar, PaneTitlebarMode::Inset);
+        assert!(!state.config.pane.show_workbar);
+        assert!(state.config.pane.workbar_at_bottom);
     }
 }

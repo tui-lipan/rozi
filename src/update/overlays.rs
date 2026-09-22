@@ -324,7 +324,11 @@ fn open_settings_choice(
     let Some(ring) = action.choice_ring(&ctx.state.config) else {
         return Update::none();
     };
-    ctx.state.settings_choice = Some(crate::state::SettingsChoiceEditor::from_ring(action, ring));
+    ctx.state.settings_choice = Some(crate::state::SettingsChoiceEditor::from_ring(
+        action,
+        ring,
+        &ctx.state.config,
+    ));
     crate::state::assign_settings_selection(&mut ctx.state, Some(action));
     ctx.request_focus(crate::view::settings_choice_key());
     Update::full()
@@ -347,10 +351,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             ));
             ctx.request_focus(crate::view::pane_padding_vertical_key());
         }
-        ToggleTitles => {
-            execute_action(ctx, Action::ToggleTitles);
-        }
-        CycleTitlebar
+        ChooseTitlebar
+        | ChooseWorkbar
         | CycleTitleStyle
         | CycleSidebarTabStyle
         | CycleWorkbarStyle
@@ -375,12 +377,6 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleStartupMode
         | CycleResurrectForeground => {
             return open_settings_choice(ctx, action);
-        }
-        ToggleWorkbar => {
-            execute_action(ctx, Action::ToggleWorkbar);
-        }
-        ToggleWorkbarPosition => {
-            execute_action(ctx, Action::ToggleWorkbarPosition);
         }
         ToggleWorkbarGap => {
             execute_action(ctx, Action::ToggleWorkbarGap);
@@ -587,6 +583,40 @@ fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
     );
 }
 
+fn persist_titlebar_choice(ctx: &mut Context<AppRoot>) {
+    let pane = &ctx.state.config.pane;
+    if pane.show_titles {
+        let titlebar = format!("\"{}\"", pane.titlebar.id());
+        if let Err(err) = crate::config::persist_section_values(
+            "pane",
+            &[("show_titles", "true"), ("titlebar", &titlebar)],
+        ) {
+            preference_error(ctx, err);
+        }
+    } else if let Err(err) = crate::config::persist_pane_flag("show_titles", false) {
+        preference_error(ctx, err);
+    }
+}
+
+fn persist_workbar_choice(ctx: &mut Context<AppRoot>) {
+    let pane = &ctx.state.config.pane;
+    if pane.show_workbar {
+        let position = if pane.workbar_at_bottom {
+            "true"
+        } else {
+            "false"
+        };
+        if let Err(err) = crate::config::persist_section_values(
+            "pane",
+            &[("show_workbar", "true"), ("workbar_at_bottom", position)],
+        ) {
+            preference_error(ctx, err);
+        }
+    } else if let Err(err) = crate::config::persist_pane_flag("show_workbar", false) {
+        preference_error(ctx, err);
+    }
+}
+
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
         crate::pane::pty_events::notify_on(
@@ -726,9 +756,8 @@ fn persist_applied_settings_choice(
             "picker_selection_style",
             crate::state::cap_style_id(ctx.state.config.pane.picker_selection_style),
         ),
-        CycleTitlebar => {
-            persist_pane_string_or_toast(ctx, "titlebar", ctx.state.config.pane.titlebar.id())
-        }
+        ChooseTitlebar => persist_titlebar_choice(ctx),
+        ChooseWorkbar => persist_workbar_choice(ctx),
         CycleTitleStyle => persist_pane_string_or_toast(
             ctx,
             "title_style",

@@ -177,10 +177,12 @@
 # the centre while the previous session recedes behind it, over geometry_ms; "off" switches at once.
 #session = "fade"
 #focus_chrome = true
-# Shape of the pane open/close animation. "scale" grows the pane from its own centre with a fade;
-# "slide" brings it in from the edge it was split off, clipped to its tile, and springs the tile that
-# gave up the space; "portal" materializes the full-size pane radially; "scan" reveals it along a
-# top-left to bottom-right diagonal. Portal and Scan also apply to floating panes and popups.
+# Shape of the pane open/close animation. "off" shows and hides the pane at once while neighbouring
+# tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in
+# from the edge it was split off, clipped to its tile, and springs the tile that gave up the space;
+# "portal" materializes the full-size pane radially; "scan" reveals it along a top-left to
+# bottom-right diagonal. Portal and Scan also apply to floating panes and popups. Off stays off for
+# floats; Slide falls back to Scale.
 #pane_style = "scale"
 # Base geometry duration; tiled Slide uses it as its slide duration in both directions. The scratchpad
 # and sidebar slides run at two-thirds of it.

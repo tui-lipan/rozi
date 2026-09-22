@@ -112,7 +112,8 @@ pane returns to its prior position.
 
 ## Pane open/close animation styles
 
-Set `[animations].pane_style` to choose how panes appear and disappear. `Scale` grows a pane from its
+Set `[animations].pane_style` to choose how panes appear and disappear. `Off` shows and hides the
+pane at once; the panes around it still reflow. `Scale` grows a pane from its
 centre with a soft fade. `Slide` brings tiled panes from the split edge and clips them to their tile;
 neighboring tiles spring into their new geometry. Floating panes keep the scale behavior under
 `Slide`.

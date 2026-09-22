@@ -48,6 +48,9 @@ pub enum GeometryAnimation {
 /// says *why* geometry is moving; this says how the arriving or leaving pane itself is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaneAnimationStyle {
+    /// The opening or closing pane appears and disappears at once. Neighbouring panes still
+    /// animate their reflow. Not a drawn effect: there is no fade and no reveal.
+    Off,
     /// Scale toward the centre of the pane's own rectangle, with a fade riding on top.
     #[default]
     Scale,
@@ -127,6 +130,12 @@ pub struct PaneEventAnimationSnapshot {
 
 pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec {
     let (open_curve, close_curve, visual_open_curve, visual_close_curve) = match style {
+        PaneAnimationStyle::Off => (
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
+        ),
         PaneAnimationStyle::Scale => (
             Easing::EaseInOutCubic,
             Easing::EaseOutQuad,
@@ -164,8 +173,11 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
         visual_open_curve,
         visual_close_curve,
         // Slide is clipped to its tile, so it genuinely emerges; a fade on top would make its
-        // leading edge ghostly instead of solid.
-        fade: !matches!(style, PaneAnimationStyle::Slide),
+        // leading edge ghostly instead of solid. Off has no effect to fade.
+        fade: matches!(
+            style,
+            PaneAnimationStyle::Scale | PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
+        ),
         scale_from: 0.9,
         origin: [0.5, 0.5],
         scan_direction: ScanDirection::TopLeft,
@@ -176,9 +188,10 @@ pub(crate) fn snapshot_for_open(
     animations: WindowAnimationConfig,
     floating: bool,
 ) -> PaneAnimationSnapshot {
+    let resolved = animations.resolved_animation(floating);
     PaneAnimationSnapshot {
-        spec: animations.resolved_animation(floating),
-        active: animations.enabled && animations.spawn,
+        spec: resolved,
+        active: animations.enabled && animations.spawn && resolved.kind != PaneAnimationStyle::Off,
     }
 }
 
@@ -186,9 +199,10 @@ pub(crate) fn snapshot_for_close(
     animations: WindowAnimationConfig,
     floating: bool,
 ) -> PaneAnimationSnapshot {
+    let resolved = animations.resolved_animation(floating);
     PaneAnimationSnapshot {
-        spec: animations.resolved_animation(floating),
-        active: animations.enabled && animations.close,
+        spec: resolved,
+        active: animations.enabled && animations.close && resolved.kind != PaneAnimationStyle::Off,
     }
 }
 
@@ -243,12 +257,19 @@ impl SessionAnimationStyle {
 impl PaneAnimationStyle {
     /// Cycle order for the Settings row.
     pub fn all() -> &'static [Self] {
-        &[Self::Scale, Self::Slide, Self::Portal, Self::Scan]
+        &[
+            Self::Off,
+            Self::Scale,
+            Self::Slide,
+            Self::Portal,
+            Self::Scan,
+        ]
     }
 
     /// Config token and persisted value.
     pub fn id(self) -> &'static str {
         match self {
+            Self::Off => "off",
             Self::Scale => "scale",
             Self::Slide => "slide",
             Self::Portal => "portal",
@@ -258,6 +279,7 @@ impl PaneAnimationStyle {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Off => "Off",
             Self::Scale => "Scale",
             Self::Slide => "Slide",
             Self::Portal => "Portal",
@@ -267,6 +289,7 @@ impl PaneAnimationStyle {
 
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
             "scale" => Some(Self::Scale),
             "slide" => Some(Self::Slide),
             "portal" => Some(Self::Portal),
@@ -277,16 +300,18 @@ impl PaneAnimationStyle {
 
     pub fn next(self) -> Self {
         match self {
+            Self::Off => Self::Scale,
             Self::Scale => Self::Slide,
             Self::Slide => Self::Portal,
             Self::Portal => Self::Scan,
-            Self::Scan => Self::Scale,
+            Self::Scan => Self::Off,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Self::Scale => Self::Scan,
+            Self::Off => Self::Scan,
+            Self::Scale => Self::Off,
             Self::Slide => Self::Scale,
             Self::Portal => Self::Slide,
             Self::Scan => Self::Portal,
@@ -413,11 +438,19 @@ pub fn lifecycle_motion_enabled(
     if pane.closing {
         pane.closing_animation
             .map(|snapshot| snapshot.active)
-            .unwrap_or(animations.enabled && animations.close)
+            .unwrap_or(
+                animations.enabled
+                    && animations.close
+                    && animations.pane_style != PaneAnimationStyle::Off,
+            )
     } else {
         pane.opening_animation
             .map(|snapshot| snapshot.active)
-            .unwrap_or(animations.enabled && animations.spawn)
+            .unwrap_or(
+                animations.enabled
+                    && animations.spawn
+                    && animations.pane_style != PaneAnimationStyle::Off,
+            )
     }
 }
 
@@ -426,6 +459,7 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
     let spec = pane_animation_for_pane(animations, pane);
     spec.fade
         && !pane_slides(animations, pane)
+        && spec.kind != PaneAnimationStyle::Off
         && spec.kind != PaneAnimationStyle::Slide
         && lifecycle_motion_enabled(animations, pane)
         && (pane_opening_transition(pane) || pane.closing)
@@ -437,10 +471,18 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
 /// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
 /// state settles; otherwise disabling close animation can make it reappear before pruning.
 ///
+/// [`PaneAnimationStyle::Off`] draws no effect. An opening pane is fully visible on the first
+/// frame, and a retained closing pane (the last scratch pane, held while the dropdown retracts)
+/// is fully hidden on the first frame. Slide also has `fade == false`, and it stays opaque
+/// because a clip reveals it.
+///
 /// `pane.opening`, not [`pane_opening_transition`]: the fade has to *travel* once the spawn timer
 /// clears that flag, and the snapshot outlives it by design.
 pub fn pane_opacity_target(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> f32 {
     let spec = pane_animation_for_pane(animations, pane);
+    if spec.kind == PaneAnimationStyle::Off {
+        return if pane.closing { 0.0 } else { 1.0 };
+    }
     if !spec.fade || pane_slides(animations, pane) || (!pane.opening && !pane.closing) {
         1.0
     } else {
@@ -578,7 +620,8 @@ impl WindowAnimationConfig {
     ///
     /// A floating pane has no tile edge to emerge from and no neighbour to take space from, so
     /// Slide is not something it can perform - it resolves to Scale before anything else is
-    /// applied, and therefore picks up Scale's timing and Scale's overrides.
+    /// applied, and therefore picks up Scale's timing and Scale's overrides. Off stays Off:
+    /// disappearing at once does not need a tile edge.
     pub(crate) fn resolved_animation(self, floating: bool) -> PaneAnimationSpec {
         let kind = if floating && self.pane_style == PaneAnimationStyle::Slide {
             PaneAnimationStyle::Scale
@@ -616,7 +659,9 @@ impl PaneAnimationOverrides {
             spec.close_curve = close;
             spec.visual_close_curve = close;
         }
-        if let Some(fade) = self.fade {
+        if let Some(fade) = self.fade
+            && spec.kind != PaneAnimationStyle::Off
+        {
             spec.fade = fade;
         }
         match spec.kind {
@@ -636,7 +681,8 @@ impl PaneAnimationOverrides {
                 }
             }
             // A slide enters from the edge the split placed it on; there is nothing to aim.
-            PaneAnimationStyle::Slide => {}
+            // Off draws neither an effect nor a fade, so a dormant override cannot turn one on.
+            PaneAnimationStyle::Slide | PaneAnimationStyle::Off => {}
         }
     }
 }
@@ -773,8 +819,12 @@ pub fn instant_transition() -> TransitionConfig {
     }
 }
 
+fn pane_open_waits(animations: WindowAnimationConfig) -> bool {
+    animations.enabled && animations.spawn && animations.pane_style != PaneAnimationStyle::Off
+}
+
 pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
-    if animations.enabled && animations.spawn {
+    if pane_open_waits(animations) {
         animations.open_delay
     } else {
         Duration::ZERO
@@ -782,7 +832,7 @@ pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
 }
 
 pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
-    if animations.enabled && animations.spawn {
+    if pane_open_waits(animations) {
         animations.open_delay + animations.selected_animation().open_duration
     } else {
         Duration::ZERO
@@ -797,6 +847,8 @@ pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
     }
     let spec = animations.selected_animation();
     let motion = match spec.kind {
+        // The pane is already gone. Neighbours keep `geometry_duration` from the event snapshot.
+        PaneAnimationStyle::Off => return Duration::ZERO,
         // A short pop the fade rides on.
         PaneAnimationStyle::Scale => spec.close_duration,
         // A whole tile to cross, which `close_ms` is far too short for - it would prune the pane
@@ -903,7 +955,10 @@ pub(crate) fn geometry_transition_for_pane(
     if pane_transition {
         if matches!(
             spec.kind,
-            PaneAnimationStyle::Slide | PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
+            PaneAnimationStyle::Off
+                | PaneAnimationStyle::Slide
+                | PaneAnimationStyle::Portal
+                | PaneAnimationStyle::Scan
         ) {
             return instant_transition();
         }
@@ -1023,6 +1078,117 @@ mod tests {
                 ..slide
             }),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn off_opens_live_with_no_delay_and_draws_no_effect() {
+        let animations = WindowAnimationConfig {
+            pane_style: PaneAnimationStyle::Off,
+            open_delay: Duration::from_millis(36),
+            geometry_duration: Duration::from_millis(220),
+            ..WindowAnimationConfig::default()
+        };
+        assert_eq!(open_delay(animations), Duration::ZERO);
+        assert_eq!(activation_delay(animations), Duration::ZERO);
+        assert_eq!(
+            PaneAnimationStyle::parse("off"),
+            Some(PaneAnimationStyle::Off)
+        );
+        assert_eq!(
+            PaneAnimationStyle::parse("  OFF "),
+            Some(PaneAnimationStyle::Off)
+        );
+        assert_eq!(
+            animations.resolved_animation(true).kind,
+            PaneAnimationStyle::Off
+        );
+        assert_eq!(
+            WindowAnimationConfig {
+                pane_style: PaneAnimationStyle::Slide,
+                ..animations
+            }
+            .resolved_animation(true)
+            .kind,
+            PaneAnimationStyle::Scale
+        );
+
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = true;
+        pane.floating = true;
+        pane.begin_open_animation(animations);
+        let snapshot = pane.opening_animation.expect("open snapshot");
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.spec.kind, PaneAnimationStyle::Off);
+        assert!(!snapshot.spec.fade);
+        assert!(!pane_opacity_animates(animations, &pane));
+        assert!(!pane_reveal_effects_for_pane(animations, &pane));
+        assert!(!pane_slides(animations, &pane));
+        assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+        pane.opening = false;
+        pane.closing = true;
+        pane.opening_animation = None;
+        pane.begin_close_animation(animations);
+        assert!(!pane_opacity_animates(animations, &pane));
+        assert_eq!(pane_opacity_target(animations, &pane), 0.0);
+
+        let mut state = spawning_state(PaneAnimationStyle::Off, GeometryAnimation::Spawn);
+        state.config.animations.open_delay = Duration::from_millis(36);
+        state.begin_pane_event(GeometryAnimation::Spawn);
+        let animations = state.config.animations;
+        {
+            let opening = &mut state.current_mut().workspaces[0].panes[0];
+            opening.opening = true;
+            opening.begin_open_animation(animations);
+        }
+        let opening = &state.current().workspaces[0].panes[0];
+        assert_eq!(
+            geometry_transition_for_pane(&state, opening, false, None).duration,
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn off_closes_with_no_retention_while_neighbours_keep_geometry_duration() {
+        let mut state = spawning_state(PaneAnimationStyle::Off, GeometryAnimation::Close);
+        state.config.animations.geometry_duration = Duration::from_millis(275);
+        state.config.animations.close_duration = Duration::from_millis(80);
+        state.begin_pane_event(GeometryAnimation::Close);
+        let animations = state.config.animations;
+
+        {
+            let closing = &mut state.current_mut().workspaces[0].panes[0];
+            closing.opening = false;
+            closing.closing = true;
+            closing.begin_close_animation(animations);
+            assert!(!closing.closing_animation.expect("close snapshot").active);
+            assert!(!pane_opacity_animates(animations, closing));
+            assert_eq!(pane_opacity_target(animations, closing), 0.0);
+            assert_eq!(
+                retained_pane_timeout_for_pane(animations, closing),
+                Duration::ZERO
+            );
+        }
+        assert_eq!(retained_pane_timeout(animations), Duration::ZERO);
+
+        let mut neighbour = Pane::new(2, 100, FloatRect::default());
+        neighbour.opening = false;
+        state.current_mut().workspaces[0].panes.push(neighbour);
+        let neighbour = &state.current().workspaces[0].panes[1];
+        assert_eq!(
+            geometry_transition_for_pane(
+                &state,
+                neighbour,
+                false,
+                Some(FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 12.0,
+                }),
+            )
+            .duration,
+            Duration::from_millis(275)
         );
     }
 

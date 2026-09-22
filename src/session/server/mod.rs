@@ -32,6 +32,7 @@ mod panes;
 mod resurrect;
 pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
+pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 mod runtime;
 mod shutdown;
 mod waits;

@@ -976,7 +976,16 @@ fn default_snapshot_dir() -> Option<PathBuf> {
     Some(crate::platform::paths::state_dir(&env).join("sessions"))
 }
 
-pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
+/// Metadata needed for discovery. Reading it never touches pane replay files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotSummary {
+    pub session: String,
+    pub saved_at: u64,
+    pub origin: crate::session::origin::SessionOrigin,
+    pub panes: usize,
+}
+
+pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
     let Some(root) = default_snapshot_dir() else {
         return Vec::new();
     };
@@ -996,11 +1005,30 @@ pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
             (meta.version == SNAPSHOT_VERSION
                 && meta.session == dir_name
                 && crate::session::discovery::valid_session_name(&meta.session))
-            .then_some((meta.saved_at, meta.session))
+            .then_some(SnapshotSummary {
+                session: meta.session,
+                saved_at: meta.saved_at,
+                origin: crate::session::origin::SessionOrigin {
+                    profile: meta.created_from_profile,
+                    ..Default::default()
+                },
+                panes: meta.panes.len(),
+            })
         })
         .collect::<Vec<_>>();
-    snapshots.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    snapshots.into_iter().map(|(_, name)| name).collect()
+    snapshots.sort_by(|a, b| {
+        b.saved_at
+            .cmp(&a.saved_at)
+            .then_with(|| a.session.cmp(&b.session))
+    });
+    snapshots
+}
+
+pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
+    list_snapshot_summaries_by_recency()
+        .into_iter()
+        .map(|snapshot| snapshot.session)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1042,7 +1070,7 @@ mod tests {
                     session: session.to_string(),
                     saved_at: 1,
                     layout_rev: 0,
-                    created_from_profile: None,
+                    created_from_profile: Some("work".to_string()),
                     panes: Vec::new(),
                 })
                 .unwrap(),
@@ -1050,6 +1078,14 @@ mod tests {
             .expect("write snapshot meta");
         }
 
+        let summaries = list_snapshot_summaries_by_recency();
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.session == published)
+            .expect("published snapshot summary");
+        assert_eq!(summary.origin.profile.as_deref(), Some("work"));
+        assert_eq!(summary.panes, 0);
+        assert_eq!(summary.saved_at, 1);
         let listed = list_snapshot_names_by_recency();
         assert!(
             listed.iter().any(|name| name == published),

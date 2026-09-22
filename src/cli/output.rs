@@ -64,30 +64,38 @@ impl OutputStyles {
         }
     }
 
-    /// The rozi palette colour for a tone, so `--help`, `update`, and the install scripts all
-    /// describe rozi with the colours the app and the logo use.
-    fn color_for(tone: OutputTone) -> Option<crate::platform::ansi::Rgb> {
+    /// The rozi palette colour for a tone, and whether it is bold, so `--help`, `update`, and the
+    /// install scripts all describe rozi with the colours the app and the logo use.
+    fn style_for(tone: OutputTone) -> (bool, Option<crate::platform::ansi::Rgb>) {
         use crate::platform::ansi::palette;
         match tone {
-            OutputTone::Plain => None,
-            OutputTone::Accent => Some(palette::ROSE),
-            OutputTone::Heading => Some(palette::VIOLET),
-            OutputTone::Success => Some(palette::SUCCESS),
-            OutputTone::Warning => Some(palette::WARNING),
-            OutputTone::Error => Some(palette::ERROR),
-            OutputTone::Muted => Some(palette::LAVENDER),
+            OutputTone::Plain => (false, None),
+            OutputTone::Accent => (false, Some(palette::ROSE)),
+            OutputTone::Heading => (true, Some(palette::ROSE)),
+            OutputTone::Label => (true, None),
+            OutputTone::Success => (false, Some(palette::SUCCESS)),
+            OutputTone::Warning => (false, Some(palette::WARNING)),
+            OutputTone::Error => (false, Some(palette::ERROR)),
+            OutputTone::Muted => (false, Some(palette::LAVENDER)),
         }
     }
 
     pub(super) fn paint(self, text: &str, tone: OutputTone) -> String {
-        match Self::color_for(tone).filter(|_| self.color) {
-            Some(color) => format!(
-                "{}{text}{}",
-                crate::platform::ansi::fg(color, self.truecolor),
-                crate::platform::ansi::RESET
-            ),
-            None => text.to_string(),
+        use crate::platform::ansi;
+        let (bold, color) = Self::style_for(tone);
+        if !self.color || (!bold && color.is_none()) {
+            return text.to_string();
         }
+        let mut out = String::new();
+        if bold {
+            out.push_str(ansi::BOLD);
+        }
+        if let Some(color) = color {
+            out.push_str(&ansi::fg(color, self.truecolor));
+        }
+        out.push_str(text);
+        out.push_str(ansi::RESET);
+        out
     }
 }
 
@@ -95,7 +103,10 @@ impl OutputStyles {
 pub(super) enum OutputTone {
     Plain,
     Accent,
+    /// A section title, styled like the headings in `--help`.
     Heading,
+    /// A table column header, styled like the command names in `--help`.
+    Label,
     Success,
     Warning,
     Error,
@@ -154,7 +165,7 @@ pub(super) fn format_table(
         &mut out,
         headers
             .iter()
-            .map(|header| TableCell::new(*header, OutputTone::Heading))
+            .map(|header| TableCell::new(*header, OutputTone::Label))
             .collect(),
     );
     for row in rows {

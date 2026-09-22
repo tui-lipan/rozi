@@ -212,7 +212,11 @@ mod tests {
         assert!(plain.lines().all(|line| !line.ends_with(' ')));
 
         let colored = format_sessions_text(&rows, OutputStyles::colored());
-        assert!(colored.contains("\x1b["));
+        // Column headers read like the command names in `--help`: bold, in the terminal's own
+        // foreground, so the rose accent stays on the values.
+        let bold = crate::platform::ansi::BOLD;
+        let reset = crate::platform::ansi::RESET;
+        assert!(colored.starts_with(&format!("{bold}NAME{reset}")));
         let mut stripped = String::with_capacity(colored.len());
         let mut rest = colored.as_str();
         while let Some(start) = rest.find('\x1b') {

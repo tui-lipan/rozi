@@ -28,6 +28,7 @@ while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 shift
 shift
 unset ROZI_ASKPASS_ENDPOINT ROZI_ASKPASS_TOKEN ROZI_ASKPASS_SESSION SSH_ASKPASS SSH_ASKPASS_REQUIRE
+cd "$HOME"
 exec /bin/sh -c "$*"
 "##,
     );
@@ -36,9 +37,24 @@ exec /bin/sh -c "$*"
         std::fs::create_dir_all(&cargo).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_rozi"), cargo.join("rozi")).unwrap();
     }
+    let managed = home
+        .join(".local/share/rozi/remote")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("rozi");
+    if matches!(case, "symlink" | "staged_failure") {
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+    }
     if case == "symlink" {
-        std::fs::create_dir_all(home.join(".local/bin")).unwrap();
-        std::os::unix::fs::symlink(home.join("untouched"), home.join(".local/bin/rozi")).unwrap();
+        std::os::unix::fs::symlink(home.join("untouched"), &managed).unwrap();
+    }
+    if case == "staged_failure" {
+        std::fs::write(&managed, b"previous managed runtime").unwrap();
+        executable(&root.path().join("invalid-rozi"), b"#!/bin/sh\nexit 1\n");
+    }
+    if case == "tui_always" {
+        let global = home.join(".local/bin/rozi");
+        std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+        executable(&global, b"#!/bin/sh\necho incompatible\n");
     }
     let tui = case.starts_with("tui_");
     let mut child = if tui {
@@ -63,6 +79,8 @@ exec /bin/sh -c "$*"
         .env_remove("ROZI_REMOTE_BINARY");
     if matches!(case, "upload" | "symlink") {
         child.env("ROZI_REMOTE_BINARY", env!("CARGO_BIN_EXE_rozi"));
+    } else if case == "staged_failure" {
+        child.env("ROZI_REMOTE_BINARY", root.path().join("invalid-rozi"));
     }
     let output = child.output().unwrap();
     assert!(
@@ -73,13 +91,23 @@ exec /bin/sh -c "$*"
     );
     if tui {
         let frame = std::fs::read_to_string(root.path().join("frame.md")).unwrap();
-        let installed = home.join(".local/bin/rozi").is_file();
-        assert_eq!(installed, case == "tui_accept", "{frame}");
+        let installed = managed.is_file();
+        assert_eq!(
+            installed,
+            matches!(case, "tui_accept" | "tui_always"),
+            "{frame}"
+        );
         assert!(!frame.contains("Install Rozi on remote"), "{frame}");
         if installed {
             assert!(
                 frame.contains("label: `open`"),
                 "host discovery finished: {frame}"
+            );
+        }
+        if case == "tui_always" {
+            assert_eq!(
+                std::fs::read(home.join(".local/bin/rozi")).unwrap(),
+                b"#!/bin/sh\necho incompatible\n"
             );
         }
     }
@@ -89,11 +117,16 @@ fn tui_command(root: &Path, case: &str) -> Command {
     let config = root.join("rozi.toml");
     std::fs::write(
         &config,
-        "[session]\nstartup = \"picker\"\n[remote.hosts.fixture]\nhost = \"fixture\"\n",
+        format!(
+            "[session]\nstartup = \"picker\"\n[remote]\ninstall = \"{}\"\n[remote.hosts.fixture]\nhost = \"fixture\"\n",
+            if case == "tui_always" { "always" } else { "prompt" }
+        ),
     )
     .unwrap();
     let answer = if case == "tui_accept" {
         "type:yes; key:enter"
+    } else if case == "tui_always" {
+        "sleep:100"
     } else {
         "key:esc"
     };
@@ -122,6 +155,11 @@ fn tui_cancellation_leaves_the_host_untouched() {
 }
 
 #[test]
+fn tui_always_policy_installs_without_opening_confirmation() {
+    run_case("tui_always");
+}
+
+#[test]
 fn discovery_finds_a_cargo_install_without_path_configuration() {
     run_case("discovery");
 }
@@ -142,6 +180,11 @@ fn upload_refuses_a_dangling_destination_symlink() {
 }
 
 #[test]
+fn failed_staged_verification_preserves_the_previous_runtime() {
+    run_case("staged_failure");
+}
+
+#[test]
 fn bootstrap_child() {
     let Ok(case) = std::env::var("ROZI_BOOTSTRAP_CASE") else {
         return;
@@ -155,9 +198,14 @@ fn bootstrap_child() {
     match case.as_str() {
         "upload" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
-            assert_eq!(Path::new(&path), home.join(".local/bin/rozi"));
             assert_eq!(
-                std::fs::read(path).unwrap(),
+                Path::new(&path),
+                Path::new(".local/share/rozi/remote")
+                    .join(env!("CARGO_PKG_VERSION"))
+                    .join("rozi")
+            );
+            assert_eq!(
+                std::fs::read(home.join(path)).unwrap(),
                 std::fs::read(env!("CARGO_BIN_EXE_rozi")).unwrap()
             );
             assert!(
@@ -193,11 +241,25 @@ fn bootstrap_child() {
             );
             assert!(!home.join("untouched").exists());
             assert!(
-                home.join(".local/bin/rozi")
+                home.join(".local/share/rozi/remote")
+                    .join(env!("CARGO_PKG_VERSION"))
+                    .join("rozi")
                     .symlink_metadata()
                     .unwrap()
                     .file_type()
                     .is_symlink()
+            );
+        }
+        "staged_failure" => {
+            assert!(ensure_remote_binary(&target, &config, true).is_err());
+            assert_eq!(
+                std::fs::read(
+                    home.join(".local/share/rozi/remote")
+                        .join(env!("CARGO_PKG_VERSION"))
+                        .join("rozi")
+                )
+                .unwrap(),
+                b"previous managed runtime"
             );
         }
         _ => panic!("unknown fixture"),

@@ -3,16 +3,20 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 
 use crate::config::{RemoteConfig, RemoteInstallPolicy};
 use crate::platform::command::program_exists;
+use crate::release_app::ROZI;
 use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
+use relswap::Downloader;
+use url::Url;
 
 use super::{
     RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
 };
 
-const INSTALL_DIR: &str = ".local/bin";
+const INSTALL_DIR: &str = ".local/share/rozi/remote";
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
@@ -53,11 +57,12 @@ printf 'platform=%s\n' "$(uname -s 2>/dev/null || echo unknown)"
 printf 'machine=%s\n' "$(uname -m 2>/dev/null || echo unknown)"
 try_bin() {
   bin="$1"
+  reported="${2:-}"
   if [ -x "$bin" ] || command -v "$bin" >/dev/null 2>&1; then
     resolved=$(command -v "$bin" 2>/dev/null || echo "$bin")
     if [ -x "$resolved" ]; then
       out=$("$resolved" --version 2>/dev/null || true)
-      printf 'candidate=%s\n' "$resolved"
+      printf 'candidate=%s\n' "${reported:-$resolved}"
       # Flatten version output to a single line for the report, keep protocol_* keys separate.
       printf 'version_line=%s\n' "$(printf '%s' "$out" | tr '\n' ' ')"
       printf '%s\n' "$out" | while IFS= read -r line; do
@@ -85,19 +90,22 @@ try_bin /usr/local/bin/rozi
 try_bin /usr/bin/rozi
 try_bin "$HOME/bin/rozi"
 try_bin "$HOME/.nix-profile/bin/rozi"
+for managed in "$HOME/.local/share/rozi/remote/"*/rozi; do
+  [ -e "$managed" ] || continue
+  try_bin "$managed" "${managed#"$HOME/"}"
+done
 printf 'probe_done=1\n'
 "#;
 
-/// PowerShell counterpart of [`PROBE_SCRIPT`] for a Windows remote host (default sshd shell is
-/// `cmd.exe`, so this is fed to `powershell -Command -`). Emits the same fixed keys the POSIX probe
-/// does; [`parse_probe_output`] handles both. Never treats binary output as code.
+/// PowerShell counterpart of [`PROBE_SCRIPT`] for a Windows remote host. Emits the same fixed keys
+/// the POSIX probe does; [`parse_probe_output`] handles both. Never treats binary output as code.
 const WINDOWS_PROBE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'SilentlyContinue'
 Write-Output "platform=windows"
 $arch = $env:PROCESSOR_ARCHITECTURE
 if (-not $arch) { $arch = 'unknown' }
 Write-Output "machine=$arch"
-function Try-Bin($bin) {
+function Try-Bin($bin, $reported = $null) {
   $resolved = $null
   if (Test-Path -LiteralPath $bin -PathType Leaf) {
     $resolved = (Resolve-Path -LiteralPath $bin).Path
@@ -107,7 +115,8 @@ function Try-Bin($bin) {
   }
   if (-not $resolved) { return }
   $out = & $resolved --version 2>$null
-  Write-Output "candidate=$resolved"
+  if (-not $reported) { $reported = $resolved }
+  Write-Output "candidate=$reported"
   $flat = ($out -join ' ')
   Write-Output "version_line=$flat"
   foreach ($line in $out) {
@@ -121,6 +130,11 @@ if ($env:ROZI_PROBE_BIN) { Try-Bin $env:ROZI_PROBE_BIN }
 Try-Bin 'rozi.exe'
 Try-Bin (Join-Path $env:USERPROFILE '.local\bin\rozi.exe')
 Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
+$managedRoot = Join-Path $env:USERPROFILE '.local\share\rozi\remote'
+Get-ChildItem -LiteralPath $managedRoot -Directory | ForEach-Object {
+  $relative = ".local\share\rozi\remote\$($_.Name)\rozi.exe"
+  Try-Bin (Join-Path $_.FullName 'rozi.exe') $relative
+}
 Write-Output "probe_done=1"
 "#;
 
@@ -344,17 +358,61 @@ enum RemoteFamily {
     Windows,
 }
 
-/// Detect the remote shell family with a single fixed command. `cmd.exe` expands `%OS%` to
-/// `Windows_NT`; a POSIX shell echoes the literal `%OS%`. Neither treats the marker as code.
+/// Detect the remote shell family by explicitly invoking each platform interpreter. This does not
+/// depend on whether OpenSSH-for-Windows was configured with cmd.exe or PowerShell as its default
+/// shell.
 fn detect_remote_family(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
     connect_timeout_secs: u64,
 ) -> Result<RemoteFamily, String> {
+    let powershell_probe = encode_powershell_command("Write-Output 'rozi_family=windows'");
+    if let Ok(stdout) = run_family_probe(
+        resolved,
+        config,
+        connect_timeout_secs,
+        &[
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &powershell_probe,
+        ],
+    ) && stdout
+        .lines()
+        .any(|line| line.trim() == "rozi_family=windows")
+    {
+        return Ok(RemoteFamily::Windows);
+    }
+
+    let stdout = run_family_probe(
+        resolved,
+        config,
+        connect_timeout_secs,
+        &["sh", "-c", "'echo rozi_family=posix'"],
+    )?;
+    if stdout
+        .lines()
+        .any(|line| line.trim() == "rozi_family=posix")
+    {
+        return Ok(RemoteFamily::Posix);
+    }
+    Err(format!(
+        "remote shell probe of {} found neither PowerShell nor a POSIX shell",
+        resolved.host
+    ))
+}
+
+fn run_family_probe(
+    resolved: &ResolvedRemote,
+    config: &RemoteConfig,
+    connect_timeout_secs: u64,
+    argv: &[&str],
+) -> Result<String, String> {
     let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
-    command.arg("echo").arg("rozi_family=%OS%");
     command
+        .args(argv)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -364,8 +422,6 @@ fn detect_remote_family(
             resolved.host
         )
     })?;
-    // A cmd.exe host still exits 0 here; a POSIX host does too. A hard ssh/auth failure is caught by
-    // a non-zero status, which we surface rather than silently defaulting to POSIX.
     if !output.status.success() {
         return Err(format!(
             "remote shell probe of {} failed: {}",
@@ -373,12 +429,7 @@ fn detect_remote_family(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.contains("rozi_family=Windows_NT") {
-        Ok(RemoteFamily::Windows)
-    } else {
-        Ok(RemoteFamily::Posix)
-    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Pipe `script` to a remote `interpreter` over ssh stdin and return its stdout (POSIX probe).
@@ -490,7 +541,10 @@ pub(crate) fn ensure_remote_binary_in_ui(
     config: &RemoteConfig,
     probe_epoch: Option<u64>,
 ) -> Result<String, String> {
-    ensure_with_confirmation(target, config, true, |report, _ask| {
+    ensure_with_confirmation(target, config, true, |report, ask| {
+        if !ask {
+            return Ok(true);
+        }
         let host = ResolvedRemote::resolve(target, config).ssh_destination();
         super::askpass::confirm_install(
             format!(
@@ -503,11 +557,17 @@ pub(crate) fn ensure_remote_binary_in_ui(
     })
 }
 
-fn install_destination(report: &ProbeReport) -> &'static str {
+fn install_destination(report: &ProbeReport) -> String {
     if normalize_os(&report.platform) == "windows" {
-        r"%USERPROFILE%\.local\bin\rozi.exe"
+        format!(
+            r"%USERPROFILE%\.local\share\rozi\remote\{}\rozi.exe",
+            env!("CARGO_PKG_VERSION")
+        )
     } else {
-        "$HOME/.local/bin/rozi"
+        format!(
+            "$HOME/{INSTALL_DIR}/{}/{INSTALL_NAME}",
+            env!("CARGO_PKG_VERSION")
+        )
     }
 }
 
@@ -622,11 +682,9 @@ fn family_from_os(os: &str) -> RemoteFamily {
 
 /// Stream `local` onto the remote and return the installed path.
 ///
-/// The POSIX path installs `$HOME/.local/bin/rozi` (`chmod 755`, atomic `mv`) by streaming the
-/// binary over ssh stdin. The Windows path installs `%USERPROFILE%\.local\bin\rozi.exe` via `scp`
-/// then a finalize step, because OpenSSH-on-Windows deadlocks a large command stdin. Either way the
-/// installed path is echoed back — `connect.rs` invokes `--remote-serve` with it verbatim, so the
-/// `.exe` suffix propagates.
+/// The payload is staged and executed before it is moved into Rozi's private, versioned runtime
+/// directory. The returned path is home-relative so it remains one shell-safe token even when the
+/// remote user's home directory contains spaces.
 fn install_bytes(
     target: &RemoteTarget,
     config: &RemoteConfig,
@@ -650,17 +708,16 @@ fn install_bytes(
     }
 }
 
-/// Stream the binary onto a POSIX remote over ssh stdin (`cat > tmp`, `chmod 755`, atomic `mv`).
+/// Stream the binary onto a POSIX remote, validate it in place, then atomically activate it.
 fn install_bytes_posix(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
     local: &Path,
 ) -> Result<String, String> {
-    // Atomic install with quoted paths; refuse to overwrite a non-regular destination. The binary
-    // arrives on stdin (`cat > tmp`), the script as an argument.
+    let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"set -e
-dir="$HOME/{INSTALL_DIR}"
+dir="$HOME/{INSTALL_DIR}/{version}"
 final="$dir/{INSTALL_NAME}"
 mkdir -p "$dir"
 if [ -L "$final" ] || {{ [ -e "$final" ] && [ ! -f "$final" ]; }}; then
@@ -671,8 +728,23 @@ tmp=$(mktemp "$dir/.rozi.install.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 cat > "$tmp"
 chmod 755 "$tmp"
+out=$("$tmp" --version 2>/dev/null) || {{ printf 'staged_binary_failed=%s\n' "$tmp" >&2; exit 1; }}
+protocol_min=$(printf '%s\n' "$out" | sed -n 's/^protocol_min=//p' | sed -n '1p')
+protocol_max=$(printf '%s\n' "$out" | sed -n 's/^protocol_max=//p' | sed -n '1p')
+case "$protocol_min:$protocol_max" in *[!0-9:]*|:|*:|:*)
+  printf 'staged_binary_has_no_protocol_range=%s\n' "$tmp" >&2
+  exit 1
+esac
+if [ "$protocol_max" -lt {MIN_SUPPORTED_PROTOCOL} ] || [ "$protocol_min" -gt {PROTOCOL_VERSION} ]; then
+  printf 'staged_binary_protocol_mismatch=%s:%s\n' "$protocol_min" "$protocol_max" >&2
+  exit 1
+fi
+if ! "$tmp" --help 2>/dev/null | grep -q -- '--remote'; then
+  printf 'staged_binary_has_no_remote_support=%s\n' "$tmp" >&2
+  exit 1
+fi
 mv -f "$tmp" "$final"
-printf 'installed=%s\n' "$final"
+printf 'installed={INSTALL_DIR}/{version}/{INSTALL_NAME}\n'
 "#
     );
     let mut command = ssh_base_command(resolved, config);
@@ -711,7 +783,7 @@ printf 'installed=%s\n' "$final"
 
 /// Install onto a Windows remote in two steps: `scp` the binary to a temp file (the sftp subsystem
 /// has real flow control), then a small no-stdin `powershell -EncodedCommand` that moves it into
-/// `%USERPROFILE%\.local\bin\rozi.exe`.
+/// Rozi's private managed-runtime directory.
 ///
 /// Streaming the binary through a command's stdin — as the POSIX path does — deadlocks on
 /// OpenSSH-for-Windows once the data exceeds the channel's stdin buffer (a real ~11 MB binary hangs
@@ -724,9 +796,7 @@ fn install_bytes_windows(
     if !program_exists("scp") {
         return Err("scp was not found on PATH (required to install onto a Windows remote)".into());
     }
-    // A relative scp destination lands in the remote user's home (%USERPROFILE%). Keep it unique per
-    // local process so concurrent installs to one host cannot clobber each other mid-upload.
-    let temp_name = format!("rozi.install.{}.tmp", std::process::id());
+    let temp_name = format!("rozi.install.{}.tmp", random_hex_token());
 
     let mut scp = scp_base_command(resolved, config);
     scp.arg(local);
@@ -745,20 +815,39 @@ fn install_bytes_windows(
         ));
     }
 
-    // Finalize with a no-stdin PowerShell step: move the uploaded temp file into place under a
-    // `.exe` name. `-EncodedCommand` is quoting-proof through cmd.exe.
+    let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
-$dir = Join-Path $env:USERPROFILE '.local\bin'
+$dir = Join-Path $env:USERPROFILE '.local\share\rozi\remote\{version}'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $final = Join-Path $dir 'rozi.exe'
-if (Test-Path -LiteralPath $final -PathType Container) {{
-  [Console]::Error.WriteLine("refuse_non_regular=$final")
-  exit 1
-}}
 $src = Join-Path $env:USERPROFILE '{temp_name}'
-Move-Item -Force -LiteralPath $src -Destination $final
-Write-Output "installed=$final""#
+try {{
+  if (Test-Path -LiteralPath $final) {{
+    $item = Get-Item -Force -LiteralPath $final
+    if (-not ($item -is [System.IO.FileInfo]) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {{
+      throw "refuse_non_regular=$final"
+    }}
+  }}
+  $out = & $src --version 2>$null
+  if ($LASTEXITCODE -ne 0) {{ throw "staged binary failed: $src" }}
+  $protocolMin = $null
+  $protocolMax = $null
+  foreach ($line in $out) {{
+    if ($line -match '^protocol_min=([0-9]+)$') {{ $protocolMin = [uint32]$Matches[1] }}
+    if ($line -match '^protocol_max=([0-9]+)$') {{ $protocolMax = [uint32]$Matches[1] }}
+  }}
+  if ($null -eq $protocolMin -or $null -eq $protocolMax) {{ throw "staged binary has no protocol range: $src" }}
+  if ($protocolMax -lt {MIN_SUPPORTED_PROTOCOL} -or $protocolMin -gt {PROTOCOL_VERSION}) {{
+    throw "staged binary protocol mismatch: $protocolMin..$protocolMax"
+  }}
+  $help = & $src --help 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
+  Move-Item -Force -LiteralPath $src -Destination $final
+  Write-Output 'installed=.local\share\rozi\remote\{version}\rozi.exe'
+}} finally {{
+  if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}
+}}"#
     );
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
@@ -791,6 +880,17 @@ fn parse_installed_path(stdout: &str) -> Result<String, String> {
         }
     }
     Err("remote install succeeded but did not report installed= path".to_string())
+}
+
+fn random_hex_token() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("operating-system randomness unavailable");
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(token, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    token
 }
 
 /// `scp` argv mirroring [`ssh_base_command`]'s connection options (scp uses `-P` for the port, not
@@ -830,8 +930,8 @@ fn encode_powershell_command(script: &str) -> String {
     base64_standard(&utf16)
 }
 
-/// Minimal standard-alphabet base64 (with `=` padding). Kept in-crate rather than pulling a direct
-/// dependency, mirroring the hand-rolled `sha256` module used for the same install path.
+/// Minimal standard-alphabet base64 (with `=` padding). Kept in-crate rather than adding a direct
+/// dependency for one fixed PowerShell command.
 fn base64_standard(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -860,143 +960,95 @@ fn download_release_binary(
     triple: &str,
     version: &str,
 ) -> Result<(tempfile::TempDir, PathBuf), String> {
+    download_release_binary_with(&relswap::UreqDownloader::new(), triple, version)
+}
+
+fn download_release_binary_with(
+    downloader: &impl Downloader,
+    triple: &str,
+    version: &str,
+) -> Result<(tempfile::TempDir, PathBuf), String> {
     let base = std::env::var("ROZI_RELEASE_BASE_URL").unwrap_or_else(|_| {
         format!("https://github.com/{RELEASE_REPO}/releases/download/v{version}")
     });
-    let archive_name = if triple.contains("windows") {
-        format!("rozi-{version}-{triple}.zip")
-    } else {
-        format!("rozi-{version}-{triple}.tar.gz")
-    };
-    let archive_url = format!("{base}/{archive_name}");
-    let sha_url = format!("{archive_url}.sha256");
+    download_release_binary_from_base_with(downloader, triple, version, &base)
+}
+
+fn download_release_binary_from_base_with(
+    downloader: &impl Downloader,
+    triple: &str,
+    version: &str,
+    base: &str,
+) -> Result<(tempfile::TempDir, PathBuf), String> {
+    let mut release_base =
+        Url::parse(base).map_err(|error| format!("invalid ROZI_RELEASE_BASE_URL: {error}"))?;
+    if release_base.scheme() != "https" {
+        return Err(format!(
+            "release downloads require HTTPS, got {}",
+            release_base.scheme()
+        ));
+    }
+    if release_base.query().is_some() || release_base.fragment().is_some() {
+        return Err("release base URL must not contain a query or fragment".to_string());
+    }
+    if !release_base.path().ends_with('/') {
+        release_base.set_path(&format!("{}/", release_base.path()));
+    }
+    let version = semver::Version::parse(version)
+        .map_err(|error| format!("invalid client release version: {error}"))?;
+    let target = relswap::Target::from_str(triple).map_err(|error| error.to_string())?;
+
+    let manifest_url = release_base
+        .join(&ROZI.metadata_filename())
+        .map_err(|error| format!("invalid release manifest URL: {error}"))?;
+    let signature_url = release_base
+        .join(&ROZI.signature_filename())
+        .map_err(|error| format!("invalid release signature URL: {error}"))?;
+    let manifest = downloader
+        .fetch(&manifest_url, relswap::MAX_METADATA_SIZE)
+        .map_err(|error| format!("download signed release manifest: {error}"))?;
+    let signature = downloader
+        .fetch(&signature_url, relswap::MAX_METADATA_SIZE)
+        .map_err(|error| format!("download release signatures: {error}"))?;
+    relswap::verify_manifest(&ROZI, &manifest.bytes, &signature.bytes)
+        .map_err(|error| format!("authenticate release manifest: {error}"))?;
+    let manifest = relswap::ReleaseManifest::from_bytes(&ROZI, &manifest.bytes)
+        .map_err(|error| format!("read signed release manifest: {error}"))?;
+    manifest
+        .ensure_not_expired(chrono::Utc::now())
+        .map_err(|error| format!("accept signed release manifest: {error}"))?;
+    if manifest.version != version {
+        return Err(format!(
+            "signed release manifest describes {}, expected {version}",
+            manifest.version
+        ));
+    }
+    let asset = manifest
+        .asset_for(&ROZI, target)
+        .map_err(|error| format!("select release target {triple}: {error}"))?;
+    let archive_url = release_base
+        .join(asset.archive())
+        .map_err(|error| format!("invalid release archive URL: {error}"))?;
+    let archive = downloader
+        .fetch(&archive_url, relswap::MAX_ARCHIVE_SIZE as usize)
+        .map_err(|error| format!("download release archive: {error}"))?;
+    let extracted = relswap::inspect_archive(&ROZI, &archive.bytes, asset.asset)
+        .map_err(|error| format!("authenticate release archive: {error}"))?;
 
     let download_dir = tempfile::Builder::new()
         .prefix("rozi-remote-install-")
         .tempdir()
         .map_err(|error| format!("temp dir: {error}"))?;
     let tmp = download_dir.path();
-    let archive_path = tmp.join(&archive_name);
-    let sha_path = tmp.join(format!("{archive_name}.sha256"));
-
-    download_url(&archive_url, &archive_path)?;
-    download_url(&sha_url, &sha_path)?;
-    verify_sha256(&archive_path, &sha_path)?;
-
-    let bin_name = if triple.contains("windows") {
+    let bin_name = if target.is_windows() {
         "rozi.exe"
     } else {
         "rozi"
     };
-    let binary = extract_release_binary(&archive_path, &archive_name, tmp, bin_name)?;
+    let binary = tmp.join(bin_name);
+    std::fs::write(&binary, extracted.payload.data)
+        .map_err(|error| format!("write authenticated release payload: {error}"))?;
     Ok((download_dir, binary))
-}
-
-/// Extract `archive_path` into `tmp` and return the path to the contained binary.
-///
-/// The release archives (see `.github/workflows/release.yml`) wrap the binary in a versioned
-/// directory: `rozi-<version>-<triple>/rozi`. Extract everything, then locate the binary by
-/// name — extracting a bare top-level member would always miss it.
-fn extract_release_binary(
-    archive_path: &Path,
-    archive_name: &str,
-    tmp: &Path,
-    bin_name: &str,
-) -> Result<PathBuf, String> {
-    if archive_name.ends_with(".zip") {
-        let status = Command::new("unzip")
-            .args(["-o"])
-            .arg(archive_path)
-            .arg("-d")
-            .arg(tmp)
-            .status()
-            .map_err(|err| format!("unzip not available: {err}"))?;
-        if !status.success() {
-            return Err(format!("failed to unzip {archive_name}"));
-        }
-    } else {
-        let status = Command::new("tar")
-            .args(["-xzf"])
-            .arg(archive_path)
-            .arg("-C")
-            .arg(tmp)
-            .status()
-            .map_err(|err| format!("tar not available: {err}"))?;
-        if !status.success() {
-            return Err(format!("failed to extract {archive_name}"));
-        }
-    }
-    find_file_named(tmp, bin_name, 4)
-        .ok_or_else(|| format!("release archive {archive_name} did not contain {bin_name}"))
-}
-
-/// Recursively search `dir` (bounded to `max_depth` levels) for a regular file named `name`.
-fn find_file_named(dir: &Path, name: &str, max_depth: usize) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    let mut subdirs = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let file_type = entry.file_type().ok()?;
-        if file_type.is_file() && entry.file_name() == *name {
-            return Some(path);
-        }
-        if file_type.is_dir() {
-            subdirs.push(path);
-        }
-    }
-    if max_depth == 0 {
-        return None;
-    }
-    for subdir in subdirs {
-        if let Some(found) = find_file_named(&subdir, name, max_depth - 1) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn download_url(url: &str, dest: &Path) -> Result<(), String> {
-    if !program_exists("curl") {
-        return Err(
-            "curl was not found on PATH (required to download a cross-platform remote binary)"
-                .to_string(),
-        );
-    }
-    let status = Command::new("curl")
-        .args(["-fsSL", "--proto", "=https", "--tlsv1.2", "-o"])
-        .arg(dest)
-        .arg(url)
-        .status()
-        .map_err(|err| format!("curl failed: {err}"))?;
-    if !status.success() {
-        return Err(format!("failed to download {url}"));
-    }
-    Ok(())
-}
-
-fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
-    let expected = std::fs::read_to_string(sha_file)
-        .map_err(|err| format!("read checksum: {err}"))?
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(format!("invalid sha256 file {}", sha_file.display()));
-    }
-    // Hashed in-process rather than through `sha256sum`/`shasum`: neither exists on Windows, and
-    // verification is the security-relevant step of a cross-platform install — it must never be
-    // skipped, or silently degraded, for want of a tool on the client.
-    let actual = relswap::sha256_file(archive)
-        .map_err(|err| format!("hash {}: {err}", archive.display()))?;
-    if actual != expected {
-        return Err(format!(
-            "checksum mismatch for {}: expected {expected}, got {actual}",
-            archive.display()
-        ));
-    }
-    Ok(())
 }
 
 /// Common ssh argv for every remote invocation: no tty, timeouts, and the per-host options.
@@ -1799,50 +1851,42 @@ protocol_max={beyond}
         assert!(rustc_target("plan9", "x86_64").is_none());
     }
 
-    /// The release archives nest the binary in a versioned directory
-    /// (`rozi-<version>-<triple>/rozi`, per `.github/workflows/release.yml`). Build a fixture
-    /// with exactly that layout and prove the extract-then-locate path finds it — the earlier
-    /// single-member extraction could never reach into the directory, so `--remote` install always
-    /// failed with "release archive did not contain rozi".
     #[test]
-    fn extract_locates_binary_nested_in_versioned_directory() {
-        let root = std::env::temp_dir().join(format!(
-            "rozi-extract-fixture-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        // Mirror release.yml: dist/<name>/{rozi,README…} tarred as `<name>`.
-        let name = "rozi-9.9.9-x86_64-unknown-linux-gnu";
-        let staging = root.join("dist");
-        let pkg = staging.join(name);
-        std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(pkg.join("rozi"), b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::write(pkg.join("README.md"), b"readme").unwrap();
+    fn cross_platform_download_rejects_an_unsigned_manifest() {
+        struct UnsignedDownloader;
 
-        let archive_name = format!("{name}.tar.gz");
-        let archive_path = staging.join(&archive_name);
-        let status = Command::new("tar")
-            .arg("-czf")
-            .arg(&archive_path)
-            .arg("-C")
-            .arg(&staging)
-            .arg(name)
-            .status()
-            .expect("tar available");
-        assert!(status.success(), "fixture tar failed");
+        impl Downloader for UnsignedDownloader {
+            fn fetch(
+                &self,
+                url: &Url,
+                _max_bytes: usize,
+            ) -> relswap::ReleaseResult<relswap::DownloadResponse> {
+                Ok(relswap::DownloadResponse::new(
+                    url.clone(),
+                    url.clone(),
+                    Vec::new(),
+                    b"{}".to_vec(),
+                ))
+            }
+        }
 
-        let out = root.join("extract");
-        std::fs::create_dir_all(&out).unwrap();
-        let located = extract_release_binary(&archive_path, &archive_name, &out, "rozi")
-            .expect("binary located in nested archive");
-        assert!(located.is_file());
-        assert_eq!(located.file_name().unwrap(), "rozi");
+        let error = download_release_binary_from_base_with(
+            &UnsignedDownloader,
+            "x86_64-unknown-linux-gnu",
+            env!("CARGO_PKG_VERSION"),
+            "https://mirror.example/releases/v0/",
+        )
+        .unwrap_err();
+        assert!(error.contains("authenticate release manifest"), "{error}");
+    }
 
-        let _ = std::fs::remove_dir_all(&root);
+    #[test]
+    fn windows_upload_names_are_random_and_shell_safe() {
+        let first = random_hex_token();
+        let second = random_hex_token();
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
     }
 
     /// Opening a host is four ssh invocations — two probes, a re-probe, the attach — and without a

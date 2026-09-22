@@ -112,7 +112,8 @@ fn keyboard_navigation_suppresses_a_stale_hovered_close_affordance() {
 }
 
 /// The ✕ is a nested MouseRegion so it can own clicks and its red foreground hover. Moving onto it
-/// must not drop the parent row's background lift: both effects compose while the pointer is there.
+/// must not drop the parent row's background lift, and moving back to the row must not clear the
+/// row hover or hide the ✕: the parent remains hovered across both transitions.
 ///
 /// Every cell of the ✕ is the same target — the glyph and the padding cell beside it that holds it
 /// off the panel edge — so the row must read identically on both. The pointer drives the whole
@@ -178,6 +179,36 @@ fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
                     "the ✕ adds its own foreground hover, reaching the configured error color (x={probe})"
                 );
             }
+
+            move_to(&mut backend, 4, y);
+            let frame = backend.capture_frame();
+            let lines = frame.to_fixed_grid_lines();
+            assert_eq!(
+                backend.state().sidebar.panels[0].hovered_row,
+                Some(PANE_ROW),
+                "leaving the nested region does not clear its still-hovered parent row"
+            );
+            assert!(
+                lines[y as usize].contains('✕'),
+                "the ✕ remains visible after moving back onto the row"
+            );
+            assert_eq!(
+                frame.cell(4, y).bg,
+                row_hover_bg,
+                "the row keeps its background hover after leaving the nested region"
+            );
+            assert_ne!(
+                frame.cell(x, y).fg,
+                error,
+                "the ✕ loses only its own red hover when the pointer returns to the row"
+            );
+
+            move_to(&mut backend, x, y);
+            assert_eq!(
+                backend.capture_frame().cell(x, y).fg,
+                error,
+                "the still-visible ✕ can be hovered red again"
+            );
         })
         .expect("spawn nested hover smoke thread")
         .join()

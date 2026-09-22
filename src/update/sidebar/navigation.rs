@@ -286,10 +286,8 @@ pub(crate) fn pointer_moved(ctx: &mut Context<AppRoot>, panel: usize) -> Update 
 
 /// The pointer entered or left a row, which is what reveals that row's ✕.
 ///
-/// A leave only clears when it is still this row's: moving from a row onto the ✕ nested inside it
-/// fires leave for the row and then enter for the ✕, both naming the same index, and the queue is
-/// drained before the next paint — so ordering them this way keeps the glyph steady under the
-/// pointer instead of flickering out from under it.
+/// A leave only clears when it is still this row's, so a stale leave queued while the pointer moves
+/// directly between rows cannot clear the newer row's hover.
 pub(crate) fn row_hover(
     ctx: &mut Context<AppRoot>,
     panel: usize,

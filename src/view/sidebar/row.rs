@@ -329,9 +329,8 @@ fn detail_item(detail: Vec<(String, Style)>) -> Option<ListItem> {
 ///
 /// Its own `MouseRegion` nested inside the row's is what separates "close this" from the row's
 /// ordinary click (focus the pane, attach the session): the nearest enclosing region wins a click,
-/// so the row's `on_click` never fires for it. That nesting is also why it reports hover itself —
-/// hover resolves to a single innermost node, so without this the pointer reaching the ✕ would read
-/// as leaving the row and take the ✕ away with it.
+/// so the row's `on_click` never fires for it. The parent region remains hovered while the pointer
+/// is over this child; only this region's visual effect turns the glyph red.
 fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
     let panel = close.panel;
     let index = close.index;
@@ -345,11 +344,6 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
             ctx.link()
                 .callback(move |_| Msg::SidebarPointerMoved(panel)),
         )
-        .on_hover_change(ctx.link().callback(move |hovered| Msg::SidebarRowHover {
-            panel,
-            index,
-            hovered,
-        }))
         .hover_effect(VisualEffect::transform_fg(ColorTransform::Tint(
             ctx.state.theme.status.error,
             1.0,
@@ -367,8 +361,8 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
     region.key(close_hover_key(panel, index))
 }
 
-/// Stable identity for the nested close region, allowing the parent row to compose its own hover
-/// effect while this child is the framework's single hover owner.
+/// Stable identity for the nested close region, allowing its foreground hover effect to reconcile
+/// independently of the parent row.
 pub(super) fn close_hover_key(panel: usize, index: usize) -> String {
     format!("sidebar-{panel}-row-close-{index}")
 }

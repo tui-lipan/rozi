@@ -173,9 +173,8 @@ pub enum Msg {
         panel: usize,
         index: usize,
     },
-    /// The pointer entered or left a sidebar row (or its ✕), which is what reveals the ✕. Both the
-    /// row and the ✕ nested inside it report, because hover resolves to one innermost node: without
-    /// the inner report, moving onto the ✕ would read as leaving the row and hide it.
+    /// The pointer entered or left a sidebar row, which is what reveals the ✕. Nested regions keep
+    /// their parent hovered, so the row is the sole owner of this state.
     SidebarRowHover {
         panel: usize,
         index: usize,

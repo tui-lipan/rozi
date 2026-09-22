@@ -1152,11 +1152,9 @@ fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
     });
 }
 
-/// Hover drives the ✕, and the row plus the ✕ nested inside it both report against the same
-/// index. Moving between them fires leave-then-enter for that one index, which has to settle on
-/// "hovered" rather than cancelling itself out.
+/// A stale leave from the previous row must not clear the row the pointer entered afterward.
 #[test]
-fn hover_survives_the_pointer_crossing_into_the_close_affordance() {
+fn row_hover_ignores_a_stale_leave_from_the_previous_row() {
     on_test_thread(|| {
         let mut backend = settled_backend();
         backend
@@ -1168,41 +1166,33 @@ fn hover_survives_the_pointer_crossing_into_the_close_affordance() {
             .expect("enter the row");
         assert_eq!(backend.state().sidebar.panels[0].hovered_row, Some(1));
 
-        // Crossing onto the ✕: the row leaves, then the ✕ enters, both naming row 1.
         backend
             .dispatch(crate::Msg::SidebarRowHover {
                 panel: 0,
-                index: 1,
-                hovered: false,
-            })
-            .expect("leave the row");
-        backend
-            .dispatch(crate::Msg::SidebarRowHover {
-                panel: 0,
-                index: 1,
+                index: 4,
                 hovered: true,
             })
-            .expect("enter the ✕");
+            .expect("enter the next row");
         assert_eq!(
             backend.state().sidebar.panels[0].hovered_row,
-            Some(1),
-            "the ✕ stays revealed under the pointer"
+            Some(4),
+            "the newly entered row owns hover"
         );
 
         // A leave naming a row that is no longer the hovered one is stale and must not clear it.
         backend
             .dispatch(crate::Msg::SidebarRowHover {
                 panel: 0,
-                index: 4,
+                index: 1,
                 hovered: false,
             })
             .expect("stale leave");
-        assert_eq!(backend.state().sidebar.panels[0].hovered_row, Some(1));
+        assert_eq!(backend.state().sidebar.panels[0].hovered_row, Some(4));
 
         backend
             .dispatch(crate::Msg::SidebarRowHover {
                 panel: 0,
-                index: 1,
+                index: 4,
                 hovered: false,
             })
             .expect("leave the sidebar");

@@ -117,12 +117,15 @@ pub(crate) fn open_named_target(
         SessionSeed::Default => crate::profiles::default_session_seed(&ctx.state.config),
         SessionSeed::FreshWorktree { path, checkouts } => {
             // A broken worktree profile should not keep the checkout from opening at all.
-            let profile = crate::profiles::load_worktree_profile(&ctx.state.config).unwrap_or_else(
-                |message| {
-                    crate::pane::pty_events::notify_error(ctx, "Worktree profile skipped", message);
-                    None
-                },
-            );
+            let profile = crate::profiles::load_worktree_profile(
+                &ctx.state.config,
+                &checkouts,
+                remote.is_some(),
+            )
+            .unwrap_or_else(|message| {
+                crate::pane::pty_events::notify_error(ctx, "Worktree profile skipped", message);
+                None
+            });
             crate::profiles::worktree_session_seed(&ctx.state.config, &path, &checkouts, profile)
         }
     };

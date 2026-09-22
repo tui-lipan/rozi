@@ -405,17 +405,15 @@ fn resolve_startup_cwd(
         }
         path.to_string_lossy().into_owned()
     };
-    let worktree = cli
-        .worktree_checkouts
-        .clone()
-        .map(|checkouts| StartupWorktree {
-            checkouts,
-            // A broken worktree profile still opens the checkout, with a plain shell.
-            profile: profiles::load_worktree_profile(config).unwrap_or_else(|message| {
+    let worktree = cli.worktree_checkouts.clone().map(|checkouts| {
+        // A broken or unusable worktree profile still opens the checkout, with a plain shell.
+        let profile =
+            profiles::load_worktree_profile(config, &checkouts, remote).unwrap_or_else(|message| {
                 messages.push(message);
                 None
-            }),
-        });
+            });
+        StartupWorktree { checkouts, profile }
+    });
     Some(StartupCwd { path, worktree })
 }
 

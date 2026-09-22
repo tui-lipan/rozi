@@ -175,8 +175,15 @@ pub(crate) struct LoadedProfile {
 }
 
 /// `[worktrees] profile`, loaded. `Ok(None)` when none is configured.
+///
+/// `remote` says the session lives on another host. A profile is a file on this machine, and a pane
+/// directory it names outside the repository is a directory on this machine too: rebasing cannot
+/// carry it to the host, and spawning there would land in whatever happens to share the path. Such
+/// a profile is refused for a remote worktree, so the session starts as one shell in its checkout.
 pub(crate) fn load_worktree_profile(
     config: &crate::config::Config,
+    checkouts: &[String],
+    remote: bool,
 ) -> Result<Option<LoadedProfile>, String> {
     let Some(name) = config.worktrees.profile.as_deref() else {
         return Ok(None);
@@ -184,11 +191,32 @@ pub(crate) fn load_worktree_profile(
     let path = crate::config::profile_path_for_name(name);
     let profile = load_profile(&path)
         .map_err(|err| format!("Worktree profile `{name}` failed to load: {err}"))?;
+    if remote && let Some(outside) = first_directory_outside(&profile, checkouts) {
+        return Err(format!(
+            "Worktree profile `{name}` skipped: {outside} is outside the repository, and this \
+             session runs on another host"
+        ));
+    }
     Ok(Some(LoadedProfile {
         name: name.to_string(),
         path,
         profile,
     }))
+}
+
+/// The first pane directory in `profile` that no checkout contains, as the pane would get it.
+fn first_directory_outside(profile: &Profile, checkouts: &[String]) -> Option<String> {
+    profile
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.panes)
+        .filter_map(|pane| pane.cwd.as_ref())
+        .map(|cwd| {
+            crate::config::expand_path(cwd)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .find(|cwd| innermost_checkout_rest(cwd, checkouts).is_none())
 }
 
 /// The attachment and intent a new session for the checkout at `path` starts from.
@@ -261,16 +289,41 @@ fn host_path_components(path: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Whether a host path follows Windows rules, where names compare without regard to case: it has
+/// a drive letter or uses backslashes.
+fn windows_style(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.contains('\\') || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+}
+
+/// The components of `cwd` below the innermost checkout containing it, or `None` when no checkout
+/// contains it. Windows-style paths match regardless of case.
+fn innermost_checkout_rest<'a>(cwd: &'a str, checkouts: &[String]) -> Option<Vec<&'a str>> {
+    let cwd_parts = host_path_components(cwd);
+    checkouts
+        .iter()
+        .filter_map(|checkout| {
+            let parts = host_path_components(checkout);
+            let ignore_case = windows_style(cwd) || windows_style(checkout);
+            let contains = !parts.is_empty()
+                && parts.len() <= cwd_parts.len()
+                && parts.iter().zip(&cwd_parts).all(|(a, b)| {
+                    if ignore_case {
+                        a.eq_ignore_ascii_case(b)
+                    } else {
+                        a == b
+                    }
+                });
+            contains.then_some(parts.len())
+        })
+        .max()
+        .map(|depth| cwd_parts[depth..].to_vec())
+}
+
 /// `cwd` moved from the innermost checkout containing it into `target`, or `None` when no checkout
 /// contains it.
 fn rebase_host_path(cwd: &str, checkouts: &[String], target: &str) -> Option<String> {
-    let cwd_parts = host_path_components(cwd);
-    let rest = checkouts
-        .iter()
-        .map(|checkout| host_path_components(checkout))
-        .filter(|parts| !parts.is_empty() && cwd_parts.starts_with(parts))
-        .max_by_key(Vec::len)
-        .map(|parts| &cwd_parts[parts.len()..])?;
+    let rest = innermost_checkout_rest(cwd, checkouts)?;
     let separator = if target.contains('\\') && !target.contains('/') {
         '\\'
     } else {
@@ -1070,6 +1123,80 @@ mod tests {
             .as_deref(),
             Some("C:\\code\\repo-worktrees\\x\\web")
         );
+    }
+
+    #[test]
+    fn windows_style_paths_rebase_regardless_of_case() {
+        let checkouts = ["C:/Code/Repo".to_string()];
+        assert_eq!(
+            rebase_host_path(
+                "c:\\code\\repo\\Web",
+                &checkouts,
+                "C:\\code\\repo-worktrees\\x"
+            )
+            .as_deref(),
+            Some("C:\\code\\repo-worktrees\\x\\Web")
+        );
+        // POSIX names are case-sensitive: this is a different directory.
+        assert_eq!(
+            rebase_host_path("/Src/Rozi/web", &["/src/rozi".to_string()], "/wt/x"),
+            None
+        );
+    }
+
+    /// A profile is a file on this machine. On another host, a pane directory outside the
+    /// repository cannot be rebased and would name an unrelated remote path, so the profile is
+    /// skipped there; one whose directories all rebase still applies.
+    #[test]
+    fn a_remote_worktree_refuses_a_profile_with_directories_outside_the_repository() {
+        let profiles = crate::config::profiles_dir();
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
+        let pane = |id, cwd: Option<&str>| PaneProfile {
+            id,
+            cwd: cwd.map(PathBuf::from),
+            ..PaneProfile::default()
+        };
+        let save = |name: &str, panes: Vec<PaneProfile>| {
+            let profile = Profile {
+                workspaces: vec![WorkspaceProfile {
+                    index: 0,
+                    panes,
+                    ..WorkspaceProfile::default()
+                }],
+                ..Profile::default()
+            };
+            save_profile(&profiles.join(format!("{name}.toml")), &profile).expect("save profile");
+        };
+        save(
+            "wt-outside",
+            vec![
+                pane(0, Some("/src/rozi/frontend")),
+                pane(1, Some("/var/log")),
+            ],
+        );
+        save(
+            "wt-inside",
+            vec![pane(0, Some("/src/rozi/frontend")), pane(1, None)],
+        );
+        let checkouts = ["/src/rozi".to_string(), "/wt/feat".to_string()];
+        let mut config = Config::default();
+
+        config.worktrees.profile = Some("wt-outside".into());
+        assert!(matches!(
+            load_worktree_profile(&config, &checkouts, false),
+            Ok(Some(_))
+        ));
+        let refused = load_worktree_profile(&config, &checkouts, true).expect_err("refused");
+        assert!(refused.contains("/var/log"), "{refused}");
+
+        config.worktrees.profile = Some("wt-inside".into());
+        assert!(matches!(
+            load_worktree_profile(&config, &checkouts, true),
+            Ok(Some(_))
+        ));
+
+        let _ = std::fs::remove_file(profiles.join("wt-outside.toml"));
+        let _ = std::fs::remove_file(profiles.join("wt-inside.toml"));
     }
 
     #[test]

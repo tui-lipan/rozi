@@ -82,7 +82,9 @@ To seed them with a layout, set `[worktrees] profile`. Its pane directories insi
 the repository are rebased onto the new one: a pane saved at `~/src/rozi/frontend` opens at
 `~/src/rozi-worktrees/feat-login/frontend`. Directories outside the repository are kept, and panes
 without a directory start in the checkout. The session records both the profile and the worktree
-as its origin.
+as its origin. A profile is a local file, so for a worktree on a remote host it applies only when
+all of its pane directories are inside the repository; otherwise Rozi says so and starts the
+session as one shell in the checkout.
 
 Removal never deletes a branch. It refuses a primary or locked checkout and any checkout owned
 by a running or restorable Rozi session. `force` only asks Git to remove a dirty checkout; stop or

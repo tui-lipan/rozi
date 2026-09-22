@@ -191,8 +191,10 @@ same output in their own colors. Output already on screen changes when you switc
 The accent in command output is the terminal palette's accent color, which Rozi derives slightly
 lighter than the interface accent.
 
-Outside Rozi, the terminal has its own theme, so these commands use the Rozi palette. `NO_COLOR`
-and the other color switches turn styling off in both cases.
+Outside Rozi, the terminal has its own theme, so these commands use the Rozi palette. The
+message Rozi prints when you detach from a session is part of Rozi's own interface, so it uses your
+active theme's accent and muted colors. `NO_COLOR` and the other color switches turn styling off in
+every case.
 
 See [Terminal features](terminal.md) for clipboard, title, image, and scrollback behavior that is
 independent of the selected theme.

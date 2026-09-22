@@ -1,24 +1,27 @@
-use tui_lipan::prelude::{Color, Context, Element, Span, Style, Text};
+use tui_lipan::prelude::{Context, Element, Span, Style, Text, Theme};
 
 use crate::AppRoot;
-use crate::platform::ansi::{Rgb, palette};
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 use crate::state::{Attachment, is_ephemeral_session_name};
+use crate::view::fg_only;
 
 /// Build the one-shot view rendered after the client leaves the event loop.
 pub(crate) fn exit_view(_component: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let Some(summary) = exit_summary_parts(ctx.state.current()) else {
         return Element::default();
     };
-    exit_text(summary, crate::platform::ansi::stdout_supports_color()).into()
+    let color = crate::platform::ansi::stdout_supports_color();
+    exit_text(summary, color.then_some(&ctx.state.theme)).into()
 }
 
-fn exit_text(summary: ExitSummaryParts, color: bool) -> Text {
-    if !color {
+/// The farewell is Rozi-owned UI, so it is painted in the client's exact active theme, like the
+/// frame it replaces. `None` means the terminal asked for no colour.
+fn exit_text(summary: ExitSummaryParts, theme: Option<&Theme>) -> Text {
+    let Some(theme) = theme else {
         return Text::new(summary.text());
-    }
-    let heading = Style::new().fg(tui_color(palette::ROSE)).bold();
-    let muted = Style::new().fg(tui_color(palette::LAVENDER));
+    };
+    let heading = fg_only(&theme.accent).bold();
+    let muted = fg_only(&theme.muted);
     let command = Style::new().bold();
     Text::from_spans([
         Span::new("Detached from ").style(muted),
@@ -81,10 +84,6 @@ fn exit_summary_parts(attachment: &Attachment) -> Option<ExitSummaryParts> {
         identity: format!("{name}@{identity}"),
         command: format!("rozi --remote {remote_target} sessions attach {name}"),
     })
-}
-
-fn tui_color(Rgb(red, green, blue): Rgb) -> Color {
-    Color::rgb(red, green, blue)
 }
 
 fn contains_terminal_control(value: &str) -> bool {
@@ -181,6 +180,7 @@ fn is_portable_shell_word(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ThemePreset;
 
     fn attachment(name: Option<&str>) -> Attachment {
         let mut attachment = Attachment::new();
@@ -199,9 +199,9 @@ mod tests {
     }
 
     #[test]
-    fn exit_text_uses_muted_context_and_a_default_foreground_command() {
+    fn exit_text_uses_the_active_themes_muted_and_accent_with_a_default_foreground_command() {
         let attachment = attachment(Some("dev"));
-        let plain = exit_text(exit_summary_parts(&attachment).unwrap(), false);
+        let plain = exit_text(exit_summary_parts(&attachment).unwrap(), None);
         assert_eq!(plain.spans.len(), 1);
         assert_eq!(
             plain.spans[0].content.as_ref(),
@@ -209,28 +209,26 @@ mod tests {
         );
         assert_eq!(plain.spans[0].style.fg, None);
 
-        let styled = exit_text(exit_summary_parts(&attachment).unwrap(), true);
-        assert_eq!(
-            styled
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>(),
-            "Detached from dev\nReattach: rozi sessions attach dev"
+        for preset in [ThemePreset::TokyoNight, ThemePreset::SolarizedLight] {
+            let theme = preset.theme();
+            let styled = exit_text(exit_summary_parts(&attachment).unwrap(), Some(&theme));
+            assert_eq!(
+                styled
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>(),
+                "Detached from dev\nReattach: rozi sessions attach dev"
+            );
+            assert_eq!(styled.spans[0].style.fg, theme.muted.fg);
+            assert_eq!(styled.spans[1].style.fg, theme.muted.fg);
+            assert_eq!(styled.spans[3].style.fg, theme.accent.fg);
+            assert_eq!(styled.spans[4].style.fg, None);
+        }
+        assert_ne!(
+            ThemePreset::TokyoNight.theme().accent.fg,
+            ThemePreset::SolarizedLight.theme().accent.fg
         );
-        assert_eq!(
-            styled.spans[0].style.fg,
-            Some(tui_color(palette::LAVENDER).into())
-        );
-        assert_eq!(
-            styled.spans[1].style.fg,
-            Some(tui_color(palette::LAVENDER).into())
-        );
-        assert_eq!(
-            styled.spans[3].style.fg,
-            Some(tui_color(palette::ROSE).into())
-        );
-        assert_eq!(styled.spans[4].style.fg, None);
     }
 
     #[test]

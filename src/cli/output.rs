@@ -72,7 +72,7 @@ impl OutputStyles {
             OutputTone::Plain => (false, None),
             OutputTone::Accent => (false, Some(palette::ROSE)),
             OutputTone::Heading => (true, Some(palette::ROSE)),
-            OutputTone::Key => (true, Some(palette::ROSE.mix(palette::LAVENDER, 1, 2))),
+            OutputTone::Key => (false, Some(palette::ROSE.mix(palette::LAVENDER, 1, 2))),
             OutputTone::Success => (false, Some(palette::SUCCESS)),
             OutputTone::Warning => (false, Some(palette::WARNING)),
             OutputTone::Error => (false, Some(palette::ERROR)),

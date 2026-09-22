@@ -213,13 +213,10 @@ mod tests {
 
         let colored = format_sessions_text(&rows, OutputStyles::colored());
         // Column headers read like the section headings in `--help`: bold rose. The key column
-        // under them is bold too, but softened toward lavender so it does not merge into them.
+        // under them is regular weight and softened toward lavender so it does not merge into them.
         use crate::platform::ansi::{BOLD, RESET, fg, palette};
         let heading = format!("{BOLD}{}", fg(palette::ROSE, true));
-        let key = format!(
-            "{BOLD}{}",
-            fg(palette::ROSE.mix(palette::LAVENDER, 1, 2), true)
-        );
+        let key = fg(palette::ROSE.mix(palette::LAVENDER, 1, 2), true);
         assert!(colored.starts_with(&format!("{heading}NAME{RESET}")));
         assert!(colored.contains(&format!("\n{key}dev{RESET}")));
         let mut stripped = String::with_capacity(colored.len());

@@ -232,6 +232,11 @@ pub(crate) fn attached(
         crate::session::record_recent_remote(target);
     }
     ctx.state.runtime_epoch = epoch;
+    // The Connecting scene gives way to the session itself. A reconnect lands on the session that
+    // was already on screen, so it is not a new view to reveal.
+    if !reconnect {
+        ctx.state.session_view_revision += 1;
+    }
     ctx.state.current_mut().session_client = Some(client);
     ctx.state.current_mut().session_name = Some(session.clone());
     ctx.state.current_mut().session_instance = Some(session_instance);

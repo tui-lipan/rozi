@@ -1900,6 +1900,153 @@ mod reconciler_tests {
         });
     }
 
+    fn attach_message(epoch: u64, session: &str, panes: &[(PaneId, u64)]) -> Msg {
+        Msg::SessionAttached {
+            epoch,
+            session_instance: crate::session::protocol::SessionInstanceId::for_test(session),
+            session: session.into(),
+            client_id: 1,
+            panes: Vec::new(),
+            layout_rev: 1,
+            layout: Some(layout_with_panes(panes)),
+            controller: Some(1),
+            clients: Vec::new(),
+            input_locked: false,
+            allow_takeover: false,
+            read_only: false,
+            created_from_profile: None,
+        }
+    }
+
+    fn pend_attach(backend: &mut TestBackend<AppRoot>, epoch: u64, name: &str) {
+        let (client, _rx) = SessionClient::test_channel();
+        let state = backend.state_mut();
+        state.runtime_epoch = epoch;
+        state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+            epoch,
+            name: name.into(),
+            client: Some(client),
+            autostart: false,
+            read_only: false,
+            reconnect: false,
+            remote_host: None,
+            intent: crate::state::AttachIntent::Plain,
+            left: None,
+            parked_epoch: None,
+        });
+        state.current_mut().connection = crate::state::ConnectionState::Connecting;
+    }
+
+    fn frame_colors(
+        backend: &TestBackend<AppRoot>,
+    ) -> Vec<(tui_lipan::prelude::Color, tui_lipan::prelude::Color)> {
+        backend
+            .capture_frame()
+            .cells
+            .into_iter()
+            .map(|cell| (cell.fg, cell.bg))
+            .collect()
+    }
+
+    /// A cold attach goes session -> Connecting -> session. The session that lands reuses the
+    /// outgoing session's pane ids, and so its chrome animation keys; its first frame must already
+    /// wear its settled chrome, with nothing left to fade in afterwards.
+    #[test]
+    fn a_cold_attach_lands_with_settled_chrome() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            backend.state_mut().config.animations.session =
+                crate::layout::anim::SessionAnimationStyle::Off;
+            pend_attach(&mut backend, 1, "a");
+            backend.render();
+            backend
+                .dispatch(attach_message(1, "a", &[(1, 1), (2, 2)]))
+                .expect("attach a");
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(2);
+            backend.state_mut().current_mut().focused_pane = Some(2);
+            backend.render();
+            backend.advance(std::time::Duration::from_secs(1));
+
+            let parked = backend.state().runtime_epoch;
+            backend
+                .state_mut()
+                .park_current(parked, crate::state::Attachment::new());
+            pend_attach(&mut backend, 2, "b");
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(300));
+
+            backend
+                .dispatch(attach_message(2, "b", &[(1, 3), (2, 4)]))
+                .expect("attach b");
+            backend.render();
+            let first = frame_colors(&backend);
+            backend.advance(std::time::Duration::from_secs(1));
+            let settled = frame_colors(&backend);
+            let width = usize::from(VIEWPORT.w);
+            let changed: Vec<_> = first
+                .iter()
+                .zip(&settled)
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .map(|(index, (a, b))| ((index % width, index / width), *a, *b))
+                .collect();
+            assert!(
+                changed.is_empty(),
+                "{} cells still settling after the attach: {:?}",
+                changed.len(),
+                changed.iter().take(12).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    fn screen_text(backend: &TestBackend<AppRoot>) -> String {
+        backend.capture_frame().to_fixed_grid_lines().join("\n")
+    }
+
+    /// A local attach lands in tens of milliseconds. For that long the previous session's picture
+    /// stays up instead of a Connecting scene that would only flash; a slow attach still gets one.
+    #[test]
+    fn a_fresh_attach_holds_the_previous_picture_before_admitting_it_is_connecting() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            pend_attach(&mut backend, 1, "a");
+            backend.render();
+            backend
+                .dispatch(attach_message(1, "a", &[(1, 1), (2, 2)]))
+                .expect("attach a");
+            backend.render();
+            backend.advance(std::time::Duration::from_secs(1));
+            let settled = screen_text(&backend);
+            assert!(!settled.contains("Connecting"), "{settled}");
+
+            let parked = backend.state().runtime_epoch;
+            backend
+                .state_mut()
+                .park_current(parked, crate::state::Attachment::new());
+            pend_attach(&mut backend, 2, "b");
+            backend.state_mut().connect_hold = Some(crate::state::ConnectHold {
+                epoch: 2,
+                active: true,
+            });
+            backend.render();
+            let held = screen_text(&backend);
+            assert!(!held.contains("Connecting"), "{held}");
+            assert_eq!(
+                held, settled,
+                "the outgoing picture should stand in unchanged"
+            );
+
+            backend
+                .dispatch(Msg::ConnectHoldElapsed(2))
+                .expect("hold elapsed");
+            backend.render();
+            let connecting = screen_text(&backend);
+            assert!(connecting.contains("Connecting"), "{connecting}");
+        });
+    }
+
     #[test]
     fn own_commit_echo_confirms_rev_without_reapplying() {
         in_stack(|| {

@@ -246,6 +246,7 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `sidebar` | bool | `true` | Animates sidebar movement. |
 | `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as Workspace switching animation in Settings. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds; `0` switches instantly. |
+| `session` | string or bool | `"fade"` | How the workbar and panes arrive when the foreground session changes: switching sessions, a session finishing its connect, or dropping to the launcher. `"fade"` resolves the incoming session in place from slightly dimmed, over two-thirds of `geometry_ms`. `"portal"` opens a portal from the centre onto it while the previous session recedes behind it, over `geometry_ms`, with the ring drawn in the theme's accents. `"off"` switches at once. `true` means `"fade"` and `false` means `"off"`. Pane geometry always snaps and the sidebar stays still. Case-insensitive; unknown values keep the fade with a warning. Also available as Session switching animation in Settings. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | `"scale"` | `"scale"`, `"slide"`, `"portal"`, `"scan"`, or a recipe ID. Builtin values are case-insensitive. Unknown values fall back to Scale with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |

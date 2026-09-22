@@ -29,6 +29,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     ToggleWorkspaceAnimation,
                 ),
                 (
+                    "Session switching animation",
+                    ctx.state.config.animations.session.label().to_string(),
+                    CycleSessionAnimation,
+                ),
+                (
                     "Nerd icons",
                     enabled_status(ctx.state.config.nerd_icons),
                     ToggleNerdIcons,

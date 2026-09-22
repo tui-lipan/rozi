@@ -197,6 +197,21 @@ Switching sessions keeps the old attachment connected in the background. Its scr
 scrollback continue to receive output. A background attachment gives up layout control. Returning
 to it takes control when nobody else has claimed it.
 
+The incoming session's workbar and panes fade in briefly when they replace another session,
+including when a connecting session arrives or the launcher takes over. Panes never move from the
+previous session's positions, the focused pane is highlighted from the first frame, and the sidebar
+stays still. Settings → Session switching animation chooses the effect, as does `session` in
+`[animations]`:
+
+| Choice | Effect |
+| --- | --- |
+| Fade | The default. The incoming session resolves in place from slightly dimmed. |
+| Portal | A portal opens onto the incoming session from the centre of the screen, its edge drawn in the theme's accents, while the previous session recedes behind it. |
+| Off | The incoming session appears at once. |
+
+While a session you have not opened in this client connects, the previous session stays on screen
+for a quarter of a second. The Connecting scene appears only if the connection takes longer.
+
 An untouched temporary session is discarded when you switch away. A temporary session that has
 been used stays available in the background.
 

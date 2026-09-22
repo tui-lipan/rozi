@@ -1,4 +1,7 @@
-use tui_lipan::prelude::{CellEffect, EffectCell, EffectContext, EffectScope, Element, Key};
+use tui_lipan::prelude::{
+    CellEffect, Color, EffectCell, EffectContext, EffectScope, Element, Key, Paint, TerminalColor,
+    Theme,
+};
 
 use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, ScanDirection};
 
@@ -28,6 +31,154 @@ pub(super) fn pane_reveal_scope(
     };
     let scoped: Element = scope.child(pane_tree).into();
     scoped.key(key)
+}
+
+/// Wrap the session content layer in the session portal, keeping the keyed scope mounted at rest.
+pub(super) fn session_portal_scope(
+    content: Element,
+    progress: f32,
+    ring: SessionPortalRing,
+) -> Element {
+    let scope = EffectScope::new();
+    let scope = if progress < 1.0 {
+        scope.custom_effect(SessionPortalEffect::new(progress, ring))
+    } else {
+        scope
+    };
+    let scoped: Element = scope.child(content).into();
+    scoped.key("rozi-session-portal")
+}
+
+/// The colours the session portal's ring is drawn in: the active theme's own accents, so the ring
+/// reads as part of the theme rather than as bare terminal-white punctuation.
+///
+/// Led by the focused-border colour - the portal is the same "this is where you are" signal - and
+/// joined by the theme accent and its informational hue. A colour the terminal cannot paint as a
+/// glyph (reset, backdrop, transparent) is left out; with none left, the ring falls back to the
+/// incoming session's own foreground.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct SessionPortalRing {
+    colors: [Option<TerminalColor>; 3],
+}
+
+impl SessionPortalRing {
+    pub(crate) fn from_theme(theme: &Theme) -> Self {
+        let accent = match theme.accent.fg {
+            Some(Paint::Solid(color)) => Some(color),
+            Some(Paint::Alpha { color, .. }) => Some(color),
+            _ => None,
+        };
+        Self {
+            colors: [
+                terminal_color(theme.border_active),
+                accent.and_then(terminal_color),
+                terminal_color(theme.status.info),
+            ],
+        }
+    }
+
+    /// The ring colour for a cell, chosen by its spatial hash so the mix holds still as the
+    /// portal grows instead of shimmering frame to frame.
+    fn color_for(&self, hash: u64) -> Option<TerminalColor> {
+        let available = self.colors.iter().flatten().count();
+        if available == 0 {
+            return None;
+        }
+        let pick = ((hash >> 8) % available as u64) as usize;
+        self.colors.iter().flatten().nth(pick).copied()
+    }
+}
+
+/// A theme colour as the terminal colour an effect paints with. Palette colours stay palette
+/// colours, so a theme that follows the terminal's own palette keeps it.
+fn terminal_color(color: Color) -> Option<TerminalColor> {
+    Some(match color {
+        Color::Reset | Color::Backdrop | Color::Transparent => return None,
+        Color::Black => TerminalColor::Black,
+        Color::Red => TerminalColor::Red,
+        Color::Green => TerminalColor::Green,
+        Color::Yellow => TerminalColor::Yellow,
+        Color::Blue => TerminalColor::Blue,
+        Color::Magenta => TerminalColor::Magenta,
+        Color::Cyan => TerminalColor::Cyan,
+        Color::Gray => TerminalColor::Gray,
+        Color::DarkGray => TerminalColor::DarkGray,
+        Color::LightRed => TerminalColor::LightRed,
+        Color::LightGreen => TerminalColor::LightGreen,
+        Color::LightYellow => TerminalColor::LightYellow,
+        Color::LightBlue => TerminalColor::LightBlue,
+        Color::LightMagenta => TerminalColor::LightMagenta,
+        Color::LightCyan => TerminalColor::LightCyan,
+        Color::White => TerminalColor::White,
+        Color::Indexed(index) => TerminalColor::Indexed(index),
+        Color::Rgb(r, g, b) => TerminalColor::Rgb(r, g, b),
+    })
+}
+
+/// A portal opening from the centre of the screen onto the incoming session.
+///
+/// The pane Portal's geometry and ring, drawn as a compositor rather than a mask: inside the
+/// radius the incoming session shows, beyond it the outgoing session's retained layer - this
+/// scope's backdrop - and on the ring sparse portal glyphs, in the theme's colours, over the
+/// outgoing session.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SessionPortalEffect {
+    progress: f32,
+    ring: SessionPortalRing,
+}
+
+impl SessionPortalEffect {
+    /// Fixed so the ring pattern is the same on every switch, as a pane's is for its own id.
+    const SEED: u64 = 0x5E55_1011;
+    const ORIGIN: [f32; 2] = [0.5, 0.5];
+
+    pub(crate) fn new(progress: f32, ring: SessionPortalRing) -> Self {
+        Self {
+            progress: progress.clamp(0.0, 1.0),
+            ring,
+        }
+    }
+}
+
+impl CellEffect for SessionPortalEffect {
+    fn apply(&self, _cell: &mut EffectCell, _ctx: &EffectContext) {}
+
+    fn uses_backdrop(&self) -> bool {
+        self.progress < 1.0
+    }
+
+    fn apply_with_backdrop(
+        &self,
+        cell: &mut EffectCell,
+        backdrop: &EffectCell,
+        ctx: &EffectContext,
+    ) {
+        let position = reveal_position(ctx);
+        if !position.is_valid() {
+            return;
+        }
+        let (distance, maximum) = portal_distance(
+            position.x,
+            position.y,
+            position.width,
+            position.height,
+            Self::ORIGIN,
+        );
+        let radius = self.progress * maximum;
+        // A closed portal shows nothing of the incoming session, not even the one centre cell a
+        // zero radius would otherwise contain.
+        if self.progress > 0.0 && distance <= radius {
+            return;
+        }
+        let ring = portal_ring_width(maximum, self.progress);
+        let hash = pane_spatial_hash(position.x, position.y, Self::SEED);
+        let glyph_fg = self.ring.color_for(hash).unwrap_or(cell.fg);
+        *cell = backdrop.clone();
+        if self.progress > 0.0 && distance <= radius + ring && hash & 1 == 0 {
+            cell.set_symbol(portal_symbol(hash));
+            cell.set_fg(glyph_fg);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,6 +410,111 @@ fn portal_symbol(hash: u64) -> &'static str {
 mod tests {
     use super::*;
     use tui_lipan::prelude::Rect;
+
+    /// Composite a `new` screen over an `old` one through a session portal at `progress`.
+    fn session_portal_frame(progress: f32, bounds: Rect) -> Vec<String> {
+        let effect = SessionPortalEffect::new(progress, SessionPortalRing::default());
+        let old = &EffectCell::new("o");
+        (0..bounds.h)
+            .flat_map(|y| {
+                (0..bounds.w).map(move |x| {
+                    let mut cell = EffectCell::new("n");
+                    let ctx = EffectContext {
+                        x: bounds.x + x as i16,
+                        y: bounds.y + y as i16,
+                        bounds,
+                        phase: 0,
+                        terminal_bg: None,
+                    };
+                    if effect.uses_backdrop() {
+                        effect.apply_with_backdrop(&mut cell, old, &ctx);
+                    } else {
+                        effect.apply(&mut cell, &ctx);
+                    }
+                    cell.symbol().to_string()
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_session_portal_opens_the_new_screen_over_the_old_one() {
+        let bounds = Rect {
+            x: 2,
+            y: 1,
+            w: 41,
+            h: 13,
+        };
+        let at = |frame: &[String], x: u16, y: u16| frame[usize::from(y * bounds.w + x)].clone();
+        let (cx, cy) = (bounds.w / 2, bounds.h / 2);
+
+        let closed = session_portal_frame(0.0, bounds);
+        assert!(closed.iter().all(|symbol| symbol == "o"), "{closed:?}");
+
+        let half = session_portal_frame(0.5, bounds);
+        assert_eq!(at(&half, cx, cy), "n", "the centre opens first");
+        assert_eq!(at(&half, 0, 0), "o", "a corner still shows the old screen");
+        assert!(
+            half.iter()
+                .any(|symbol| !matches!(symbol.as_str(), "n" | "o")),
+            "the portal's edge carries a ring: {half:?}"
+        );
+        assert_eq!(
+            half,
+            session_portal_frame(0.5, bounds),
+            "the ring is stable"
+        );
+
+        let open = session_portal_frame(1.0, bounds);
+        assert!(open.iter().all(|symbol| symbol == "n"), "{open:?}");
+        assert!(!SessionPortalEffect::new(1.0, SessionPortalRing::default()).uses_backdrop());
+    }
+
+    /// Ring glyphs are drawn in the theme's accents, never the incoming cell's plain foreground.
+    #[test]
+    fn the_session_portal_ring_takes_the_theme_palette() {
+        let theme = Theme::default();
+        let ring = SessionPortalRing::from_theme(&theme);
+        let palette: Vec<TerminalColor> = ring.colors.iter().flatten().copied().collect();
+        assert!(
+            !palette.is_empty(),
+            "the default theme has accents to draw with"
+        );
+
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 41,
+            h: 13,
+        };
+        let effect = SessionPortalEffect::new(0.5, ring);
+        let old = EffectCell::new("o");
+        let mut glyphs = 0;
+        for y in 0..bounds.h {
+            for x in 0..bounds.w {
+                let mut cell = EffectCell::new("n");
+                cell.set_fg(TerminalColor::White);
+                let ctx = EffectContext {
+                    x: x as i16,
+                    y: y as i16,
+                    bounds,
+                    phase: 0,
+                    terminal_bg: None,
+                };
+                effect.apply_with_backdrop(&mut cell, &old, &ctx);
+                if !matches!(cell.symbol(), "n" | "o") {
+                    glyphs += 1;
+                    assert!(palette.contains(&cell.fg), "ring glyph in {:?}", cell.fg);
+                }
+            }
+        }
+        assert!(glyphs > 0, "the half-open portal draws a ring");
+        assert_eq!(
+            SessionPortalRing::default().color_for(7),
+            None,
+            "no palette leaves the incoming foreground in charge"
+        );
+    }
 
     #[test]
     fn pane_reveal_effects_are_stable_distinct_and_safe_at_the_edges() {

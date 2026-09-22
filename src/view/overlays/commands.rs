@@ -248,6 +248,13 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "workspace switching",
             "workspace slide",
         ]),
+        CycleSessionAnimation => alias_list(&[
+            "session animation",
+            "session switching",
+            "session reveal",
+            "session portal",
+            "session fade",
+        ]),
         ToggleAnimations => alias_list(&["animation effects", "motion effects", "transitions"]),
         ToggleNerdIcons => {
             alias_list(&["nerd font", "nerd icons", "patched font", "powerline icons"])

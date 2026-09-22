@@ -192,6 +192,54 @@ pub(crate) fn snapshot_for_close(
     }
 }
 
+/// How a newly shown session takes over the screen from the previous one.
+///
+/// Never a geometry animation: pane 2 in one session has no spatial relationship to pane 2 in
+/// another, so the incoming session always snaps to its own layout and only its presentation moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionAnimationStyle {
+    /// The incoming session appears at once.
+    Off,
+    /// The incoming session resolves in place from slightly dimmed.
+    #[default]
+    Fade,
+    /// A portal opens from the centre, revealing the incoming session over the outgoing one.
+    Portal,
+}
+
+impl SessionAnimationStyle {
+    /// Cycle order for the Settings row.
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Fade, Self::Portal]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fade => "fade",
+            Self::Portal => "portal",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Fade => "Fade",
+            Self::Portal => "Portal",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "fade" => Some(Self::Fade),
+            "portal" => Some(Self::Portal),
+            _ => None,
+        }
+    }
+}
+
 impl PaneAnimationStyle {
     /// Cycle order for the Settings row.
     pub fn all() -> &'static [Self] {
@@ -484,6 +532,7 @@ pub struct WindowAnimationConfig {
     pub sidebar: bool,
     pub workspace: bool,
     pub workspace_duration: Duration,
+    pub session: SessionAnimationStyle,
     pub focus_chrome: bool,
     pub pane_style: PaneAnimationStyle,
     pub pane_overrides: PaneAnimationOverrides,
@@ -506,6 +555,7 @@ impl Default for WindowAnimationConfig {
             sidebar: true,
             workspace: true,
             workspace_duration: Duration::from_millis(GEOMETRY_MS),
+            session: SessionAnimationStyle::Fade,
             focus_chrome: true,
             pane_style: PaneAnimationStyle::Scale,
             pane_overrides: PaneAnimationOverrides::default(),
@@ -677,6 +727,44 @@ pub fn sidebar_transition(animations: WindowAnimationConfig) -> TransitionConfig
     }
     slide_transition(scratch_transition_duration(animations.geometry_duration))
 }
+
+/// Opacity the incoming session's content starts from when it replaces another session.
+///
+/// Deliberately high: the reveal is a delimiter between two unrelated screens, felt more than
+/// watched. The attachment itself has already swapped, so there is nothing to crossfade from.
+pub const SESSION_REVEAL_FROM: f32 = 0.8;
+
+/// Curve for the incoming session's reveal, or `None` when the switch should snap.
+///
+/// Only presentation moves, never geometry: see [`SessionAnimationStyle`]. The fade shares the
+/// scratchpad's shortened duration: changing session identity is a short visual delimiter, not a
+/// spatial move, and tying it to `geometry_ms` keeps the whole motion vocabulary in proportion
+/// when that is retuned. The portal has a whole screen to cross, so it takes the full geometry
+/// duration on the pane Portal's own curve.
+pub fn session_reveal_transition(animations: WindowAnimationConfig) -> Option<TransitionConfig> {
+    let config = match animations.session {
+        SessionAnimationStyle::Off => return None,
+        SessionAnimationStyle::Fade => TransitionConfig {
+            duration: scratch_transition_duration(animations.geometry_duration),
+            easing: Easing::EaseOutQuad,
+        },
+        SessionAnimationStyle::Portal => TransitionConfig {
+            duration: animations.geometry_duration,
+            easing: builtin_animation(PaneAnimationStyle::Portal).open_curve,
+        },
+    };
+    (animations.enabled && !config.duration.is_zero()).then_some(config)
+}
+
+/// The portal is open when [`session_reveal_transition`] runs for a portal.
+pub fn session_portal_enabled(animations: WindowAnimationConfig) -> bool {
+    animations.session == SessionAnimationStyle::Portal
+        && session_reveal_transition(animations).is_some()
+}
+
+/// Opacity the outgoing session gives way to beneath an opening portal: it recedes rather than
+/// vanishing, so the portal reads as opening onto somewhere new instead of out of nothing.
+pub const SESSION_PORTAL_RECEDE: f32 = 0.4;
 
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {

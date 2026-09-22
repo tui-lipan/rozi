@@ -1256,6 +1256,7 @@ fn attaching_to_parked_session_closes_profile_picker() {
                     Some(SessionPickerState::new(vec![session_row("dev", None)]));
                 state.show_session_picker = true;
             }
+            let revision = backend.state().session_view_revision;
 
             backend
                 .dispatch(Msg::SessionPickerActivate(0))
@@ -1264,6 +1265,11 @@ fn attaching_to_parked_session_closes_profile_picker() {
             assert_eq!(
                 backend.state().current().session_name.as_deref(),
                 Some("dev")
+            );
+            assert_eq!(
+                backend.state().session_view_revision,
+                revision + 1,
+                "a parked session coming forward is a new view to reveal"
             );
             assert!(!backend.state().show_profile_picker);
             assert!(backend.state().profile_picker.is_none());

@@ -127,9 +127,14 @@ pub(crate) fn scratch_transition_config(ctx: &Context<AppRoot>) -> TransitionCon
     }
 }
 
+/// Timing for focus colour changes on pane chrome, workbar tabs, and sidebar rows.
+///
+/// Instant on the first frame of a new session view: the incoming session should appear already
+/// focused, with only its layer fading in, rather than its chrome animating out of the previous
+/// session's colours. See [`crate::state::State::session_view_changed`].
 pub(crate) fn focus_chrome_transition_config(ctx: &Context<AppRoot>) -> TransitionConfig {
     let animations = ctx.state.config.animations;
-    if animations.enabled && animations.focus_chrome {
+    if animations.enabled && animations.focus_chrome && !ctx.state.session_view_changed.get() {
         TransitionConfig {
             duration: animations.focus_chrome_duration,
             easing: Easing::EaseInOutCubic,
@@ -230,6 +235,74 @@ pub(crate) fn chrome_paint_with_frame_rate(
     }
 }
 
+/// How far a newly shown session has taken over the screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SessionReveal {
+    /// Opacity of the session content layer (workbar and workspace). Below 1 only while a fade
+    /// reveal is running.
+    pub(crate) opacity: f32,
+    /// How far the portal has opened, `1.0` when there is no portal to draw.
+    pub(crate) portal: f32,
+}
+
+/// The reveal of the session content layer, for the configured [`anim::SessionAnimationStyle`].
+///
+/// The attachment has already swapped by the time this runs; only its presentation moves. The
+/// first frame after [`State::session_view_revision`] moves restarts the reveal from its beginning:
+/// the layer at [`anim::SESSION_REVEAL_FROM`] for a fade, a closed portal for a portal. The very
+/// first render has no previous session to delimit from, so the client's initial frame never
+/// animates.
+///
+/// [`State::session_view_revision`]: crate::state::State::session_view_revision
+pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
+    const KEY: &str = "rozi-session-reveal";
+    let revision = ctx.state.session_view_revision;
+    let previous = ctx.state.session_reveal_seen.replace(Some(revision));
+    let changed = previous.is_some_and(|seen| seen != revision);
+    ctx.state.session_view_changed.set(changed);
+    if changed {
+        // Seeded even when the reveal is off: retargeting from a distinct value is what applies
+        // the instant config, so a reveal still in flight when animations were disabled stops
+        // rather than finishing on its old duration (see `workspace_offset`).
+        ctx.transition(KEY, 0.0, anim::instant_transition());
+    }
+    let animations = ctx.state.config.animations;
+    let config =
+        anim::session_reveal_transition(animations).unwrap_or_else(anim::instant_transition);
+    let progress = ctx.transition(KEY, 1.0, config);
+    match animations.session {
+        anim::SessionAnimationStyle::Off | anim::SessionAnimationStyle::Fade => SessionReveal {
+            opacity: anim::SESSION_REVEAL_FROM + (1.0 - anim::SESSION_REVEAL_FROM) * progress,
+            portal: 1.0,
+        },
+        anim::SessionAnimationStyle::Portal => SessionReveal {
+            opacity: 1.0,
+            portal: progress,
+        },
+    }
+}
+
+/// How the outgoing session's layer leaves once a switch replaces it.
+///
+/// It stays painted beneath its successor, so an opaque successor covers it at once. It matters
+/// in two places. During a fresh attach's grace period it stands in for a Connecting scene that
+/// would only flash; ease-in keeps it nearly whole for a local attach, which lands in tens of
+/// milliseconds, and only a slow one watches it fade into Connecting. Under a portal it is what the
+/// portal opens over, so it has to outlast both the grace period and the portal, and it only
+/// recedes rather than fading away.
+pub(crate) fn session_layer_exit(animations: anim::WindowAnimationConfig) -> ExitAnimation {
+    let hold = crate::ops::session::CONNECT_HOLD;
+    let millis = |duration: std::time::Duration| duration.as_millis() as u64;
+    match anim::session_reveal_transition(animations) {
+        Some(portal) if anim::session_portal_enabled(animations) => {
+            ExitAnimation::new(millis(hold + portal.duration))
+                .opacity(anim::SESSION_PORTAL_RECEDE)
+                .easing(Easing::EaseInQuad)
+        }
+        _ => ExitAnimation::new(millis(hold)).easing(Easing::EaseInQuad),
+    }
+}
+
 /// Seed every workspace off-screen on its numbered side. Only the outgoing and active pages
 /// travel, so jumping from 1 to 9 does not sweep through the seven intermediate workspaces.
 pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(usize, f32)> {
@@ -302,4 +375,238 @@ fn workspace_offset(ctx: &Context<AppRoot>, index: usize, active: usize, animate
         ctx.transition(key.clone(), target + 2.0, anim::instant_transition());
     }
     ctx.transition(key, target, config)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::layout::anim;
+
+    use tui_lipan::TestBackend;
+    use tui_lipan::prelude::{Color, Rect};
+
+    use crate::AppRoot;
+
+    fn in_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn test thread")
+            .join()
+            .expect("join test thread");
+    }
+
+    const VIEWPORT_W: u16 = 80;
+    const VIEWPORT_H: u16 = 24;
+
+    fn backend() -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: VIEWPORT_W,
+            h: VIEWPORT_H,
+        });
+        backend.render();
+        backend
+    }
+
+    /// Backgrounds only: the workbar clock may change its text between frames, never its colour.
+    fn backgrounds(backend: &TestBackend<AppRoot>) -> Vec<Color> {
+        backend
+            .capture_frame()
+            .cells
+            .into_iter()
+            .map(|cell| cell.bg)
+            .collect()
+    }
+
+    fn reveal_duration(backend: &TestBackend<AppRoot>) -> Duration {
+        crate::layout::anim::session_reveal_transition(backend.state().config.animations)
+            .expect("session reveal enabled by default")
+            .duration
+    }
+
+    #[test]
+    fn a_new_session_view_resolves_in_and_then_settles() {
+        in_stack(|| {
+            let mut backend = backend();
+            let settled = backgrounds(&backend);
+
+            backend.state_mut().session_view_revision += 1;
+            backend.render();
+            assert_ne!(
+                backgrounds(&backend),
+                settled,
+                "the incoming session should start dimmed toward the backdrop"
+            );
+
+            let duration = reveal_duration(&backend);
+            backend.advance(duration + Duration::from_millis(20));
+            assert_eq!(backgrounds(&backend), settled);
+
+            // Nothing new to reveal: a redraw of the same session must not fade again.
+            backend.render();
+            assert_eq!(backgrounds(&backend), settled);
+        });
+    }
+
+    /// Two tiled panes, `focus` focused, the session fade off so frames compare exactly.
+    fn two_panes(focus: crate::state::PaneId) -> TestBackend<AppRoot> {
+        let mut backend = backend();
+        {
+            let state = backend.state_mut();
+            state.config.animations.session = anim::SessionAnimationStyle::Off;
+            let workspace = &mut state.current_mut().workspaces[0];
+            for id in [1, 2] {
+                let mut pane =
+                    crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default());
+                pane.opening = false;
+                workspace.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(workspace, id);
+            }
+            workspace.focused_pane = Some(focus);
+            state.current_mut().focused_pane = Some(focus);
+        }
+        backend.render();
+        backend.advance(Duration::from_secs(1));
+        backend
+    }
+
+    fn move_focus(backend: &mut TestBackend<AppRoot>, focus: crate::state::PaneId) {
+        let state = backend.state_mut();
+        state.current_mut().workspaces[0].focused_pane = Some(focus);
+        state.current_mut().focused_pane = Some(focus);
+    }
+
+    /// Pane ids repeat across sessions, and chrome transitions are keyed by pane id. The incoming
+    /// session's focused pane must arrive focused rather than fading out of the colours the
+    /// outgoing session's pane with the same id was wearing.
+    #[test]
+    fn a_new_session_view_arrives_with_its_focus_chrome_settled() {
+        in_stack(|| {
+            let settled = backgrounds(&two_panes(2));
+            let foregrounds = |backend: &TestBackend<AppRoot>| -> Vec<Color> {
+                backend
+                    .capture_frame()
+                    .cells
+                    .into_iter()
+                    .map(|cell| cell.fg)
+                    .collect()
+            };
+            let settled_fg = foregrounds(&two_panes(2));
+
+            let mut switched = two_panes(1);
+            move_focus(&mut switched, 2);
+            switched.state_mut().session_view_revision += 1;
+            switched.render();
+            assert_eq!(backgrounds(&switched), settled);
+            assert_eq!(foregrounds(&switched), settled_fg);
+
+            // Control: the same focus move inside one session still animates.
+            let mut moved = two_panes(1);
+            move_focus(&mut moved, 2);
+            moved.render();
+            assert_ne!(foregrounds(&moved), settled_fg);
+        });
+    }
+
+    fn symbols(backend: &TestBackend<AppRoot>) -> Vec<String> {
+        backend
+            .capture_frame()
+            .cells
+            .into_iter()
+            .map(|cell| cell.symbol)
+            .collect()
+    }
+
+    /// The real layer stack under a portal switch: the outgoing session is retained beneath the
+    /// incoming one, and the portal opens from the centre. Midway, cells near the centre already
+    /// show the new session while cells near the edge still show the old one.
+    #[test]
+    fn a_portal_switch_opens_the_new_session_over_the_old_one() {
+        in_stack(|| {
+            let mut old = two_panes(1);
+            {
+                old.state_mut().config.animations.session = anim::SessionAnimationStyle::Portal;
+            }
+            old.render();
+            let before = symbols(&old);
+
+            // Another session takes the foreground: a different attachment under a new id.
+            {
+                let state = old.state_mut();
+                state.attachment = crate::state::Attachment::new();
+                state.runtime_epoch = 99;
+                state.current_mut().epoch = 99;
+                state.session_view_revision += 1;
+            }
+            old.render();
+            let duration = anim::session_reveal_transition(old.state().config.animations)
+                .expect("portal enabled")
+                .duration;
+            old.advance(duration / 2);
+            let midway = symbols(&old);
+            old.advance(duration + Duration::from_secs(1));
+            let after = symbols(&old);
+
+            let width = usize::from(VIEWPORT_W);
+            let height = usize::from(VIEWPORT_H);
+            let reach = |index: usize| {
+                let (x, y) = ((index % width) as f32, (index / width) as f32);
+                let (cx, cy) = ((width - 1) as f32 / 2.0, (height - 1) as f32 / 2.0);
+                let max = cx.hypot(cy * 2.0);
+                (x - cx).hypot((y - cy) * 2.0) / max
+            };
+            let changed: Vec<usize> = (0..before.len())
+                .filter(|&index| before[index] != after[index])
+                .collect();
+            let inner: Vec<usize> = changed
+                .iter()
+                .copied()
+                .filter(|&i| reach(i) < 0.2)
+                .collect();
+            let outer: Vec<usize> = changed
+                .iter()
+                .copied()
+                .filter(|&i| reach(i) > 0.85)
+                .collect();
+            assert!(
+                !inner.is_empty() && !outer.is_empty(),
+                "the two sessions must differ at both"
+            );
+            for index in inner {
+                assert_eq!(
+                    midway[index], after[index],
+                    "centre cell {index} shows the new session"
+                );
+            }
+            for index in outer {
+                assert_eq!(
+                    midway[index], before[index],
+                    "edge cell {index} still shows the old one"
+                );
+            }
+            assert_ne!(midway, after, "the portal is still opening midway");
+        });
+    }
+
+    #[test]
+    fn a_disabled_session_reveal_snaps() {
+        in_stack(|| {
+            let mut backend = backend();
+            let settled = backgrounds(&backend);
+            backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Off;
+            backend.state_mut().session_view_revision += 1;
+            backend.render();
+            assert_eq!(backgrounds(&backend), settled);
+
+            backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
+            backend.state_mut().config.animations.enabled = false;
+            backend.state_mut().session_view_revision += 1;
+            backend.render();
+            assert_eq!(backgrounds(&backend), settled);
+        });
+    }
 }

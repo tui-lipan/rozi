@@ -868,6 +868,44 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
 }
 
 #[test]
+fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
+    on_large_stack(|| {
+        use rozi::layout::anim::SessionAnimationStyle;
+        use rozi::state::SettingsAction::CycleSessionAnimation;
+        let mut backend = settings_backend(90, 30);
+        backend.state_mut().config.animations.enabled = true;
+        type_query(&mut backend, "session switching");
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Session switching animation")
+                .contains("Fade")
+        );
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(CycleSessionAnimation))
+            .unwrap();
+        let frame = rendered_rows(&mut backend);
+        for label in ["Off", "Fade", "Portal"] {
+            assert!(frame.contains(label), "{label} missing:\n{frame}");
+        }
+        backend.dispatch(rozi::Msg::SettingsChoicePick(2)).unwrap();
+        assert_eq!(
+            backend.state().config.animations.session,
+            SessionAnimationStyle::Portal
+        );
+        assert_eq!(
+            rozi::config::load_config().config.animations.session,
+            SessionAnimationStyle::Portal
+        );
+
+        backend.state_mut().config.animations.enabled = false;
+        assert_eq!(
+            CycleSessionAnimation.disabled_reason(&backend.state().config),
+            Some("Needs animations")
+        );
+    });
+}
+
+#[test]
 fn settings_choice_lists_every_option() {
     on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
@@ -945,7 +983,7 @@ fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 14, "Workspace switching animation"),
+            (SettingsTab::General, 15, "Session switching animation"),
             (SettingsTab::Panes, 14, "Open/close animation"),
             (SettingsTab::Bars, 13, "Show workbar"),
             (SettingsTab::Alerts, 19, "Bell urgency"),

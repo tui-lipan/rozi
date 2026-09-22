@@ -58,7 +58,7 @@ Set `name = "system"` to derive the theme from the host terminal's foreground, b
 colors. If the terminal cannot answer the color query, Rozi uses ANSI colors for that run and warns.
 It keeps `system` configured and tries again next launch.
 
-Use **Background follows terminal** in Settings, or:
+Use **Panes › Background › Follows terminal** in Settings, or:
 
 ```toml
 [pane]

@@ -165,25 +165,39 @@ impl SettingsAction {
         &[
             // General
             Self::Theme,
-            Self::EditPadding,
+            Self::ToggleNerdIcons,
+            Self::CycleWhichKey,
+            Self::ToggleFocusOnHover,
+            // Animations
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
             Self::CycleSessionAnimation,
-            Self::ToggleNerdIcons,
-            Self::CycleWhichKey,
+            Self::CyclePaneAnimation,
+            // Clipboard
             Self::CycleCopyOnSelect,
             Self::CycleMiddleClickPaste,
             Self::CycleRightClickClipboard,
             Self::ToggleOsc52,
-            Self::ToggleFocusOnHover,
-            Self::ToggleBackgroundFollowsTerminal,
+            // Pickers
             Self::CyclePickerBorderStyle,
             Self::TogglePickerTabBackground,
             Self::CyclePickerTabStyle,
             Self::CyclePickerSelectionStyle,
-            // Titlebar
+            // Panes: background
+            Self::ToggleBackgroundFollowsTerminal,
+            Self::ToggleHighlightFocusedBackground,
+            Self::EditPadding,
+            // Panes: borders
+            Self::CycleBorderMode,
+            Self::CycleBorderStyle,
+            Self::ToggleHighlightFocusedBorder,
+            Self::CycleFloatBorderStyle,
+            Self::CycleScratchBorderStyle,
+            Self::CycleFullscreenBorderStyle,
+            // Panes: titlebar
             Self::ChooseTitlebar,
             Self::CycleTitleStyle,
+            Self::ToggleHighlightFocusedTitlebar,
             // Workbar
             Self::ChooseWorkbar,
             Self::ToggleWorkbarGap,
@@ -192,16 +206,6 @@ impl SettingsAction {
             Self::CycleWorkbarBadgeStyle,
             Self::CycleWorkbarTabStyle,
             Self::ToggleWorkbarPowerline,
-            // Panes
-            Self::ToggleHighlightFocusedBackground,
-            Self::ToggleHighlightFocusedBorder,
-            Self::ToggleHighlightFocusedTitlebar,
-            Self::CycleBorderMode,
-            Self::CycleBorderStyle,
-            Self::CycleFloatBorderStyle,
-            Self::CycleScratchBorderStyle,
-            Self::CycleFullscreenBorderStyle,
-            Self::CyclePaneAnimation,
             // Sidebar
             Self::ToggleSidebarPosition,
             Self::ToggleSidebarBackgroundFollowsCanvas,
@@ -210,9 +214,11 @@ impl SettingsAction {
             Self::CycleSidebarTabStyle,
             // Alerts
             Self::ToggleBellUrgency,
+            // Highlights
             Self::CycleAlertBorder,
             Self::CycleWorkbarAlert,
             Self::CycleWorkbarAlertPaint,
+            // Marks
             Self::ToggleMarkBell,
             Self::ToggleMarkBlocked,
             Self::ToggleMarkFinished,

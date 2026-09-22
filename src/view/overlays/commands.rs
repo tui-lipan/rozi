@@ -261,7 +261,12 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "session portal",
             "session fade",
         ]),
-        ToggleAnimations => alias_list(&["animation effects", "motion effects", "transitions"]),
+        ToggleAnimations => alias_list(&[
+            "animations",
+            "animation effects",
+            "motion effects",
+            "transitions",
+        ]),
         ToggleNerdIcons => {
             alias_list(&["nerd font", "nerd icons", "patched font", "powerline icons"])
         }
@@ -279,13 +284,21 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
             "scan panes",
             "springy panes",
         ]),
-        ToggleHighlightFocusedBackground => {
-            alias_list(&["focused pane background", "active pane background"])
-        }
-        ToggleHighlightFocusedBorder => alias_list(&["focused pane border", "active pane border"]),
-        ToggleHighlightFocusedTitlebar => {
-            alias_list(&["focused pane titlebar", "active pane titlebar"])
-        }
+        ToggleHighlightFocusedBackground => alias_list(&[
+            "focused background",
+            "focused pane background",
+            "active pane background",
+        ]),
+        ToggleHighlightFocusedBorder => alias_list(&[
+            "focused border",
+            "focused pane border",
+            "active pane border",
+        ]),
+        ToggleHighlightFocusedTitlebar => alias_list(&[
+            "focused titlebar",
+            "focused pane titlebar",
+            "active pane titlebar",
+        ]),
         CycleBorderMode => alias_list(&[
             "border mode",
             "border merge",
@@ -411,13 +424,23 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ToggleFocusOnHover => alias_list(&["mouse focus", "hover focus"]),
         ToggleBellUrgency => alias_list(&["terminal bell", "urgent bell"]),
         CycleAlertBorder => alias_list(&[
+            "pane border effect",
             "blocked pane border",
             "agent border",
             "attention border",
             "alert pulse",
         ]),
-        CycleWorkbarAlert => alias_list(&["workspace tab alert", "workspace marker", "tab pulse"]),
-        CycleWorkbarAlertPaint => alias_list(&["workspace tab alert paint", "marker fill"]),
+        CycleWorkbarAlert => alias_list(&[
+            "workspace tab effect",
+            "workspace tab alert",
+            "workspace marker",
+            "tab pulse",
+        ]),
+        CycleWorkbarAlertPaint => alias_list(&[
+            "workspace tab highlight",
+            "workspace tab alert paint",
+            "marker fill",
+        ]),
         CycleStartupMode => alias_list(&[
             "session startup",
             "launch",

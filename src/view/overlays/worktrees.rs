@@ -58,6 +58,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .iter()
         .find(|tree| !tree.linked)
         .map(|tree| tree.path.as_str());
+    let mut widest_row = 0;
     let entries = picker
         .entries
         .iter()
@@ -89,6 +90,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                 [only] => (*only).to_string(),
                 [first, rest @ ..] => format!("{first} +{}", rest.len()),
             };
+            widest_row = widest_row.max(label.chars().count() + description.chars().count());
             SearchEntry::item(label, index).description(picker_description(description))
         })
         .collect();
@@ -105,7 +107,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         "Worktrees",
         crate::view::worktree_picker_key(),
         Msg::CloseWorktrees,
-        72,
+        picker_width(widest_row),
     )
     .header_right(
         picker
@@ -232,6 +234,15 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
         .into()
 }
 
+/// Wide enough for the widest row, so a nested checkout path and its session both fit, within a
+/// range that keeps a short list compact and a long one from spanning an ultrawide screen. The
+/// modal is clamped to the viewport either way.
+fn picker_width(widest_row: usize) -> u16 {
+    // Frame border, row padding, and the gap between a label and its description.
+    const CHROME: usize = 8;
+    (widest_row + CHROME).clamp(72, 120) as u16
+}
+
 /// A checkout's path relative to the directory holding the primary checkout, so rows differ in the
 /// part that stays visible: `rozi`, `rozi-worktrees/feat`. A checkout elsewhere keeps its full
 /// path. These are session-host paths, compared as text split on either separator.
@@ -260,7 +271,14 @@ pub(crate) fn short_checkout_path(path: &str, primary: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::short_checkout_path;
+    use super::{picker_width, short_checkout_path};
+
+    #[test]
+    fn the_picker_grows_with_its_widest_row_within_bounds() {
+        assert_eq!(picker_width(20), 72);
+        assert_eq!(picker_width(90), 98);
+        assert_eq!(picker_width(400), 120);
+    }
 
     #[test]
     fn checkout_paths_are_shown_from_the_repository_parent() {

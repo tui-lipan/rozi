@@ -78,6 +78,63 @@ fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
     });
 }
 
+/// A checkout nested a few directories deep, next to its session, still fits in one row; and the
+/// wider picker is clamped rather than overflowing a narrow terminal.
+#[test]
+fn picker_widens_to_fit_long_checkout_rows() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        let path = "/home/me/src/rozi/.claude/worktrees/session-fade-duration";
+        {
+            let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+            picker.target = None;
+            picker.cwd = "/home/me/src/rozi".into();
+            picker.sessions.clear();
+            picker.entries.insert(
+                0,
+                rozi::git::worktrees::WorktreeInfo {
+                    path: "/home/me/src/rozi".into(),
+                    branch: Some("master".into()),
+                    detached: false,
+                    bare: false,
+                    prunable: false,
+                    linked: false,
+                    locked: false,
+                },
+            );
+            picker.entries[1].path = path.into();
+            picker.entries[1].branch = Some("fix/config-test-race".into());
+        }
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 140,
+            h: 30,
+        });
+        backend.render();
+        let frame = backend.capture_frame().plain_text();
+        assert!(
+            frame.contains("fix/config-test-race  rozi/.claude/worktrees/session-fade-duration"),
+            "{frame}"
+        );
+        assert!(frame.contains("primary"), "{frame}");
+
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 20,
+        });
+        backend.render();
+        let narrow = backend.capture_frame().plain_text();
+        assert!(narrow.contains("Worktrees"), "{narrow}");
+        assert!(
+            narrow.lines().all(|line| line.chars().count() <= 60),
+            "{narrow}"
+        );
+    });
+}
+
 #[test]
 fn stale_list_reply_does_not_replace_a_new_picker_request() {
     on_large_stack(|| {

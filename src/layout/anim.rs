@@ -459,6 +459,7 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
     let spec = pane_animation_for_pane(animations, pane);
     spec.fade
         && !pane_slides(animations, pane)
+        && spec.kind != PaneAnimationStyle::Off
         && spec.kind != PaneAnimationStyle::Slide
         && lifecycle_motion_enabled(animations, pane)
         && (pane_opening_transition(pane) || pane.closing)
@@ -470,10 +471,18 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
 /// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
 /// state settles; otherwise disabling close animation can make it reappear before pruning.
 ///
+/// [`PaneAnimationStyle::Off`] draws no effect. An opening pane is fully visible on the first
+/// frame, and a retained closing pane (the last scratch pane, held while the dropdown retracts)
+/// is fully hidden on the first frame. Slide also has `fade == false`, and it stays opaque
+/// because a clip reveals it.
+///
 /// `pane.opening`, not [`pane_opening_transition`]: the fade has to *travel* once the spawn timer
 /// clears that flag, and the snapshot outlives it by design.
 pub fn pane_opacity_target(animations: WindowAnimationConfig, pane: &crate::state::Pane) -> f32 {
     let spec = pane_animation_for_pane(animations, pane);
+    if spec.kind == PaneAnimationStyle::Off {
+        return if pane.closing { 0.0 } else { 1.0 };
+    }
     if !spec.fade || pane_slides(animations, pane) || (!pane.opening && !pane.closing) {
         1.0
     } else {
@@ -1116,6 +1125,12 @@ mod tests {
         assert!(!pane_reveal_effects_for_pane(animations, &pane));
         assert!(!pane_slides(animations, &pane));
         assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+        pane.opening = false;
+        pane.closing = true;
+        pane.opening_animation = None;
+        pane.begin_close_animation(animations);
+        assert!(!pane_opacity_animates(animations, &pane));
+        assert_eq!(pane_opacity_target(animations, &pane), 0.0);
 
         let mut state = spawning_state(PaneAnimationStyle::Off, GeometryAnimation::Spawn);
         state.config.animations.open_delay = Duration::from_millis(36);
@@ -1147,6 +1162,8 @@ mod tests {
             closing.closing = true;
             closing.begin_close_animation(animations);
             assert!(!closing.closing_animation.expect("close snapshot").active);
+            assert!(!pane_opacity_animates(animations, closing));
+            assert_eq!(pane_opacity_target(animations, closing), 0.0);
             assert_eq!(
                 retained_pane_timeout_for_pane(animations, closing),
                 Duration::ZERO

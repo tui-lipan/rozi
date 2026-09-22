@@ -176,8 +176,12 @@ fn restore_focus(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
-    let full_size_reveal = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations);
-    let target = if (pane.opening || pane.closing) && !full_size_reveal {
+    // Portal and Scan reveal in place. Off is not a reveal and not Scale: it has no collapsed
+    // geometry, so an opening or retained closing popup stays at its full rect.
+    let spec = crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
+    let full_size = crate::layout::anim::pane_reveal_effects(ctx.state.config.animations)
+        || spec.kind == crate::layout::anim::PaneAnimationStyle::Off;
+    let target = if (pane.opening || pane.closing) && !full_size {
         close_rect(pane.floating_rect)
     } else {
         pane.floating_rect
@@ -270,6 +274,78 @@ mod tests {
             )
             .w <= 95.0
         );
+    }
+
+    /// Off is not a Scale inset. An opening popup is full size and already readable.
+    #[test]
+    fn an_off_opening_popup_is_full_size_and_visible() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                crate::test_support::isolate_user_dirs();
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                let viewport = Rect {
+                    x: 0,
+                    y: 0,
+                    w: 40,
+                    h: 10,
+                };
+                backend.set_viewport(viewport);
+                let full = FloatRect {
+                    x: 8.0,
+                    y: 2.0,
+                    w: 24.0,
+                    h: 6.0,
+                };
+                {
+                    let state = backend.state_mut();
+                    state.config.animations.pane_style =
+                        crate::layout::anim::PaneAnimationStyle::Off;
+                    state.config.animations.open_delay = std::time::Duration::ZERO;
+                    state.config.pane.show_titles = false;
+                    state.config.pane.show_workbar = false;
+                    let mut popup = crate::state::Pane::new(POPUP_PANE_ID, 5_000, full);
+                    popup.opening = true;
+                    popup.terminal_active = true;
+                    popup.begin_open_animation(state.config.animations);
+                    let _ = popup.terminal.process_server_output(b"OFF-POPUP-LIVE\r\n");
+                    state.popup = Some(popup);
+                }
+                backend.render();
+
+                let popup = backend.state().popup.as_ref().expect("opening popup");
+                assert!(popup.opening);
+                let collapsed = close_rect(full);
+                let rect = backend
+                    .rect_of_key(&crate::view::pane_window_key(POPUP_PANE_ID, 0).into())
+                    .expect("opening Off popup");
+                assert!(
+                    (f32::from(rect.w) - full.w).abs() < 1.0
+                        && (f32::from(rect.h) - full.h).abs() < 1.0,
+                    "Off popup opened at {rect:?}; full {full:?}, collapsed {collapsed:?}"
+                );
+                assert!(
+                    (f32::from(rect.w) - collapsed.w).abs() > 1.0,
+                    "Off popup used the Scale close rect {rect:?} vs {collapsed:?}"
+                );
+                let frame = backend.capture_frame();
+                let visible = (0..viewport.h).any(|y| {
+                    let row = frame.row(y);
+                    let line: String = row.iter().map(|cell| cell.symbol.as_str()).collect();
+                    let Some(start) = line.find("OFF-POPUP-LIVE") else {
+                        return false;
+                    };
+                    row.get(start..start + "OFF-POPUP-LIVE".len())
+                        .is_some_and(|cells| cells.iter().any(|cell| cell.fg != cell.bg))
+                });
+                assert!(
+                    visible,
+                    "an opening Off popup should already show its content"
+                );
+            })
+            .expect("spawn off popup test thread")
+            .join()
+            .expect("off popup test thread panicked");
     }
 
     #[test]

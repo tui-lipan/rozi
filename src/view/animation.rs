@@ -113,7 +113,8 @@ pub(crate) fn window_opacity_config(ctx: &Context<AppRoot>, pane: &Pane) -> Tran
         return anim::instant_transition();
     }
     // A slide is not faded: it is clipped to its tile, so it genuinely emerges. A fade on top
-    // would make the leading edge ghostly instead of solid.
+    // would make the leading edge ghostly instead of solid. Off does not fade either; its
+    // opacity target is already the settled value, so the transition is instant.
     let spec = anim::pane_animation_for_pane(animations, pane);
     if !anim::pane_opacity_animates(animations, pane) {
         return anim::instant_transition();

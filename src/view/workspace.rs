@@ -279,8 +279,12 @@ pub(crate) fn render_workspace_panes(
         // final allocation rather than re-laying it out every frame.
         let canvas_target_rect = if sliding_now || revealing_now || scales {
             base_rect
-        } else if pane.closing {
-            // Preserve the legacy bare-flag close path for un-snapshotted panes.
+        } else if pane.closing
+            && animation_spec.kind != crate::layout::anim::PaneAnimationStyle::Off
+        {
+            // Preserve the legacy bare-flag close path for un-snapshotted panes. Off has no
+            // geometry effect: a retained closing pane (the last scratch pane, held while the
+            // dropdown retracts) stays at its full rect and disappears through opacity instead.
             close_rect(floating_rect)
         } else if pane.opening
             && crate::layout::anim::geometry_animation_enabled(

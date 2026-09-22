@@ -378,13 +378,23 @@ mod tests {
 
     #[test]
     fn mouse_policy_preserves_framework_primary_capability() {
-        let mut config = Config::default();
-        config.clipboard.copy_on_select = config::CopyOnSelect::Clipboard;
-        config.clipboard.middle_click_paste = config::MiddleClickPaste::Disabled;
+        let expected = ClipboardConfig::default().enable_primary_selection;
+
+        let mut primary = Config::default();
+        primary.clipboard.copy_on_select = config::CopyOnSelect::PrimarySelection;
+        primary.clipboard.middle_click_paste = config::MiddleClickPaste::PrimarySelection;
+
+        let mut regular = Config::default();
+        regular.clipboard.copy_on_select = config::CopyOnSelect::Clipboard;
+        regular.clipboard.middle_click_paste = config::MiddleClickPaste::Disabled;
 
         assert_eq!(
-            clipboard_config(&config).enable_primary_selection,
-            ClipboardConfig::default().enable_primary_selection
+            clipboard_config(&primary).enable_primary_selection,
+            expected
+        );
+        assert_eq!(
+            clipboard_config(&regular).enable_primary_selection,
+            expected
         );
     }
 }

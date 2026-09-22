@@ -74,7 +74,7 @@ pub(super) fn tree_tab(
         // Bare arrows and h/l expand or collapse; modified arrows remain available to the sidebar
         // for tab movement and resizing.
         .keymap(TreeKeymap::ARROWS | TreeKeymap::VIM | TreeKeymap::TOGGLE)
-        .directory_label_style(super::super::fg_only(&theme.accent))
+        .directory_label_style(super::super::rozi_fg(theme))
         .file_label_style(super::super::fg_only(&theme.primary))
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty
         // styles — it never reads `theme.git_status` itself — so without this every marker and diff

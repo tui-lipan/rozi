@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::*;
 
-use crate::state::ThemePreset;
+use crate::state::{ThemePreset, ensure_rozi_color};
 
 use super::file::config_home;
 use super::schema::ThemeChoice;
@@ -104,13 +104,13 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
     };
     match choice {
         ThemeChoice::System => {
-            let theme = system_theme.cloned().unwrap_or_else(|| {
+            let theme = ensure_rozi_color(system_theme.cloned().unwrap_or_else(|| {
                 warnings.push(
                     "System theme unavailable because terminal colors could not be queried; using ANSI"
                         .to_string(),
                 );
                 ThemePreset::Ansi.theme()
-            });
+            }));
             ResolvedTheme {
                 theme,
                 watch_path: None,
@@ -123,13 +123,13 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
             warnings,
         },
         ThemeChoice::Custom { path, .. } => {
-            let theme = match load_theme_from_toml(&path, fallback.clone()) {
+            let theme = ensure_rozi_color(match load_theme_from_toml(&path, fallback.clone()) {
                 Ok(theme) => theme,
                 Err(err) => {
                     warnings.push(format!("Theme load failed for {}: {err}", path.display()));
                     fallback
                 }
-            };
+            });
             ResolvedTheme {
                 theme,
                 watch_path: Some(path),

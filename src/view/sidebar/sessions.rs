@@ -140,7 +140,7 @@ fn header_row(
     let theme = &ctx.state.theme;
     let mut row = Row::new(label.to_string())
         .group_level()
-        .title_style(super::super::fg_only(&theme.accent).bold());
+        .title_style(super::super::rozi_fg(theme).bold());
     let Some((host, status)) = host else {
         return SidebarRow::item(row, RowTarget::Inert);
     };
@@ -190,13 +190,13 @@ fn empty_row(ctx: &Context<AppRoot>, text: &str) -> SidebarRow {
 
 /// A child-level "＋ …" action row within a session group.
 fn session_action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&ctx.state.theme.accent);
+    let style = super::super::rozi_fg(&ctx.state.theme);
     SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
 }
 
 /// A group-level "＋ …" action row (connect a host).
 fn action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&ctx.state.theme.accent);
+    let style = super::super::rozi_fg(&ctx.state.theme);
     SidebarRow::item(
         Row::new(label)
             .glyph(Text::new("+").style(style))

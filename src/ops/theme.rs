@@ -4,7 +4,7 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
-use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset};
+use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset, ensure_rozi_color};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
@@ -54,7 +54,7 @@ pub(crate) fn apply_backdrop_policy(
     host_bg: Option<Color>,
     follow_terminal: bool,
 ) -> Theme {
-    let mut theme = apply_default_caret_palette(theme);
+    let mut theme = ensure_rozi_color(apply_default_caret_palette(theme));
     if follow_terminal {
         theme.surface.backdrop = Color::Backdrop;
     }
@@ -367,6 +367,10 @@ pub(crate) fn pane_frame_foreground(
 
 /// Resolve the shared `BadgeColor` vocabulary to its theme role. Workbar badges and pane alerts
 /// intentionally use this one mapping so a role means the same thing on both surfaces.
+///
+/// The `accent` role paints `border_active`. On the Rozi theme that is the chrome rose, so title
+/// and session chips match [`crate::state::RoziColor`]. Other presets lighten the active border,
+/// and chips stay on that lighter color so they still match a focused pane edge.
 pub(crate) fn badge_role_color(theme: &Theme, color: BadgeColor) -> Color {
     match color {
         BadgeColor::Accent => theme.border_active,

@@ -646,7 +646,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .item_style(fg_only(&theme.primary))
         .active_item_style(search_palette_active_item_style())
         .active_description_style(fg_only(&theme.accent))
-        .header_style(fg_only(&theme.accent).bold())
+        .header_style(rozi_fg(theme).bold())
         .description_style(fg_only(&theme.muted))
         .description_placement(DescriptionPlacement::Right)
         .primary_truncate_description_first(true)
@@ -851,8 +851,8 @@ fn search_palette_item_match_style(theme: &Theme) -> Style {
     Style::new().fg(theme.status.info).bold()
 }
 
-/// Shared modal chrome for every overlay: a configured picker border, an accent title, and the
-/// surface-element background fill so overlays read as solid panels over the workspace.
+/// Shared modal chrome for every overlay: a configured picker border, a chrome-colored title, and
+/// the surface-element background fill so overlays read as solid panels over the workspace.
 pub(crate) fn overlay_border_style(ctx: &Context<AppRoot>) -> BorderStyle {
     ctx.state.config.pane.picker_border_style.to_border_style()
 }
@@ -861,7 +861,7 @@ pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> M
     let theme = &ctx.state.theme;
     Modal::new()
         .title(title.to_string())
-        .title_style(theme.accent.bold())
+        .title_style(rozi_chrome(theme).bold())
         .width(Length::Px(width))
         .border_style(overlay_border_style(ctx))
         .frame_style(Style::new().bg(theme.surface.element))
@@ -910,6 +910,16 @@ pub(crate) fn canvas_rect_to_root(rect: FloatRect, top_chrome: u16) -> FloatRect
         y: rect.y + f32::from(top_chrome),
         ..rect
     }
+}
+
+/// Persistent Rozi chrome: headers, directory names, section titles.
+pub(crate) fn rozi_chrome(theme: &Theme) -> Style {
+    crate::state::rozi_style(theme)
+}
+
+/// [`rozi_chrome`] reduced to a foreground, for text drawn over a surface fill.
+pub(crate) fn rozi_fg(theme: &Theme) -> Style {
+    fg_only(&rozi_chrome(theme))
 }
 
 /// A theme `Style` reduced to just its foreground, so text paints over the modal fill

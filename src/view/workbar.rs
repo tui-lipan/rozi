@@ -326,8 +326,9 @@ fn segment_edge_color(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Color {
 }
 
 /// The curated default badge color for a segment when the user did not override it. `title` and
-/// `session` keep the active accent; the rest get distinct, theme-derived hues so they read as
-/// separate chips instead of one dim run.
+/// `session` use the accent role, which paints the active border. On the Rozi theme that border
+/// is the chrome rose. The rest get distinct, theme-derived hues so they read as separate chips
+/// instead of one dim run.
 fn curated_color(segment: &WorkbarSegment) -> BadgeColor {
     match segment {
         WorkbarSegment::Title | WorkbarSegment::Session => BadgeColor::Accent,

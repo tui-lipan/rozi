@@ -2,6 +2,54 @@ use tui_lipan::prelude::{BorderStyle, CapStyle};
 use tui_lipan::style::SplitterPalette;
 use tui_lipan::{Color, ScrollbarPalette, Style, SurfacePalette, Theme, ThemePalette};
 
+/// Rose used by the Rozi theme for both `accent` and persistent interface chrome.
+///
+/// `accent` is focus, active state, and highlights. [`RoziColor`] is headers, directories,
+/// section titles, and the rest of the persistent pink styling. They share this value so the
+/// split does not change what is on screen.
+pub const ROZI_ROSE: u32 = 0xFD4A80;
+
+/// Rozi's persistent interface color, stored on the active [`Theme`].
+///
+/// Framework `accent` stays the interaction color. This extension is the color of Rozi's own
+/// chrome. Built-in themes seed it from `accent`, and the Rozi theme sets it to [`ROZI_ROSE`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoziColor {
+    pub style: Style,
+}
+
+impl RoziColor {
+    /// The Rozi theme's chrome rose.
+    pub fn rose() -> Self {
+        Self {
+            style: Style::new().fg(Color::hex_u24(ROZI_ROSE)),
+        }
+    }
+}
+
+/// Attach [`RoziColor`] when a theme does not already carry one.
+///
+/// The seed is that theme's `accent`, so headers and directory labels keep the color they had
+/// when those call sites read `accent` directly.
+pub fn ensure_rozi_color(theme: Theme) -> Theme {
+    if theme.extension::<RoziColor>().is_some() {
+        return theme;
+    }
+    let style = theme.accent;
+    theme.with_extension(RoziColor { style })
+}
+
+/// Persistent Rozi chrome style: headers, directories, section titles.
+///
+/// Falls back to `accent` when a theme was built without the extension, which is the color those
+/// surfaces used before the token existed.
+pub fn rozi_style(theme: &Theme) -> Style {
+    theme
+        .extension::<RoziColor>()
+        .map(|color| color.style)
+        .unwrap_or(theme.accent)
+}
+
 /// Structural presentation of a visible pane title. `Bar` is the existing separate title row above
 /// the frame; `Border` and `Integrated` reuse the frame's top border row; `Inset` writes the title
 /// inside the frame, on the first interior row beneath the top border. Visibility is controlled
@@ -676,7 +724,7 @@ impl ThemePreset {
     }
 
     pub fn theme(self) -> Theme {
-        match self {
+        let theme = match self {
             Self::Rozi => rozi_theme(),
             Self::Lipan => Theme::lipan(),
             Self::OneDark => Theme::one_dark(),
@@ -708,14 +756,15 @@ impl ThemePreset {
             Self::MaterialPalenight => Theme::material_palenight(),
             Self::Oxocarbon => Theme::oxocarbon(),
             Self::Zenburn => Theme::zenburn(),
-        }
+        };
+        ensure_rozi_color(theme)
     }
 }
 
 fn rozi_theme() -> Theme {
     let background = Color::hex_u24(0x06070F);
     let text = Color::hex_u24(0xCCD0E6);
-    let rose = Color::hex_u24(0xFD4A80);
+    let rose = Color::hex_u24(ROZI_ROSE);
     let violet = Color::hex_u24(0x982BF2);
     let mut theme = ThemePalette::new(text, background, rose)
         .selection(violet)
@@ -753,7 +802,9 @@ fn rozi_theme() -> Theme {
         hover: violet,
         active: rose,
     };
-    theme
+    // Chrome is the same rose as `accent`. Call sites that mean headers and persistent styling
+    // read this extension; focus and active state keep reading `accent`.
+    theme.with_extension(RoziColor::rose())
 }
 
 pub struct ThemePickerPreview {
@@ -853,9 +904,27 @@ mod tests {
         assert_eq!(theme.surface.backdrop, Color::hex_u24(0x06070F));
         assert_eq!(theme.surface.panel, Color::hex_u24(0x0B0D1C));
         assert_eq!(theme.surface.element, Color::hex_u24(0x0B0D1C));
-        assert_eq!(theme.accent.fg, Some(Color::hex_u24(0xFD4A80).into()));
+        assert_eq!(theme.accent.fg, Some(Color::hex_u24(ROZI_ROSE).into()));
+        assert_eq!(
+            rozi_style(&theme).fg,
+            Some(Color::hex_u24(ROZI_ROSE).into())
+        );
+        assert_eq!(theme.border_active, Color::hex_u24(ROZI_ROSE));
         assert_eq!(theme.selection.bg, Some(Color::hex_u24(0x982BF2).into()));
         assert_eq!(theme.primary.fg, Some(Color::hex_u24(0xCCD0E6).into()));
+    }
+
+    #[test]
+    fn every_builtin_theme_seeds_chrome_from_its_accent() {
+        for preset in ThemePreset::all() {
+            let theme = preset.theme();
+            assert_eq!(
+                rozi_style(&theme).fg,
+                theme.accent.fg,
+                "{} chrome diverges from accent",
+                preset.id()
+            );
+        }
     }
 
     #[test]

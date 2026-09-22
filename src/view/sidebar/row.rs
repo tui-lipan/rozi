@@ -372,7 +372,7 @@ pub(super) fn header(ctx: &Context<AppRoot>, label: impl Into<String>, muted: bo
     let style = if muted {
         super::super::fg_only(&ctx.state.theme.muted).bold()
     } else {
-        super::super::fg_only(&ctx.state.theme.accent).bold()
+        super::super::rozi_fg(&ctx.state.theme).bold()
     };
     Text::new(format!(" {}", label.into()))
         .style(style)
@@ -398,7 +398,7 @@ pub(super) fn header_with_note(
         .padding((0, 0, 0, 1))
         .child(
             Text::new(label.into())
-                .style(super::super::fg_only(&ctx.state.theme.accent).bold())
+                .style(super::super::rozi_fg(&ctx.state.theme).bold())
                 .width(Length::Flex(1)),
         )
         .child(Text::new(note.into()).style(super::super::fg_only(&ctx.state.theme.muted).dim()))

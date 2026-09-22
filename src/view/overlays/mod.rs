@@ -23,7 +23,7 @@ pub(in crate::view::overlays) use super::widget_keys::{
 pub(in crate::view::overlays) use super::{
     ACTION_PALETTE_MAX_HEIGHT_PERCENT, action_palette_modal, action_palette_modal_with_width,
     fg_only, modal_scrollbar_config, nested_action_palette_modal, overlay_border_style,
-    search_entries_with_groups, shared_search_palette, styled_modal,
+    rozi_chrome, rozi_fg, search_entries_with_groups, shared_search_palette, styled_modal,
 };
 
 mod agents;

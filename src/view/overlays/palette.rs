@@ -553,7 +553,7 @@ pub(super) fn wrap_palette(
     let panel: Element = Frame::new()
         .header_left(title.into_owned())
         .header_right(header_right.into_owned())
-        .header_style(ctx.state.theme.accent.bold())
+        .header_style(rozi_chrome(&ctx.state.theme).bold())
         .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))
@@ -644,7 +644,7 @@ pub(super) fn tabbed_picker_panel(
 ) -> Element {
     Frame::new()
         .header_left(title)
-        .header_style(ctx.state.theme.accent.bold())
+        .header_style(rozi_chrome(&ctx.state.theme).bold())
         .border(true)
         .border_style(overlay_border_style(ctx))
         .style(Style::new().bg(ctx.state.theme.surface.element))

@@ -92,8 +92,10 @@ redirection, variable expansion - is not interpreted.
 ## Settings picker
 
 Open Settings from the command palette or with `prefix -`. Browse General, Panes, Bars,
-Alerts, Sessions, or All. Open/close animation lives under Panes; workspace animation
-and the master animation switch live under General.
+Alerts, Sessions, or All. General holds Animations (the master switch, then workspace switching,
+session switching, and pane open/close), Clipboard, and Pickers. Panes groups Background, Borders,
+and Titlebar. Alerts groups Highlights for the pane border and workspace tab effects, Marks for the
+workspace tab markers, Desktop notifications, and Sounds.
 
 Type to search every category. The category strip sits under the search field, as in
 Keybindings. Results retain their category and group headings. Browsing a category omits the inner
@@ -244,9 +246,9 @@ Each value is a theme role or `"off"`. Theme roles are `accent`, `info`, `succes
 | `tile_float` | bool | `true` | Animates tile and float transitions. |
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
-| `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as Workspace switching animation in Settings. |
+| `workspace` | bool | `true` | Slides workspace content horizontally when switching. Also available as General › Animations › Workspace switching in Settings. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds; `0` switches instantly. |
-| `session` | string or bool | `"fade"` | How the workbar and panes arrive when the foreground session changes: switching sessions, a session finishing its connect, or dropping to the launcher. `"fade"` resolves the incoming session in place from slightly dimmed, over one and a half times `geometry_ms` (330 ms by default). `"portal"` opens a portal from the centre onto it while the previous session recedes behind it, over `geometry_ms`, with the ring drawn in the theme's accents. `"off"` switches at once. `true` means `"fade"` and `false` means `"off"`. Pane geometry always snaps and the sidebar stays still. Case-insensitive; unknown values keep the fade with a warning. Also available as Session switching animation in Settings. |
+| `session` | string or bool | `"fade"` | How the workbar and panes arrive when the foreground session changes: switching sessions, a session finishing its connect, or dropping to the launcher. `"fade"` resolves the incoming session in place from slightly dimmed, over one and a half times `geometry_ms` (330 ms by default). `"portal"` opens a portal from the centre onto it while the previous session recedes behind it, over `geometry_ms`, with the ring drawn in the theme's accents. `"off"` switches at once. `true` means `"fade"` and `false` means `"off"`. Pane geometry always snaps and the sidebar stays still. Case-insensitive; unknown values keep the fade with a warning. Also available as General › Animations › Session switching in Settings. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, or `"scan"`. Builtin values are case-insensitive. `"off"` shows or hides the pane at once, with no fade and no spawn delay; neighbouring panes still reflow over `geometry_ms`. Unknown values fall back to Scale with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |

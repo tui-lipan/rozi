@@ -118,11 +118,11 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
         // Distinct modes per surface: one shared status string would pass even if both rows read
         // the same config key.
         assert!(
-            setting_row(&frame, "Pane border effect").contains("Static"),
+            setting_row(&frame, "Pane border").contains("Static"),
             "pane alert row is misbound:\n{frame}"
         );
         assert!(
-            setting_row(&frame, "Workspace tab effect").contains("Pulse"),
+            setting_row(&frame, "Workspace tab").contains("Pulse"),
             "workspace alert row is misbound:\n{frame}"
         );
     });
@@ -143,22 +143,22 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
             "the current value stays unmarked:\n{frame}"
         );
         assert!(
-            setting_row(&frame, "Open/close animation").contains("Open/close animation…"),
+            setting_row(&frame, "Pane open/close").contains("Pane open/close…"),
             "{frame}"
         );
-        let animations = setting_row(&frame, "Animations");
+        let animations = setting_row(&frame, "Play animations");
         assert!(
             animations.contains("Enabled") && !animations.contains('…'),
             "two-option rows stay unmarked:\n{animations}"
         );
-        let highlight = setting_row(&frame, "Workspace tab highlight");
+        let highlight = setting_row(&frame, "Workspace tab paint");
         assert!(
             !highlight.contains('…'),
             "a two-option cycle stays unmarked:\n{highlight}"
         );
         backend.state_mut().config.pane.border_mode = PaneBorderMode::None;
         let disabled = rendered_rows(&mut backend);
-        let effect = setting_row(&disabled, "Pane border effect");
+        let effect = setting_row(&disabled, "Pane border");
         assert!(
             effect.contains("Needs pane borders") && !effect.contains('…'),
             "disabled reasons stay unmarked:\n{effect}"
@@ -180,7 +180,7 @@ fn settings_rows_report_their_disabled_reasons() {
         let lines = capture.to_fixed_grid_lines();
         let frame = lines.join("\n");
         assert!(
-            setting_row(&frame, "Pane border effect").contains("Needs pane borders"),
+            setting_row(&frame, "Pane border").contains("Needs pane borders"),
             "{frame}"
         );
         let search = lines
@@ -192,17 +192,18 @@ fn settings_rows_report_their_disabled_reasons() {
         let divider_fg = capture.cell(rule as u16, (search + 1) as u16).fg;
         let row = lines
             .iter()
-            .position(|line| setting_label_matches(line, "Pane border effect"))
+            .position(|line| setting_label_matches(line, "Pane border"))
             .expect("disabled settings row");
-        let label = lines[row]
-            .find("Pane border effect")
-            .expect("disabled label");
+        let label = lines[row].find("Pane border").expect("disabled label");
         let reason = lines[row]
             .find("Needs pane borders")
             .expect("disabled reason");
         assert_eq!(capture.cell(label as u16, row as u16).fg, divider_fg);
         assert_eq!(capture.cell(reason as u16, row as u16).fg, divider_fg);
-        type_query(&mut backend, "pane border effect");
+        type_query(&mut backend, "pane border");
+        backend
+            .dispatch(rozi::Msg::SettingsSelect(SettingsAction::CycleAlertBorder))
+            .unwrap();
         key(&mut backend, KeyCode::Enter);
         assert!(backend.state().settings_choice.is_none());
         assert_eq!(backend.state().config.pane.alert_border, AlertMode::Pulse);
@@ -210,23 +211,20 @@ fn settings_rows_report_their_disabled_reasons() {
 }
 
 /// A narrow viewport scrolls both rows out of the unfiltered grid; search must still reach both
-/// effect controls in their shared Alerts group.
+/// effect controls in their shared Highlights group.
 #[test]
 fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
     on_large_stack(|| {
         let mut backend = settings_backend(70, 24);
         backend.state_mut().config.workbar.alert.mode = AlertMode::Off;
-        type_query(&mut backend, "effect");
+        type_query(&mut backend, "attention");
         let frame = rendered_rows(&mut backend);
-        assert!(frame.contains("Alerts"), "Alerts group missing:\n{frame}");
         assert!(
-            frame.contains("Pane border effect"),
-            "pane effect missing:\n{frame}"
+            frame.contains("Alerts › Highlights"),
+            "Highlights group missing:\n{frame}"
         );
-        assert!(
-            frame.contains("Workspace tab effect"),
-            "tab effect missing:\n{frame}"
-        );
+        setting_row(&frame, "Pane border");
+        setting_row(&frame, "Workspace tab");
     });
 }
 
@@ -239,8 +237,10 @@ fn settings_all_keeps_every_control_available() {
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
         for label in [
             "Theme",
-            "Animations",
-            "Workspace switching animation",
+            "Play animations",
+            "Workspace switching",
+            "Session switching",
+            "Pane open/close",
             "Nerd icons",
             "Which-key",
             "Copy on selection",
@@ -251,32 +251,24 @@ fn settings_all_keeps_every_control_available() {
             "Border",
             "Selection style",
             "Terminal padding",
-            "Background follows terminal",
+            "Follows terminal",
             "Background follows canvas",
             "Layout",
             "Position",
             "Background",
             "Badge style",
             "Powerline",
-            "Focused background",
-            "Focused border",
-            "Focused titlebar",
-            "Border mode",
-            "Border style",
-            "Floating border",
-            "Scratchpad border",
-            "Fullscreen border",
-            "Open/close animation",
+            "Mode",
+            "Floating",
+            "Scratchpad",
+            "Fullscreen",
             "Tab strip",
             "Bell urgency",
-            "Pane border effect",
-            "Workspace tab effect",
-            "Workspace tab highlight",
-            "Bell mark",
-            "Blocked mark",
-            "Finished mark",
-            "Working mark",
-            "Idle mark",
+            "Pane border",
+            "Workspace tab",
+            "Workspace tab paint",
+            "Working",
+            "Idle",
             "Show notifications",
             "Blocked",
             "Finished",
@@ -291,13 +283,31 @@ fn settings_all_keeps_every_control_available() {
         ] {
             setting_row(&frame, label);
         }
-        let pickers = group_rows(&frame, "Pickers", "Panes");
+        let animations = group_rows(&frame, "Animations", "Clipboard");
+        setting_row(animations, "Play animations");
+        setting_row(animations, "Pane open/close");
+        let pickers = group_rows(&frame, "Pickers", "Background");
         setting_row(pickers, "Border");
         setting_row(pickers, "Tab strip");
         setting_row(pickers, "Tab style");
         setting_row(pickers, "Selection style");
+        let background = group_rows(&frame, "Background", "Borders");
+        setting_row(background, "Follows terminal");
+        setting_row(background, "Focused");
+        setting_row(background, "Terminal padding");
+        let borders = group_rows(&frame, "Borders", "Titlebar");
+        setting_row(borders, "Mode");
+        setting_row(borders, "Style");
+        setting_row(borders, "Focused");
+        setting_row(borders, "Scratchpad");
         let titlebar = group_rows(&frame, "Titlebar", "Workbar");
+        setting_row(titlebar, "Layout");
         setting_row(titlebar, "Style");
+        setting_row(titlebar, "Focused");
+        let marks = group_rows(&frame, "Marks", "Desktop notifications");
+        for mark in ["Bell", "Blocked", "Finished", "Working", "Idle"] {
+            setting_row(marks, mark);
+        }
         let workbar = group_rows(&frame, "Workbar", "Sidebar");
         setting_row(workbar, "Position");
         setting_row(workbar, "Gap");
@@ -312,12 +322,17 @@ fn settings_all_keeps_every_control_available() {
         let body = list_body(&frame);
         for group in [
             "General",
+            "Animations",
+            "Clipboard",
             "Pickers",
-            "Panes",
+            "Background",
+            "Borders",
             "Titlebar",
             "Workbar",
             "Sidebar",
             "Alerts",
+            "Highlights",
+            "Marks",
             "Desktop notifications",
             "Sounds",
             "Sessions",
@@ -342,10 +357,12 @@ fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
             "General repeats its tab name:\n{general}"
         );
         setting_row(&general, "Theme");
-        assert!(
-            body_has_group_header(&general_body, "Pickers"),
-            "General is missing Pickers:\n{general}"
-        );
+        for group in ["Animations", "Clipboard", "Pickers"] {
+            assert!(
+                body_has_group_header(&general_body, group),
+                "General is missing {group}:\n{general}"
+            );
+        }
 
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         let panes = rendered_rows(&mut backend);
@@ -354,10 +371,12 @@ fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
             !body_has_group_header(&panes_body, "Panes"),
             "Panes repeats its tab name:\n{panes}"
         );
-        assert!(
-            body_has_group_header(&panes_body, "Titlebar"),
-            "Panes is missing Titlebar:\n{panes}"
-        );
+        for group in ["Background", "Borders", "Titlebar"] {
+            assert!(
+                body_has_group_header(&panes_body, group),
+                "Panes is missing {group}:\n{panes}"
+            );
+        }
 
         backend.state_mut().settings_navigation.tab = SettingsTab::Bars;
         let bars = rendered_rows(&mut backend);
@@ -378,14 +397,12 @@ fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
             !body_has_group_header(&alerts_body, "Alerts"),
             "Alerts repeats its tab name:\n{alerts}"
         );
-        assert!(
-            body_has_group_header(&alerts_body, "Desktop notifications"),
-            "Alerts is missing Desktop notifications:\n{alerts}"
-        );
-        assert!(
-            body_has_group_header(&alerts_body, "Sounds"),
-            "Alerts is missing Sounds:\n{alerts}"
-        );
+        for group in ["Highlights", "Marks", "Desktop notifications", "Sounds"] {
+            assert!(
+                body_has_group_header(&alerts_body, group),
+                "Alerts is missing {group}:\n{alerts}"
+            );
+        }
 
         backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
         let sessions = rendered_rows(&mut backend);
@@ -506,13 +523,44 @@ fn settings_reports_sidebar_values() {
     });
 }
 
+/// Search matches each query term against the label or a heading, so a short label under a section
+/// still answers to the phrase a user would type for it, with no alias spelling that phrase out.
+#[test]
+fn settings_search_combines_section_and_row_terms() {
+    on_large_stack(|| {
+        for (query, heading, label) in [
+            ("floating border", "Panes › Borders", "Floating"),
+            ("focused titlebar", "Panes › Titlebar", "Focused"),
+            ("active pane border", "Panes › Borders", "Focused"),
+            ("workbar gap", "Bars › Workbar", "Gap"),
+            ("idle mark", "Alerts › Marks", "Idle"),
+            ("pane animation", "General › Animations", "Pane open/close"),
+        ] {
+            let mut backend = settings_backend(100, 80);
+            type_query(&mut backend, query);
+            let frame = rendered_rows(&mut backend);
+            let start = frame
+                .find(heading)
+                .unwrap_or_else(|| panic!("`{query}` lost {heading}:\n{frame}"))
+                + heading.len();
+            let section = group_rows(&frame[start..], "", "›");
+            assert!(
+                section
+                    .lines()
+                    .any(|line| setting_label_matches(line, label)),
+                "`{query}` should reach {heading} › {label}:\n{frame}"
+            );
+        }
+    });
+}
+
 #[test]
 fn settings_filtered_duplicate_labels_keep_their_group_headers() {
     on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
         type_query(&mut backend, "blocked");
         let frame = rendered_rows(&mut backend);
-        for group in ["Alerts", "Desktop notifications", "Sounds"] {
+        for group in ["Alerts › Marks", "Desktop notifications", "Sounds"] {
             assert!(
                 frame.contains(group),
                 "filtered Blocked row lost {group} header:\n{frame}"
@@ -521,9 +569,7 @@ fn settings_filtered_duplicate_labels_keep_their_group_headers() {
         assert_eq!(
             frame
                 .lines()
-                .filter(|line| {
-                    line.contains("Blocked mark") || line.trim_start().starts_with("│ Blocked ")
-                })
+                .filter(|line| setting_label_matches(line, "Blocked"))
                 .count(),
             3,
             "expected one Blocked row in each alert channel:\n{frame}"
@@ -609,7 +655,7 @@ fn picker_tab_strip_and_selection_caps_follow_pane_config() {
             "capped selection kept trailing item padding:\n{rendered}"
         );
         assert!(
-            rendered.contains("│ Animations"),
+            rendered.contains("│ Nerd icons"),
             "unselected rows should keep their inset:\n{rendered}"
         );
     });
@@ -649,11 +695,7 @@ fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
         backend.state_mut().config.animations.workspace = true;
         type_query(&mut backend, "workspace switching");
         assert!(
-            setting_row(
-                &rendered_rows(&mut backend),
-                "Workspace switching animation"
-            )
-            .contains("Enabled")
+            setting_row(&rendered_rows(&mut backend), "Workspace switching").contains("Enabled")
         );
         backend
             .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
@@ -877,10 +919,7 @@ fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
         let mut backend = settings_backend(90, 30);
         backend.state_mut().config.animations.enabled = true;
         type_query(&mut backend, "session switching");
-        assert!(
-            setting_row(&rendered_rows(&mut backend), "Session switching animation")
-                .contains("Fade")
-        );
+        assert!(setting_row(&rendered_rows(&mut backend), "Session switching").contains("Fade"));
 
         backend
             .dispatch(rozi::Msg::SettingsActivate(CycleSessionAnimation))
@@ -986,7 +1025,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
         use rozi::state::{PaneTitlebarMode, SettingsAction};
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
-        let mut backend = settings_backend(100, 80);
+        let mut backend = settings_backend(100, 160);
         backend.state_mut().config.pane.show_titles = false;
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
         backend.state_mut().config.pane.show_workbar = false;
@@ -1091,12 +1130,12 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
 }
 
 #[test]
-fn settings_categories_cover_all_controls_and_keep_pane_motion_local() {
+fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 15, "Session switching animation"),
-            (SettingsTab::Panes, 13, "Open/close animation"),
+            (SettingsTab::General, 16, "Pane open/close"),
+            (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 19, "Bell urgency"),
             (SettingsTab::Sessions, 4, "Startup mode"),

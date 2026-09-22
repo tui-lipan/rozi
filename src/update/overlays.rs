@@ -358,6 +358,9 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleWorkbarTabStyle
         | CyclePaneAnimation
         | CycleWhichKey
+        | CycleCopyOnSelect
+        | CycleMiddleClickPaste
+        | CycleRightClickClipboard
         | CycleBorderMode
         | CycleBorderStyle
         | CycleFloatBorderStyle
@@ -414,6 +417,15 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         }
         ToggleNerdIcons => {
             execute_action(ctx, Action::ToggleNerdIcons);
+        }
+        ToggleOsc52 => {
+            ctx.state.config.clipboard.enable_osc52 = !ctx.state.config.clipboard.enable_osc52;
+            ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
+            persisted = Some((
+                "clipboard",
+                "enable_osc52",
+                ctx.state.config.clipboard.enable_osc52,
+            ));
         }
         ToggleFocusOnHover => {
             execute_action(ctx, Action::ToggleFocusOnHover);
@@ -550,6 +562,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             "sounds" => crate::config::persist_sound_flag(key, value),
             "session" => crate::config::persist_session_flag(key, value),
             "input" => crate::config::persist_input_flag(key, value),
+            "clipboard" => crate::config::persist_clipboard_flag(key, value),
             _ => crate::config::persist_workbar_alert_flag(key, value),
         };
         if let Err(err) = result {
@@ -618,8 +631,19 @@ fn cycle_settings_choice(
 }
 
 fn discard_settings_choice(ctx: &mut Context<AppRoot>) {
+    let clipboard_changed = ctx.state.settings_choice.as_ref().is_some_and(|editor| {
+        matches!(
+            editor.action,
+            crate::state::SettingsAction::CycleCopyOnSelect
+                | crate::state::SettingsAction::CycleMiddleClickPaste
+                | crate::state::SettingsAction::CycleRightClickClipboard
+        )
+    });
     if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
         ctx.set_command_chord_reveal_delay(delay);
+    }
+    if clipboard_changed {
+        ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
     }
 }
 
@@ -634,6 +658,14 @@ fn apply_settings_choice(
     }
     if matches!(action, crate::state::SettingsAction::CycleWhichKey) {
         ctx.set_command_chord_reveal_delay(ctx.state.config.input.which_key.reveal_delay());
+    }
+    if matches!(
+        action,
+        crate::state::SettingsAction::CycleCopyOnSelect
+            | crate::state::SettingsAction::CycleMiddleClickPaste
+            | crate::state::SettingsAction::CycleRightClickClipboard
+    ) {
+        ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
     }
     if persist {
         persist_applied_settings_choice(ctx, action);
@@ -650,6 +682,30 @@ fn persist_applied_settings_choice(
             if let Err(err) = crate::config::persist_input_string(
                 "which_key",
                 ctx.state.config.input.which_key.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleCopyOnSelect => {
+            if let Err(err) = crate::config::persist_clipboard_string(
+                "copy_on_select",
+                ctx.state.config.clipboard.copy_on_select.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleMiddleClickPaste => {
+            if let Err(err) = crate::config::persist_clipboard_string(
+                "middle_click_paste",
+                ctx.state.config.clipboard.middle_click_paste.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleRightClickClipboard => {
+            if let Err(err) = crate::config::persist_clipboard_string(
+                "right_click",
+                ctx.state.config.clipboard.right_click.id(),
             ) {
                 preference_error(ctx, err);
             }

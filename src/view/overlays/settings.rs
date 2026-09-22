@@ -46,6 +46,41 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             ],
         ),
         settings_group(
+            "Clipboard",
+            vec![
+                (
+                    "Copy on selection",
+                    ctx.state
+                        .config
+                        .clipboard
+                        .copy_on_select
+                        .label()
+                        .to_string(),
+                    CycleCopyOnSelect,
+                ),
+                (
+                    "Middle-click paste",
+                    ctx.state
+                        .config
+                        .clipboard
+                        .middle_click_paste
+                        .label()
+                        .to_string(),
+                    CycleMiddleClickPaste,
+                ),
+                (
+                    "Right-click action",
+                    ctx.state.config.clipboard.right_click.label().to_string(),
+                    CycleRightClickClipboard,
+                ),
+                (
+                    "OSC 52",
+                    enabled_status(ctx.state.config.clipboard.enable_osc52),
+                    ToggleOsc52,
+                ),
+            ],
+        ),
+        settings_group(
             "Pickers",
             vec![
                 (
@@ -376,7 +411,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
 fn setting_category(group: &str) -> crate::state::SettingsTab {
     use crate::state::SettingsTab;
     match group {
-        "General" | "Pickers" => SettingsTab::General,
+        "General" | "Clipboard" | "Pickers" => SettingsTab::General,
         "Panes" | "Titlebar" => SettingsTab::Panes,
         "Workbar" | "Sidebar" => SettingsTab::Bars,
         "Alerts" | "Desktop notifications" | "Sounds" => SettingsTab::Alerts,

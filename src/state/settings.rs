@@ -1,6 +1,9 @@
 use tui_lipan::prelude::{CapStyle, TextInput};
 
-use crate::config::{Config, ForegroundRestore, SessionStartup, WhichKey};
+use crate::config::{
+    Config, CopyOnSelect, ForegroundRestore, MiddleClickPaste, RightClickClipboardAction,
+    SessionStartup, WhichKey,
+};
 use crate::layout::anim::PaneAnimationStyle;
 
 use super::{
@@ -95,6 +98,10 @@ pub enum SettingsAction {
     ToggleWorkspaceAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
+    CycleCopyOnSelect,
+    CycleMiddleClickPaste,
+    CycleRightClickClipboard,
+    ToggleOsc52,
     ToggleFocusOnHover,
     ToggleBackgroundFollowsTerminal,
     ToggleTitles,
@@ -164,6 +171,10 @@ impl SettingsAction {
             Self::ToggleWorkspaceAnimation,
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
+            Self::CycleCopyOnSelect,
+            Self::CycleMiddleClickPaste,
+            Self::CycleRightClickClipboard,
+            Self::ToggleOsc52,
             Self::ToggleFocusOnHover,
             Self::ToggleBackgroundFollowsTerminal,
             Self::CyclePickerBorderStyle,
@@ -238,6 +249,24 @@ impl SettingsAction {
                 WhichKey::all(),
                 config.input.which_key,
                 WhichKey::label,
+            )),
+            Self::CycleCopyOnSelect => Some(choice_ring(
+                "Copy on selection",
+                CopyOnSelect::all(),
+                config.clipboard.copy_on_select,
+                CopyOnSelect::label,
+            )),
+            Self::CycleMiddleClickPaste => Some(choice_ring(
+                "Middle-click paste",
+                MiddleClickPaste::all(),
+                config.clipboard.middle_click_paste,
+                MiddleClickPaste::label,
+            )),
+            Self::CycleRightClickClipboard => Some(choice_ring(
+                "Right-click action",
+                RightClickClipboardAction::all(),
+                config.clipboard.right_click,
+                RightClickClipboardAction::label,
             )),
             Self::CyclePickerBorderStyle => Some(choice_ring(
                 "Picker border",
@@ -374,6 +403,21 @@ impl SettingsAction {
             Self::CycleWhichKey => {
                 assign_choice(WhichKey::all(), index, &mut config.input.which_key)
             }
+            Self::CycleCopyOnSelect => assign_choice(
+                CopyOnSelect::all(),
+                index,
+                &mut config.clipboard.copy_on_select,
+            ),
+            Self::CycleMiddleClickPaste => assign_choice(
+                MiddleClickPaste::all(),
+                index,
+                &mut config.clipboard.middle_click_paste,
+            ),
+            Self::CycleRightClickClipboard => assign_choice(
+                RightClickClipboardAction::all(),
+                index,
+                &mut config.clipboard.right_click,
+            ),
             Self::CyclePickerBorderStyle => assign_choice(
                 PaneBorderStyle::all(),
                 index,
@@ -655,6 +699,9 @@ mod tests {
     fn multi_value_rows_advertise_a_choice_picker() {
         let config = Config::default();
         assert!(SettingsAction::CycleWhichKey.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CycleCopyOnSelect.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CycleMiddleClickPaste.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CycleRightClickClipboard.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CyclePaneAnimation.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleStartupMode.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::ToggleAnimations.shows_choice_ellipsis(&config));

@@ -181,6 +181,44 @@ pub(crate) fn overlay_interceptor(ctx: &Context<AppRoot>, actions: &[OverlayActi
     })
 }
 
+/// Pages of an [`OverlayPalette`], drawn as the shared picker tab strip above the query.
+///
+/// The query sits inside the tab rather than above it because each page keeps its own filter:
+/// the palette remounts per page, seeded with that page's query and highlight.
+pub(crate) struct OverlayTabs {
+    labels: Vec<String>,
+    active: usize,
+    select: fn(usize) -> Msg,
+}
+
+impl OverlayTabs {
+    pub(crate) fn new(labels: Vec<String>, active: usize, select: fn(usize) -> Msg) -> Self {
+        Self {
+            labels,
+            active,
+            select,
+        }
+    }
+
+    /// Tab and Shift+Tab step through the pages, wrapping, as they do on every tabbed picker.
+    fn interceptor(&self, ctx: &Context<AppRoot>) -> KeyHandler {
+        let count = self.labels.len();
+        let active = self.active;
+        let select = self.select;
+        ctx.link().key_handler(move |key| {
+            let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
+            if count < 2 || !plain {
+                return None;
+            }
+            match key.code {
+                KeyCode::Tab if !key.mods.shift => Some(select((active + 1) % count)),
+                KeyCode::BackTab | KeyCode::Tab => Some(select((active + count - 1) % count)),
+                _ => None,
+            }
+        })
+    }
+}
+
 pub(crate) struct OverlayPalette<'a, T> {
     title: Cow<'a, str>,
     header_right: Option<Cow<'a, str>>,
@@ -201,6 +239,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     render_item: Option<OverlayItemRenderer<T>>,
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
+    tabs: Option<OverlayTabs>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -230,7 +269,15 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item: None,
             item_gutter: None,
             fallback_interceptor: None,
+            tabs: None,
         }
+    }
+
+    /// Show `tabs` above the query. `entries`, `selected`, and `initial_query` then describe the
+    /// active page only.
+    pub(crate) fn tabs(mut self, tabs: OverlayTabs) -> Self {
+        self.tabs = Some(tabs);
+        self
     }
 
     pub(crate) fn placeholder(mut self, placeholder: impl Into<Cow<'a, str>>) -> Self {
@@ -329,6 +376,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             render_item,
             item_gutter,
             fallback_interceptor,
+            tabs,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -376,15 +424,35 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             cap_left.is_empty(),
         );
 
-        let action_interceptor = overlay_interceptor(ctx, &actions);
-        let interceptor = if let Some(fallback) = fallback_interceptor {
-            KeyHandler::new(move |key| action_interceptor.handle(key) || fallback.handle(key))
+        // Caller actions come first, so a producer may claim Tab for itself.
+        let mut interceptors = vec![overlay_interceptor(ctx, &actions)];
+        interceptors.extend(tabs.as_ref().map(|tabs| tabs.interceptor(ctx)));
+        interceptors.extend(fallback_interceptor);
+        let interceptor = if interceptors.len() == 1 {
+            interceptors.remove(0)
         } else {
-            action_interceptor
+            KeyHandler::new(move |key| interceptors.iter().any(|handler| handler.handle(key)))
         };
         palette = palette.input_key_interceptor(interceptor);
 
-        let mut body = VStack::new().height(Length::Auto).child(palette);
+        let mut body = VStack::new().height(Length::Auto);
+        if let Some(tabs) = tabs {
+            let select = tabs.select;
+            let labels = tabs.labels.iter().map(String::as_str).collect::<Vec<_>>();
+            body = body.child(picker_tabs(
+                ctx,
+                &labels,
+                tabs.active,
+                ctx.link()
+                    .callback(move |event: TabsEvent| select(event.index)),
+            ));
+            // Keyed per page: the query field and highlight are seeded only on mount, and each
+            // page brings its own.
+            let palette: Element = palette.into();
+            body = body.child(palette.key(format!("{key}-page-{}", tabs.active)));
+        } else {
+            body = body.child(palette);
+        }
         if actions.iter().any(OverlayAction::shows_hint) {
             body = body.child(overlay_hints(&ctx.state.theme, &actions));
         }

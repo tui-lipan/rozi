@@ -718,6 +718,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             empty: None,
                             width: None,
                             actions: Vec::new(),
+                            tabs: Vec::new(),
+                            tab: None,
                         },
                     )?,
                     title,

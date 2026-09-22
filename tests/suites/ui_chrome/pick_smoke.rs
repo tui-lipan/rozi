@@ -22,6 +22,8 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>
             placeholder: Some("Search branches…".into()),
             empty: None,
             extension: None,
+            tabs: Vec::new(),
+            tab: None,
             sender: tx,
             ack: ack_tx,
         })
@@ -30,6 +32,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>
     backend
         .dispatch(rozi::Msg::PickRowsReported {
             id: 1,
+            tab: None,
             rows: vec![
                 PickRow {
                     id: Some("main".into()),
@@ -175,6 +178,8 @@ fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
                 placeholder: Some("Filter…".into()),
                 empty: Some("No snippets yet".into()),
                 extension: None,
+                tabs: Vec::new(),
+                tab: None,
                 sender: tx,
                 ack: ack_tx,
             })
@@ -238,6 +243,8 @@ fn a_masked_prompt_hides_its_seed_value() {
                 placeholder: None,
                 empty: None,
                 extension: None,
+                tabs: Vec::new(),
+                tab: None,
                 sender: tx,
                 ack: ack_tx,
             })
@@ -278,6 +285,8 @@ fn a_long_description_never_costs_a_row_its_label() {
                 placeholder: Some("Filter tasks…".into()),
                 empty: None,
                 extension: None,
+                tabs: Vec::new(),
+                tab: None,
                 sender: tx,
                 ack: ack_tx,
             })
@@ -285,6 +294,7 @@ fn a_long_description_never_costs_a_row_its_label() {
         backend
             .dispatch(rozi::Msg::PickRowsReported {
                 id: 1,
+                tab: None,
                 rows: vec![PickRow {
                     id: Some("npm:build:wasm".into()),
                     label: "build:wasm".into(),
@@ -341,6 +351,114 @@ fn a_picker_takes_the_keyboard_from_app_chords() {
         assert!(
             backend.state().commands_gate,
             "closing it hands the chords back without anyone announcing it"
+        );
+    });
+}
+
+fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, mpsc::Receiver<String>) {
+    rozi::test_support::isolate_user_dirs();
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect { x: 0, y: 0, w, h });
+
+    let (tx, rx) = mpsc::sync_channel(8);
+    let (ack_tx, _ack_rx) = mpsc::channel();
+    backend
+        .dispatch(rozi::Msg::PickStreamOpen {
+            id: 1,
+            title: Some("Git".into()),
+            placeholder: None,
+            empty: None,
+            width: None,
+            actions: Vec::new(),
+            tabs: ["Branches", "Worktrees"]
+                .map(|label| rozi::state::PickTab {
+                    id: label.to_lowercase(),
+                    label: Some(label.into()),
+                })
+                .to_vec(),
+            tab: None,
+            extension: None,
+            sender: tx,
+            ack: ack_tx,
+        })
+        .expect("dispatch open");
+    for (tab, labels) in [
+        ("branches", ["main", "feat/tabs"]),
+        ("worktrees", ["rozi-review", "rozi-docs"]),
+    ] {
+        backend
+            .dispatch(rozi::Msg::PickRowsReported {
+                id: 1,
+                tab: Some(tab.into()),
+                rows: labels
+                    .map(|label| PickRow {
+                        id: Some(label.into()),
+                        label: label.into(),
+                        description: None,
+                        group: None,
+                        disabled: None,
+                        active: false,
+                        priority: None,
+                    })
+                    .to_vec(),
+            })
+            .expect("dispatch rows");
+    }
+    (backend, rx)
+}
+
+fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
+    backend.render();
+    backend
+        .send_key(KeyEvent {
+            code,
+            mods: KeyMods::NONE,
+        })
+        .expect("send key");
+}
+
+/// Tabs are the same picker with a strip on top: Tab moves between pages, each page shows only
+/// its own rows, and the filter typed on one page is waiting there on the way back.
+#[test]
+fn a_tabbed_picker_switches_pages_and_keeps_each_filter() {
+    on_large_stack(|| {
+        let (mut backend, rx) = tabbed_pick_backend(100, 30);
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("Branches"), "strip rendered:\n{frame}");
+        assert!(frame.contains("Worktrees"), "strip rendered:\n{frame}");
+        assert!(frame.contains("feat/tabs"), "first page shown:\n{frame}");
+        assert!(
+            !frame.contains("rozi-review"),
+            "second page hidden:\n{frame}"
+        );
+
+        type_query(&mut backend, "feat");
+        let frame = rendered_lines(&mut backend);
+        assert!(!frame.contains("main"), "filter applied:\n{frame}");
+
+        press(&mut backend, KeyCode::Tab);
+        let frame = rendered_lines(&mut backend);
+        assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"worktrees"}"#);
+        assert!(frame.contains("rozi-review"), "second page shown:\n{frame}");
+        assert!(
+            frame.contains("rozi-docs"),
+            "its own empty filter:\n{frame}"
+        );
+        assert!(!frame.contains("feat/tabs"), "first page hidden:\n{frame}");
+
+        press(&mut backend, KeyCode::BackTab);
+        let frame = rendered_lines(&mut backend);
+        assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"branches"}"#);
+        assert!(frame.contains("feat/tabs"), "first page back:\n{frame}");
+        assert!(
+            !frame.contains("main"),
+            "the first page's filter came back with it:\n{frame}"
+        );
+
+        press(&mut backend, KeyCode::Enter);
+        assert_eq!(
+            rx.try_recv().unwrap().trim(),
+            r#"{"selected":"feat/tabs","tab":"branches"}"#
         );
     });
 }

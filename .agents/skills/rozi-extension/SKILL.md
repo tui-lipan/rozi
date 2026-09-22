@@ -232,6 +232,12 @@ Read `{"selected":"main"}`, `{"action":"new","input":"feat/x","selected":"main"}
 `{"cancelled":true}` from stdout. An action stays open unless it declares `"close":true`; send a new
 `{"rows":[…]}` line after mutation to refresh in place.
 
+For related lists, declare `"tabs":[{"id":"branches","label":"Branches"},{"id":"tags"}]` and send
+each tab's rows as `{"tab":"tags","rows":[…]}`. Opening `rows` fill the tab named by `"tab"`, or the
+first. Each tab keeps its own filter. Replies from a tabbed picker carry `"tab"`, and a bare
+`{"tab":"tags"}` reports a switch, so load expensive tabs lazily on their first switch. Row IDs only
+need to be unique within a tab. Actions are shared by every tab; read `tab` to act on the right one.
+
 ### Publish
 
 Keep `rozi publish` open, write replacement activity snapshots, and read activations:

@@ -154,16 +154,31 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         }
     };
     // In `--json` mode the first stdin line *is* the picker request, which is the only way to
-    // declare `width` and `actions` - they have no flag spelling, and a mini-language inside one
-    // would be worse than the object the caller is already writing. Its `rows`, if present, become
-    // the initial set. Plain mode is a dumb list and needs none of it.
+    // declare `width`, `actions`, and `tabs` - they have no flag spelling, and a mini-language
+    // inside one would be worse than the object the caller is already writing. Its `rows`, if
+    // present, become the initial set of the tab the picker opens on. Plain mode is a dumb list
+    // and needs none of it.
+    //
+    // One reader serves the whole session: a buffer dropped after the opening line would take any
+    // snapshot the producer wrote straight after it along with it.
+    let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut opening_rows = None;
-    let (title, placeholder, empty, width, actions) = if command.json {
-        let first_line = read_socket_line(&mut BufReader::new(std::io::stdin().lock()))?;
+    let (title, placeholder, empty, width, actions, tabs, tab) = if command.json {
+        let first_line = read_socket_line(&mut stdin)?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
+        let tabs: Vec<crate::state::PickTab> = spec
+            .get("tabs")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let tab = spec.get("tab").and_then(|v| v.as_str()).map(str::to_string);
         if spec.get("rows").is_some() {
-            opening_rows = Some(serde_json::json!({ "rows": spec["rows"].clone() }));
+            let mut rows = serde_json::json!({ "rows": spec["rows"].clone() });
+            if let Some(opening) = opening_tab(&tabs, tab.as_deref()) {
+                rows["tab"] = serde_json::Value::String(opening.to_string());
+            }
+            opening_rows = Some(rows);
         }
         (
             spec.get("title")
@@ -183,9 +198,19 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 .cloned()
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_default(),
+            tabs,
+            tab,
         )
     } else {
-        (command.title, command.placeholder, None, None, Vec::new())
+        (
+            command.title,
+            command.placeholder,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+        )
     };
 
     let request = control_request(control::ControlCommand::Pick {
@@ -194,6 +219,8 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         empty,
         width,
         actions,
+        tabs,
+        tab,
     });
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
@@ -218,7 +245,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 continue;
             };
             match classify_pick_stream_event(&value) {
-                PickStreamEvent::Action => {
+                PickStreamEvent::Action | PickStreamEvent::Tab => {
                     if json {
                         println!("{line}");
                         let _ = std::io::stdout().flush();
@@ -247,7 +274,6 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         if let Some(rows) = opening_rows {
             let _ = writeln!(stream, "{rows}");
         }
-        let mut stdin = BufReader::new(std::io::stdin().lock());
         while let Ok(Some(line)) = crate::control::read_control_line(&mut stdin) {
             if writeln!(stream, "{line}").is_err() {
                 break;
@@ -258,7 +284,6 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         // stdin closes immediately, and one send beats a redraw per line on a long pipeline. A
         // caller that wants to grow the list while the palette is open uses `--json` and controls
         // its own batching.
-        let mut stdin = BufReader::new(std::io::stdin().lock());
         let mut rows = Vec::new();
         while let Ok(Some(line)) = crate::control::read_control_line(&mut stdin) {
             if line.trim().is_empty() {
@@ -276,9 +301,24 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     Ok(())
 }
 
+/// The tab the picker opens on, mirroring the UI: the requested one when it names a usable tab,
+/// otherwise the first usable one.
+fn opening_tab<'a>(tabs: &'a [crate::state::PickTab], requested: Option<&str>) -> Option<&'a str> {
+    let mut usable = tabs
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .filter(|id| !id.is_empty());
+    let first = usable.clone().next();
+    requested
+        .and_then(|requested| usable.find(|id| *id == requested))
+        .or(first)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickStreamEvent<'a> {
     Action,
+    /// The user switched tabs; the producer may fill the new one lazily.
+    Tab,
     Selected(&'a str),
     Cancelled,
     Ignore,
@@ -291,6 +331,8 @@ fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> 
         .is_some()
     {
         PickStreamEvent::Action
+    } else if value.get("selected").is_none() && value.get("tab").is_some() {
+        PickStreamEvent::Tab
     } else if let Some(selected) = value.get("selected").and_then(serde_json::Value::as_str) {
         PickStreamEvent::Selected(selected)
     } else if value.get("cancelled").is_some() {
@@ -458,5 +500,49 @@ mod tests {
             classify_pick_stream_event(&serde_json::json!({ "selected": "feature" })),
             PickStreamEvent::Selected("feature")
         );
+    }
+
+    #[test]
+    fn a_tab_switch_is_non_terminal_and_a_tabbed_selection_still_ends_the_picker() {
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({ "tab": "tags" })),
+            PickStreamEvent::Tab
+        );
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({ "selected": "v1", "tab": "tags" })),
+            PickStreamEvent::Selected("v1")
+        );
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({
+                "action": "delete",
+                "selected": "v1",
+                "tab": "tags"
+            })),
+            PickStreamEvent::Action
+        );
+    }
+
+    /// Opening rows go to the tab the UI will actually show, which is the requested one only when
+    /// it was declared.
+    #[test]
+    fn opening_rows_fill_the_tab_the_picker_opens_on() {
+        let tabs = [
+            crate::state::PickTab {
+                id: String::new(),
+                label: None,
+            },
+            crate::state::PickTab {
+                id: "branches".into(),
+                label: None,
+            },
+            crate::state::PickTab {
+                id: "tags".into(),
+                label: None,
+            },
+        ];
+        assert_eq!(opening_tab(&tabs, Some("tags")), Some("tags"));
+        assert_eq!(opening_tab(&tabs, Some("missing")), Some("branches"));
+        assert_eq!(opening_tab(&tabs, None), Some("branches"));
+        assert_eq!(opening_tab(&[], Some("tags")), None);
     }
 }

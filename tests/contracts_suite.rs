@@ -11,3 +11,5 @@ mod no_sleeping_pool_tasks;
 // The bootstrap scripts' own contracts. Unix drives `install.sh`; Windows drives `install.ps1`.
 #[path = "suites/contracts/install_script.rs"]
 mod install_script;
+#[path = "suites/contracts/pick_stream.rs"]
+mod pick_stream;

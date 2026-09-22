@@ -924,6 +924,18 @@ pub struct PickRow {
     pub priority: Option<i32>,
 }
 
+/// One tab a `pick` caller declares up front. Rows arrive per tab afterwards.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PickTab {
+    /// Names the tab in row snapshots, and rides back as `tab` on selections, actions, and tab
+    /// switches. Row ids only need to be unique within their tab.
+    pub id: String,
+    /// Strip text. Defaults to `id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// One extra key the caller offers alongside select and cancel.
 ///
 /// Actions are what turn a picker from a menu into a working surface: delete the branch under the
@@ -1152,19 +1164,54 @@ pub struct PickState {
     pub width: u16,
     pub actions: Vec<PickAction>,
     pub prompt: Option<PickPrompt>,
-    /// The live filter text, mirrored out of the palette so a rebuild can restore it.
-    pub query: String,
-    /// What the rebuilt palette is seeded with. Updated only when the picker is about to unmount,
-    /// so it stays stable while typing - feeding the live mirror back as `initial_query` would
-    /// change that prop on every keystroke and risk re-seeding the field mid-edit.
-    pub restore_query: String,
     /// The `confirm` action awaiting its second press, with the row it was armed on. Held by row
     /// id rather than position: the caller can push a new list under an armed row, and a
     /// confirmation landing on whoever slid into that slot is the mistake arming exists to stop.
+    /// Always about the active page; switching tabs disarms it.
     pub pending_action: Option<(usize, String)>,
+    /// One page per declared tab, or a single untitled page when the caller declared none. Never
+    /// empty, so an untabbed picker is just the one-page case rather than a separate mode.
+    pub pages: Vec<PickPage>,
+    /// Index into `pages`.
+    pub active: usize,
+    pub reply: std::sync::mpsc::SyncSender<String>,
+}
+
+/// One tab of a picker: its own rows, filter, and highlight.
+///
+/// The filter is per page on purpose. Tabs are related views rather than one list sorted into
+/// buckets, so text typed into Branches is still there after a look at Worktrees.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PickPage {
+    /// The caller's tab id, echoed back on selections and actions. `None` only for the implicit
+    /// page of a picker that declared no tabs.
+    pub tab: Option<String>,
+    pub label: String,
     pub rows: Vec<PickRow>,
     pub selected: usize,
-    pub reply: std::sync::mpsc::SyncSender<String>,
+    /// The live filter text, mirrored out of the palette so a rebuild can restore it.
+    pub query: String,
+    /// What the rebuilt palette is seeded with. Updated only when the page is about to be
+    /// remounted (a prompt covering it, or a tab switch back to it), so it stays stable while
+    /// typing - feeding the live mirror back as `initial_query` would change that prop on every
+    /// keystroke and risk re-seeding the field mid-edit.
+    pub restore_query: String,
+}
+
+impl PickState {
+    pub fn page(&self) -> &PickPage {
+        &self.pages[self.active]
+    }
+
+    pub fn page_mut(&mut self) -> &mut PickPage {
+        &mut self.pages[self.active]
+    }
+
+    /// Whether the caller declared tabs, which is what shows the strip. A single declared tab
+    /// still gets one, so a producer that adds pages later does not change the picker's shape.
+    pub fn tabbed(&self) -> bool {
+        self.pages.first().is_some_and(|page| page.tab.is_some())
+    }
 }
 
 #[cfg(test)]

@@ -208,7 +208,7 @@ fn empty_text(state: &crate::state::ExtensionsState, searching: bool) -> &'stati
 }
 
 fn section_item(title: &str, theme: &Theme) -> ListItem {
-    ListItem::header(title).style(fg_only(&theme.accent).bold())
+    ListItem::header(title).style(rozi_fg(theme).bold())
 }
 
 fn installed_row(
@@ -687,7 +687,7 @@ impl ExtensionReportFormatter {
     fn new(sections: Vec<crate::config::ReportSection>, theme: &Theme) -> Self {
         Self {
             sections,
-            heading: fg_only(&theme.accent).bold(),
+            heading: rozi_fg(theme).bold(),
             label: fg_only(&theme.primary).bold(),
             value: fg_only(&theme.primary),
             muted: fg_only(&theme.muted),

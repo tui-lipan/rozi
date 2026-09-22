@@ -4,7 +4,7 @@ use std::time::Duration;
 use notify::Watcher;
 use tui_lipan::prelude::*;
 
-use crate::state::{PaneIdentity, ThemePreset};
+use crate::state::PaneIdentity;
 use crate::{AppRoot, Msg};
 
 /// Watches the config file's directory and requests a live reload when `config.toml` changes
@@ -124,7 +124,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     ctx.state.theme_watcher = None;
     let mut start_theme_tick = false;
     if let Some(path) = &resolved.watch_path {
-        match ThemeWatcher::new(path.clone(), ThemePreset::Lipan.theme()) {
+        match ThemeWatcher::new(path.clone(), crate::config::custom_theme_base()) {
             Ok(watcher) => {
                 ctx.state.theme_watcher = Some(watcher);
                 start_theme_tick = !had_theme_watcher;

@@ -3,7 +3,7 @@ use tui_lipan::prelude::{Context, Element, Span, Style, Text, Theme};
 use crate::AppRoot;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 use crate::state::{Attachment, is_ephemeral_session_name};
-use crate::view::fg_only;
+use crate::view::{fg_only, rozi_fg};
 
 /// Build the one-shot view rendered after the client leaves the event loop.
 pub(crate) fn exit_view(_component: &AppRoot, ctx: &Context<AppRoot>) -> Element {
@@ -20,7 +20,7 @@ fn exit_text(summary: ExitSummaryParts, theme: Option<&Theme>) -> Text {
     let Some(theme) = theme else {
         return Text::new(summary.text());
     };
-    let heading = fg_only(&theme.accent).bold();
+    let heading = rozi_fg(theme).bold();
     let muted = fg_only(&theme.muted);
     let command = Style::new().bold();
     Text::from_spans([
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_text_uses_the_active_themes_muted_and_accent_with_a_default_foreground_command() {
+    fn exit_text_uses_the_active_themes_muted_and_chrome_with_a_default_foreground_command() {
         let attachment = attachment(Some("dev"));
         let plain = exit_text(exit_summary_parts(&attachment).unwrap(), None);
         assert_eq!(plain.spans.len(), 1);
@@ -222,7 +222,11 @@ mod tests {
             );
             assert_eq!(styled.spans[0].style.fg, theme.muted.fg);
             assert_eq!(styled.spans[1].style.fg, theme.muted.fg);
-            assert_eq!(styled.spans[3].style.fg, theme.accent.fg);
+            assert_eq!(
+                styled.spans[3].style.fg,
+                crate::state::rozi_style(&theme).fg
+            );
+            assert_eq!(crate::state::rozi_style(&theme).fg, theme.accent.fg);
             assert_eq!(styled.spans[4].style.fg, None);
         }
         assert_ne!(

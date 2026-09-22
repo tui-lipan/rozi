@@ -140,7 +140,7 @@ fn header_row(
     let theme = &ctx.state.theme;
     let mut row = Row::new(label.to_string())
         .group_level()
-        .title_style(super::super::fg_only(&theme.accent).bold());
+        .title_style(super::super::rozi_fg(theme).bold());
     let Some((host, status)) = host else {
         return SidebarRow::item(row, RowTarget::Inert);
     };

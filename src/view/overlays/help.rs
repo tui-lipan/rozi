@@ -1316,7 +1316,7 @@ fn help_category_priority(category: &str) -> usize {
 }
 
 fn help_section_item(title: &str, theme: &Theme) -> ListItem {
-    ListItem::from_spans([Span::new(title.to_uppercase()).style(fg_only(&theme.accent).bold())])
+    ListItem::from_spans([Span::new(title.to_uppercase()).style(rozi_fg(theme).bold())])
         .role(ListItemRole::Header)
         .rule(fg_only(&theme.muted))
 }

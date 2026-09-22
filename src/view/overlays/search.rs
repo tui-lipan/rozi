@@ -15,7 +15,7 @@ pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
 
     let panel: Element = Frame::new()
         .header_left(title)
-        .header_style(ctx.state.theme.accent.bold())
+        .header_style(rozi_chrome(&ctx.state.theme).bold())
         .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))

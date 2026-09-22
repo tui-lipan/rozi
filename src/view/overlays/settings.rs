@@ -514,7 +514,7 @@ pub(crate) fn settings_query_selection(ctx: &Context<AppRoot>) -> Option<Setting
 }
 
 fn settings_section_item(title: &str, theme: &Theme) -> ListItem {
-    ListItem::header(title).style(fg_only(&theme.accent).bold())
+    ListItem::header(title).style(rozi_fg(theme).bold())
 }
 
 fn settings_list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {

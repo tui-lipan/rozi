@@ -112,6 +112,10 @@ A custom theme is a partial overlay. Omitted fields keep their value from `exten
 The style tables are `primary`, `accent`, `selection`, `text_selection`, `focus`, `hover`, `border`,
 and `muted`.
 
+`primary` is ordinary text. `accent` is focus, active state, and highlights. Headers, directory
+names, and section titles use Rozi's chrome color. Built-in themes, custom themes, and the system
+theme set that chrome color from `accent`, so those surfaces keep the accent color.
+
 Other top-level fields are:
 
 | Field | Shape |
@@ -193,8 +197,8 @@ lighter than the interface accent.
 
 Outside Rozi, the terminal has its own theme, so these commands use the Rozi palette. The
 message Rozi prints when you detach from a session is part of Rozi's own interface, so it uses your
-active theme's accent and muted colors. `NO_COLOR` and the other color switches turn styling off in
-every case.
+active theme's chrome and muted colors. That chrome color matches `accent`. `NO_COLOR` and the
+other color switches turn styling off in every case.
 
 See [Terminal features](terminal.md) for clipboard, title, image, and scrollback behavior that is
 independent of the selected theme.

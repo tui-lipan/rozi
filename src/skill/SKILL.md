@@ -100,6 +100,11 @@ tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` throu
 Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`, and
 `metrics` support it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
 
+When colors or layout matter, look at the screen instead of its text:
+`capture-pane --target <PANE_ID> --render png --output pane.png` saves an image of the visible
+screen in the pane's theme colors, and `--render ansi` keeps the colors as SGR-styled text. Both
+cover the visible screen only, not scrollback.
+
 Re-read pane ids before acting after a delay or any layout or session change.
 
 ## Target rules

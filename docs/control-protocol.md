@@ -100,7 +100,7 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | `layout-set`, `pane-set`, `pane-move`, `pane-swap` | `{ "changed": bool, "revision": number or null, "committed": bool, "workspace": object }`; see [Changing the layout](control.md#changing-the-layout). |
 | `pane-close` | `{ "id": number, "revision": number or null, "committed": bool, "workspace": object or absent }` |
 | `metrics` | Client counters and the most recent cached server counters. |
-| `capture-pane` | `{ "id": number, "text": string, "title": string or null }` |
+| `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, or for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }` |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
 
@@ -144,10 +144,14 @@ which the server loop, and so every client, waits on.
 {"cmd":"capture-pane","target":3,"scrollback":200}
 {"cmd":"capture-pane","scrollback":"full"}
 {"cmd":"capture-pane","scrollback":"last-output"}
+{"cmd":"capture-pane","target":3,"render":"png"}
 ```
 
 `capture-pane.target` defaults to `source_pane`, then the focused pane. `scrollback` is a
-nonnegative line count, `"full"`, or `"last-output"`.
+nonnegative line count, `"full"`, or `"last-output"`. `render` is `"text"` (the default),
+`"ansi"`, or `"png"`; `ansi` and `png` capture the visible grid only, and fail with
+`invalid-argument` when `scrollback` is set. A PNG larger than a session reply can carry fails with
+`message-too-large`.
 
 `list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
 program data, reported status, and detected agent data when available.

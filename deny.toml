@@ -28,10 +28,11 @@ multiple-versions = "allow"
 version = 2
 yanked = "warn"
 ignore = [
-    # Pulled through fontdue/fontdb by tui-lipan's opt-in PNG snapshot support. It parses bundled
-    # and system fonts during trusted development captures, not untrusted terminal input. Revisit
-    # when fontdue/fontdb migrate to a maintained parser.
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained and has no safe upgrade; usage is limited to trusted development captures." },
+    # Used by tui-lipan's PNG rendering, directly and through fontdb, for `capture-pane --render
+    # png`. It parses fonts installed on the machine, and only when a capture asks for an image;
+    # nothing a pane prints can choose which font file is read. Revisit when fontdb and tui-lipan
+    # move to a maintained parser.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained and has no safe upgrade; it only parses installed system fonts for requested PNG captures, never pane output." },
 ]
 
 [sources]

@@ -919,6 +919,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
             scrollback: Some(crate::control::CaptureScrollback::Named(
                 crate::control::CaptureScrollbackNamed::Full,
             )),
+            render: crate::control::CaptureRender::Text,
         },
         source_pane: None,
         extension: None,
@@ -947,6 +948,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
                 "cmd": "capture-pane",
                 "target": 3,
                 "scrollback": "full",
+                "render": "text",
                 "source_pane": null
             }
         })

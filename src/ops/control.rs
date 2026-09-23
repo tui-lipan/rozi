@@ -3,7 +3,8 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::actions::execute_action;
 use crate::control::{
-    CaptureScrollback, ControlCommand, ControlEnvelope, ControlErrorCode, ControlResponse,
+    CaptureRender, CaptureScrollback, ControlCommand, ControlEnvelope, ControlErrorCode,
+    ControlResponse,
 };
 use crate::input::Action;
 use crate::input::send_keys::{SendKeysItem, parse_send_keys_arg};
@@ -97,7 +98,7 @@ pub(crate) fn handle_control_request(
         },
         ControlCommand::AgentRead { target, scrollback } => match resolve_agent(ctx, &target) {
             Ok(agent) => match validate_agent_input_reference(ctx, &agent.reference) {
-                Ok(()) => capture_pane(ctx, Some(agent.pane), scrollback),
+                Ok(()) => capture_pane(ctx, Some(agent.pane), scrollback, CaptureRender::Text),
                 Err(response) => response,
             },
             Err(response) => response,
@@ -141,9 +142,16 @@ pub(crate) fn handle_control_request(
         ControlCommand::RunAction { action } => {
             return run_action(ctx, &action, envelope.reply);
         }
-        ControlCommand::CapturePane { target, scrollback } => {
-            capture_pane(ctx, target.or(envelope.request.source_pane), scrollback)
-        }
+        ControlCommand::CapturePane {
+            target,
+            scrollback,
+            render,
+        } => capture_pane(
+            ctx,
+            target.or(envelope.request.source_pane),
+            scrollback,
+            render,
+        ),
         ControlCommand::Notify {
             message,
             title,
@@ -1252,6 +1260,7 @@ fn capture_pane(
     ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
     scrollback: Option<CaptureScrollback>,
+    render: CaptureRender,
 ) -> ControlResponse {
     let Some(id) = target.or(ctx.state.focused_pane()) else {
         return ControlResponse::error_with(
@@ -1265,15 +1274,15 @@ fn capture_pane(
             format!("pane {id} not found"),
         );
     };
-    let text = match pane
+    let content = match pane
         .terminal
-        .with_screen_mut(|screen| crate::pane::capture_screen_text(screen, scrollback))
+        .with_screen_mut(|screen| crate::pane::capture_screen(screen, scrollback, render))
     {
-        Ok(text) => text,
-        Err(error) => return ControlResponse::error(error),
+        Ok(content) => content,
+        Err(response) => return response,
     };
     let title = pane.terminal.title();
-    ControlResponse::ok(PaneCapture { id, text, title })
+    ControlResponse::ok(PaneCapture { id, title, content })
 }
 
 /// Raise a toast on behalf of a script.

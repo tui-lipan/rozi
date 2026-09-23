@@ -18,8 +18,8 @@
 
 use super::*;
 use crate::control::{
-    AgentInfo, AgentTarget, CaptureScrollback, ControlCommand, ControlErrorCode, ControlRequest,
-    ControlResponse,
+    AgentInfo, AgentTarget, CaptureRender, CaptureScrollback, ControlCommand, ControlErrorCode,
+    ControlRequest, ControlResponse,
 };
 use crate::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace, float_rect_to_frac,
@@ -346,9 +346,11 @@ impl SessionServer {
             ControlCommand::AgentRead { target, scrollback } => {
                 match self.resolve_agent_wait_target(target) {
                     Ok(reference) => match self.validate_agent_input_reference(&reference) {
-                        Ok(()) => {
-                            self.session_capture_pane(Some(reference.pane.pane_id), scrollback)
-                        }
+                        Ok(()) => self.session_capture_pane(
+                            Some(reference.pane.pane_id),
+                            scrollback,
+                            CaptureRender::Text,
+                        ),
                         Err(response) => response,
                     },
                     Err(response) => response,
@@ -364,9 +366,11 @@ impl SessionServer {
                     stale: false,
                 },
             }),
-            ControlCommand::CapturePane { target, scrollback } => {
-                self.session_capture_pane(target, scrollback)
-            }
+            ControlCommand::CapturePane {
+                target,
+                scrollback,
+                render,
+            } => self.session_capture_pane(target, scrollback, render),
             ControlCommand::SendText { target, text } => {
                 self.session_send_bytes(target, text.into_bytes())
             }
@@ -1038,6 +1042,7 @@ impl SessionServer {
         &mut self,
         target: Option<PaneId>,
         scrollback: Option<CaptureScrollback>,
+        render: CaptureRender,
     ) -> ControlResponse {
         let id = match self.session_target_pane(target) {
             Ok(id) => id,
@@ -1051,13 +1056,13 @@ impl SessionServer {
         };
         // Reading a snapshot does not change what a replay would contain, so this must not bump
         // `content_generation` and make every snapshot re-export the pane it just captured.
-        let text = match crate::pane::capture_screen_text(pane.screen_without_change(), scrollback)
-        {
-            Ok(text) => text,
-            Err(error) => return ControlResponse::error(error),
-        };
+        let content =
+            match crate::pane::capture_screen(pane.screen_without_change(), scrollback, render) {
+                Ok(content) => content,
+                Err(response) => return response,
+            };
         let title = pane.screen().title();
-        ControlResponse::ok(PaneCapture { id, text, title })
+        ControlResponse::ok(PaneCapture { id, title, content })
     }
 
     fn session_send_bytes(&mut self, target: Option<PaneId>, bytes: Vec<u8>) -> ControlResponse {
@@ -2459,6 +2464,7 @@ mod tests {
             ControlCommand::CapturePane {
                 target: Some(7),
                 scrollback: None,
+                render: CaptureRender::Text,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -2782,6 +2788,7 @@ mod tests {
             ControlCommand::CapturePane {
                 target: Some(1),
                 scrollback: None,
+                render: CaptureRender::Text,
             },
         );
         assert!(captured.ok, "{:?}", captured.error);

@@ -418,6 +418,26 @@
       ],
       "type": "object"
     },
+    "CaptureRender": {
+      "description": "What form `capture-pane` returns a pane in.",
+      "oneOf": [
+        {
+          "const": "text",
+          "description": "Plain text, the only form that can include scrollback.",
+          "type": "string"
+        },
+        {
+          "const": "ansi",
+          "description": "The visible grid as text with SGR color and style sequences: no cursor movement or screen\nclearing, every row at the pane's width.",
+          "type": "string"
+        },
+        {
+          "const": "png",
+          "description": "The visible grid as a PNG image, in the pane's theme colors.",
+          "type": "string"
+        }
+      ]
+    },
     "CaptureScrollback": {
       "anyOf": [
         {
@@ -1061,11 +1081,15 @@
           "type": "object"
         },
         {
-          "description": "Capture pane text. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only.",
           "properties": {
             "cmd": {
               "const": "capture-pane",
               "type": "string"
+            },
+            "render": {
+              "$ref": "#/$defs/CaptureRender",
+              "default": "text"
             },
             "scrollback": {
               "anyOf": [
@@ -2035,11 +2059,15 @@
           "type": "object"
         },
         {
-          "description": "Capture pane text. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only.",
           "properties": {
             "cmd": {
               "const": "capture-pane",
               "type": "string"
+            },
+            "render": {
+              "$ref": "#/$defs/CaptureRender",
+              "default": "text"
             },
             "scrollback": {
               "anyOf": [
@@ -2777,14 +2805,64 @@
     },
     "PaneCapture": {
       "description": "One pane's captured screen, as `capture-pane` and `agents read` report it.",
+      "oneOf": [
+        {
+          "description": "Plain text.",
+          "properties": {
+            "render": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "SGR-styled text; print it to a terminal to see the pane's colors.",
+          "properties": {
+            "render": {
+              "const": "ansi",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the\nCLI decodes them before writing.",
+          "properties": {
+            "png_base64": {
+              "type": "string"
+            },
+            "render": {
+              "const": "png",
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "png_base64"
+          ],
+          "type": "object"
+        }
+      ],
       "properties": {
         "id": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
-        },
-        "text": {
-          "type": "string"
         },
         "title": {
           "description": "The terminal title, which several detection rules match instead of the screen. A capture\nwithout it cannot stand in for what the detector saw.",
@@ -2795,8 +2873,7 @@
         }
       },
       "required": [
-        "id",
-        "text"
+        "id"
       ],
       "type": "object"
     },
@@ -3526,5 +3603,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 2
+  "x-rozi-schema-version": 3
 }

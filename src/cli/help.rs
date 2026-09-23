@@ -233,7 +233,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "split [OPTIONS] [COMMAND | --argv PROGRAM [ARG...]]",
                 "Spawn a pane, optionally in another workspace",
             ),
-            row("capture-pane [OPTIONS]", "Print pane text; JSON when piped"),
+            row(
+                "capture-pane [OPTIONS]",
+                "Capture text, ANSI, or PNG; JSON when piped",
+            ),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(
                 "move-to-workspace <1-9>",

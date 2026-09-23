@@ -70,6 +70,27 @@ impl StartupTasks {
         if !self.enabled {
             return;
         }
+        // Keep the global Agents view informed about other local sessions without attaching to
+        // them. Discovery probes their semantic summaries; it never requests terminal frames.
+        let local_link = link.clone();
+        std::thread::spawn(move || {
+            let mut previous = None;
+            loop {
+                let snapshot = crate::session::discovery::discover_sessions_with_agents()
+                    .ok()
+                    .map(
+                        |(sessions, agents)| crate::session::discovery::LocalAgentSnapshot {
+                            sessions: sessions.into_iter().filter(|row| !row.ephemeral).collect(),
+                            agents,
+                        },
+                    );
+                if previous.as_ref() != Some(&snapshot) {
+                    local_link.send(Msg::LocalAgentMetadata(snapshot.clone()));
+                    previous = Some(snapshot);
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        });
         if let Some(interval) = self.update_check_interval {
             let update_link = link.clone();
             std::thread::spawn(move || check_for_update(update_link, interval));

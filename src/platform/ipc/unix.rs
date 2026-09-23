@@ -304,6 +304,11 @@ mod tests {
             drop(bound); // listener dropped, but the socket file itself is left behind on Unix.
         }
         assert!(endpoint.path().exists());
+        // Allow the kernel to finish tearing down the listener before checking the stale path.
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while endpoint.is_live() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(!endpoint.is_live());
 
         // A second bind at the same path must succeed by replacing the dead file rather than

@@ -44,6 +44,37 @@ pub struct DiscoveredSession {
     pub remote_target: Option<crate::session::remote::RemoteTarget>,
 }
 
+/// One local metadata sweep. Session rows and agent summaries must travel together so an Agents
+/// view selection can attach to the same session the summary described.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalAgentSnapshot {
+    pub sessions: Vec<DiscoveredSession>,
+    pub agents: Vec<crate::session::protocol::AgentSummary>,
+}
+
+/// A busy endpoint gave no semantic answer this poll. Keep its last agent summaries until it
+/// answers again; a missing endpoint (which has no row) still removes its agents normally.
+pub(crate) fn retain_busy_agent_summaries(
+    rows: &[DiscoveredSession],
+    agents: &mut Vec<crate::session::protocol::AgentSummary>,
+    previous: &[crate::session::protocol::AgentSummary],
+) {
+    let busy_sessions: BTreeSet<_> = rows
+        .iter()
+        .filter(|row| matches!(row.status, DiscoveredSessionStatus::Busy))
+        .map(|row| row.name.as_str())
+        .collect();
+    let retained: Vec<_> = previous
+        .iter()
+        .filter(|agent| {
+            busy_sessions.contains(agent.session.as_str())
+                && !agents.iter().any(|current| current.same_agent(agent))
+        })
+        .cloned()
+        .collect();
+    agents.extend(retained);
+}
+
 /// Where to discover sessions from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionSource {

@@ -8,8 +8,8 @@ pub(crate) use input::{
     terminal_key_event_bytes,
 };
 pub(crate) use notifications::{
-    PaneStatusNotification, ToastKey, TrackedToast, confirm_toast, maybe_notify_host_agent,
-    maybe_notify_pane_exit, maybe_notify_pane_status, notify_error, notify_info, notify_on,
+    PaneStatusNotification, ToastKey, TrackedToast, confirm_toast, maybe_notify_pane_exit,
+    maybe_notify_pane_status, maybe_notify_session_agent, notify_error, notify_info, notify_on,
     notify_update, notify_warning,
 };
 pub(crate) use resize::{

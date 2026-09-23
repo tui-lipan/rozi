@@ -165,7 +165,16 @@ Write-Output "probe_done=1"
 pub struct ProbeReport {
     pub platform: String,
     pub machine: String,
+    /// Shell family detected from the remote host, kept separate from the client OS.
+    pub(crate) family: Option<RemoteFamily>,
     pub candidates: Vec<ProbeCandidate>,
+}
+
+impl ProbeReport {
+    pub(crate) fn remote_family(&self) -> RemoteFamily {
+        self.family
+            .unwrap_or_else(|| family_from_os(&normalize_os(&self.platform)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -235,6 +244,11 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
         &mut pending_min,
         &mut pending_max,
     );
+    report.family = match normalize_os(&report.platform).as_str() {
+        "windows" => Some(RemoteFamily::Windows),
+        "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" => Some(RemoteFamily::Posix),
+        _ => None,
+    };
     report
 }
 
@@ -332,21 +346,12 @@ fn probe_remote_report_with_connect_timeout(
             return Err("ssh was not found on PATH (required for --remote)".to_string());
         }
         let family = detect_remote_family(&resolved, config, connect_timeout_secs)?;
-        return Ok(ProbeReport {
-            platform: if family == RemoteFamily::Windows {
-                "windows".to_string()
-            } else {
-                local_uname_platform()
-            },
-            machine: local_uname_machine(),
-            candidates: vec![ProbeCandidate {
-                path: path.clone(),
-                speaks_remote: true,
-                version_line: String::new(),
-                protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
-                protocol_max: Some(PROTOCOL_VERSION),
-            }],
-        });
+        return Ok(configured_binary_path_report(
+            path.clone(),
+            family,
+            normalize_os(std::env::consts::OS),
+            local_uname_machine(),
+        ));
     }
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote)".to_string());
@@ -354,7 +359,8 @@ fn probe_remote_report_with_connect_timeout(
     // The remote sshd default shell is not always POSIX (Windows defaults to `cmd.exe`). Detect the
     // family with one fixed, shell-agnostic probe, then feed the matching script to the matching
     // interpreter. Probe output is still parsed with fixed keys and never treated as argv.
-    let stdout = match detect_remote_family(&resolved, config, connect_timeout_secs)? {
+    let family = detect_remote_family(&resolved, config, connect_timeout_secs)?;
+    let stdout = match family {
         // PowerShell's `-Command -` truncates a multi-line script read from stdin (only the first
         // statements run) over OpenSSH-for-Windows; pass the script as a base64 `-EncodedCommand`
         // instead, which runs the whole thing and needs no stdin.
@@ -378,7 +384,35 @@ fn probe_remote_report_with_connect_timeout(
             PROBE_SCRIPT,
         )?,
     };
-    Ok(parse_probe_output(&stdout))
+    let mut report = parse_probe_output(&stdout);
+    report.family = Some(family);
+    Ok(report)
+}
+
+fn configured_binary_path_report(
+    path: String,
+    family: RemoteFamily,
+    client_platform: String,
+    client_machine: String,
+) -> ProbeReport {
+    ProbeReport {
+        // `binary_path` skips OS/architecture discovery. These fields remain client-derived for
+        // diagnostics, so the remote shell family must be carried independently.
+        platform: if family == RemoteFamily::Windows {
+            "windows".to_string()
+        } else {
+            client_platform
+        },
+        machine: client_machine,
+        family: Some(family),
+        candidates: vec![ProbeCandidate {
+            path,
+            speaks_remote: true,
+            version_line: String::new(),
+            protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
+            protocol_max: Some(PROTOCOL_VERSION),
+        }],
+    }
 }
 
 /// Remote sshd default-shell family, chosen up front so the probe/install scripts target the right
@@ -589,7 +623,7 @@ pub(crate) fn ensure_remote_binary_in_ui(
 }
 
 fn install_destination(report: &ProbeReport) -> String {
-    if normalize_os(&report.platform) == "windows" {
+    if report.remote_family() == RemoteFamily::Windows {
         format!(
             r"%LOCALAPPDATA%\rozi\remote\{}\rozi.exe",
             env!("CARGO_PKG_VERSION")
@@ -615,7 +649,7 @@ fn ensure_with_confirmation(
         }
         let report = probe_remote_report(target, config)?;
         verify_override_targets_remote(local, &report)?;
-        let family = family_from_os(&normalize_os(&report.platform));
+        let family = report.remote_family();
         let path = install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family)?;
         return verify_installed(target, config, path);
     }
@@ -626,7 +660,7 @@ fn ensure_with_confirmation(
     let decision = decide_install(&select_compatible(&report), config.install, interactive);
     let ask = match decision {
         InstallDecision::Use { path } => {
-            let family = family_from_os(&normalize_os(&report.platform));
+            let family = report.remote_family();
             return super::binary::remember(target, config, path, family).map(|binary| binary.path);
         }
         InstallDecision::Fail { message } => return Err(message),
@@ -650,7 +684,7 @@ fn verify_installed(
 ) -> Result<String, String> {
     super::binary::invalidate(target, config);
     let report = probe_remote_report(target, config)?;
-    let family = family_from_os(&normalize_os(&report.platform));
+    let family = report.remote_family();
     let candidates = report
         .candidates
         .iter()
@@ -1595,10 +1629,6 @@ fn rustc_target(os: &str, arch: &str) -> Option<&'static str> {
     }
 }
 
-fn local_uname_platform() -> String {
-    normalize_os(std::env::consts::OS)
-}
-
 fn local_uname_machine() -> String {
     normalize_arch(std::env::consts::ARCH)
 }
@@ -1606,6 +1636,31 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_binary_path_preserves_detected_remote_family() {
+        let windows_client_posix_remote = configured_binary_path_report(
+            "/opt/rozi/bin/rozi".into(),
+            RemoteFamily::Posix,
+            "windows".into(),
+            "x86_64".into(),
+        );
+        assert_eq!(
+            windows_client_posix_remote.remote_family(),
+            RemoteFamily::Posix
+        );
+
+        let posix_client_windows_remote = configured_binary_path_report(
+            r"C:\Program Files\Rozi\rozi.exe".into(),
+            RemoteFamily::Windows,
+            "linux".into(),
+            "x86_64".into(),
+        );
+        assert_eq!(
+            posix_client_windows_remote.remote_family(),
+            RemoteFamily::Windows
+        );
+    }
 
     #[test]
     fn installed_path_comparison_follows_remote_path_rules() {
@@ -1922,6 +1977,7 @@ protocol_max={beyond}
         let netbsd = ProbeReport {
             platform: "NetBSD".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &netbsd).expect("a NetBSD binary installs on NetBSD");
@@ -1929,6 +1985,7 @@ protocol_max={beyond}
         let linux = ProbeReport {
             platform: "Linux".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         assert!(verify_override_targets_remote(&bin, &linux).is_err());
@@ -1954,6 +2011,7 @@ protocol_max={beyond}
         let linux = ProbeReport {
             platform: "Linux".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &linux).expect("matching target installs");
@@ -1961,6 +2019,7 @@ protocol_max={beyond}
         let windows = ProbeReport {
             platform: "windows".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         assert!(verify_override_targets_remote(&bin, &windows).is_err());
@@ -1969,6 +2028,7 @@ protocol_max={beyond}
         let unknown = ProbeReport {
             platform: "unknown".into(),
             machine: "unknown".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &unknown).expect("unknown platform does not block");

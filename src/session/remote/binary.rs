@@ -94,12 +94,9 @@ pub(crate) fn resolve(
     }
     let report = bootstrap::probe_remote_report(target, config)?;
     match bootstrap::select_compatible(&report) {
-        bootstrap::ProbeResult::Found { path, .. } => remember(
-            target,
-            config,
-            path,
-            bootstrap::family_from_os(&bootstrap::normalize_os(&report.platform)),
-        ),
+        bootstrap::ProbeResult::Found { path, .. } => {
+            remember(target, config, path, report.remote_family())
+        }
         bootstrap::ProbeResult::Missing { detail } => Err(detail),
     }
 }

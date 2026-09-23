@@ -38,6 +38,14 @@ pub fn profile_picker_key() -> &'static str {
     "rozi-profile-picker"
 }
 
+pub fn worktree_picker_key() -> &'static str {
+    "rozi-worktree-picker"
+}
+
+pub fn worktree_form_input_key() -> &'static str {
+    "rozi-worktree-form-input"
+}
+
 pub fn session_picker_key() -> &'static str {
     "rozi-session-picker"
 }

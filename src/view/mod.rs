@@ -24,7 +24,7 @@ pub use widget_keys::{
     pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key, remote_picker_key,
     rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
     session_picker_key, settings_choice_key, settings_palette_key, sidebar_body_key,
-    sidebar_region_key, theme_picker_key,
+    sidebar_region_key, theme_picker_key, worktree_form_input_key, worktree_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes};
@@ -44,7 +44,7 @@ use overlays::{
     palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
     profile_picker_overlay, reconnecting_overlay, remote_picker_overlay, rename_overlay,
     rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    settings_choice_overlay, settings_overlay, theme_picker_overlay,
+    settings_choice_overlay, settings_overlay, theme_picker_overlay, worktree_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
@@ -412,6 +412,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_profile_picker {
         root = root.child(profile_picker_overlay(ctx));
+    }
+    if ctx.state.worktree_picker.is_some() {
+        root = root.child(worktree_overlay(ctx));
     }
     if ctx.state.show_session_picker {
         root = root.child(session_picker_overlay(ctx));

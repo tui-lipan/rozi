@@ -69,7 +69,7 @@ pub struct Attachment {
     /// dropped link reconnects to the *same* remote host instead of re-parsing (or, worse, falling
     /// back to a same-named local session). `None` for local sessions.
     pub remote_target: Option<crate::session::remote::RemoteTarget>,
-    pub created_from_profile: Option<String>,
+    pub origin: crate::session::origin::SessionOrigin,
     pub deferred_profile_seed: Option<(String, PathBuf)>,
     pub pending_profile_loaded: Option<(String, PathBuf, String)>,
     pub connection: ConnectionState,
@@ -151,7 +151,7 @@ impl Attachment {
             session_instance: None,
             remote_host: None,
             remote_target: None,
-            created_from_profile: None,
+            origin: crate::session::origin::SessionOrigin::default(),
             deferred_profile_seed: None,
             pending_profile_loaded: None,
             connection: ConnectionState::Disconnected,

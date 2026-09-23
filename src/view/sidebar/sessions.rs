@@ -15,13 +15,9 @@ fn session_detail(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> String {
 
 fn session_status_detail(entry: &DiscoveredSession) -> String {
     match &entry.status {
-        DiscoveredSessionStatus::Running {
-            panes,
-            created_from_profile,
-            ..
-        } => {
+        DiscoveredSessionStatus::Running { panes, .. } => {
             let mut detail = format!("{panes} pane{}", if *panes == 1 { "" } else { "s" });
-            if let Some(profile) = created_from_profile {
+            if let Some(profile) = &entry.origin.profile {
                 detail.push_str(&format!(" · from {profile}"));
             }
             detail
@@ -103,6 +99,7 @@ fn cached_session_row(
 ) -> SidebarRow {
     let entry = DiscoveredSession {
         name: cached.name.clone(),
+        origin: Default::default(),
         ephemeral: false,
         host: Some(host.alias.clone()),
         remote_target: Some(host.target.clone()),

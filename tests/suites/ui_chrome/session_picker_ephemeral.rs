@@ -17,6 +17,7 @@ const VIEWPORT: Rect = Rect {
 fn session_row(name: &str) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         ephemeral: false,
         host: None,
         remote_target: None,
@@ -24,7 +25,6 @@ fn session_row(name: &str) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
-            created_from_profile: None,
         },
     }
 }
@@ -162,6 +162,7 @@ fn padded_selection_insets_the_current_marker() {
             state.show_session_picker = true;
             state.session_picker = Some(SessionPickerState::new(vec![DiscoveredSession {
                 name: session_name,
+                origin: Default::default(),
                 ephemeral: true,
                 host: None,
                 remote_target: None,
@@ -169,7 +170,6 @@ fn padded_selection_insets_the_current_marker() {
                     panes: 1,
                     has_layout: true,
                     clients: 1,
-                    created_from_profile: None,
                 },
             }]));
         }

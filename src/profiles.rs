@@ -166,6 +166,247 @@ pub fn restore_state_from_profile(
     }
 }
 
+/// A profile chosen to seed a session, loaded ahead of time.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LoadedProfile {
+    pub name: String,
+    pub path: PathBuf,
+    pub profile: Profile,
+}
+
+/// `[worktrees] profile`, loaded. `Ok(None)` when none is configured.
+///
+/// `remote` says the session lives on another host. A profile is a file on this machine, and a pane
+/// directory it names outside the repository is a directory on this machine too: rebasing cannot
+/// carry it to the host, and spawning there would land in whatever happens to share the path. Such
+/// a profile is refused for a remote worktree, so the session starts as one shell in its checkout.
+pub(crate) fn load_worktree_profile(
+    config: &crate::config::Config,
+    checkouts: &[String],
+    remote: bool,
+) -> Result<Option<LoadedProfile>, String> {
+    let Some(name) = config.worktrees.profile.as_deref() else {
+        return Ok(None);
+    };
+    let path = crate::config::profile_path_for_name(name);
+    let profile = load_profile(&path)
+        .map_err(|err| format!("Worktree profile `{name}` failed to load: {err}"))?;
+    if remote && let Some(outside) = first_directory_outside(&profile, checkouts) {
+        return Err(format!(
+            "Worktree profile `{name}` skipped: {outside} is outside the repository, and this \
+             session runs on another host"
+        ));
+    }
+    Ok(Some(LoadedProfile {
+        name: name.to_string(),
+        path,
+        profile,
+    }))
+}
+
+/// The first pane directory in `profile` that no checkout contains, as the pane would get it.
+fn first_directory_outside(profile: &Profile, checkouts: &[String]) -> Option<String> {
+    profile
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.panes)
+        .filter_map(|pane| pane.cwd.as_ref())
+        .map(|cwd| {
+            crate::config::expand_path(cwd)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .find(|cwd| innermost_checkout_rest(cwd, checkouts).is_none())
+}
+
+/// The attachment and intent a new session for the checkout at `path` starts from.
+///
+/// Without a profile it is one shell in the checkout. A profile is rebased onto the checkout with
+/// [`rebase_onto_worktree`], so its panes stay inside this worktree rather than returning to the
+/// checkout the profile was saved in. `checkouts` lists the repository's worktrees on the session
+/// host.
+pub(crate) fn worktree_session_seed(
+    config: &crate::config::Config,
+    path: &str,
+    checkouts: &[String],
+    profile: Option<LoadedProfile>,
+) -> (crate::state::Attachment, crate::state::AttachIntent) {
+    let seeded = profile.and_then(|loaded| {
+        let attachment = attachment_from_profile(config, loaded.profile)?;
+        Some((attachment, (loaded.name, loaded.path)))
+    });
+    let (attachment, profile) = match seeded {
+        Some((mut attachment, profile)) => {
+            rebase_onto_worktree(&mut attachment, checkouts, path);
+            (attachment, Some(profile))
+        }
+        None => {
+            let mut attachment = crate::state::fresh_default_attachment(config);
+            attachment.workspaces[0].panes[0].identity.cwd = Some(path.to_string());
+            (attachment, None)
+        }
+    };
+    (
+        attachment,
+        crate::state::AttachIntent::WorktreeSeed {
+            path: path.to_string(),
+            profile,
+        },
+    )
+}
+
+/// Point a seeded attachment's panes at the checkout `target`.
+///
+/// A pane directory inside any of the repository's `checkouts` moves to the same place inside
+/// `target`, so `/repo/frontend` becomes `/repo-worktrees/feat/frontend`. A directory outside the
+/// repository stays where it is, and a pane without one starts at `target`.
+///
+/// These are session-host paths, which may follow another operating system's rules, so they are
+/// compared as text split on either separator rather than through this machine's path handling.
+pub(crate) fn rebase_onto_worktree(
+    attachment: &mut crate::state::Attachment,
+    checkouts: &[String],
+    target: &str,
+) {
+    for pane in attachment
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.panes.iter_mut())
+    {
+        let rebased = match pane.identity.cwd.as_deref() {
+            None => target.to_string(),
+            Some(cwd) => {
+                rebase_host_path(cwd, checkouts, target).unwrap_or_else(|| cwd.to_string())
+            }
+        };
+        pane.identity.cwd = Some(rebased);
+    }
+}
+
+/// A session-host path parsed for comparison, lexically: this machine's path rules may not be the
+/// host's, and the directories need not exist here.
+#[derive(Debug, PartialEq, Eq)]
+struct HostPath<'a> {
+    /// `/`, a drive such as `C:`, or a UNC share such as `\\server\share`.
+    root: String,
+    /// Components below the root, with `.` and `..` already resolved.
+    parts: Vec<&'a str>,
+    /// Windows rules: names compare without regard to case.
+    windows: bool,
+}
+
+impl<'a> HostPath<'a> {
+    /// The root decides which rules apply. A drive (`C:\`) or UNC share (`\\server\share`,
+    /// or `//server/share` as Git on Windows spells it) is Windows: either slash separates, and
+    /// names compare without regard to case. A `/` root is Unix: only `/` separates, so a
+    /// backslash is part of a name, and names are case-sensitive.
+    ///
+    /// `None` for a path whose place in a repository cannot be known: a relative one, a Windows
+    /// path rooted at the current drive (`\repo`, `C:repo`), or one whose `..` climbs above
+    /// its root.
+    fn parse(path: &'a str) -> Option<Self> {
+        let bytes = path.as_bytes();
+        let windows_separator = |byte: u8| byte == b'/' || byte == b'\\';
+        const WINDOWS: &[char] = &['/', '\\'];
+        const UNIX: &[char] = &['/'];
+        let (root, rest, windows) =
+            if bytes.len() >= 2 && windows_separator(bytes[0]) && windows_separator(bytes[1]) {
+                // UNC: the server and share are part of the root.
+                let mut pieces = path[2..].splitn(3, WINDOWS);
+                let server = pieces.next().filter(|piece| !piece.is_empty())?;
+                let share = pieces.next().filter(|piece| !piece.is_empty())?;
+                (
+                    format!("\\\\{server}\\{share}"),
+                    pieces.next().unwrap_or(""),
+                    true,
+                )
+            } else if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                if bytes.len() > 2 && !windows_separator(bytes[2]) {
+                    return None;
+                }
+                (path[..2].to_string(), &path[2..], true)
+            } else if bytes.first() == Some(&b'/') {
+                ("/".to_string(), path, false)
+            } else {
+                return None;
+            };
+        let mut parts = Vec::new();
+        for part in rest.split(if windows { WINDOWS } else { UNIX }) {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                part => parts.push(part),
+            }
+        }
+        Some(Self {
+            root,
+            parts,
+            windows,
+        })
+    }
+
+    /// The components of `self` below `ancestor`, or `None` when `ancestor` does not contain it.
+    fn below(&self, ancestor: &HostPath) -> Option<&[&'a str]> {
+        let ignore_case = self.windows || ancestor.windows;
+        let same = |a: &str, b: &str| {
+            if ignore_case {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        };
+        (same(&self.root, &ancestor.root)
+            && ancestor.parts.len() <= self.parts.len()
+            && ancestor
+                .parts
+                .iter()
+                .zip(&self.parts)
+                .all(|(a, b)| same(a, b)))
+        .then(|| &self.parts[ancestor.parts.len()..])
+    }
+}
+
+/// The components of `cwd` below the innermost checkout containing it, or `None` when no checkout
+/// contains it, including when `cwd` is relative or climbs out through `..`.
+fn innermost_checkout_rest<'a>(cwd: &'a str, checkouts: &[String]) -> Option<Vec<&'a str>> {
+    let cwd = HostPath::parse(cwd)?;
+    checkouts
+        .iter()
+        .filter_map(|checkout| HostPath::parse(checkout))
+        // A checkout at a bare root would contain everything on the host.
+        .filter(|checkout| !checkout.parts.is_empty())
+        .filter_map(|checkout| {
+            cwd.below(&checkout)
+                .map(|rest| (checkout.parts.len(), rest.to_vec()))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, rest)| rest)
+}
+
+/// `cwd` moved from the innermost checkout containing it into `target`, or `None` when no checkout
+/// contains it.
+fn rebase_host_path(cwd: &str, checkouts: &[String], target: &str) -> Option<String> {
+    let rest = innermost_checkout_rest(cwd, checkouts)?;
+    let separator = if target.contains('\\') && !target.contains('/') {
+        '\\'
+    } else {
+        '/'
+    };
+    let mut rebased = target.trim_end_matches(['/', '\\']).to_string();
+    if rebased.is_empty() {
+        rebased.push(separator);
+    }
+    for part in rest {
+        if !rebased.ends_with(separator) {
+            rebased.push(separator);
+        }
+        rebased.push_str(part);
+    }
+    Some(rebased)
+}
+
 /// The seed a session starts from when the user named no recipe for it, paired with the attach
 /// intent that records where it came from: the configured `[profile] default` when one is set and
 /// loads, otherwise a single shell.
@@ -898,6 +1139,255 @@ mod tests {
         assert!(
             matches!(intent, crate::state::AttachIntent::Plain),
             "an unreadable default must not claim the session came from it"
+        );
+    }
+
+    #[test]
+    fn rebasing_moves_repository_paths_into_the_checkout_and_leaves_the_rest() {
+        let checkouts = [
+            "/src/rozi".to_string(),
+            "/src/rozi/.worktrees/nested".to_string(),
+            "/src/rozi-worktrees/old".to_string(),
+        ];
+        let target = "/src/rozi-worktrees/feat/";
+        for (cwd, expected) in [
+            ("/src/rozi", Some("/src/rozi-worktrees/feat")),
+            (
+                "/src/rozi/frontend/src",
+                Some("/src/rozi-worktrees/feat/frontend/src"),
+            ),
+            // Captured in another checkout of the same repository.
+            (
+                "/src/rozi-worktrees/old/docs",
+                Some("/src/rozi-worktrees/feat/docs"),
+            ),
+            // The innermost checkout wins, so a nested worktree is not mistaken for a directory.
+            (
+                "/src/rozi/.worktrees/nested/api",
+                Some("/src/rozi-worktrees/feat/api"),
+            ),
+            // A shared prefix is not containment.
+            ("/src/rozi-tools", None),
+            ("/home/me", None),
+        ] {
+            assert_eq!(
+                rebase_host_path(cwd, &checkouts, target).as_deref(),
+                expected,
+                "{cwd}"
+            );
+        }
+
+        // Another host's paths are compared as text and rebuilt with the target's separator.
+        let windows = ["C:/code/repo".to_string()];
+        assert_eq!(
+            rebase_host_path(
+                "C:\\code\\repo\\web",
+                &windows,
+                "C:\\code\\repo-worktrees\\x"
+            )
+            .as_deref(),
+            Some("C:\\code\\repo-worktrees\\x\\web")
+        );
+    }
+
+    /// Containment is decided on lexically normalized, rooted paths: a `..` that climbs out of the
+    /// checkout, or a relative path, is never "inside the repository", which is what a remote
+    /// profile is checked against.
+    #[test]
+    fn containment_resolves_dot_dot_and_requires_a_rooted_path() {
+        let inside = |cwd: &str, checkout: &str| {
+            innermost_checkout_rest(cwd, &[checkout.to_string()]).is_some()
+        };
+        assert!(!inside("/src/rozi/../outside", "/src/rozi"));
+        assert!(!inside("src/rozi/frontend", "/src/rozi"));
+        assert!(!inside("C:\\Code\\Repo\\..\\outside", "C:\\Code\\Repo"));
+        assert!(inside("C:\\Code\\Repo\\Web", "c:\\code\\repo"));
+
+        // Resolved `..` that stays inside is fine, and so is `.`.
+        assert_eq!(
+            innermost_checkout_rest("/src/rozi/docs/../web/./app", &["/src/rozi".into()]),
+            Some(vec!["web", "app"])
+        );
+        // Climbing above the root, a drive-relative path, and another drive or share never match.
+        assert!(!inside("/src/../../etc", "/src"));
+        assert!(!inside("C:Repo\\web", "C:\\Repo"));
+        assert!(!inside("D:\\Code\\Repo\\web", "C:\\Code\\Repo"));
+        assert!(inside("\\\\host\\share\\repo\\web", "//HOST/share/repo"));
+        assert!(!inside("\\\\other\\share\\repo\\web", "//host/share/repo"));
+        // A checkout at a bare root would contain everything, so it contains nothing.
+        assert!(!inside("/etc", "/"));
+
+        // A `/` root is Unix: a backslash is part of a name, and names keep their case.
+        assert_eq!(
+            innermost_checkout_rest("/src/Foo\\Bar/web", &["/src/Foo\\Bar".into()]),
+            Some(vec!["web"])
+        );
+        assert!(!inside("/src/Foo\\Bar/web", "/src/foo\\bar"));
+        assert!(!inside("/src/Foo\\Bar", "/src/Foo"));
+        // Rooted at the current drive, which is unknown here.
+        assert!(!inside("\\Code\\Repo\\web", "C:\\Code\\Repo"));
+
+        assert_eq!(
+            rebase_host_path("/src/rozi/../outside", &["/src/rozi".into()], "/wt/feat"),
+            None
+        );
+    }
+
+    #[test]
+    fn windows_style_paths_rebase_regardless_of_case() {
+        let checkouts = ["C:/Code/Repo".to_string()];
+        assert_eq!(
+            rebase_host_path(
+                "c:\\code\\repo\\Web",
+                &checkouts,
+                "C:\\code\\repo-worktrees\\x"
+            )
+            .as_deref(),
+            Some("C:\\code\\repo-worktrees\\x\\Web")
+        );
+        // POSIX names are case-sensitive: this is a different directory.
+        assert_eq!(
+            rebase_host_path("/Src/Rozi/web", &["/src/rozi".to_string()], "/wt/x"),
+            None
+        );
+    }
+
+    /// A profile is a file on this machine. On another host, a pane directory outside the
+    /// repository cannot be rebased and would name an unrelated remote path, so the profile is
+    /// skipped there; one whose directories all rebase still applies.
+    #[test]
+    fn a_remote_worktree_refuses_a_profile_with_directories_outside_the_repository() {
+        let profiles = crate::config::profiles_dir();
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
+        let pane = |id, cwd: Option<&str>| PaneProfile {
+            id,
+            cwd: cwd.map(PathBuf::from),
+            ..PaneProfile::default()
+        };
+        let save = |name: &str, panes: Vec<PaneProfile>| {
+            let profile = Profile {
+                workspaces: vec![WorkspaceProfile {
+                    index: 0,
+                    panes,
+                    ..WorkspaceProfile::default()
+                }],
+                ..Profile::default()
+            };
+            save_profile(&profiles.join(format!("{name}.toml")), &profile).expect("save profile");
+        };
+        save(
+            "wt-outside",
+            vec![
+                pane(0, Some("/src/rozi/frontend")),
+                pane(1, Some("/var/log")),
+            ],
+        );
+        save(
+            "wt-inside",
+            vec![pane(0, Some("/src/rozi/frontend")), pane(1, None)],
+        );
+        let checkouts = ["/src/rozi".to_string(), "/wt/feat".to_string()];
+        let mut config = Config::default();
+
+        config.worktrees.profile = Some("wt-outside".into());
+        assert!(matches!(
+            load_worktree_profile(&config, &checkouts, false),
+            Ok(Some(_))
+        ));
+        let refused = load_worktree_profile(&config, &checkouts, true).expect_err("refused");
+        assert!(refused.contains("/var/log"), "{refused}");
+
+        save("wt-escape", vec![pane(0, Some("/src/rozi/../outside"))]);
+        config.worktrees.profile = Some("wt-escape".into());
+        assert!(
+            load_worktree_profile(&config, &checkouts, true).is_err(),
+            "a `..` that climbs out of the repository is outside it"
+        );
+
+        config.worktrees.profile = Some("wt-inside".into());
+        assert!(matches!(
+            load_worktree_profile(&config, &checkouts, true),
+            Ok(Some(_))
+        ));
+
+        let _ = std::fs::remove_file(profiles.join("wt-outside.toml"));
+        let _ = std::fs::remove_file(profiles.join("wt-inside.toml"));
+        let _ = std::fs::remove_file(profiles.join("wt-escape.toml"));
+    }
+
+    #[test]
+    fn a_worktree_session_without_a_profile_is_one_shell_in_the_checkout() {
+        let config = Config {
+            cwd: Some("/source".into()),
+            profile: crate::config::ProfileConfig {
+                default: Some("dev".into()),
+            },
+            ..Default::default()
+        };
+        let (attachment, intent) =
+            worktree_session_seed(&config, "/checkout/feature", &["/source".into()], None);
+        assert_eq!(attachment.workspaces[0].panes.len(), 1);
+        assert_eq!(
+            attachment.workspaces[0].panes[0].identity.cwd.as_deref(),
+            Some("/checkout/feature")
+        );
+        assert_eq!(
+            intent,
+            crate::state::AttachIntent::WorktreeSeed {
+                path: "/checkout/feature".into(),
+                profile: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_worktree_profile_is_rebased_onto_the_checkout_and_recorded() {
+        let pane = |id, cwd: Option<&str>| PaneProfile {
+            id,
+            cwd: cwd.map(PathBuf::from),
+            ..PaneProfile::default()
+        };
+        let loaded = LoadedProfile {
+            name: "dev".into(),
+            path: PathBuf::from("/config/profiles/dev.toml"),
+            profile: Profile {
+                workspaces: vec![WorkspaceProfile {
+                    index: 0,
+                    panes: vec![
+                        pane(0, Some("/src/rozi/frontend")),
+                        pane(1, Some("/var/log")),
+                        pane(2, None),
+                    ],
+                    ..WorkspaceProfile::default()
+                }],
+                ..Profile::default()
+            },
+        };
+        let (attachment, intent) = worktree_session_seed(
+            &Config::default(),
+            "/wt/feat",
+            &["/src/rozi".into(), "/wt/feat".into()],
+            Some(loaded),
+        );
+        let cwds: Vec<_> = attachment.workspaces[0]
+            .panes
+            .iter()
+            .map(|pane| pane.identity.cwd.as_deref())
+            .collect();
+        assert_eq!(
+            cwds,
+            [
+                Some("/wt/feat/frontend"),
+                Some("/var/log"),
+                Some("/wt/feat")
+            ]
+        );
+        assert_eq!(
+            intent,
+            crate::state::AttachIntent::WorktreeSeed {
+                path: "/wt/feat".into(),
+                profile: Some(("dev".into(), PathBuf::from("/config/profiles/dev.toml"))),
+            }
         );
     }
 

@@ -34,6 +34,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session, optionally from a profile",
             ),
             row(
+                "new <NAME> --cwd <DIR>",
+                "Create a session whose first pane starts in DIR",
+            ),
+            row(
                 "kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
@@ -256,6 +260,51 @@ mod tests {
         assert_eq!(created.session_command, SessionCommand::New);
         assert_eq!(created.profile.as_deref(), Some("p"));
         assert!(created.pick);
+    }
+
+    #[test]
+    fn cwd_seeds_only_a_created_session() {
+        let ParsedCli::Run(created) = parse_cli_args(vec![
+            "sessions".into(),
+            "new".into(),
+            "dev".into(),
+            "--cwd".into(),
+            "~/src/rozi".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected launch");
+        };
+        assert_eq!(created.cwd.as_deref(), Some("~/src/rozi"));
+        assert!(
+            created.worktree_checkouts.is_none(),
+            "argv never records a worktree origin"
+        );
+
+        for (args, message) in [
+            (
+                vec!["sessions", "attach", "dev", "--cwd", "/src"],
+                "--cwd can only be used with sessions new",
+            ),
+            (
+                vec!["--cwd", "/src"],
+                "--cwd can only be used with sessions new",
+            ),
+            (
+                vec!["sessions", "new", "dev", "--cwd", "/a", "--profile", "p"],
+                "--cwd cannot be combined with --profile",
+            ),
+            (
+                vec!["--cwd", "/src", "list-panes"],
+                "--cwd does not apply to control commands",
+            ),
+        ] {
+            assert_eq!(
+                parse_cli_args(args.iter().map(|arg| arg.to_string()).collect())
+                    .expect_err("must reject"),
+                message,
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

@@ -16,6 +16,38 @@ pub(super) struct StartupProfile {
     pub(super) records_origin: bool,
 }
 
+/// Where a created session's first pane starts, on the session's host.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct StartupCwd {
+    pub(super) path: String,
+    /// Set when `path` is a checkout to record as the session's worktree origin (`worktrees open`).
+    pub(super) worktree: Option<StartupWorktree>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct StartupWorktree {
+    /// The repository's checkouts on the session host.
+    pub(super) checkouts: Vec<String>,
+    /// `[worktrees] profile`, rebased onto the checkout when the session is seeded.
+    pub(super) profile: Option<profiles::LoadedProfile>,
+}
+
+impl StartupCwd {
+    /// The attachment and intent this launch seeds its session with.
+    pub(super) fn seed(
+        &self,
+        config: &Config,
+    ) -> Option<(crate::state::Attachment, crate::state::AttachIntent)> {
+        let worktree = self.worktree.as_ref()?;
+        Some(profiles::worktree_session_seed(
+            config,
+            &self.path,
+            &worktree.checkouts,
+            worktree.profile.clone(),
+        ))
+    }
+}
+
 pub(super) struct StartupTasks {
     pub(super) enabled: bool,
     /// How long after the startup check the first re-check fires, or `None` when this client does
@@ -130,6 +162,7 @@ pub(super) struct StartupPlan {
     pub(super) autostart: bool,
     pub(super) create_only: bool,
     pub(super) profile: Option<StartupProfile>,
+    pub(super) cwd: Option<StartupCwd>,
     pub(super) remote: Option<crate::session::remote::RemoteTarget>,
     pub(super) last_session: Option<String>,
     pub(super) want_picker: bool,
@@ -145,11 +178,14 @@ impl StartupPlan {
             autostart: cli.attach_session.is_none(),
             create_only: false,
             profile: None,
+            cwd: None,
             remote,
             last_session: None,
             want_picker: false,
             config: loaded.config,
         };
+        plan.cwd =
+            resolve_startup_cwd(cli, plan.remote.is_some(), &plan.config, &mut plan.messages);
         plan.apply_session_policy(cli);
         plan.resolve_session_target(cli, explicit_target);
         plan.load_fallback_profile();
@@ -347,6 +383,38 @@ impl StartupPlan {
             Err(err) => self.messages.push(format!("Session restore failed: {err}")),
         }
     }
+}
+
+/// `--cwd` for a created session. A local directory is resolved here, where it was typed; a remote
+/// one is the far host's path and is passed through untouched.
+fn resolve_startup_cwd(
+    cli: &cli::CliArgs,
+    remote: bool,
+    config: &Config,
+    messages: &mut Vec<String>,
+) -> Option<StartupCwd> {
+    let raw = cli.cwd.as_deref()?;
+    let path = if remote || cli.worktree_checkouts.is_some() {
+        raw.to_string()
+    } else {
+        let path = crate::session::worktrees::host_path(raw).unwrap_or_else(|err| {
+            startup_fatal(format!("Invalid --cwd `{raw}`: {err}"));
+        });
+        if !path.is_dir() {
+            startup_fatal(format!("--cwd `{}` is not a directory.", path.display()));
+        }
+        path.to_string_lossy().into_owned()
+    };
+    let worktree = cli.worktree_checkouts.clone().map(|checkouts| {
+        // A broken or unusable worktree profile still opens the checkout, with a plain shell.
+        let profile =
+            profiles::load_worktree_profile(config, &checkouts, remote).unwrap_or_else(|message| {
+                messages.push(message);
+                None
+            });
+        StartupWorktree { checkouts, profile }
+    });
+    Some(StartupCwd { path, worktree })
 }
 
 fn requested_new_profile(cli: &cli::CliArgs) -> Option<StartupProfile> {

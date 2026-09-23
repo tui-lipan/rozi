@@ -15,13 +15,14 @@ pub(crate) mod output;
 pub(crate) mod session;
 pub(crate) mod skill;
 pub(crate) mod update;
+pub(crate) mod worktrees;
 
 pub(crate) use api::run_api_describe_cli;
 pub(crate) use args::{
     CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
     print_agents_help, print_extensions_check_help, print_extensions_help,
     print_extensions_install_help, print_extensions_remove_help, print_extensions_update_help,
-    print_sessions_help,
+    print_sessions_help, print_worktrees_help,
 };
 pub(crate) use control::{run_control_cli, run_pick_cli, run_publish_cli, run_subscribe_cli};
 pub(crate) use extension::{
@@ -31,10 +32,11 @@ pub(crate) use extension::{
 pub(crate) use help::{print_help, print_version};
 pub(crate) use session::{
     run_kill_session_cli, run_list_sessions_cli, run_remote_control_cli, run_remote_serve_cli,
-    run_server_cli,
+    run_remote_worktrees_cli, run_server_cli,
 };
 pub(crate) use skill::{print_skill_help, run_skill_cli};
 pub(crate) use update::{recover_managed_installation, run_install_cli, run_update_cli};
+pub(crate) use worktrees::run_worktrees_cli;
 
 #[cfg(test)]
 mod tests {

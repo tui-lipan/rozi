@@ -9,10 +9,9 @@
 //! repository, and the framework's own git discovery only reads local paths.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::path::Path;
-use std::time::Duration;
 
+use crate::git::command::{self, BROWSE_TIMEOUT};
 use crate::session::protocol::{WireChange, WireChangeState, WireDirEntry};
 
 /// How many entries a single listing may return. Matches the widget's own per-directory cap so a
@@ -22,8 +21,6 @@ const MAX_ENTRIES: usize = 10_000;
 /// budget is conservative for JSON escaping, so a result admitted here remains protocol-safe.
 const MAX_CHANGE_ENTRIES: usize = 4096;
 const MAX_CHANGE_RESULT_BYTES: usize = 2 * 1024 * 1024;
-const GIT_TIMEOUT: Duration = Duration::from_secs(2);
-const GIT_CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
 
 /// List `path` on this host. Errors are returned as a message rather than failing the connection —
 /// an unreadable directory is a normal thing to browse into.
@@ -188,27 +185,11 @@ fn git_status_for_dir(dir: &Path) -> DirStatus {
 /// Run `git -C <dir> <args>`, returning stdout. Errors when git is missing or the path is not a
 /// repository — both mean "no change decorations", never a hard failure.
 fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    if !crate::platform::command::program_exists("git") {
-        return Err("git was not found on the session server's PATH".to_string());
-    }
-    let mut argv = Vec::with_capacity(args.len() + 2);
-    argv.push(OsString::from("-C"));
-    argv.push(dir.as_os_str().to_os_string());
-    argv.extend(args.iter().map(OsString::from));
-    let output = crate::platform::command::run_bounded_argv_command(
-        "git",
-        &argv,
-        GIT_TIMEOUT,
-        GIT_CAPTURE_LIMIT,
-    )
-    .map_err(|err| format!("git failed: {err}"))?;
-    if output.timed_out {
-        return Err("git timed out".to_string());
-    }
-    if output.status != Some(0) {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(output.stdout)
+    let args = args
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    command::checked(dir, &args, BROWSE_TIMEOUT)
 }
 
 /// One parsed `git status --porcelain=v1 -z` record.

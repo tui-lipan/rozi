@@ -11,6 +11,7 @@ mod agents;
 mod extensions;
 mod sessions;
 mod skill;
+mod worktrees;
 
 #[cfg(test)]
 pub(super) use agents::HELP_SECTIONS as AGENTS_HELP_SECTIONS;
@@ -25,6 +26,10 @@ pub(crate) use extensions::print_update_help as print_extensions_update_help;
 #[cfg(test)]
 pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
 pub(crate) use sessions::print_help as print_sessions_help;
+#[cfg(test)]
+pub(super) use worktrees::HELP_SECTIONS as WORKTREES_HELP_SECTIONS;
+pub(crate) use worktrees::print_help as print_worktrees_help;
+pub(crate) use worktrees::{WorktreesCli, WorktreesCommand};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
@@ -45,6 +50,11 @@ pub(crate) struct CliArgs {
     pub(crate) read_only: bool,
     /// SSH remote host alias or `ssh://` URL (`--remote`).
     pub(crate) remote: Option<String>,
+    /// First-pane directory for a `sessions new` session, on the session's host (`--cwd`).
+    pub(crate) cwd: Option<String>,
+    /// Record [`Self::cwd`] as the session's worktree origin, with its repository's checkouts on the
+    /// session host. Set by `worktrees open`, never by argv.
+    pub(crate) worktree_checkouts: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,6 +145,8 @@ pub(crate) enum ParsedCli {
     Sessions(SessionsCommand),
     Extensions(ExtensionsCommand),
     SessionsHelp,
+    Worktrees(WorktreesCli),
+    WorktreesHelp,
     ExtensionsHelp,
     ExtensionsCheckHelp,
     ExtensionsInstallHelp,
@@ -162,6 +174,8 @@ pub(crate) enum ParsedCli {
     RemoteControl {
         name: String,
     },
+    /// Hidden remote-side worktree runner: one JSON call in, one JSON reply out.
+    RemoteWorktrees,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,9 +261,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     // namespace owns its help. `--advanced` is only ever read here, so it can never be silently
     // swallowed by another command.
     let help_index = args.iter().position(|arg| arg == "--help" || arg == "-h");
-    let namespace_index = args
-        .iter()
-        .position(|arg| matches!(arg.as_str(), "agents" | "sessions" | "extensions" | "skill"));
+    let namespace_index = args.iter().position(|arg| {
+        matches!(
+            arg.as_str(),
+            "agents" | "sessions" | "worktrees" | "extensions" | "skill"
+        )
+    });
     if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {
         return Ok(ParsedCli::Help {
             advanced: args.iter().any(|arg| arg == "--advanced"),
@@ -299,6 +316,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     return Ok(parsed);
                 }
             }
+            "worktrees" => return worktrees::parse(&mut iter, &mut cli),
             "extensions" => return extensions::parse(&mut iter, cli.config_path),
             "--server" => {
                 if cli.remote.is_some() {
@@ -372,6 +390,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "--remote-control")?;
                 return Ok(ParsedCli::RemoteControl { name });
             }
+            "--remote-worktrees" => {
+                reject_trailing_control_args(&mut iter, "--remote-worktrees")?;
+                return Ok(ParsedCli::RemoteWorktrees);
+            }
             "--remote-serve-existing" => {
                 let name =
                     require_value(&mut iter, "--remote-serve-existing requires a session name")?;
@@ -384,7 +406,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--remote" => {
                 // Host is optional when `[remote] default_host` is set (resolved in app::run).
                 let target = match iter.peek().map(|s| s.as_str()) {
-                    Some(next) if !next.starts_with('-') && !matches!(next, "sessions") => {
+                    Some(next)
+                        if !next.starts_with('-') && !matches!(next, "sessions" | "worktrees") =>
+                    {
                         let target = iter.next().expect("peeked");
                         session::remote::parse_remote_target(&target)?;
                         target
@@ -408,6 +432,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let profile = require_value(&mut iter, "--profile requires a profile name")?;
                 if cli.profile.replace(profile).is_some() {
                     return Err("--profile specified more than once".to_string());
+                }
+            }
+            "--cwd" => {
+                let cwd = require_value(&mut iter, "--cwd requires a directory")?;
+                if cli.cwd.replace(cwd).is_some() {
+                    return Err("--cwd specified more than once".to_string());
                 }
             }
             "--pick" => {
@@ -919,6 +949,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     if cli.profile.is_some() && cli.session_command != SessionCommand::New {
         return Err("--profile can only be used with sessions new".to_string());
     }
+    if cli.cwd.is_some() && cli.session_command != SessionCommand::New {
+        return Err("--cwd can only be used with sessions new".to_string());
+    }
+    if cli.cwd.is_some() && cli.profile.is_some() {
+        return Err("--cwd cannot be combined with --profile".to_string());
+    }
     Ok(ParsedCli::Run(cli))
 }
 
@@ -1012,6 +1048,8 @@ pub(super) fn control_endpoint(
         "--pick"
     } else if cli.profile.is_some() {
         "--profile"
+    } else if cli.cwd.is_some() {
+        "--cwd"
     } else {
         ""
     };

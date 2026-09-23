@@ -38,6 +38,26 @@ pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
     }
 }
 
+/// `--remote-worktrees`: run one forwarded worktree call on this host.
+///
+/// A call the host ran and refused is still an answer, printed like a success. A non-zero exit
+/// means the call could not be read at all.
+pub(crate) fn run_remote_worktrees_cli() -> Result<()> {
+    match session::remote::worktrees::run_remote_worktrees() {
+        Ok(reply) => {
+            println!(
+                "{}",
+                serde_json::to_string(&reply).map_err(std::io::Error::other)?
+            );
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub(super) fn format_sessions_text(
     rows: &[session::discovery::DiscoveredSession],
     styles: OutputStyles,
@@ -184,11 +204,11 @@ mod tests {
         let rows = vec![
             session::discovery::DiscoveredSession {
                 name: "dev".into(),
+                origin: Default::default(),
                 status: session::discovery::DiscoveredSessionStatus::Running {
                     panes: 5,
                     clients: 1,
                     has_layout: true,
-                    created_from_profile: None,
                 },
                 ephemeral: false,
                 host: None,
@@ -196,6 +216,7 @@ mod tests {
             },
             session::discovery::DiscoveredSession {
                 name: "saved-work".into(),
+                origin: Default::default(),
                 status: session::discovery::DiscoveredSessionStatus::Restorable,
                 ephemeral: false,
                 host: None,

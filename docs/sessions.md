@@ -30,9 +30,18 @@ rozi sessions attach dev              # attach only
 rozi sessions attach dev --read-only  # attach without input or layout authority
 rozi sessions new dev                 # create a fresh empty named session
 rozi sessions new review --profile dev
+rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions list
 rozi sessions kill dev
 ```
+
+`--cwd` applies only to `sessions new` and cannot be combined with `--profile`. Under `--remote` it
+names a directory on the remote host and is passed through unchanged, so use an absolute path.
+
+`rozi sessions list --format json` includes an `origin` object when a session was seeded from a
+profile or a Git worktree. A worktree origin contains its checkout path on the session host; remote
+clients treat that path as an opaque string. Restorable sessions retain this origin in their
+snapshot metadata.
 
 `rozi dev` first looks for a running session named `dev`. If none exists, it launches the
 same-name profile. It reports an error when neither exists. It never creates an unknown empty
@@ -43,6 +52,82 @@ Namespace names and retired CLI spellings cannot be bare session or profile targ
 `rozi --session attach` when the intended session or profile is literally named `attach`.
 
 Remote targets use the same session commands. See [Remote sessions](remote.md).
+
+## Worktrees
+
+Open **Worktrees** from the command palette or the Changes sidebar while a pane is focused in a
+Git repository. The picker lists checkouts on that pane's session host, including remote hosts,
+with `●` on the checkout the focused pane is in and each checkout's sessions on the right. It
+opens with the list it last showed for that repository and refreshes it in place.
+`Enter` opens an associated session; when none exists, Rozi creates a named session with its first
+shell in that checkout. Multiple sessions can use one checkout, in which case `Enter` shows those
+sessions to choose from. Association comes from the session's recorded origin, not a pane that
+happens to have changed directory into the checkout.
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a fresh session |
+| `Ctrl+R` | Refresh the worktree list |
+| `Ctrl+K` | Remove a linked checkout; press again to force only if Git refused a dirty checkout |
+| `Esc` | Close the picker |
+
+The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews
+the default path on the session host: `<repo>-worktrees/<branch>` beside the repository by
+default, `<directory>/<repo>/<branch>` for an absolute `[worktrees] directory`, or
+`<repo>/<directory>/<branch>` for a single folder name such as `.worktrees`. Edit Path to choose another
+absolute host path. `Tab` and `Shift+Tab` change fields.
+
+A checkout inside the repository shows up in `git status` and is swept up by `git add -A` unless
+Git ignores its directory. When it does not, the form warns under the path and `Ctrl+E` adds the
+directory to `.git/info/exclude`, which is local to your clone. Rozi never edits the committed
+`.gitignore`, and creating a checkout never changes ignore rules on its own; a checkout created
+without the rule reports the same warning.
+
+New worktree sessions start with a plain shell in the checkout; `[profile] default` does not apply.
+To seed them with a layout, set `[worktrees] profile`. Its pane directories inside any checkout of
+the repository are rebased onto the new one: a pane saved at `~/src/rozi/frontend` opens at
+`~/src/rozi-worktrees/feat-login/frontend`. Directories outside the repository are kept, and panes
+without a directory start in the checkout. The session records both the profile and the worktree
+as its origin. A profile is a local file, so for a worktree on a remote host it applies only when
+all of its pane directories are inside the repository; otherwise Rozi says so and starts the
+session as one shell in the checkout.
+
+Removal never deletes a branch. It refuses a primary or locked checkout and any checkout owned
+by a running or restorable Rozi session. `force` only asks Git to remove a dirty checkout; stop or
+forget an associated session first. A create or remove already underway finishes even if the
+picker closes, and Rozi reports the result.
+
+### Worktrees from the command line
+
+```bash
+rozi worktrees list                         # checkouts of the repository around this directory
+rozi worktrees list --cwd ~/src/rozi --format json
+rozi worktrees create feat/login            # new branch from HEAD, beside the repository
+rozi worktrees create fix/ssh --base origin/main --open
+rozi worktrees open ~/src/rozi-worktrees/feat-login
+rozi worktrees remove ~/src/rozi-worktrees/feat-login
+rozi worktrees exclude                      # add the in-repository worktree directory to .git/info/exclude
+```
+
+`create` checks out an existing local branch, or creates the branch from `--base` (`HEAD` by
+default). Without `--path` the checkout goes to the same default location as in the picker. It
+prints the new checkout's path, or a `worktree` object with `--format json`. When the checkout is
+inside the repository in a directory Git does not ignore, `create` prints a warning, and the JSON
+names it as `unignored`. `rozi worktrees exclude` adds the relative `[worktrees] directory`, or a
+directory you name, to `.git/info/exclude`.
+`list --format json` prints a `worktrees` array; each entry adds the `sessions` whose recorded
+origin is that checkout.
+
+`open` accepts any path inside a checkout. It attaches to the checkout's session when there is
+exactly one, and otherwise creates a session named `wt-<branch>` whose first shell starts in the
+checkout and records it as the session's origin. When several sessions use the checkout, choose one
+with `--name <SESSION>`; a `--name` that is not yet associated creates another session for it.
+`create --open` opens the new checkout the same way.
+
+`remove` follows the same rules as the picker: it never deletes a branch, and `--force` only lets
+Git remove a dirty checkout. Paths resolve on the host that owns the repository, so under
+`--remote` a `~` or relative path means that host's home or working directory. See
+[Remote sessions](remote.md).
 
 ## Scope: where an action happens
 

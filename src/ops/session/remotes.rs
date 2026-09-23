@@ -15,6 +15,7 @@ fn cached_rows_for_target(
         .filter(|session| !session.ephemeral)
         .map(|session| crate::session::discovery::DiscoveredSession {
             name: session.name.clone(),
+            origin: session.origin.clone(),
             ephemeral: session.ephemeral,
             host: Some(label.clone()),
             remote_target: Some(target.clone()),
@@ -1039,6 +1040,12 @@ mod tests {
             &target,
             vec![crate::session::CachedHostSession {
                 name: "dev".into(),
+                origin: crate::session::origin::SessionOrigin {
+                    worktree: Some(crate::session::origin::WorktreeOrigin {
+                        path: "C:\\code\\feature".into(),
+                    }),
+                    ..Default::default()
+                },
                 ephemeral: false,
                 panes: 3,
             }],
@@ -1047,6 +1054,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].host.as_deref(), Some("adam@workbox:2222"));
         assert_eq!(rows[0].remote_target.as_ref(), Some(&target));
+        assert_eq!(rows[0].origin, cache[&target.to_spec()][0].origin);
     }
 
     #[test]
@@ -1063,11 +1071,13 @@ mod tests {
             vec![
                 crate::session::CachedHostSession {
                     name: "dev".into(),
+                    origin: Default::default(),
                     ephemeral: false,
                     panes: 2,
                 },
                 crate::session::CachedHostSession {
                     name: "eph-stale".into(),
+                    origin: Default::default(),
                     ephemeral: true,
                     panes: 1,
                 },
@@ -1085,6 +1095,7 @@ mod tests {
             crate::ops::session::discovery::cached_sessions_for_target(&rows, &target),
             vec![crate::session::CachedHostSession {
                 name: "dev".into(),
+                origin: Default::default(),
                 ephemeral: false,
                 panes: 2,
             }]
@@ -1320,6 +1331,7 @@ mod tests {
                     target: target.clone(),
                     rows: Ok(vec![crate::session::discovery::DiscoveredSession {
                         name: "api".into(),
+                        origin: Default::default(),
                         ephemeral: false,
                         host: Some("workbox".into()),
                         remote_target: Some(target.clone()),
@@ -1327,7 +1339,6 @@ mod tests {
                             panes: 1,
                             clients: 0,
                             has_layout: false,
-                            created_from_profile: None,
                         },
                     }]),
                 })
@@ -1374,6 +1385,7 @@ mod tests {
                     target: target.clone(),
                     rows: Ok(vec![crate::session::discovery::DiscoveredSession {
                         name: "backend".into(),
+                        origin: Default::default(),
                         ephemeral: false,
                         host: Some("workbox".into()),
                         remote_target: Some(target.clone()),
@@ -1381,7 +1393,6 @@ mod tests {
                             panes: 2,
                             clients: 0,
                             has_layout: false,
-                            created_from_profile: None,
                         },
                     }]),
                 })
@@ -1614,6 +1625,7 @@ mod tests {
             let target = RemoteTarget::Alias("winvm".into());
             let session = crate::session::discovery::DiscoveredSession {
                 name: "test".into(),
+                origin: Default::default(),
                 ephemeral: false,
                 host: Some("winvm".into()),
                 remote_target: Some(target.clone()),
@@ -1626,6 +1638,7 @@ mod tests {
                     &target,
                     vec![crate::session::CachedHostSession {
                         name: "test".into(),
+                        origin: Default::default(),
                         ephemeral: false,
                         panes: 1,
                     }],

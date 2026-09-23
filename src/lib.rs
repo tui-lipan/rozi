@@ -20,6 +20,7 @@ pub mod control;
 pub mod events;
 mod extension_catalog;
 mod extension_installation;
+pub mod git;
 pub mod input;
 mod jobs;
 pub mod layout;

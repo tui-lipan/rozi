@@ -13,11 +13,11 @@ use tui_lipan::prelude::{KeyMods, Rect};
 fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> DiscoveredSession {
     DiscoveredSession {
         name: name.into(),
+        origin: Default::default(),
         status: DiscoveredSessionStatus::Running {
             panes,
             clients,
             has_layout: true,
-            created_from_profile: None,
         },
         ephemeral: false,
         host: host.map(str::to_string),
@@ -123,6 +123,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                     "winvm".into(),
                     vec![CachedHostSession {
                         name: "dev".into(),
+                        origin: Default::default(),
                         ephemeral: false,
                         panes: 2,
                     }],

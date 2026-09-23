@@ -2054,10 +2054,13 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         first,
         ClientMessage::SetSessionOrigin {
-            profile: "too-early".into(),
+            origin: SessionOrigin {
+                profile: Some("too-early".into()),
+                ..Default::default()
+            },
         },
     );
-    assert_eq!(server.created_from_profile, None);
+    assert_eq!(server.origin.profile, None);
     server.handle_message(
         first,
         ClientMessage::SpawnPane {
@@ -2081,20 +2084,26 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         first,
         ClientMessage::SetSessionOrigin {
-            profile: "work".into(),
+            origin: SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            },
         },
     );
-    assert_eq!(server.created_from_profile.as_deref(), Some("work"));
+    assert_eq!(server.origin.profile.as_deref(), Some("work"));
     assert!(server.snapshot_dirty());
 
     let (second, _stream) = attach_client(&mut server);
     server.handle_message(
         second,
         ClientMessage::SetSessionOrigin {
-            profile: "other".into(),
+            origin: SessionOrigin {
+                profile: Some("other".into()),
+                ..Default::default()
+            },
         },
     );
-    assert_eq!(server.created_from_profile.as_deref(), Some("work"));
+    assert_eq!(server.origin.profile.as_deref(), Some("work"));
 
     let query = server.handle_query("dev".into(), PROTOCOL_VERSION, PROTOCOL_VERSION, None);
     assert!(matches!(
@@ -2102,7 +2111,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
         [(
             Target::Sender,
             ServerMessage::SessionInfo {
-                created_from_profile: Some(profile),
+                origin: SessionOrigin { profile: Some(profile), .. },
                 ..
             }
         )] if profile == "work"
@@ -2122,10 +2131,13 @@ fn profile_origin_claim_is_ignored_without_seeded_panes() {
     server.handle_message(
         client,
         ClientMessage::SetSessionOrigin {
-            profile: "too-late".into(),
+            origin: SessionOrigin {
+                profile: Some("too-late".into()),
+                ..Default::default()
+            },
         },
     );
-    assert_eq!(server.created_from_profile, None);
+    assert_eq!(server.origin.profile, None);
 }
 
 #[test]
@@ -3964,7 +3976,10 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         ..ServerSettings::default()
     };
     let mut server = SessionServer::new_named_with_settings("dev", settings.clone());
-    server.created_from_profile = Some("work".into());
+    server.origin.profile = Some("work".into());
+    server.origin.worktree = Some(crate::session::origin::WorktreeOrigin {
+        path: "C:\\code\\feature".into(),
+    });
     for (id, exited) in [(1, None), (2, Some(0)), (crate::state::POPUP_PANE_ID, None)] {
         let mut screen = TerminalScreen::new(5, 20, 100);
         screen.process_bytes(format!("marker-{id}").as_bytes());
@@ -4056,7 +4071,15 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
             .contains("marker-1")
     );
     assert_eq!(restored.layout_rev, 1);
-    assert_eq!(restored.created_from_profile.as_deref(), Some("work"));
+    assert_eq!(restored.origin.profile.as_deref(), Some("work"));
+    assert_eq!(
+        restored
+            .origin
+            .worktree
+            .as_ref()
+            .map(|tree| tree.path.as_str()),
+        Some("C:\\code\\feature")
+    );
     restored.delete_snapshot().unwrap();
     assert!(!root.join("dev").exists());
     let _ = fs::remove_dir_all(root);

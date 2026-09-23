@@ -190,6 +190,7 @@ fn a_bare_unknown_tab_is_not_retained() {
 fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
     crate::session::discovery::DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         ephemeral: false,
         host: None,
         remote_target: None,
@@ -197,7 +198,6 @@ fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
             panes: 1,
             clients: 0,
             has_layout: true,
-            created_from_profile: None,
         },
     }
 }
@@ -952,6 +952,7 @@ fn cached_rows_do_not_mark_an_idle_host_reached() {
                 .sessions
                 .push(crate::session::discovery::DiscoveredSession {
                     name: "work".to_string(),
+                    origin: Default::default(),
                     status: crate::session::discovery::DiscoveredSessionStatus::LastSeen {
                         panes: 2,
                     },

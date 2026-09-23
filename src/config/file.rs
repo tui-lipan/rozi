@@ -102,6 +102,7 @@ struct FileConfig {
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
+    worktrees: WorktreesFileConfig,
     session: SessionFileConfig,
     remote: RemoteFileConfig,
     layout: LayoutFileConfig,
@@ -363,6 +364,13 @@ pub(super) enum WorkbarSegmentSpec {
 #[serde(default)]
 struct ProfileFileConfig {
     default: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct WorktreesFileConfig {
+    profile: Option<String>,
+    directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -791,6 +799,16 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(name) = non_empty(parsed.profile.default) {
         config.profile.default = Some(name);
+    }
+    if let Some(name) = non_empty(parsed.worktrees.profile) {
+        config.worktrees.profile = Some(name);
+    }
+    if let Some(directory) = non_empty(parsed.worktrees.directory) {
+        let expanded = expand_path(&directory);
+        match crate::git::worktrees::checkout_root(Some(&expanded)) {
+            Ok(_) => config.worktrees.directory = Some(directory),
+            Err(message) => warnings.push(format!("Ignored {message}")),
+        }
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;
@@ -1761,6 +1779,48 @@ mod file_tests {
         let parsed: FileConfig =
             toml::from_str("[profile]\ndefault = \"dev\"").expect("config parses");
         assert_eq!(parsed.profile.default.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn worktrees_keys_load_without_warnings() {
+        let loaded = load_config_from_text(
+            "[worktrees]\nprofile = \"dev\"\ndirectory = \"~/worktrees\"",
+            Path::new("config.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.worktrees.profile.as_deref(), Some("dev"));
+        assert_eq!(
+            loaded.config.worktrees.directory.as_deref(),
+            Some("~/worktrees")
+        );
+    }
+
+    #[test]
+    fn a_nested_or_escaping_relative_worktrees_directory_is_ignored_with_a_warning() {
+        for directory in ["../worktrees", "tools/.worktrees"] {
+            let loaded = load_config_from_text(
+                &format!("[worktrees]\ndirectory = \"{directory}\""),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.worktrees.directory, None, "{directory}");
+            assert!(
+                loaded
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("one folder name")),
+                "{:?}",
+                loaded.warnings
+            );
+        }
+        let loaded = load_config_from_text(
+            "[worktrees]\ndirectory = \".worktrees\"",
+            Path::new("config.toml"),
+        );
+        assert_eq!(
+            loaded.config.worktrees.directory.as_deref(),
+            Some(".worktrees")
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]

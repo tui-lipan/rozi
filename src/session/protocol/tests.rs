@@ -166,12 +166,42 @@ fn pane_meta_from_older_peer_defaults_original_user() {
 #[test]
 fn session_origin_shape_round_trips() {
     let msg = ClientMessage::SetSessionOrigin {
-        profile: "work".into(),
+        origin: crate::session::origin::SessionOrigin {
+            profile: Some("work".into()),
+            ..Default::default()
+        },
     };
     let mut buf = Vec::new();
     write_frame(&mut buf, &msg).unwrap();
     let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
     assert_eq!(decoded, msg);
+}
+
+#[test]
+fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
+    let request = ClientMessage::Worktree {
+        request_id: 47,
+        request: WorktreeRequest::Remove {
+            cwd: "C:\\code\\repo".into(),
+            path: "C:\\code\\repo-worktrees\\feature".into(),
+            force: false,
+        },
+    };
+    let mut bytes = Vec::new();
+    write_frame(&mut bytes, &request).unwrap();
+    let decoded: ClientMessage = read_frame(&mut &bytes[..]).unwrap();
+    assert_eq!(decoded, request);
+
+    let response = ServerMessage::WorktreeResult {
+        request_id: 47,
+        result: WorktreeResult::Removed {
+            path: "C:\\code\\repo-worktrees\\feature".into(),
+        },
+    };
+    bytes.clear();
+    write_frame(&mut bytes, &response).unwrap();
+    let decoded: ServerMessage = read_frame(&mut &bytes[..]).unwrap();
+    assert_eq!(decoded, response);
 }
 
 #[test]
@@ -534,10 +564,13 @@ fn golden_client_attach_json_shape() {
     );
     assert_eq!(
         serde_json::to_value(ClientMessage::SetSessionOrigin {
-            profile: "work".into()
+            origin: crate::session::origin::SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            }
         })
         .unwrap(),
-        serde_json::json!({"type":"set-session-origin","profile":"work"})
+        serde_json::json!({"type":"set-session-origin","origin":{"profile":"work"}})
     );
 }
 
@@ -634,7 +667,10 @@ fn golden_session_info_json_shape() {
             clients: 1,
             has_layout: true,
             effective_protocol: PROTOCOL_VERSION,
-            created_from_profile: Some("work".into()),
+            origin: crate::session::origin::SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            },
         })
         .unwrap(),
         serde_json::json!({
@@ -644,7 +680,7 @@ fn golden_session_info_json_shape() {
             "clients":1,
             "has_layout":true,
             "effective_protocol":PROTOCOL_VERSION,
-            "created_from_profile":"work"
+            "origin":{"profile":"work"}
         })
     );
 }
@@ -853,6 +889,7 @@ fn attached_without_effective_protocol_deserializes_as_zero() {
         "layout": null,
         "controller": null,
         "clients": [],
+        "origin": {},
         "input_locked": false
     });
     let decoded: ServerMessage = serde_json::from_value(value).unwrap();

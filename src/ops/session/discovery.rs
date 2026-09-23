@@ -282,6 +282,7 @@ pub(crate) fn cached_sessions_for_target(
         .filter(|entry| !entry.ephemeral && entry.remote_target.as_ref() == Some(target))
         .map(|entry| crate::session::CachedHostSession {
             name: entry.name.clone(),
+            origin: entry.origin.clone(),
             ephemeral: entry.ephemeral,
             panes: match &entry.status {
                 crate::session::discovery::DiscoveredSessionStatus::Running { panes, .. }
@@ -321,6 +322,7 @@ pub(crate) fn push_cached_known_remote_rows(
                 rows,
                 DiscoveredSession {
                     name: session.name.clone(),
+                    origin: session.origin.clone(),
                     ephemeral: session.ephemeral,
                     host: Some(label.clone()),
                     remote_target: Some(target.clone()),
@@ -471,6 +473,7 @@ pub(crate) fn attachment_session_row(
     let name = attachment.session_name.clone()?;
     Some(DiscoveredSession {
         name,
+        origin: attachment.origin.clone(),
         ephemeral: attachment.is_ephemeral_session(),
         host: attachment.remote_host.clone(),
         remote_target: attachment.remote_target.clone(),
@@ -478,7 +481,6 @@ pub(crate) fn attachment_session_row(
             panes: attachment.workspaces.iter().map(|w| w.panes.len()).sum(),
             has_layout: true,
             clients: attachment.attached_client_count(),
-            created_from_profile: attachment.created_from_profile.clone(),
         },
     })
 }

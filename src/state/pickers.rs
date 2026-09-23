@@ -26,6 +26,187 @@ pub struct ProfilePickerState {
     pub apply_mode: bool,
 }
 
+/// A repository picker scoped to the host and project root of the pane that opened it.
+pub struct WorktreePickerState {
+    pub cwd: String,
+    pub target: Option<crate::session::remote::RemoteTarget>,
+    pub entries: Vec<crate::git::worktrees::WorktreeInfo>,
+    pub sessions: Vec<DiscoveredSession>,
+    pub input: TextInput,
+    pub selected: usize,
+    pub pending_list: Option<u64>,
+    pub pending_remove: Option<String>,
+    pub form: Option<WorktreeFormState>,
+    pub error: Option<String>,
+}
+
+impl WorktreePickerState {
+    pub fn new(cwd: String, target: Option<crate::session::remote::RemoteTarget>) -> Self {
+        Self {
+            cwd,
+            target,
+            entries: Vec::new(),
+            sessions: Vec::new(),
+            input: TextInput::new(""),
+            selected: 0,
+            pending_list: None,
+            pending_remove: None,
+            form: None,
+            error: None,
+        }
+    }
+}
+
+/// The last checkouts listed for each repository, per host, so the Worktrees picker opens with
+/// rows while it refreshes them in the background rather than drawing an empty loading list.
+#[derive(Clone, Debug, Default)]
+pub struct WorktreeListCache {
+    lists: Vec<(
+        Option<crate::session::remote::RemoteTarget>,
+        String,
+        Vec<crate::git::worktrees::WorktreeInfo>,
+    )>,
+}
+
+impl WorktreeListCache {
+    /// Repositories remembered at once; the least recently listed is dropped first.
+    const CAPACITY: usize = 8;
+
+    pub fn get(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+    ) -> Option<&[crate::git::worktrees::WorktreeInfo]> {
+        self.lists
+            .iter()
+            .find(|(host, repo, _)| host.as_ref() == target && repo == cwd)
+            .map(|(_, _, list)| list.as_slice())
+    }
+
+    pub fn put(
+        &mut self,
+        target: Option<crate::session::remote::RemoteTarget>,
+        cwd: String,
+        list: Vec<crate::git::worktrees::WorktreeInfo>,
+    ) {
+        self.forget(target.as_ref(), &cwd);
+        self.lists.insert(0, (target, cwd, list));
+        self.lists.truncate(Self::CAPACITY);
+    }
+
+    pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
+        self.lists
+            .retain(|(host, repo, _)| !(host.as_ref() == target && repo == cwd));
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorktreeFormField {
+    Branch,
+    Base,
+    Path,
+}
+
+impl WorktreeFormField {
+    pub const ORDER: [Self; 3] = [Self::Branch, Self::Base, Self::Path];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Branch => "Branch",
+            Self::Base => "Base",
+            Self::Path => "Path",
+        }
+    }
+}
+
+pub struct WorktreeFormState {
+    pub branch: TextInput,
+    pub base: TextInput,
+    pub path: TextInput,
+    pub focus: WorktreeFormField,
+    pub path_edited: bool,
+    pub preview_revision: u64,
+    pub pending_preview: Option<u64>,
+    /// The repository's top-level directory the previewed path would add, when Git does not
+    /// ignore it.
+    pub unignored: Option<String>,
+    pub pending_exclude: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl WorktreeFormState {
+    pub fn new() -> Self {
+        Self {
+            branch: TextInput::new(""),
+            base: TextInput::new("HEAD"),
+            path: TextInput::new(""),
+            focus: WorktreeFormField::Branch,
+            path_edited: false,
+            preview_revision: 0,
+            pending_preview: None,
+            unignored: None,
+            pending_exclude: None,
+            error: None,
+        }
+    }
+
+    pub fn input(&self, field: WorktreeFormField) -> &TextInput {
+        match field {
+            WorktreeFormField::Branch => &self.branch,
+            WorktreeFormField::Base => &self.base,
+            WorktreeFormField::Path => &self.path,
+        }
+    }
+
+    pub fn input_mut(&mut self, field: WorktreeFormField) -> &mut TextInput {
+        match field {
+            WorktreeFormField::Branch => &mut self.branch,
+            WorktreeFormField::Base => &mut self.base,
+            WorktreeFormField::Path => &mut self.path,
+        }
+    }
+
+    pub fn cycle_focus(&mut self, forward: bool) {
+        let position = Self::field_index(self.focus);
+        let next = if forward {
+            (position + 1) % 3
+        } else {
+            (position + 2) % 3
+        };
+        self.focus = WorktreeFormField::ORDER[next];
+    }
+
+    fn field_index(field: WorktreeFormField) -> usize {
+        WorktreeFormField::ORDER
+            .iter()
+            .position(|item| *item == field)
+            .unwrap()
+    }
+}
+
+impl Default for WorktreeFormState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Git work continues when the picker closes; completion is still delivered as a toast.
+pub struct WorktreeOperation {
+    pub request_id: u64,
+    /// The attachment that sent the request, which need not still be the foreground one.
+    pub epoch: u64,
+    /// The connection the reply will come back on. Once that attachment is gone or has
+    /// reconnected, no reply can arrive.
+    pub connection: crate::session::client::ConnectionToken,
+    pub cwd: String,
+    pub kind: WorktreeOperationKind,
+}
+
+pub enum WorktreeOperationKind {
+    Create { branch: String },
+    Remove { path: String, force: bool },
+}
+
 pub struct SessionPickerState {
     pub entries: Vec<DiscoveredSession>,
     pub input: TextInput,
@@ -1378,5 +1559,44 @@ mod tests {
         assert_eq!(spec.placeholder(), "git status");
         assert_eq!(spec.value(), "git status --short");
         assert!(spec.masked());
+    }
+}
+
+#[cfg(test)]
+mod worktree_cache_tests {
+    use super::WorktreeListCache;
+
+    fn tree(path: &str) -> crate::git::worktrees::WorktreeInfo {
+        crate::git::worktrees::WorktreeInfo {
+            path: path.into(),
+            branch: None,
+            detached: true,
+            bare: false,
+            prunable: false,
+            linked: true,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn the_cache_keeps_recent_repositories_per_host() {
+        let mut cache = WorktreeListCache::default();
+        let host = crate::session::remote::RemoteTarget::Alias("box".into());
+        cache.put(None, "/repo".into(), vec![tree("/repo")]);
+        cache.put(Some(host.clone()), "/repo".into(), vec![tree("/remote")]);
+        assert_eq!(cache.get(None, "/repo").unwrap()[0].path, "/repo");
+        assert_eq!(cache.get(Some(&host), "/repo").unwrap()[0].path, "/remote");
+
+        cache.put(None, "/repo".into(), vec![tree("/repo"), tree("/wt")]);
+        assert_eq!(cache.get(None, "/repo").unwrap().len(), 2);
+        for index in 0..WorktreeListCache::CAPACITY {
+            cache.put(None, format!("/other{index}"), Vec::new());
+        }
+        assert!(
+            cache.get(None, "/repo").is_none(),
+            "the oldest repository is dropped"
+        );
+        cache.forget(None, "/other0");
+        assert!(cache.get(None, "/other0").is_none());
     }
 }

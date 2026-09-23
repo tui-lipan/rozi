@@ -111,7 +111,10 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         )
     });
     client.write_control(&ClientMessage::SetSessionOrigin {
-        profile: "work".into(),
+        origin: rozi::session::origin::SessionOrigin {
+            profile: Some("work".into()),
+            ..Default::default()
+        },
     });
     client.write_pane_input(PANE_ID, PANE_GENERATION, b"i=0; while [ $i -lt 40 ]; do printf 'resurrect-line-%03d\\n' $i; i=$((i+1)); done; printf 'rozi-resurrect-%s\\n' 'replay-marker'\r");
     let mut live_output = Vec::new();
@@ -180,14 +183,14 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         panes,
         layout_rev,
         layout: restored_layout,
-        created_from_profile,
+        origin,
         ..
     } = attached.expect("restored attach response")
     else {
         unreachable!()
     };
     assert_eq!(layout_rev, 1);
-    assert_eq!(created_from_profile.as_deref(), Some("work"));
+    assert_eq!(origin.profile.as_deref(), Some("work"));
     let restored_layout = restored_layout.expect("restored shared layout");
     assert_eq!(restored_layout.canvas_cols, layout.canvas_cols);
     assert_eq!(restored_layout.workspaces.len(), 1);

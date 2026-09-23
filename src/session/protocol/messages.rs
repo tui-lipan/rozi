@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::shared::{ClientId, SharedLayout};
 use crate::runtime_metrics::ServerRuntimeMetrics;
+use crate::session::origin::SessionOrigin;
 use crate::session::protocol::pane_runtime::{
     PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
 };
@@ -54,10 +55,10 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_server_nonce: Option<String>,
     },
-    /// Record the reusable profile that supplied this session's initial panes. Sent only after the
-    /// profile seed requests have been queued successfully.
+    /// Record the provenance that supplied this session's initial panes. Sent only after the seed
+    /// requests have been queued successfully.
     SetSessionOrigin {
-        profile: String,
+        origin: SessionOrigin,
     },
     /// Headless control: run one [`crate::control::ControlCommand`] against this session and
     /// answer with its [`crate::control::ControlResponse`].
@@ -287,10 +288,73 @@ pub enum ClientMessage {
     ListChanges {
         root: String,
     },
+    /// Run Git worktree operations on this session server's host.
+    Worktree {
+        request_id: u64,
+        request: WorktreeRequest,
+    },
     /// Ask for an immediate server-owned resource sample.
     RequestRuntimeMetrics,
     Detach,
     Shutdown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum WorktreeRequest {
+    List {
+        cwd: String,
+    },
+    Preview {
+        cwd: String,
+        branch: String,
+    },
+    Create {
+        cwd: String,
+        branch: String,
+        base: String,
+        /// Absent for a server-generated sibling path. Remote clients never interpret this path.
+        path: Option<String>,
+    },
+    Remove {
+        cwd: String,
+        path: String,
+        force: bool,
+    },
+    /// Add a top-level directory of the repository to its `.git/info/exclude`.
+    Exclude {
+        cwd: String,
+        directory: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum WorktreeResult {
+    Listed {
+        worktrees: Vec<crate::git::worktrees::WorktreeInfo>,
+    },
+    Previewed {
+        path: String,
+        /// The repository's top-level directory this path would add, when Git does not ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unignored: Option<String>,
+    },
+    Created {
+        worktree: crate::git::worktrees::WorktreeInfo,
+        /// As for [`Self::Previewed`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unignored: Option<String>,
+    },
+    Removed {
+        path: String,
+    },
+    Excluded {
+        directory: String,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 /// One child entry in a [`ServerMessage::DirectoryListing`].
@@ -376,8 +440,7 @@ pub enum ServerMessage {
         input_locked: bool,
         #[serde(default)]
         allow_takeover: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        created_from_profile: Option<String>,
+        origin: SessionOrigin,
     },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
@@ -392,8 +455,7 @@ pub enum ServerMessage {
         /// Negotiated wire version for this probe. Missing (`0`) on pre-negotiation peers.
         #[serde(default)]
         effective_protocol: u32,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        created_from_profile: Option<String>,
+        origin: SessionOrigin,
     },
     /// Reply to a [`ClientMessage::SessionControl`] request.
     ///
@@ -413,7 +475,7 @@ pub enum ServerMessage {
         response: crate::control::ControlResponse,
     },
     SessionOriginSet {
-        created_from_profile: String,
+        origin: SessionOrigin,
     },
     Resized {
         pane_id: PaneId,
@@ -528,6 +590,11 @@ pub enum ServerMessage {
         changes: Vec<WireChange>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// Reply to [`ClientMessage::Worktree`], matched by request ID after asynchronous execution.
+    WorktreeResult {
+        request_id: u64,
+        result: WorktreeResult,
     },
     /// Server-owned resource sample, requested by a protocol-18 client.
     RuntimeMetrics {

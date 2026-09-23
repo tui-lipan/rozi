@@ -92,6 +92,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenLayoutPicker => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
+        | Action::OpenWorktrees
         | Action::ApplyProfile
         | Action::OpenSessionPicker
         | Action::OpenCollaborators => {}

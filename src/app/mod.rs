@@ -15,13 +15,15 @@ mod startup;
 
 pub use entry::run;
 pub(crate) use entry::{clipboard_config, clipboard_copy_feedback_duration};
-use startup::{StartupProfile, StartupTasks};
+use startup::{StartupCwd, StartupProfile, StartupTasks};
 
 pub struct AppRoot {
     config: Config,
     initial_theme: Theme,
     initial_system_theme: Option<Theme>,
     startup_profile: Option<StartupProfile>,
+    /// The first pane's directory for a created session (`sessions new --cwd`, `worktrees open`).
+    startup_cwd: Option<StartupCwd>,
     startup_messages: Vec<String>,
     control_listener: Option<crate::platform::ipc::IpcListener>,
     control_guard: Option<control::ControlSocketGuard>,
@@ -70,6 +72,7 @@ impl Default for AppRoot {
             initial_system_theme: None,
             config,
             startup_profile: None,
+            startup_cwd: None,
             startup_messages: Vec::new(),
             control_listener: None,
             control_guard: None,
@@ -112,6 +115,7 @@ impl AppRoot {
             initial_theme,
             initial_system_theme,
             startup_profile,
+            startup_cwd: None,
             startup_messages,
             control_listener,
             control_guard,
@@ -128,6 +132,11 @@ impl AppRoot {
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
+    }
+
+    fn with_startup_cwd(mut self, cwd: Option<StartupCwd>) -> Self {
+        self.startup_cwd = cwd;
+        self
     }
 
     pub(crate) fn configured_for_test(
@@ -205,19 +214,18 @@ impl AppRoot {
         });
         let epoch = ctx.state.runtime_epoch;
         let autostart = self.startup_autostart && !self.read_only;
-        let intent =
-            self.startup_profile
-                .as_ref()
-                .map_or(crate::state::AttachIntent::Plain, |profile| {
-                    if profile.records_origin {
-                        crate::state::AttachIntent::ProfileSeed {
-                            profile: profile.name.clone(),
-                            path: profile.path.clone(),
-                        }
-                    } else {
-                        crate::state::AttachIntent::Plain
-                    }
-                });
+        let intent = match (&self.startup_profile, &self.startup_cwd) {
+            (Some(profile), _) if profile.records_origin => {
+                crate::state::AttachIntent::ProfileSeed {
+                    profile: profile.name.clone(),
+                    path: profile.path.clone(),
+                }
+            }
+            (_, Some(cwd)) => cwd
+                .seed(&ctx.state.config)
+                .map_or(crate::state::AttachIntent::Plain, |(_, intent)| intent),
+            _ => crate::state::AttachIntent::Plain,
+        };
         let remote_host = self.remote.as_ref().map(|target| target.display_label());
         ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
             epoch,
@@ -280,6 +288,15 @@ impl Component for AppRoot {
         } else {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
+        if let Some(cwd) = &self.startup_cwd {
+            match cwd.seed(&self.config) {
+                Some((attachment, _)) => state.attachment = attachment,
+                None => {
+                    state.current_mut().workspaces[0].panes[0].identity.cwd =
+                        Some(cwd.path.clone());
+                }
+            }
+        }
         state.system_theme = self.initial_system_theme.clone();
         state.control_socket_path = self
             .control_guard
@@ -463,7 +480,6 @@ mod tests {
                         panes: 2,
                         clients: 1,
                         has_layout: true,
-                        created_from_profile: None,
                     },
                 );
                 backend.state_mut().config.profile.default = Some("rust-dev".to_string());
@@ -1688,6 +1704,7 @@ mod tests {
                     Some(crate::state::SessionPickerState::new(vec![
                         crate::session::discovery::DiscoveredSession {
                             name: session_name,
+                            origin: Default::default(),
                             ephemeral: true,
                             host: None,
                             remote_target: None,
@@ -1695,11 +1712,11 @@ mod tests {
                                 panes: 1,
                                 clients: 1,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                         crate::session::discovery::DiscoveredSession {
                             name: "shared-dev".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: None,
                             remote_target: None,
@@ -1707,11 +1724,11 @@ mod tests {
                                 panes: 2,
                                 clients: 1,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                         crate::session::discovery::DiscoveredSession {
                             name: "remote-dev".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: Some("workbox".to_string()),
                             remote_target: Some(crate::session::remote::RemoteTarget::Alias(
@@ -1721,7 +1738,6 @@ mod tests {
                                 panes: 3,
                                 clients: 0,
                                 has_layout: true,
-                                created_from_profile: None,
                             },
                         },
                     ]));
@@ -1832,6 +1848,7 @@ mod tests {
                     Some(crate::state::SessionPickerState::new(vec![
                         crate::session::discovery::DiscoveredSession {
                             name: "saved".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             host: None,
                             remote_target: None,

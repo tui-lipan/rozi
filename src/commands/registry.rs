@@ -1307,6 +1307,7 @@ mod tests {
                 "Workspace",
                 "App",
                 "Profile",
+                "Git",
                 "Session",
                 "Collaboration",
                 "Sidebar",
@@ -1323,6 +1324,7 @@ mod tests {
         assert_eq!(category(Action::RenameWorkspace), Some("Workspace"));
         assert_eq!(category(Action::KillWorkspace), Some("Workspace"));
         assert_eq!(category(Action::OpenSettings), Some("App"));
+        assert_eq!(category(Action::OpenWorktrees), Some("Git"));
     }
 
     #[test]

@@ -400,6 +400,7 @@ mod tests {
     ) -> crate::session::discovery::DiscoveredSession {
         crate::session::discovery::DiscoveredSession {
             name: name.into(),
+            origin: Default::default(),
             host: Some(target.display_label()),
             remote_target: Some(target.clone()),
             ephemeral: false,
@@ -407,7 +408,6 @@ mod tests {
                 panes: 1,
                 clients: 0,
                 has_layout: false,
-                created_from_profile: None,
             },
         }
     }

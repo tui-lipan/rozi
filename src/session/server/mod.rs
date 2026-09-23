@@ -14,6 +14,7 @@ use crate::runtime_metrics::{
     ByteBufferMetrics, QueueMetrics, ResurrectionMetrics, ServerOutboxMetrics,
     ServerRuntimeMetrics, unix_time_millis,
 };
+use crate::session::origin::SessionOrigin;
 use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
@@ -32,10 +33,13 @@ mod panes;
 mod resurrect;
 pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
+pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 mod runtime;
 mod shutdown;
 mod waits;
+mod worktree;
 pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
+use worktree::{WorktreeJob, WorktreeWorker};
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -138,8 +142,8 @@ pub struct SessionServer {
     next_generation: u64,
     layout: Option<SharedLayout>,
     layout_rev: u64,
-    /// Immutable origin metadata claimed by the profile client that first seeds an empty session.
-    created_from_profile: Option<String>,
+    /// Immutable provenance claimed by the client that first seeds an empty session.
+    origin: SessionOrigin,
     origin_seed_client: Option<ClientId>,
     controller: Option<ClientId>,
     input_locked: bool,
@@ -177,6 +181,7 @@ pub struct SessionServer {
     /// one latest rerun, so repeated polling cannot queue unbounded duplicate work.
     browse_in_flight: HashMap<BrowseRequestKey, BrowseState>,
     browse_worker: Option<BrowseWorker>,
+    worktree_worker: Option<WorktreeWorker>,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -248,6 +253,9 @@ pub struct ServerSettings {
     /// [`ClientMessage::SetAgentDefinitions`](crate::session::protocol::ClientMessage), which is
     /// how the controller keeps this in step with a config reload.
     pub agents: std::sync::Arc<crate::agent_detection::AgentCatalog>,
+    /// `[worktrees] directory`, expanded on this host: where a new checkout goes when a client
+    /// names no path.
+    pub worktree_directory: Option<PathBuf>,
 }
 
 impl Default for ServerSettings {
@@ -268,6 +276,7 @@ impl Default for ServerSettings {
             command_shell: Vec::new(),
             rules: Vec::new(),
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
+            worktree_directory: None,
         }
     }
 }
@@ -1339,7 +1348,7 @@ impl SessionServer {
             next_generation: 1,
             layout: None,
             layout_rev: 0,
-            created_from_profile: None,
+            origin: SessionOrigin::default(),
             origin_seed_client: None,
             controller: None,
             input_locked: false,
@@ -1363,6 +1372,7 @@ impl SessionServer {
             pending_foreground: Vec::new(),
             browse_in_flight: HashMap::new(),
             browse_worker: None,
+            worktree_worker: None,
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -1451,6 +1461,7 @@ impl SessionServer {
         self.retry_browse_requests();
         activity |= self.pump_clients();
         self.retry_browse_requests();
+        self.drain_worktree_results();
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.flush_pending_foreground();
@@ -1606,6 +1617,9 @@ impl Drop for SessionServer {
     fn drop(&mut self) {
         self.events.close();
         if let Some(worker) = self.browse_worker.take() {
+            worker.finish();
+        }
+        if let Some(worker) = self.worktree_worker.take() {
             worker.finish();
         }
     }
@@ -1867,6 +1881,11 @@ pub fn run_named_session_mode_with_nonce(
             command_shell,
             rules: loaded.config.rules,
             agents: agent_catalog(loaded.config.agents),
+            worktree_directory: loaded
+                .config
+                .worktrees
+                .directory
+                .map(crate::config::expand_path),
             ..ServerSettings::default()
         },
     );

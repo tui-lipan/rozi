@@ -18,11 +18,11 @@ fn on_large_stack(body: impl FnOnce() + Send + 'static) {
 fn running(name: &str, clients: u32, target: &RemoteTarget) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         status: DiscoveredSessionStatus::Running {
             panes: 1,
             clients,
             has_layout: false,
-            created_from_profile: None,
         },
         ephemeral: false,
         host: Some(target.display_label()),

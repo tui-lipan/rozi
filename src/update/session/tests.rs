@@ -1381,7 +1381,7 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
             input_locked: false,
             allow_takeover: false,
             read_only: false,
-            created_from_profile: None,
+            origin: crate::session::origin::SessionOrigin::default(),
         })
         .expect("flush pending geometry after reconnect");
     let resized: Vec<_> = reconnect_rx
@@ -2049,7 +2049,7 @@ fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
             tx.send(backend.state().follow_prompt.is_some())
@@ -2096,7 +2096,7 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
             backend.state().session_view_revision - before
@@ -2151,7 +2151,7 @@ fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
             let state = backend.state();
@@ -2255,28 +2255,31 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
 
-            assert_eq!(backend.state().current().created_from_profile, None);
+            assert_eq!(backend.state().current().origin.profile, None);
             assert!(!backend.state().show_profile_picker);
             assert!(backend.state().profile_picker.is_none());
             assert!(rx.try_iter().any(|message| matches!(
                 message,
                 crate::session::client::ClientOutbound::Control(
-                    crate::session::protocol::ClientMessage::SetSessionOrigin { profile }
-                ) if profile == "legacy-profile"
+                    crate::session::protocol::ClientMessage::SetSessionOrigin { origin }
+                ) if origin.profile.as_deref() == Some("legacy-profile")
             )));
             assert!(events.try_recv().is_err());
             backend
                 .dispatch(Msg::SessionOriginSet {
                     epoch: 1,
-                    created_from_profile: "legacy-profile".to_string(),
+                    origin: crate::session::origin::SessionOrigin {
+                        profile: Some("legacy-profile".to_string()),
+                        ..Default::default()
+                    },
                 })
                 .expect("acknowledge session origin");
             assert_eq!(
-                backend.state().current().created_from_profile.as_deref(),
+                backend.state().current().origin.profile.as_deref(),
                 Some("legacy-profile")
             );
 
@@ -2531,7 +2534,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     input_locked: false,
                     allow_takeover: false,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("attach shared pane");
 
@@ -2799,7 +2802,7 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
                     input_locked: false,
                     allow_takeover: true,
                     read_only: false,
-                    created_from_profile: None,
+                    origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("attach to a populated session");
             backend.render();

@@ -9,6 +9,7 @@ use tui_lipan::prelude::*;
 fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         ephemeral: false,
         host: host.map(str::to_string),
         remote_target: host
@@ -17,7 +18,6 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
-            created_from_profile: None,
         },
     }
 }
@@ -113,6 +113,7 @@ fn an_attached_remote_session_outranks_its_own_cached_row() {
                     &target,
                     vec![crate::session::CachedHostSession {
                         name: "dev".to_string(),
+                        origin: Default::default(),
                         ephemeral: false,
                         panes: 9,
                     }],
@@ -167,6 +168,7 @@ fn cached_configured_hosts_are_available_without_a_probe() {
         "winvm".to_string(),
         vec![crate::session::CachedHostSession {
             name: "dev".to_string(),
+            origin: Default::default(),
             ephemeral: false,
             panes: 4,
         }],
@@ -208,6 +210,7 @@ fn fresh_host_results_replace_cached_rows() {
         "winvm".to_string(),
         vec![crate::session::CachedHostSession {
             name: "stale".to_string(),
+            origin: Default::default(),
             ephemeral: false,
             panes: 2,
         }],
@@ -240,6 +243,7 @@ fn cached_recent_and_attached_hosts_are_available_without_a_probe() {
             target,
             vec![crate::session::CachedHostSession {
                 name: name.into(),
+                origin: Default::default(),
                 ephemeral: false,
                 panes: 1,
             }],
@@ -1910,6 +1914,7 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
             let remembered = crate::session::discovery::DiscoveredSession {
                 name: "test".to_string(),
+                origin: Default::default(),
                 ephemeral: false,
                 host: Some("winvm".to_string()),
                 remote_target: Some(target.clone()),
@@ -1917,6 +1922,7 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
             };
             let sibling = CachedHostSession {
                 name: "keep".to_string(),
+                origin: Default::default(),
                 ephemeral: false,
                 panes: 2,
             };
@@ -1936,6 +1942,7 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
                     vec![
                         CachedHostSession {
                             name: "test".to_string(),
+                            origin: Default::default(),
                             ephemeral: false,
                             panes: 1,
                         },
@@ -1986,6 +1993,7 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
             let restored = vec![
                 CachedHostSession {
                     name: "test".to_string(),
+                    origin: Default::default(),
                     ephemeral: false,
                     panes: 1,
                 },

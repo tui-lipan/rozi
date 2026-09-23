@@ -33,6 +33,7 @@ fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
 fn last_seen(name: &str, panes: usize, target: &RemoteTarget) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         ephemeral: false,
         host: Some(target.display_label()),
         remote_target: Some(target.clone()),
@@ -43,6 +44,7 @@ fn last_seen(name: &str, panes: usize, target: &RemoteTarget) -> DiscoveredSessi
 fn live(name: &str, target: &RemoteTarget) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
+        origin: Default::default(),
         ephemeral: false,
         host: Some(target.display_label()),
         remote_target: Some(target.clone()),
@@ -50,7 +52,6 @@ fn live(name: &str, target: &RemoteTarget) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
-            created_from_profile: None,
         },
     }
 }
@@ -136,6 +137,7 @@ fn unheld_rows_get_a_dot_beside_a_marked_row() {
         let target = RemoteTarget::Alias("winvm".to_string());
         let local = DiscoveredSession {
             name: "dev".to_string(),
+            origin: Default::default(),
             ephemeral: false,
             host: None,
             remote_target: None,
@@ -143,7 +145,6 @@ fn unheld_rows_get_a_dot_beside_a_marked_row() {
                 panes: 1,
                 has_layout: true,
                 clients: 1,
-                created_from_profile: None,
             },
         };
         let mut backend = picker_showing(vec![local, last_seen("test", 1, &target)]);

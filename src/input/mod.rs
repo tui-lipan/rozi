@@ -51,6 +51,7 @@ pub enum Action {
     OpenSearch,
     SaveProfile,
     OpenProfilePicker,
+    OpenWorktrees,
     ApplyProfile,
     OpenSessionPicker,
     /// The global Agents view: every agent this client knows about, here and on every connected
@@ -184,6 +185,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenSearch,
     Action::SaveProfile,
     Action::OpenProfilePicker,
+    Action::OpenWorktrees,
     Action::ApplyProfile,
     Action::OpenSessionPicker,
     Action::OpenAgentPicker,
@@ -309,6 +311,7 @@ impl Action {
             Action::OpenSearch => "search",
             Action::SaveProfile => "save-profile",
             Action::OpenProfilePicker => "open-profile",
+            Action::OpenWorktrees => "worktrees",
             Action::ApplyProfile => "apply-profile",
             Action::OpenSessionPicker => "sessions",
             Action::OpenAgentPicker => "agents",

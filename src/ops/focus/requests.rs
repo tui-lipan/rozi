@@ -47,6 +47,14 @@ pub(crate) fn request_profile_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::profile_picker_key());
 }
 
+pub(crate) fn request_worktree_picker_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::worktree_picker_key());
+}
+
+pub(crate) fn request_worktree_form_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::worktree_form_input_key());
+}
+
 pub(crate) fn request_theme_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::theme_picker_key());
 }

@@ -219,6 +219,10 @@ pub struct State {
     pub save_profile_prompt: Option<SaveProfileState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
+    pub worktree_picker: Option<WorktreePickerState>,
+    pub worktree_operation: Option<WorktreeOperation>,
+    pub worktree_lists: WorktreeListCache,
+    pub next_worktree_request_id: u64,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
@@ -510,6 +514,10 @@ impl State {
             save_profile_prompt: None,
             show_profile_picker: false,
             profile_picker: None,
+            worktree_picker: None,
+            worktree_operation: None,
+            worktree_lists: WorktreeListCache::default(),
+            next_worktree_request_id: 1,
             show_session_picker: false,
             session_picker: None,
             remote_picker: None,
@@ -597,6 +605,22 @@ impl State {
     /// Mutable access to the [current attachment](Self::current).
     pub fn current_mut(&mut self) -> &mut Attachment {
         &mut self.attachment
+    }
+
+    /// Whether the started worktree create or remove can still report back: the attachment that
+    /// sent it, foreground or background, still holds the connection its reply will arrive on.
+    pub fn worktree_operation_reachable(&self) -> bool {
+        let Some(operation) = self.worktree_operation.as_ref() else {
+            return false;
+        };
+        let attachment = if operation.epoch == self.runtime_epoch {
+            Some(&self.attachment)
+        } else {
+            self.background.get(&operation.epoch)
+        };
+        attachment
+            .and_then(|attachment| attachment.session_client.as_ref())
+            .is_some_and(|client| operation.connection.is(client))
     }
 
     pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {
@@ -959,6 +983,7 @@ impl State {
             || self.rename_session.is_some()
             || self.save_profile_prompt.is_some()
             || self.show_profile_picker
+            || self.worktree_picker.is_some()
             || self.show_session_picker
             || self.remote_picker.is_some()
             || self.agent_picker.is_some()

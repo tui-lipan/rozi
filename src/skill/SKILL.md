@@ -133,7 +133,7 @@ inherited the variable, not the extension itself.
 ```bash
 rozi sessions list --format json
 rozi sessions attach <NAME>
-rozi sessions new <NAME> [--profile <PROFILE>]
+rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
 rozi sessions kill <NAME>
 rozi sessions list --remote <HOST>
 rozi sessions kill <NAME> --remote <HOST>
@@ -141,6 +141,18 @@ rozi sessions kill <NAME> --remote <HOST>
 
 `sessions kill` destroys the named server and all its PTYs for every client. Never use it as a
 generic process killer.
+
+Git worktrees live on the session host, and `--remote <HOST>` goes before `worktrees`:
+
+```bash
+rozi worktrees list [--cwd <DIR>] --format json
+rozi worktrees create <BRANCH> [--base <REV>] [--path <DIR>] --format json
+rozi worktrees remove <PATH> [--force]
+rozi worktrees exclude [DIR]
+```
+
+`worktrees open` and `create --open` attach a UI, so run them only for a person at a terminal.
+Removal never deletes the branch and refuses a checkout that a session records as its origin.
 
 ## Safety
 

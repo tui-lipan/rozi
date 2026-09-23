@@ -281,6 +281,8 @@ pub(crate) struct WorktreeOrigins {
     pub known: Vec<(String, std::path::PathBuf)>,
     /// Live sessions whose origin could not be read, such as a server speaking another protocol.
     pub unverified: Vec<String>,
+    /// Sessions in `known` whose server answered; the rest are restorable snapshots.
+    pub live: BTreeSet<String>,
 }
 
 impl WorktreeOrigins {
@@ -289,6 +291,20 @@ impl WorktreeOrigins {
             .iter()
             .filter(|(_, tree)| tree == path)
             .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// [`Self::sessions_at`], saying which are running and which could only be restored.
+    pub fn session_refs_at(
+        &self,
+        path: &std::path::Path,
+    ) -> Vec<crate::session::protocol::WorktreeSession> {
+        self.sessions_at(path)
+            .into_iter()
+            .map(|name| crate::session::protocol::WorktreeSession {
+                running: self.live.contains(&name),
+                name,
+            })
             .collect()
     }
 }
@@ -300,6 +316,7 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
     };
     let mut known = BTreeSet::new();
     let mut unverified = Vec::new();
+    let mut live = BTreeSet::new();
     for summary in crate::session::server::list_snapshot_summaries_by_recency() {
         if let Some(tree) = summary.origin.worktree.as_ref() {
             known.insert((summary.session, canonical(&tree.path)));
@@ -325,6 +342,7 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
         match query_status(&name, &mut stream, None) {
             Ok((DiscoveredSessionStatus::Running { .. }, origin, _)) => {
                 if let Some(tree) = origin.worktree.as_ref() {
+                    live.insert(name.clone());
                     known.insert((name, canonical(&tree.path)));
                 }
             }
@@ -334,6 +352,7 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
     Ok(WorktreeOrigins {
         known: known.into_iter().collect(),
         unverified,
+        live,
     })
 }
 

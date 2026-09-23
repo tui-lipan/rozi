@@ -57,14 +57,16 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
 /// Which sessions record each checkout as their origin, keyed by the checkout's listed path.
 /// Display only: a session that cannot be verified is simply not listed here, unlike the removal
 /// guard, which refuses on it.
-fn sessions_by_checkout(trees: &[WorktreeInfo]) -> std::collections::BTreeMap<String, Vec<String>> {
+fn sessions_by_checkout(
+    trees: &[WorktreeInfo],
+) -> std::collections::BTreeMap<String, Vec<super::protocol::WorktreeSession>> {
     let Ok(origins) = super::discovery::worktree_session_origins() else {
         return Default::default();
     };
     trees
         .iter()
         .filter_map(|tree| {
-            let sessions = origins.sessions_at(&canonical(Path::new(&tree.path)));
+            let sessions = origins.session_refs_at(&canonical(Path::new(&tree.path)));
             (!sessions.is_empty()).then(|| (tree.path.clone(), sessions))
         })
         .collect()

@@ -636,10 +636,8 @@ pub enum WorktreeTabItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorktreeTabRow {
     pub tree: crate::git::worktrees::WorktreeInfo,
-    /// The primary checkout's path, which the row's path is shown relative to.
-    pub primary: Option<String>,
     /// Sessions recording this checkout as their origin.
-    pub sessions: Vec<String>,
+    pub sessions: Vec<crate::session::protocol::WorktreeSession>,
     /// The checkout the focused pane is in.
     pub current: bool,
     /// A removal of this checkout is running.
@@ -707,7 +705,6 @@ impl crate::state::State {
                     force: listing.force_remove.as_ref() == Some(&tree.path),
                     removing,
                     sessions,
-                    primary: primary.clone(),
                     tree: tree.clone(),
                 }));
             }
@@ -734,7 +731,8 @@ pub struct SidebarWorktrees {
     pub unavailable: Option<String>,
     pub entries: Vec<crate::git::worktrees::WorktreeInfo>,
     /// Sessions recording each checkout as their origin, keyed by its listed path.
-    pub sessions: std::collections::BTreeMap<String, Vec<String>>,
+    pub sessions:
+        std::collections::BTreeMap<String, Vec<crate::session::protocol::WorktreeSession>>,
     /// Whether `entries` reflects a reply (or the cache) for `source`, rather than nothing yet.
     pub loaded: bool,
     pub pending: Option<u64>,

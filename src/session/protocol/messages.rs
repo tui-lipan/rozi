@@ -328,6 +328,15 @@ pub enum WorktreeRequest {
     },
 }
 
+/// A session that records a checkout as its origin.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeSession {
+    pub name: String,
+    /// Its server is running. Otherwise it is a snapshot that can be restored.
+    #[serde(default)]
+    pub running: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeResult {
@@ -336,7 +345,7 @@ pub enum WorktreeResult {
         /// Sessions on the host that record each listed checkout (by its listed path) as their
         /// origin. Checked on the host, so a client need not discover sessions to show them.
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-        sessions: std::collections::BTreeMap<String, Vec<String>>,
+        sessions: std::collections::BTreeMap<String, Vec<WorktreeSession>>,
     },
     Previewed {
         path: String,

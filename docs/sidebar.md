@@ -151,9 +151,23 @@ stops polling.
 ## Worktrees
 
 Worktrees lists the Git worktrees of the focused pane's repository, on that pane's session host. A
-heading names the repository and the host. Each checkout shows its branch and path, and on the right
-the session that records it as its origin, or `primary` or `locked`. The gutter bar marks the
-checkout the focused pane is in.
+heading names the repository and the host. Each checkout is its branch, with the checkout's folder
+underneath only when the folder is not named after the branch. The gutter bar marks the checkout
+the focused pane is in.
+
+The right edge shows whether a session already records the checkout as its origin, with the
+Sessions tab's markers:
+
+| Marker | Session |
+| --- | --- |
+| `●` green | The one you are in |
+| `◐` | Held by this client in the background |
+| `●` | Running on the host; activating attaches to it |
+| `○` | Saved; activating restores it |
+
+A number follows the marker when several sessions use the checkout. A checkout without one shows
+`primary` or `locked` when that applies. Under the pointer the marker becomes what activating the
+row does: `attach`, `switch`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. With several sessions it shows them to choose from, and
 with none it creates a session whose first shell starts in that checkout. **+ New worktree** opens

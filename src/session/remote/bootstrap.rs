@@ -636,6 +636,11 @@ fn verify_installed(
     super::binary::invalidate(target, config);
     let report = probe_remote_report(target, config)?;
     let family = family_from_os(&normalize_os(&report.platform));
+    let candidates = report
+        .candidates
+        .iter()
+        .map(|candidate| candidate.path.clone())
+        .collect::<Vec<_>>();
     let installed = ProbeReport {
         candidates: report
             .candidates
@@ -649,7 +654,7 @@ fn verify_installed(
             super::binary::remember(target, config, path, family).map(|binary| binary.path)
         }
         ProbeResult::Missing { detail } => Err(format!(
-            "installed Rozi could not run on the remote host: {detail}"
+            "installed Rozi at {path:?} could not be verified on the remote host: {detail}; probe candidates: {candidates:?}"
         )),
     }
 }

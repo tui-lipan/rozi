@@ -4,11 +4,17 @@ use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId};
 use crate::update::sidebar::polling::{TREE_REFRESH_INTERVAL, tree_active};
 
-/// Keep exactly one low-frequency file-tree refresh chain alive while a Files/Git tab is visible.
-/// A generation travels with each tick so hiding and reopening cannot revive an old chain beside
-/// the new one.
+/// Whether any tab that follows the focused pane's repository is on screen: the Files and Git
+/// trees, or the Worktrees tab, which refreshes on the same tick.
+fn repository_tabs_active(ctx: &Context<AppRoot>) -> bool {
+    tree_active(ctx) || super::worktrees::worktrees_active(ctx)
+}
+
+/// Keep exactly one low-frequency repository refresh chain alive while a Files, Git, or Worktrees
+/// tab is visible. A generation travels with each tick so hiding and reopening cannot revive an
+/// old chain beside the new one.
 pub(crate) fn ensure_tree_refresh_armed(ctx: &mut Context<AppRoot>) {
-    if !tree_active(ctx) {
+    if !repository_tabs_active(ctx) {
         ctx.state.sidebar.tree_refresh_armed_epoch = None;
         return;
     }
@@ -29,7 +35,7 @@ pub(crate) fn ensure_tree_refresh_armed(ctx: &mut Context<AppRoot>) {
 
 /// Refresh directory entries and Git state, then reschedule only while a tree remains visible.
 pub(crate) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
-    if ctx.state.sidebar.tree_refresh_armed_epoch != Some(epoch) || !tree_active(ctx) {
+    if ctx.state.sidebar.tree_refresh_armed_epoch != Some(epoch) || !repository_tabs_active(ctx) {
         return Update::none();
     }
     ctx.state.sidebar.tree_entry_refresh_token =

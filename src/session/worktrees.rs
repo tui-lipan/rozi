@@ -16,7 +16,10 @@ use crate::git::worktrees::{self, WorktreeInfo};
 pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> WorktreeResult {
     let result = match request {
         WorktreeRequest::List { cwd } => {
-            worktrees::list(Path::new(&cwd)).map(|worktrees| WorktreeResult::Listed { worktrees })
+            worktrees::list(Path::new(&cwd)).map(|worktrees| WorktreeResult::Listed {
+                sessions: sessions_by_checkout(&worktrees),
+                worktrees,
+            })
         }
         WorktreeRequest::Preview { cwd, branch } => {
             let cwd = Path::new(&cwd);
@@ -49,6 +52,24 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
         }
     };
     result.unwrap_or_else(|message| WorktreeResult::Failed { message })
+}
+
+/// Which sessions record each checkout as their origin, keyed by the checkout's listed path.
+/// Display only: a session that cannot be verified is simply not listed here, unlike the removal
+/// guard, which refuses on it.
+fn sessions_by_checkout(
+    trees: &[WorktreeInfo],
+) -> std::collections::BTreeMap<String, Vec<super::protocol::WorktreeSession>> {
+    let Ok(origins) = super::discovery::worktree_session_origins() else {
+        return Default::default();
+    };
+    trees
+        .iter()
+        .filter_map(|tree| {
+            let sessions = origins.session_refs_at(&canonical(Path::new(&tree.path)));
+            (!sessions.is_empty()).then(|| (tree.path.clone(), sessions))
+        })
+        .collect()
 }
 
 /// The repository's top-level directory that a checkout at `path` sits in, when the checkout is

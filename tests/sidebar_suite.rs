@@ -16,3 +16,5 @@ mod sidebar_tab_scroll_interaction_smoke;
 mod sidebar_tree_smoke;
 #[path = "suites/sidebar/sidebar_user_tabs_smoke.rs"]
 mod sidebar_user_tabs_smoke;
+#[path = "suites/sidebar/sidebar_worktrees_smoke.rs"]
+mod sidebar_worktrees_smoke;

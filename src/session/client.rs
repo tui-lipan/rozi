@@ -1818,8 +1818,18 @@ mod tests {
                 })();
                 match exchange {
                     Ok(()) => break,
+                    // The client retries an attempt that met a busy pipe, dropping the connection
+                    // it had. Seen from here that attempt hangs up mid-handshake, which Windows
+                    // reports as any of these depending on where the read was. Accept the next
+                    // attempt rather than failing the test on the one the client abandoned.
                     Err(err)
-                        if err.kind() == io::ErrorKind::BrokenPipe && Instant::now() < deadline =>
+                        if matches!(
+                            err.kind(),
+                            io::ErrorKind::BrokenPipe
+                                | io::ErrorKind::UnexpectedEof
+                                | io::ErrorKind::ConnectionReset
+                                | io::ErrorKind::ConnectionAborted
+                        ) && Instant::now() < deadline =>
                     {
                         continue;
                     }

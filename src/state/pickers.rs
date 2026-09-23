@@ -38,6 +38,9 @@ pub struct WorktreePickerState {
     pub pending_remove: Option<String>,
     pub form: Option<WorktreeFormState>,
     pub error: Option<String>,
+    /// Opened from the sidebar straight into the new-worktree form: there is no list behind the
+    /// form, so closing or submitting it closes the whole overlay.
+    pub standalone_form: bool,
 }
 
 impl WorktreePickerState {
@@ -53,6 +56,7 @@ impl WorktreePickerState {
             pending_remove: None,
             form: None,
             error: None,
+            standalone_form: false,
         }
     }
 }
@@ -200,6 +204,9 @@ pub struct WorktreeOperation {
     pub connection: crate::session::client::ConnectionToken,
     pub cwd: String,
     pub kind: WorktreeOperationKind,
+    /// Open the new checkout's session when the create finishes, as long as its attachment is
+    /// still in front. Set when the create was submitted from a form nothing else stays open for.
+    pub open_when_done: bool,
 }
 
 pub enum WorktreeOperationKind {

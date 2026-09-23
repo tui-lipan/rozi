@@ -10,7 +10,7 @@ use crate::state::{
 };
 use crate::{AppRoot, Msg};
 
-fn request_id(ctx: &mut Context<AppRoot>) -> u64 {
+pub(crate) fn request_id(ctx: &mut Context<AppRoot>) -> u64 {
     let id = ctx.state.next_worktree_request_id;
     ctx.state.next_worktree_request_id = id.wrapping_add(1).max(1);
     id
@@ -59,45 +59,50 @@ fn selected(picker: &WorktreePickerState) -> Option<&crate::git::worktrees::Work
     })
 }
 
-pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(pane) = ctx
-        .state
+/// The repository Worktrees acts on: the focused pane's project root, on the session's host.
+///
+/// A pane whose shell has moved to a nested SSH host is refused: the session server cannot run
+/// Git there.
+pub(crate) fn repository_scope(
+    state: &crate::state::State,
+) -> std::result::Result<(String, Option<crate::session::remote::RemoteTarget>), &'static str> {
+    repository_scope_ref(state).map(|(cwd, target)| (cwd.to_string(), target.cloned()))
+}
+
+/// [`repository_scope`] by borrow, for the checks that run after every message.
+pub(crate) fn repository_scope_ref(
+    state: &crate::state::State,
+) -> std::result::Result<(&str, Option<&crate::session::remote::RemoteTarget>), &'static str> {
+    let pane = state
         .focused_pane()
-        .and_then(|id| crate::pane::lifecycle::find_pane(&ctx.state, id))
-    else {
-        crate::pane::pty_events::notify_error(
-            ctx,
-            "Worktrees unavailable",
-            "Focus a pane in a Git repository",
-        );
-        return Update::full();
-    };
+        .and_then(|id| crate::pane::lifecycle::find_pane(state, id))
+        .ok_or("Focus a pane in a Git repository")?;
     if pane.terminal.cwd_host.is_some() {
-        crate::pane::pty_events::notify_error(
-            ctx,
-            "Worktrees unavailable",
-            "Pane is on a nested remote host",
-        );
-        return Update::full();
+        return Err("Pane is on a nested remote host");
     }
-    let Some(cwd) = pane.terminal.project_root.clone() else {
-        crate::pane::pty_events::notify_error(
-            ctx,
-            "Worktrees unavailable",
-            "Focused pane is not in a Git repository",
-        );
-        return Update::full();
+    let cwd = pane
+        .terminal
+        .project_root
+        .as_deref()
+        .ok_or("Not in a Git repository")?;
+    if state.current().session_client.is_none() {
+        return Err("Attach to a session first");
+    }
+    Ok((cwd, state.current().remote_target.as_ref()))
+}
+
+pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
+    let (cwd, target) = match repository_scope(&ctx.state) {
+        Ok(scope) => scope,
+        Err(reason) => {
+            crate::pane::pty_events::notify_error(ctx, "Worktrees unavailable", reason);
+            return Update::full();
+        }
     };
     let Some(client) = ctx.state.current().session_client.clone() else {
-        crate::pane::pty_events::notify_error(
-            ctx,
-            "Worktrees unavailable",
-            "Attach to a session first",
-        );
-        return Update::full();
+        return Update::none();
     };
     operation_in_flight(ctx);
-    let target = ctx.state.current().remote_target.clone();
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
     // Open with the last list for this repository and refresh it in place: Git answers quickly,
     // but an empty "loading" frame that then grows into the real list reads as a delay.
@@ -163,12 +168,16 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-fn matching_sessions(picker: &WorktreePickerState, path: &str) -> Vec<DiscoveredSession> {
-    picker
-        .sessions
+/// Sessions among `sessions` that record the checkout at `path` on `target` as their origin.
+fn sessions_for_checkout(
+    sessions: &[DiscoveredSession],
+    target: Option<&crate::session::remote::RemoteTarget>,
+    path: &str,
+) -> Vec<DiscoveredSession> {
+    sessions
         .iter()
         .filter(|row| {
-            row.remote_target == picker.target
+            row.remote_target.as_ref() == target
                 && row
                     .origin
                     .worktree
@@ -179,43 +188,55 @@ fn matching_sessions(picker: &WorktreePickerState, path: &str) -> Vec<Discovered
         .collect()
 }
 
-fn new_session_name(ctx: &Context<AppRoot>, branch: Option<&str>, path: &str) -> String {
+fn new_session_name(
+    ctx: &Context<AppRoot>,
+    branch: Option<&str>,
+    path: &str,
+    target: Option<&crate::session::remote::RemoteTarget>,
+    known: &[DiscoveredSession],
+) -> String {
     let base = crate::session::worktrees::session_name_base(branch, path);
-    let picker = ctx.state.worktree_picker.as_ref();
-    let target = picker.and_then(|picker| picker.target.as_ref());
     crate::session::worktrees::unused_session_name(&base, |name| {
-        picker.is_some_and(|picker| picker.sessions.iter().any(|row| row.name == name))
+        known.iter().any(|row| row.name == name)
             || crate::ops::session::lifecycle::session_name_already_running(ctx, name, target)
     })
     .unwrap_or_else(|| format!("{base}-{}", ctx.state.next_worktree_request_id))
 }
 
-fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeInfo) -> Update {
-    let Some(picker) = ctx.state.worktree_picker.as_ref() else {
-        return Update::none();
-    };
-    let matches = matching_sessions(picker, &tree.path);
+/// Open a checkout: switch to the one session recording it as its origin, let the user choose
+/// among several, or create a named session whose first shell starts in it.
+///
+/// `known` is the discovered sessions to match against and avoid names from; `checkouts` are the
+/// repository's worktrees, which a `[worktrees] profile` is rebased from. Whatever overlay led
+/// here is closed first.
+fn enter_checkout(
+    ctx: &mut Context<AppRoot>,
+    tree: crate::git::worktrees::WorktreeInfo,
+    target: Option<crate::session::remote::RemoteTarget>,
+    mut checkouts: Vec<String>,
+    known: Vec<DiscoveredSession>,
+) -> Update {
+    ctx.state.worktree_picker = None;
+    let mut matches = sessions_for_checkout(&known, target.as_ref(), &tree.path);
     if matches.len() == 1 {
-        let entry = matches.into_iter().next().unwrap();
-        ctx.state.worktree_picker = None;
-        return crate::ops::session::activate_discovered_session(ctx, entry);
+        return crate::ops::session::activate_discovered_session(ctx, matches.remove(0));
     }
     if matches.len() > 1 {
-        ctx.state.worktree_picker = None;
         ctx.state.session_picker = Some(crate::state::SessionPickerState::new(matches));
         ctx.state.show_session_picker = true;
         crate::ops::focus::request_session_picker_focus(ctx);
         return Update::full();
     }
-    let name = new_session_name(ctx, tree.branch.as_deref(), &tree.path);
-    let target = picker.target.clone();
-    let checkouts = picker
-        .entries
-        .iter()
-        .map(|entry| entry.path.clone())
-        .chain(std::iter::once(tree.path.clone()))
-        .collect();
-    ctx.state.worktree_picker = None;
+    let name = new_session_name(
+        ctx,
+        tree.branch.as_deref(),
+        &tree.path,
+        target.as_ref(),
+        &known,
+    );
+    if !checkouts.contains(&tree.path) {
+        checkouts.push(tree.path.clone());
+    }
     crate::ops::session::open::open_named_target(
         ctx,
         name,
@@ -225,6 +246,80 @@ fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeI
         },
         target,
     )
+}
+
+fn enter_tree(ctx: &mut Context<AppRoot>, tree: crate::git::worktrees::WorktreeInfo) -> Update {
+    let Some(picker) = ctx.state.worktree_picker.as_ref() else {
+        return Update::none();
+    };
+    let target = picker.target.clone();
+    let checkouts = picker
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    let known = picker.sessions.clone();
+    enter_checkout(ctx, tree, target, checkouts, known)
+}
+
+/// Discovered sessions to match a checkout against, on the host the sidebar lists. Discovery runs
+/// here, at the moment of the click, rather than on every refresh of the tab.
+fn discovered_sessions(
+    ctx: &mut Context<AppRoot>,
+    target: Option<&crate::session::remote::RemoteTarget>,
+) -> Vec<DiscoveredSession> {
+    crate::ops::session::discovery::immediate_picker_rows(ctx)
+        .into_iter()
+        .filter(|row| !row.ephemeral && row.remote_target.as_ref() == target)
+        .collect()
+}
+
+/// A checkout row in the Worktrees tab was activated.
+pub(crate) fn open_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Update {
+    let listing = &ctx.state.sidebar.worktrees;
+    let Some((target, _)) = listing.source.clone() else {
+        return Update::none();
+    };
+    let Some(tree) = listing
+        .entries
+        .iter()
+        .find(|tree| tree.path == path)
+        .cloned()
+    else {
+        return Update::none();
+    };
+    let checkouts = listing
+        .entries
+        .iter()
+        .map(|tree| tree.path.clone())
+        .collect();
+    let known = discovered_sessions(ctx, target.as_ref());
+    enter_checkout(ctx, tree, target, checkouts, known)
+}
+
+/// The Worktrees tab's "New worktree" row: the new-worktree form on its own, with no list behind
+/// it. Submitting it opens the new checkout once Git has made it.
+pub(crate) fn open_form_from_sidebar(ctx: &mut Context<AppRoot>) -> Update {
+    if !writable(ctx) {
+        crate::pane::pty_events::notify_error(ctx, "Create failed", "Client is read-only");
+        return Update::full();
+    }
+    if operation_in_flight(ctx) {
+        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
+        return Update::full();
+    }
+    let Some((_, cwd)) = ctx.state.sidebar.worktrees.source.clone() else {
+        return Update::none();
+    };
+    let target = ctx.state.current().remote_target.clone();
+    let mut picker = WorktreePickerState::new(cwd, target);
+    picker.standalone_form = true;
+    picker.form = Some(WorktreeFormState::new());
+    ctx.state.worktree_picker = Some(picker);
+    ctx.state.show_palette = false;
+    ctx.state.mode = crate::state::Mode::Normal;
+    crate::ops::focus::request_worktree_form_focus(ctx);
+    Update::full()
 }
 
 pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
@@ -263,6 +358,14 @@ pub(crate) fn open_form(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn close_form(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.standalone_form)
+    {
+        return close(ctx);
+    }
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
         picker.form = None;
     }
@@ -377,6 +480,11 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return Update::none();
     };
+    let standalone = ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.standalone_form);
     let id = request_id(ctx);
     ctx.state.worktree_operation = Some(WorktreeOperation {
         request_id: id,
@@ -386,11 +494,19 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
         kind: WorktreeOperationKind::Create {
             branch: branch.clone(),
         },
+        open_when_done: standalone,
     });
-    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
-        picker.form = None;
+    if standalone {
+        // Nothing stays open for the result: the Worktrees tab shows the checkout being created,
+        // and its session opens when Git is done.
+        ctx.state.worktree_picker = None;
+        crate::ops::focus::request_current_pane_focus(ctx);
+    } else {
+        if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+            picker.form = None;
+        }
+        crate::ops::focus::request_worktree_picker_focus(ctx);
     }
-    crate::ops::focus::request_worktree_picker_focus(ctx);
     client.worktree(
         id,
         WorktreeRequest::Create {
@@ -404,13 +520,6 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
-    if !writable(ctx) {
-        return Update::none();
-    }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
-        return Update::full();
-    }
     let Some((cwd, tree, force)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
         let tree = selected(picker)?.clone();
         Some((
@@ -421,6 +530,42 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     }) else {
         return Update::none();
     };
+    start_remove(ctx, cwd, tree, force)
+}
+
+/// A checkout's ✕ in the Worktrees tab was confirmed.
+pub(crate) fn remove_from_sidebar(ctx: &mut Context<AppRoot>, path: String, force: bool) -> Update {
+    let listing = &ctx.state.sidebar.worktrees;
+    let Some((_, cwd)) = listing.source.clone() else {
+        return Update::none();
+    };
+    let Some(tree) = listing
+        .entries
+        .iter()
+        .find(|tree| tree.path == path)
+        .cloned()
+    else {
+        return Update::none();
+    };
+    start_remove(ctx, cwd, tree, force)
+}
+
+/// Ask the session host to remove a linked checkout. The host refuses a checkout any session
+/// records as its origin, and `force` only relaxes Git's dirty-checkout check.
+fn start_remove(
+    ctx: &mut Context<AppRoot>,
+    cwd: String,
+    tree: crate::git::worktrees::WorktreeInfo,
+    force: bool,
+) -> Update {
+    if !writable(ctx) {
+        crate::pane::pty_events::notify_error(ctx, "Remove failed", "Client is read-only");
+        return Update::full();
+    }
+    if operation_in_flight(ctx) {
+        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
+        return Update::full();
+    }
     if !tree.linked || tree.bare || tree.locked {
         crate::pane::pty_events::notify_error(
             ctx,
@@ -442,6 +587,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
             path: tree.path.clone(),
             force,
         },
+        open_when_done: false,
     });
     client.worktree(
         id,
@@ -468,12 +614,25 @@ pub(crate) fn apply_result(
         .worktree_operation
         .take_if(|op| op.epoch == epoch && op.request_id == request_id);
     if let Some(operation) = operation {
-        let picker_here = epoch == ctx.state.runtime_epoch
+        let foreground = epoch == ctx.state.runtime_epoch;
+        let picker_here = foreground
             && ctx
                 .state
                 .worktree_picker
                 .as_ref()
                 .is_some_and(|picker| picker.cwd == operation.cwd);
+        let sidebar_here = foreground
+            && ctx
+                .state
+                .sidebar
+                .worktrees
+                .source
+                .as_ref()
+                .is_some_and(|(_, cwd)| *cwd == operation.cwd);
+        if sidebar_here {
+            // The checkout list changed on the host; show it without waiting for the next tick.
+            crate::update::sidebar::worktrees::request_list(ctx);
+        }
         match (operation.kind, result) {
             (
                 WorktreeOperationKind::Create { .. },
@@ -487,6 +646,17 @@ pub(crate) fn apply_result(
                 }
                 if picker_here {
                     return enter_tree(ctx, worktree);
+                }
+                if operation.open_when_done && foreground {
+                    let target = ctx.state.current().remote_target.clone();
+                    let checkouts = ctx
+                        .state
+                        .worktree_lists
+                        .get(target.as_ref(), &operation.cwd)
+                        .map(|trees| trees.iter().map(|tree| tree.path.clone()).collect())
+                        .unwrap_or_default();
+                    let known = discovered_sessions(ctx, target.as_ref());
+                    return enter_checkout(ctx, worktree, target, checkouts, known);
                 }
                 crate::pane::pty_events::notify_info(
                     ctx,
@@ -503,13 +673,22 @@ pub(crate) fn apply_result(
                 WorktreeOperationKind::Remove { path, force: false },
                 WorktreeResult::Failed { message },
             ) => {
+                let dirty = message.contains("--force");
                 if picker_here
-                    && message.contains("--force")
+                    && dirty
                     && let Some(picker) = ctx.state.worktree_picker.as_mut()
                 {
-                    picker.pending_remove = Some(path);
+                    picker.pending_remove = Some(path.clone());
                 }
                 crate::pane::pty_events::notify_error(ctx, "Remove failed", message);
+                if sidebar_here && dirty {
+                    // Git refused a dirty checkout: the row re-arms as a forced removal, so the
+                    // next ✕ says what it will do and then does it.
+                    ctx.state.sidebar.worktrees.force_remove = Some(path.clone());
+                    ctx.state.sidebar.pending_row_close =
+                        Some(crate::state::SidebarClose::Worktree { path, force: true });
+                    return crate::ops::confirm::arm(ctx);
+                }
             }
             (_, WorktreeResult::Failed { message }) => {
                 crate::pane::pty_events::notify_error(ctx, "Worktree operation failed", message);
@@ -518,9 +697,12 @@ pub(crate) fn apply_result(
         }
         return Update::full();
     }
-    // List and preview replies only ever feed the picker on screen.
+    // List and preview replies only ever feed what is on screen.
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
+    }
+    if ctx.state.sidebar.worktrees.pending == Some(request_id) {
+        return crate::update::sidebar::worktrees::listed(ctx, result);
     }
     let Some(picker) = ctx.state.worktree_picker.as_mut() else {
         return Update::none();
@@ -528,7 +710,7 @@ pub(crate) fn apply_result(
     if picker.pending_list == Some(request_id) {
         picker.pending_list = None;
         match result {
-            WorktreeResult::Listed { worktrees } => {
+            WorktreeResult::Listed { worktrees, .. } => {
                 // A refresh may reorder or drop rows; stay on the same checkout when it remains.
                 let selected_path = picker
                     .entries
@@ -667,6 +849,7 @@ mod tests {
             kind: WorktreeOperationKind::Create {
                 branch: "feat/x".into(),
             },
+            open_when_done: false,
         });
         state.runtime_epoch
     }

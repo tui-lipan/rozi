@@ -182,24 +182,7 @@ pub(super) fn tree_tab(
             .on_explorer_escape(ctx.link().callback(|_| Msg::SidebarBlur));
     }
 
-    let tree = tree.key(tree_key(panel, view, &root));
-    if changed_only {
-        let open = MouseRegion::new()
-            .on_click(
-                ctx.link()
-                    .callback(|_| Msg::RunAction(crate::input::Action::OpenWorktrees)),
-            )
-            .hover_effect(VisualEffect::transform_bg(super::super::hover_lift()))
-            .child(
-                HStack::new()
-                    .height(Length::Auto)
-                    .padding((0, 1, 0, 1))
-                    .child(Text::new("Worktrees…").style(super::super::fg_only(&theme.accent))),
-            );
-        VStack::new().child(open).child(tree).into()
-    } else {
-        tree
-    }
+    tree.key(tree_key(panel, view, &root))
 }
 
 /// What the Changes tab says when it is showing nothing. A repo-less directory is worth naming —

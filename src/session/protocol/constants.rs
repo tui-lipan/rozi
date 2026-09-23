@@ -8,7 +8,7 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;

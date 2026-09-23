@@ -15,6 +15,7 @@ tabs = [
   "sessions",
   { name = "files", label = "", explorer = true },
   "git",
+  "worktrees",
   { name = "dev", label = "Dev", entries = [
     { label = "Run tests", run = "cargo test" },
     { label = "Check", send = "cargo check\n" },
@@ -33,17 +34,18 @@ tabs = [
     { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
     { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
   ] },
-  # Grouped command tab: the command emits its own section headers, marked with `## `.
+  # Grouped command tab: the command emits its own section headers, marked with `## `. Here each
+  # remote becomes a section, with its branches under it.
   {
-    name = "worktrees",
-    label = "Worktrees",
-    command = "git worktree list --porcelain | awk '/^worktree /{print \"## \" $2} /^branch /{print $2}'",
+    name = "remotes",
+    label = "Remotes",
+    command = "git for-each-ref --format='%(refname:lstrip=2)' refs/remotes | awk -F/ '$1 != r {r = $1; print \"## \" r} {print}'",
     interval = 30,
     group_prefix = "## ",
     on_click = { send = "{line}" },
   },
 ]
 panels = [
-  ["activity", "panes", "files", "git"],
-  ["sessions", "dev", "branches", "agents", "worktrees"],
+  ["activity", "panes", "files", "git", "worktrees"],
+  ["sessions", "dev", "branches", "agents", "remotes"],
 ]

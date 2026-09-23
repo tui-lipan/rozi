@@ -141,7 +141,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         10,
         WorktreeRequest::List { cwd: cwd.clone() },
     ) {
-        WorktreeResult::Listed { worktrees } => {
+        WorktreeResult::Listed { worktrees, .. } => {
             // Git on Windows may spell the same directory differently (`/`, long names).
             let resolve = |path: &str| std::path::Path::new(path).canonicalize().unwrap();
             assert_eq!(resolve(&worktrees[0].path), resolve(&cwd));

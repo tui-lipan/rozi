@@ -90,6 +90,7 @@ pub(crate) struct Row {
     hover_description: Option<(String, Style)>,
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
+    armed_prompt: Option<String>,
 }
 
 impl Row {
@@ -105,7 +106,15 @@ impl Row {
             hover_description: None,
             meta: None,
             detail: Vec::new(),
+            armed_prompt: None,
         }
+    }
+
+    /// What the detail line asks for while the row's ✕ is armed, when "Again to confirm" does not
+    /// say enough — a forced removal names what forcing overrides.
+    pub(super) fn armed_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.armed_prompt = Some(prompt.into());
+        self
     }
 
     /// Fills the gutter marker: the row is the focused pane, the current session, and so on.
@@ -184,7 +193,9 @@ impl Row {
         if close.is_some_and(|close| close.armed) {
             self.title_style = self.title_style.strikethrough();
             self.detail = vec![(
-                "Again to confirm".to_string(),
+                self.armed_prompt
+                    .take()
+                    .unwrap_or_else(|| "Again to confirm".to_string()),
                 Style::new().fg(theme.status.error),
             )];
         }

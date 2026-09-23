@@ -51,6 +51,10 @@ pub enum RowTarget {
     },
     /// The "Connect a host…" action row, opening the remote-host connect prompt.
     ConnectHost,
+    /// A checkout in the Worktrees tab: open its session, or create one there.
+    Worktree(String),
+    /// The Worktrees tab's "New worktree" action row.
+    NewWorktree,
     Launcher {
         config_epoch: u64,
         tab_id: SidebarTabId,
@@ -72,6 +76,8 @@ pub enum RowTarget {
 pub enum SidebarClose {
     /// Kill the pane, the same as `close-pane` on it.
     Pane(crate::state::PaneId),
+    /// Remove a linked checkout, never its branch. `force` once Git has refused a dirty one.
+    Worktree { path: String, force: bool },
     /// Kill the session: shut its server down, the same as the picker's `Ctrl+K`.
     Session {
         name: String,
@@ -183,6 +189,29 @@ impl State {
                 items
             }
             SidebarTab::Activity => self.activity_item_projections(),
+            SidebarTab::Worktrees => self
+                .worktree_tab_items()
+                .into_iter()
+                .map(|item| match item {
+                    WorktreeTabItem::Checkout(row) => SidebarItemProjection {
+                        close: row.closable.then(|| SidebarClose::Worktree {
+                            path: row.tree.path.clone(),
+                            force: row.force,
+                        }),
+                        target: RowTarget::Worktree(row.tree.path),
+                    },
+                    WorktreeTabItem::New => SidebarItemProjection {
+                        target: RowTarget::NewWorktree,
+                        close: None,
+                    },
+                    WorktreeTabItem::Header { .. }
+                    | WorktreeTabItem::Creating { .. }
+                    | WorktreeTabItem::Message(_) => SidebarItemProjection {
+                        target: RowTarget::Inert,
+                        close: None,
+                    },
+                })
+                .collect(),
             SidebarTab::Sessions => {
                 let mut items = Vec::new();
                 items.push(SidebarItemProjection {
@@ -584,6 +613,136 @@ impl SidebarPanelState {
     }
 }
 
+/// One line of the Worktrees tab. The view draws these and the semantic projection maps them, so
+/// the two cannot disagree about which row an index names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorktreeTabItem {
+    /// The repository's name and the host it is on.
+    Header {
+        repository: String,
+        host: String,
+    },
+    Checkout(WorktreeTabRow),
+    /// A checkout Git is creating right now.
+    Creating {
+        branch: String,
+    },
+    /// Loading, a Git error, or why there is no repository to list.
+    Message(String),
+    /// The "New worktree" action.
+    New,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorktreeTabRow {
+    pub tree: crate::git::worktrees::WorktreeInfo,
+    /// Sessions recording this checkout as their origin.
+    pub sessions: Vec<crate::session::protocol::WorktreeSession>,
+    /// The checkout the focused pane is in.
+    pub current: bool,
+    /// A removal of this checkout is running.
+    pub removing: bool,
+    /// Whether its ✕ is offered: a linked, unlocked checkout no session uses.
+    pub closable: bool,
+    /// Git refused to remove it as dirty, so its ✕ forces the removal.
+    pub force: bool,
+}
+
+impl crate::state::State {
+    pub fn worktree_tab_items(&self) -> Vec<WorktreeTabItem> {
+        let listing = &self.sidebar.worktrees;
+        let Some((target, cwd)) = listing.source.as_ref() else {
+            return vec![WorktreeTabItem::Message(
+                listing
+                    .unavailable
+                    .clone()
+                    .unwrap_or_else(|| "Not in a Git repository".to_string()),
+            )];
+        };
+        let primary = listing
+            .entries
+            .iter()
+            .find(|tree| !tree.linked)
+            .map(|tree| tree.path.clone());
+        let repository = primary
+            .as_deref()
+            .unwrap_or(cwd)
+            .rsplit(['/', '\\'])
+            .find(|part| !part.is_empty())
+            .unwrap_or("repository")
+            .to_string();
+        let host = target
+            .as_ref()
+            .map_or_else(|| "local".to_string(), |target| target.display_label());
+        let mut items = vec![WorktreeTabItem::Header { repository, host }];
+
+        // Only an operation this attachment can still hear back about is shown as running.
+        let operation = self
+            .worktree_operation
+            .as_ref()
+            .filter(|op| &op.cwd == cwd && self.worktree_operation_reachable());
+        if !listing.loaded {
+            items.push(WorktreeTabItem::Message("Loading…".to_string()));
+        } else if let Some(error) = listing.error.as_ref() {
+            items.push(WorktreeTabItem::Message(format!("Git: {error}")));
+        } else {
+            for tree in &listing.entries {
+                let sessions = listing
+                    .sessions
+                    .get(&tree.path)
+                    .cloned()
+                    .unwrap_or_default();
+                let removing = operation.is_some_and(|op| {
+                    matches!(&op.kind, crate::state::WorktreeOperationKind::Remove { path, .. } if *path == tree.path)
+                });
+                items.push(WorktreeTabItem::Checkout(WorktreeTabRow {
+                    current: &tree.path == cwd,
+                    closable: tree.linked
+                        && !tree.bare
+                        && !tree.locked
+                        && sessions.is_empty()
+                        && !removing,
+                    force: listing.force_remove.as_ref() == Some(&tree.path),
+                    removing,
+                    sessions,
+                    tree: tree.clone(),
+                }));
+            }
+        }
+        if let Some(crate::state::WorktreeOperationKind::Create { branch }) =
+            operation.map(|op| &op.kind)
+        {
+            items.push(WorktreeTabItem::Creating {
+                branch: branch.clone(),
+            });
+        }
+        items.push(WorktreeTabItem::New);
+        items
+    }
+}
+
+/// What the Worktrees tab shows: the checkouts of the focused pane's repository, on its host.
+#[derive(Clone, Debug, Default)]
+pub struct SidebarWorktrees {
+    /// The repository listed, as the host and project root of the pane it follows. `None` when the
+    /// focused pane is not in a Git repository the session host can reach.
+    pub source: Option<(Option<crate::session::remote::RemoteTarget>, String)>,
+    /// Why there is no `source`: not in a repository, a nested SSH pane, no session yet.
+    pub unavailable: Option<String>,
+    pub entries: Vec<crate::git::worktrees::WorktreeInfo>,
+    /// Sessions recording each checkout as their origin, keyed by its listed path.
+    pub sessions:
+        std::collections::BTreeMap<String, Vec<crate::session::protocol::WorktreeSession>>,
+    /// Whether `entries` reflects a reply (or the cache) for `source`, rather than nothing yet.
+    pub loaded: bool,
+    pub pending: Option<u64>,
+    /// The refresh signal the last request answered, so a list is asked for once per change.
+    pub requested_token: Option<u64>,
+    pub error: Option<String>,
+    /// A checkout Git refused to remove because it is dirty. Its ✕ now forces the removal.
+    pub force_remove: Option<String>,
+}
+
 #[derive(Default)]
 pub struct SidebarState {
     pub panels: Vec<SidebarPanelState>,
@@ -667,6 +826,8 @@ pub struct SidebarState {
     /// by moving the cursor, so the confirmation never outlives the moment. An armed row keeps its
     /// ✕ visible even unhovered — an invisible armed state is worse than a lingering glyph.
     pub pending_row_close: Option<SidebarClose>,
+    /// The Worktrees tab: the focused pane's repository and its checkouts.
+    pub worktrees: SidebarWorktrees,
     /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the
     /// once-a-second duration ticks into a bare reschedule instead of a repaint, the same way the
     /// workbar clock avoids redrawing an identical badge.

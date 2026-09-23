@@ -236,12 +236,12 @@ kind, and a JSON body. One exchange is:
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":10,"min_protocol_version":10,
+{"type":"session-control","session":"dev","protocol_version":11,"min_protocol_version":11,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":10,
+{"type":"session-control-result","effective_protocol":11,
  "response":{"ok":true,"data":{"id":3,"text":"…","title":"zsh"}}}
 ```
 

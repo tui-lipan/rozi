@@ -3,6 +3,7 @@ pub(crate) mod navigation;
 pub(crate) mod polling;
 pub(crate) mod sessions;
 pub(crate) mod tree;
+pub(crate) mod worktrees;
 
 #[cfg(test)]
 mod tests;
@@ -12,6 +13,7 @@ pub(crate) use navigation::*;
 pub(crate) use polling::*;
 pub(crate) use sessions::*;
 pub(crate) use tree::*;
+pub(crate) use worktrees::sync_worktrees_tab;
 
 use tui_lipan::prelude::*;
 

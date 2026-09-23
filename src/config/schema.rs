@@ -1620,6 +1620,8 @@ pub enum SidebarTab {
     Activity,
     Panes,
     Sessions,
+    /// The focused pane's repository's Git worktrees.
+    Worktrees,
     Tree {
         view: SidebarTreeView,
         config: SidebarTreeConfig,
@@ -1661,6 +1663,7 @@ impl SidebarTab {
             Self::Activity => SidebarTabId::new("activity"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
+            Self::Worktrees => SidebarTabId::new("worktrees"),
             Self::Tree { view, .. } => SidebarTabId::new(view.id()),
             Self::Launcher { name, .. } | Self::Command { name, .. } => name.clone(),
         }
@@ -1671,6 +1674,7 @@ impl SidebarTab {
             Self::Activity => "Activity",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
+            Self::Worktrees => "Worktrees",
             Self::Tree { view, .. } => view.label(),
             Self::Launcher { label, .. } | Self::Command { label, .. } => label,
         }
@@ -1726,6 +1730,7 @@ impl Default for SidebarConfig {
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),
             SidebarTab::tree(SidebarTreeView::Changes),
+            SidebarTab::Worktrees,
         ];
         Self {
             visible: false,
@@ -1740,6 +1745,7 @@ impl Default for SidebarConfig {
                 vec![
                     SidebarTabId::new(SidebarTreeView::Files.id()),
                     SidebarTabId::new(SidebarTreeView::Changes.id()),
+                    SidebarTab::Worktrees.id(),
                 ],
             ],
             tabs,

@@ -43,6 +43,9 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
         crate::state::SidebarClose::Host { target } => {
             crate::update::sidebar::sessions::disconnect_host(ctx, target)
         }
+        crate::state::SidebarClose::Worktree { path, force } => {
+            crate::ops::worktrees::remove_from_sidebar(ctx, path, force)
+        }
     }
 }
 
@@ -103,6 +106,8 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         }
         RowTarget::NewPane { workspace } => spawn_new_pane(ctx, workspace),
         RowTarget::ConnectHost => crate::ops::session::open_new_host_flow(ctx),
+        RowTarget::Worktree(path) => crate::ops::worktrees::open_from_sidebar(ctx, path),
+        RowTarget::NewWorktree => crate::ops::worktrees::open_form_from_sidebar(ctx),
         RowTarget::Launcher {
             config_epoch,
             tab_id,

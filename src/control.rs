@@ -31,6 +31,8 @@ pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
 /// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
 /// relying on it.
 pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
+/// `layout get` reports workspaces and pane geometry from the shared layout document.
+pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -52,6 +54,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
+                LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
@@ -114,6 +117,12 @@ impl CaptureScrollback {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum ControlCommand {
     ListPanes,
+    /// Report workspaces and where each pane sits. `workspace` is one-based and narrows the report
+    /// to that workspace.
+    LayoutGet {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<usize>,
+    },
     AgentsList,
     AgentGet {
         target: AgentTarget,
@@ -380,6 +389,275 @@ pub struct PaneInfo {
 #[serde(transparent)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneListPayload(pub Vec<PaneInfo>);
+
+/// What `layout get` answers with.
+///
+/// Two views of one arrangement, kept apart because they are different facts. The workspaces and
+/// each pane's `rect` describe the session's shared layout document, which the server owns and
+/// every client reconciles to: the same answer whichever endpoint is asked. `client`, and each
+/// pane's `view_rect`, describe what one UI actually draws, which depends on its own viewport,
+/// chrome, and focus, and so exists only when a UI answered.
+///
+/// A public document rather than the internal `SharedLayout` itself: that one is a synchronization
+/// format versioned with the session protocol, and this is the contract scripts read.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct LayoutReport {
+    /// Session that answered, qualified with its host when remote.
+    pub session: String,
+    /// Layout revision this report describes. Absent while no layout document exists, which is the
+    /// case for a session whose panes nothing has placed yet.
+    pub revision: Option<u64>,
+    /// The canonical canvas every `rect` is measured against, in cells. It is the canvas of the
+    /// client that last controlled the layout. Absent with `revision`.
+    pub canvas: Option<CellSize>,
+    pub workspaces: Vec<WorkspaceLayout>,
+    /// Panes the session runs that no layout document places yet. Only a session endpoint reports
+    /// these; a UI places every pane it knows about.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced_panes: Vec<PaneId>,
+    /// This UI's own view of the layout. Absent from a session endpoint, which has no screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<ClientLayoutView>,
+}
+
+/// A size in terminal cells.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CellSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// A rectangle in terminal cells. The origin can be negative or lie past the canvas: a Scrollable
+/// strip is wider than the canvas it scrolls across, and a follower letterboxes a larger canonical
+/// canvas into a smaller screen.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CellRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A rectangle as fractions of the canonical canvas, so `0.5` is half its width or height.
+/// Fractions outside `0.0..=1.0` mean the same thing as an out-of-canvas [`CellRect`].
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct FractionRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A tiling algorithm, as `layout get` names it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ControlLayoutKind {
+    Dwindle,
+    Master,
+    Grid,
+    Columns,
+    Rows,
+    Scrollable,
+    Monocle,
+}
+
+impl ControlLayoutKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dwindle => "dwindle",
+            Self::Master => "master",
+            Self::Grid => "grid",
+            Self::Columns => "columns",
+            Self::Rows => "rows",
+            Self::Scrollable => "scrollable",
+            Self::Monocle => "monocle",
+        }
+    }
+}
+
+impl From<crate::state::LayoutKind> for ControlLayoutKind {
+    fn from(kind: crate::state::LayoutKind) -> Self {
+        use crate::state::LayoutKind;
+        match kind {
+            LayoutKind::Dwindle => Self::Dwindle,
+            LayoutKind::Master => Self::Master,
+            LayoutKind::Grid => Self::Grid,
+            LayoutKind::Columns => Self::Columns,
+            LayoutKind::Rows => Self::Rows,
+            LayoutKind::Scrollable => Self::Scrollable,
+            LayoutKind::Monocle => Self::Monocle,
+        }
+    }
+}
+
+/// One workspace in a [`LayoutReport`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct WorkspaceLayout {
+    /// One-based, matching the workbar and `--workspace`.
+    pub index: usize,
+    pub name: Option<String>,
+    pub layout: ControlLayoutKind,
+    /// Whether typed input is broadcast to every pane in the workspace.
+    pub synchronized: bool,
+    /// Tiled panes in tiling order, then floating panes.
+    pub panes: Vec<PaneLayout>,
+}
+
+/// Where one pane sits.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneLayout {
+    pub id: PaneId,
+    /// Exact pane incarnation. Absent only from a UI with no session behind it.
+    pub reference: Option<crate::session::protocol::PaneRef>,
+    /// Position in the workspace's tiling order, from `0`. This is the order Master, Grid, Columns,
+    /// Rows, Scrollable, and Monocle lay panes out in; absent for a floating pane.
+    pub order: Option<usize>,
+    pub floating: bool,
+    /// A fullscreen pane covers the whole screen while it is fullscreen; `rect` stays the place it
+    /// returns to.
+    pub fullscreen: bool,
+    /// Placement on the canonical canvas, in cells, without gaps, borders, or the workbar - those
+    /// are each client's own presentation. Every pane in Monocle shares one rect.
+    pub rect: CellRect,
+    /// `rect` as fractions of the canonical canvas.
+    pub rect_fraction: FractionRect,
+    /// Where the answering UI draws the pane, in its own terminal's cells, including gaps and
+    /// chrome. Present only for panes in the UI's active workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_rect: Option<CellRect>,
+}
+
+/// What one UI is looking at. Nothing here is shared with other clients.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ClientLayoutView {
+    /// One-based workspace this UI shows.
+    pub active_workspace: usize,
+    pub focused_pane: Option<PaneId>,
+    /// Whether this UI holds the session's layout-control lease.
+    pub controller: bool,
+    /// False while this UI has layout changes the server has not yet accepted, so `revision` does
+    /// not describe them. Always true for a follower.
+    pub committed: bool,
+    /// This UI's terminal size.
+    pub viewport: CellSize,
+}
+
+impl WorkspaceLayout {
+    /// Describe the workspaces of a shared layout document, optionally only the one-based
+    /// `workspace`.
+    ///
+    /// Both endpoints report through this, so a script reads one set of rects whichever answered.
+    pub(crate) fn from_shared(
+        layout: &crate::layout::shared::SharedLayout,
+        workspace: Option<usize>,
+        session_instance: Option<&crate::session::protocol::SessionInstanceId>,
+    ) -> Vec<Self> {
+        let canvas = (layout.canvas_cols.max(1), layout.canvas_rows.max(1));
+        let mut workspaces: Vec<Self> = layout
+            .workspaces
+            .iter()
+            .filter(|shared| workspace.is_none_or(|wanted| wanted == shared.index + 1))
+            .map(|shared| {
+                let placements = crate::layout::shared::shared_workspace_placements(shared, canvas);
+                let tiled = crate::layout::ordered_tiled_ids(
+                    &crate::layout::shared::SharedTileSource::new(shared, canvas),
+                );
+                let mut panes: Vec<PaneLayout> = shared
+                    .panes
+                    .iter()
+                    .filter_map(|pane| {
+                        let rect = crate::layout::placement_for(&placements, pane.pane_id)?;
+                        Some(PaneLayout {
+                            id: pane.pane_id,
+                            reference: session_instance.map(|instance| {
+                                crate::session::protocol::PaneRef {
+                                    session_instance: instance.clone(),
+                                    pane_id: pane.pane_id,
+                                    generation: pane.generation,
+                                }
+                            }),
+                            order: tiled.iter().position(|id| *id == pane.pane_id),
+                            floating: pane.floating,
+                            fullscreen: pane.fullscreen,
+                            rect: CellRect::from_float(rect),
+                            rect_fraction: FractionRect::of_canvas(rect, canvas),
+                            view_rect: None,
+                        })
+                    })
+                    .collect();
+                panes.sort_by_key(|pane| pane.order.unwrap_or(usize::MAX));
+                Self {
+                    index: shared.index + 1,
+                    name: shared.name.clone(),
+                    layout: crate::state::LayoutKind::from(shared.layout).into(),
+                    synchronized: shared.synchronized,
+                    panes,
+                }
+            })
+            .collect();
+        workspaces.sort_by_key(|workspace| workspace.index);
+        workspaces
+    }
+}
+
+/// Refuse a `layout get --workspace` that names no workspace, rather than answering with an empty
+/// list a script would read as "that workspace has no panes".
+pub(crate) fn validate_layout_workspace(
+    workspace: Option<usize>,
+) -> std::result::Result<(), ControlResponse> {
+    match workspace {
+        Some(index) if !(1..=crate::state::WORKSPACE_COUNT).contains(&index) => {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!(
+                    "workspace {index} does not exist; expected 1-{}",
+                    crate::state::WORKSPACE_COUNT
+                ),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+impl CellRect {
+    /// Whole cells, rounded the way a rendered rect lands on the grid.
+    pub(crate) fn from_float(rect: tui_lipan::prelude::FloatRect) -> Self {
+        Self {
+            x: rect.x.round() as i32,
+            y: rect.y.round() as i32,
+            width: rect.w.round().max(0.0) as u32,
+            height: rect.h.round().max(0.0) as u32,
+        }
+    }
+}
+
+impl FractionRect {
+    /// Rounded to six decimal places, which is finer than one cell of any canvas a terminal has.
+    ///
+    /// Geometry is `f32` internally - a stored float of `0.42` comes back as `0.41999998` - and
+    /// JSON widens it to `f64`, so without rounding a script reads `0.4199999784811949` for a pane
+    /// that is plainly 42% wide.
+    pub(crate) fn of_canvas(rect: tui_lipan::prelude::FloatRect, canvas: (u16, u16)) -> Self {
+        let fraction = |value: f32, extent: u16| {
+            let fraction = f64::from(value) / f64::from(extent.max(1));
+            (fraction * 1e6).round() / 1e6
+        };
+        Self {
+            x: fraction(rect.x, canvas.0),
+            y: fraction(rect.y, canvas.1),
+            width: fraction(rect.w, canvas.0),
+            height: fraction(rect.h, canvas.1),
+        }
+    }
+}
 
 /// The whole `data` value of an `agents list` reply. See [`PaneListPayload`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

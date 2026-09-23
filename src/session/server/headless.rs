@@ -49,7 +49,10 @@ const SERVER_LAYOUT_AUTHOR: ClientId = 0;
 /// come from somewhere else than a client's do - this side reads the authoritative server runtime
 /// state directly rather than the copy a client keeps - but the shapes are shared, so a script
 /// parses one document whichever endpoint answered it.
-use crate::control::{AgentListPayload, NewPaneAccepted, PaneCapture, PaneInfo, PaneListPayload};
+use crate::control::{
+    AgentListPayload, CellSize, LayoutReport, NewPaneAccepted, PaneCapture, PaneInfo,
+    PaneListPayload, WorkspaceLayout,
+};
 
 struct SessionAgentPrompt<'a> {
     target: AgentTarget,
@@ -67,6 +70,7 @@ struct SessionAgentPrompt<'a> {
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
         ControlCommand::ListPanes
+        | ControlCommand::LayoutGet { .. }
         | ControlCommand::AgentsList
         | ControlCommand::AgentGet { .. }
         | ControlCommand::AgentRead { .. }
@@ -284,6 +288,7 @@ impl SessionServer {
             ControlCommand::ListPanes => {
                 ControlResponse::ok(PaneListPayload(self.session_pane_report()))
             }
+            ControlCommand::LayoutGet { workspace } => self.session_layout_report(workspace),
             ControlCommand::AgentsList => {
                 ControlResponse::ok(AgentListPayload(self.session_agent_report()))
             }
@@ -378,6 +383,39 @@ impl SessionServer {
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
             ),
         }
+    }
+
+    /// `layout get` from the shared layout document alone.
+    ///
+    /// The document is exactly what every client reconciles to, so this is the whole shared answer
+    /// with nothing attached. What it cannot say - focus, the active workspace, where a client
+    /// draws a pane - is client-local and left out rather than guessed.
+    fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
+        if let Err(response) = crate::control::validate_layout_workspace(workspace) {
+            return response;
+        }
+        let placed = self.layout_workspace_index();
+        let mut unplaced_panes: Vec<PaneId> = self
+            .panes
+            .keys()
+            .filter(|id| !placed.contains_key(id))
+            .copied()
+            .collect();
+        unplaced_panes.sort_unstable();
+        let layout = self.layout.as_ref();
+        ControlResponse::ok(LayoutReport {
+            session: self.session_name.clone(),
+            revision: layout.map(|_| self.layout_rev),
+            canvas: layout.map(|layout| CellSize {
+                cols: layout.canvas_cols,
+                rows: layout.canvas_rows,
+            }),
+            workspaces: layout.map_or_else(Vec::new, |layout| {
+                WorkspaceLayout::from_shared(layout, workspace, Some(&self.instance_id))
+            }),
+            unplaced_panes,
+            client: None,
+        })
     }
 
     fn session_pane_report(&self) -> Vec<PaneInfo> {
@@ -1273,6 +1311,149 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    fn shared_pane(pane_id: PaneId, rect: Option<crate::layout::shared::FracRect>) -> SharedPane {
+        SharedPane {
+            pane_id,
+            generation: 3,
+            title: None,
+            profile_name: None,
+            cwd: None,
+            launch: None,
+            replay: false,
+            keep_open: false,
+            floating: rect.is_some(),
+            fullscreen: false,
+            rect,
+            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+        }
+    }
+
+    #[test]
+    fn layout_get_reports_the_shared_document_with_nothing_attached() {
+        let mut server = SessionServer::new_named("dev");
+        for id in [4, 5, 6] {
+            pane_with_screen(&mut server, id, b"");
+        }
+        let mut layout = one_pane_layout(4);
+        let workspace = &mut layout.workspaces[0];
+        // A deliberate 60/40 split beside a float, listed floating-first so the report has to put
+        // the tiled panes back in tiling order.
+        workspace.tree = Some(SharedTree::Split {
+            axis: SharedSplitAxis::Horizontal,
+            ratio: 0.6,
+            first: Box::new(SharedTree::Leaf { pane: 4 }),
+            second: Box::new(SharedTree::Leaf { pane: 5 }),
+        });
+        workspace.panes = vec![
+            shared_pane(
+                6,
+                Some(crate::layout::shared::FracRect {
+                    x: 0.25,
+                    y: 0.25,
+                    w: 0.5,
+                    h: 0.5,
+                }),
+            ),
+            shared_pane(4, None),
+            shared_pane(5, None),
+        ];
+        layout.validate().expect("the fixture is a valid document");
+        server.layout = Some(layout);
+        server.layout_rev = 7;
+
+        let (response, broadcasts) =
+            control(&mut server, ControlCommand::LayoutGet { workspace: None });
+        assert!(response.ok, "{:?}", response.error);
+        assert!(broadcasts.is_empty(), "reading the layout commits nothing");
+        let report: LayoutReport =
+            serde_json::from_value(response.data.expect("layout data")).expect("a LayoutReport");
+
+        assert_eq!(report.session, "dev");
+        assert_eq!(report.revision, Some(7));
+        assert_eq!(report.canvas, Some(CellSize { cols: 80, rows: 24 }));
+        assert!(report.client.is_none(), "a session server has no screen");
+        assert!(report.unplaced_panes.is_empty());
+        let [workspace] = report.workspaces.as_slice() else {
+            panic!("expected the document's one workspace");
+        };
+        assert_eq!(workspace.index, 1);
+        assert_eq!(workspace.layout, crate::control::ControlLayoutKind::Dwindle);
+        let rows: Vec<_> = workspace
+            .panes
+            .iter()
+            .map(|pane| (pane.id, pane.order, pane.floating, pane.rect))
+            .collect();
+        let rect = |x, y, width, height| crate::control::CellRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (4, Some(0), false, rect(0, 0, 48, 24)),
+                (5, Some(1), false, rect(48, 0, 32, 24)),
+                (6, None, true, rect(20, 6, 40, 12)),
+            ]
+        );
+        assert_eq!(workspace.panes[0].rect_fraction.width, 0.6);
+        assert_eq!(
+            workspace.panes[2].rect_fraction,
+            crate::control::FractionRect {
+                x: 0.25,
+                y: 0.25,
+                width: 0.5,
+                height: 0.5,
+            },
+            "a float reports the fractions it was stored with, not their f32 rounding"
+        );
+        assert_eq!(
+            workspace.panes[2].reference,
+            Some(protocol::PaneRef {
+                session_instance: server.instance_id.clone(),
+                pane_id: 6,
+                generation: 3,
+            })
+        );
+        assert!(workspace.panes.iter().all(|pane| pane.view_rect.is_none()));
+    }
+
+    #[test]
+    fn layout_get_names_panes_no_document_places_and_refuses_a_workspace_that_does_not_exist() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 2, b"");
+        pane_with_screen(&mut server, 9, b"");
+
+        let (response, _) = control(&mut server, ControlCommand::LayoutGet { workspace: None });
+        assert!(response.ok, "{:?}", response.error);
+        let report: LayoutReport =
+            serde_json::from_value(response.data.expect("layout data")).expect("a LayoutReport");
+        assert_eq!(report.revision, None);
+        assert_eq!(report.canvas, None);
+        assert!(report.workspaces.is_empty());
+        assert_eq!(report.unplaced_panes, vec![2, 9]);
+
+        server.layout = Some(one_pane_layout(2));
+        let (narrowed, _) = control(
+            &mut server,
+            ControlCommand::LayoutGet { workspace: Some(1) },
+        );
+        let report: LayoutReport =
+            serde_json::from_value(narrowed.data.expect("layout data")).expect("a LayoutReport");
+        assert_eq!(report.workspaces.len(), 1);
+        assert_eq!(report.unplaced_panes, vec![9]);
+
+        let (refused, _) = control(
+            &mut server,
+            ControlCommand::LayoutGet {
+                workspace: Some(crate::state::WORKSPACE_COUNT + 1),
+            },
+        );
+        assert!(!refused.ok);
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
     }
 
     #[test]

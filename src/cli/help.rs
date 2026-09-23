@@ -194,6 +194,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "list-panes [--format text|json]",
                 "List live panes; JSON when piped",
             ),
+            row(
+                "layout get [--workspace <1-9>] [--format text|json]",
+                "Show workspaces and where each pane sits",
+            ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
                 "send-text [--target <PANE_ID>] <TEXT>",

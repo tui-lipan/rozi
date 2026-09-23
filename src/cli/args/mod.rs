@@ -504,6 +504,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output_format,
                 }));
             }
+            "layout" => {
+                let (command, output_format) = parse_layout_args(&mut iter)?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
+                }));
+            }
             "metrics" => {
                 let output_format = parse_output_format(&mut iter, "metrics")?;
                 let command = control::ControlCommand::Metrics;
@@ -1000,6 +1008,53 @@ pub(super) fn parse_list_format(
     }
 }
 
+/// `layout get [--workspace <1-9>] [--format text|json]`.
+fn parse_layout_args(
+    iter: &mut impl Iterator<Item = String>,
+) -> std::result::Result<(control::ControlCommand, Option<ListFormat>), String> {
+    match iter.next().as_deref() {
+        Some("get") => {}
+        Some(other) => return Err(format!("unknown layout subcommand `{other}`; expected get")),
+        None => return Err("layout requires a subcommand (get)".to_string()),
+    }
+    let mut workspace = None;
+    let mut output_format = None;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--workspace" => {
+                let value = require_value(iter, "--workspace requires a workspace number")?;
+                let index = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|index| (1..=crate::state::WORKSPACE_COUNT).contains(index))
+                    .ok_or_else(|| {
+                        format!(
+                            "--workspace requires a workspace number from 1 to {}",
+                            crate::state::WORKSPACE_COUNT
+                        )
+                    })?;
+                if workspace.replace(index).is_some() {
+                    return Err("layout get --workspace specified more than once".to_string());
+                }
+            }
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                if output_format
+                    .replace(parse_list_format(&value, "layout get")?)
+                    .is_some()
+                {
+                    return Err("layout get --format specified more than once".to_string());
+                }
+            }
+            other => return Err(format!("unexpected argument `{other}` after layout get")),
+        }
+    }
+    Ok((
+        control::ControlCommand::LayoutGet { workspace },
+        output_format,
+    ))
+}
+
 pub(super) fn parse_output_format(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
@@ -1240,6 +1295,51 @@ mod tests {
             control.request.command,
             control::ControlCommand::AgentRelease { target: None, .. }
         ));
+    }
+
+    #[test]
+    fn layout_get_parses_a_workspace_and_format_and_refuses_what_it_cannot_answer() {
+        let args = |args: &[&str]| args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        let ParsedCli::Control(parsed) = parse_cli_args(args(&[
+            "layout",
+            "get",
+            "--workspace",
+            "3",
+            "--format",
+            "json",
+        ]))
+        .expect("parses") else {
+            panic!("expected control command");
+        };
+        assert_eq!(
+            parsed.request.command,
+            control::ControlCommand::LayoutGet { workspace: Some(3) }
+        );
+        assert_eq!(parsed.output_format, Some(ListFormat::Json));
+
+        let ParsedCli::Control(session) =
+            parse_cli_args(args(&["--session", "dev", "layout", "get"])).expect("parses")
+        else {
+            panic!("expected control command");
+        };
+        assert!(
+            session.endpoint.is_session(),
+            "a session server answers layout get"
+        );
+
+        for refused in [
+            &["layout"][..],
+            &["layout", "set"],
+            &["layout", "get", "--workspace", "0"],
+            &["layout", "get", "--workspace", "10"],
+            &["layout", "get", "--workspace", "2", "--workspace", "3"],
+            &["layout", "get", "extra"],
+        ] {
+            assert!(
+                parse_cli_args(args(refused)).is_err(),
+                "{refused:?} should be refused"
+            );
+        }
     }
 
     #[test]

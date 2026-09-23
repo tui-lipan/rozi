@@ -936,6 +936,71 @@ fn rect_settled(animated: FloatRect, target: FloatRect) -> bool {
         && (animated.h - target.h).abs() < eps
 }
 
+/// The boxes an attachment's workspace pages lay out in, for one terminal viewport.
+pub(crate) struct WorkspacePageBoxes {
+    /// Canvas-space rect panes tile and float inside. A follower's is the controller's canonical
+    /// canvas centered in its own viewport.
+    pub bounds: FloatRect,
+    /// This client's own canvas, which Scrollable clamps its scrolling to.
+    pub local_bounds: FloatRect,
+    /// Root-space rect a fullscreen pane expands to.
+    pub fullscreen_bounds: FloatRect,
+}
+
+pub(crate) fn workspace_page_boxes(
+    state: &crate::state::State,
+    viewport: Rect,
+) -> WorkspacePageBoxes {
+    WorkspacePageBoxes {
+        bounds: super::follower_letterbox_bounds(state, viewport),
+        local_bounds: state.canvas_bounds_from_terminal_viewport(viewport),
+        fullscreen_bounds: super::viewport_bounds(state.content_viewport(viewport)),
+    }
+}
+
+/// Where each pane of the active workspace comes to rest on this client's terminal, in terminal
+/// cells: the rects [`workspace_pages`] draws once every animation and drag has settled.
+///
+/// Measured from the same boxes and the same placement call the renderer uses, so an automation
+/// client asking where a pane is on screen gets the answer the screen gives.
+pub(crate) fn settled_active_pane_rects(
+    state: &crate::state::State,
+    viewport: Rect,
+) -> Vec<(PaneId, FloatRect)> {
+    let boxes = workspace_page_boxes(state, viewport);
+    let workspace = state.current().active_workspace_ref();
+    let placements = workspace_target_rects_excluding_with_visible_and_float_bounds(
+        workspace,
+        boxes.bounds,
+        boxes.bounds,
+        Some(boxes.local_bounds),
+        None,
+        state.workspace_top_gap(),
+        state.tile_gap(),
+    );
+    let top_offset = state.content_top_offset();
+    let left_offset = f32::from(state.terminal_content_left_offset(viewport));
+    workspace
+        .panes
+        .iter()
+        .filter(|pane| !pane.closing)
+        .filter_map(|pane| {
+            let root = if pane.fullscreen {
+                boxes.fullscreen_bounds
+            } else {
+                canvas_rect_to_root(placement_for(&placements, pane.id)?, top_offset)
+            };
+            Some((
+                pane.id,
+                FloatRect {
+                    x: root.x + left_offset,
+                    ..root
+                },
+            ))
+        })
+        .collect()
+}
+
 /// Translate complete workspace canvases so pane sizes and internal seams stay fixed.
 pub(crate) fn workspace_pages(
     ctx: &Context<AppRoot>,
@@ -944,11 +1009,12 @@ pub(crate) fn workspace_pages(
 ) -> Element {
     let viewport = ctx.viewport();
     let content_viewport = ctx.state.content_viewport(viewport);
-    // Followers keep the controller's canonical canvas centered in their local viewport.
-    let bounds = super::follower_letterbox_bounds(&ctx.state, viewport);
-    let local_bounds = ctx.state.canvas_bounds_from_terminal_viewport(viewport);
+    let WorkspacePageBoxes {
+        bounds,
+        local_bounds,
+        fullscreen_bounds: root_bounds,
+    } = workspace_page_boxes(&ctx.state, viewport);
     let top_offset = ctx.state.content_top_offset();
-    let root_bounds = super::viewport_bounds(content_viewport);
     let mut pages = canvas;
     for (index, offset) in super::animation::workspace_offsets(ctx, viewport_changed) {
         let workspace = &ctx.state.current().workspaces[index];

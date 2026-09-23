@@ -38,6 +38,7 @@ pub(crate) fn handle_control_request(
     }
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
+        ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
         ControlCommand::AgentsList => {
             ControlResponse::ok(crate::control::AgentListPayload(list_agents(ctx)))
         }
@@ -303,14 +304,92 @@ impl PaneInfo {
     }
 }
 
+/// The session name a report carries, qualified with its host when the attachment is remote so
+/// two same-name sessions do not look interchangeable.
+fn session_label(attachment: &crate::state::Attachment) -> String {
+    let name = attachment.session_name.as_deref().unwrap_or("local");
+    attachment
+        .remote_host
+        .as_deref()
+        .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"))
+}
+
+/// `layout get` from this UI.
+///
+/// The shared half is built from the document this client would commit, measured against the
+/// canvas the session's rects are relative to: the controller's canonical canvas for a follower,
+/// this client's own canvas otherwise. That is the same document a session endpoint reports, so
+/// the two answers agree once the client's changes are committed. The client half adds what only
+/// this UI knows: focus, the workspace it shows, and where it draws each pane.
+fn layout_report(ctx: &Context<AppRoot>, workspace: Option<usize>) -> ControlResponse {
+    if let Err(response) = crate::control::validate_layout_workspace(workspace) {
+        return response;
+    }
+    let state = &ctx.state;
+    let viewport = ctx.viewport();
+    let attachment = state.current();
+    let canvas = state.follower_canonical_canvas().unwrap_or_else(|| {
+        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
+        (
+            bounds.w.round().max(1.0) as u16,
+            bounds.h.round().max(1.0) as u16,
+        )
+    });
+    let layout = crate::layout::shared::shared_layout_from_state(state, canvas);
+    let mut workspaces = crate::control::WorkspaceLayout::from_shared(
+        &layout,
+        workspace,
+        attachment.session_instance.as_ref(),
+    );
+    let active_workspace = attachment.active_workspace + 1;
+    if let Some(active) = workspaces
+        .iter_mut()
+        .find(|workspace| workspace.index == active_workspace)
+    {
+        let view_rects = crate::view::settled_active_pane_rects(state, viewport);
+        for pane in &mut active.panes {
+            pane.view_rect = view_rects
+                .iter()
+                .find(|(id, _)| *id == pane.id)
+                .map(|(_, rect)| crate::control::CellRect::from_float(*rect));
+        }
+    }
+    let shared = attachment.shared.as_ref();
+    let controller = state.is_controller();
+    // A controller debounces its commits, so its own layout can run ahead of the revision the
+    // server has accepted. Saying so is what lets a script tell a stale revision from a current one.
+    // Without a shared session there is no server copy to be behind.
+    let committed = shared.is_none_or(|shared| {
+        !shared.is_controller()
+            || (shared.assumed_rev == shared.layout_rev
+                && shared.last_committed_layout.as_ref() == Some(&layout))
+    });
+    ControlResponse::ok(crate::control::LayoutReport {
+        session: session_label(attachment),
+        revision: shared.map(|shared| shared.layout_rev),
+        canvas: Some(crate::control::CellSize {
+            cols: layout.canvas_cols,
+            rows: layout.canvas_rows,
+        }),
+        workspaces,
+        unplaced_panes: Vec::new(),
+        client: Some(crate::control::ClientLayoutView {
+            active_workspace,
+            focused_pane: attachment.focused_pane,
+            controller,
+            committed,
+            viewport: crate::control::CellSize {
+                cols: viewport.w,
+                rows: viewport.h,
+            },
+        }),
+    })
+}
+
 fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
     let mut panes = Vec::new();
     let attachment = ctx.state.current();
-    let name = attachment.session_name.as_deref().unwrap_or("local");
-    let session = attachment
-        .remote_host
-        .as_deref()
-        .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"));
+    let session = session_label(attachment);
     let session_instance = attachment.session_instance.as_ref();
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
@@ -330,11 +409,7 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
 
 fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
     let attachment = ctx.state.current();
-    let name = attachment.session_name.as_deref().unwrap_or("local");
-    let session = attachment
-        .remote_host
-        .as_deref()
-        .map_or_else(|| name.to_string(), |host| format!("{name}@{host}"));
+    let session = session_label(attachment);
     let mut agents = Vec::new();
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
@@ -1705,6 +1780,91 @@ mod tests {
             .expect("spawn list panes test thread")
             .join()
             .expect("list panes test thread completes");
+    }
+
+    #[test]
+    fn layout_get_reports_the_shared_arrangement_and_where_this_ui_draws_it() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.state_mut().current_mut().session_name = Some("dev".into());
+                let ask = |backend: &mut TestBackend<crate::AppRoot>, workspace| {
+                    let (reply, response) = mpsc::channel();
+                    backend
+                        .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                            request: ControlRequest {
+                                command: ControlCommand::LayoutGet { workspace },
+                                source_pane: None,
+                                extension: None,
+                            },
+                            reply,
+                        }))
+                        .expect("dispatch layout get");
+                    let response = response.recv().unwrap();
+                    assert!(response.ok, "{:?}", response.error);
+                    serde_json::from_value::<crate::control::LayoutReport>(
+                        response.data.expect("layout data"),
+                    )
+                    .expect("a LayoutReport")
+                };
+
+                let report = ask(&mut backend, None);
+                assert_eq!(report.session, "dev");
+                assert_eq!(
+                    report.workspaces.len(),
+                    crate::state::WORKSPACE_COUNT,
+                    "empty workspaces are still reported, with their layouts"
+                );
+                let client = report.client.expect("a UI reports its own view");
+                assert_eq!(client.active_workspace, 1);
+                // No shared session: this UI owns its layout outright and has no server to lag.
+                assert!(client.controller);
+                assert!(client.committed);
+                assert_eq!(report.revision, None);
+                let canvas = report.canvas.expect("a UI always has a canvas");
+                let [pane] = report.workspaces[0].panes.as_slice() else {
+                    panic!("expected the seeded pane");
+                };
+                assert_eq!(client.focused_pane, Some(pane.id));
+                assert_eq!(pane.order, Some(0));
+                assert_eq!(
+                    (pane.rect.width, pane.rect.height),
+                    (u32::from(canvas.cols), u32::from(canvas.rows)),
+                    "a lone tiled pane covers the canonical canvas"
+                );
+                let view = pane.view_rect.expect("the active workspace is on screen");
+                assert!(view.width > 0 && view.width <= u32::from(client.viewport.cols));
+                assert!(view.height > 0 && view.height <= u32::from(client.viewport.rows));
+
+                let narrowed = ask(&mut backend, Some(2));
+                assert_eq!(narrowed.workspaces.len(), 1);
+                assert_eq!(narrowed.workspaces[0].index, 2);
+                assert!(narrowed.workspaces[0].panes.is_empty());
+
+                // A follower describes the revision it applied and never has changes of its own.
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(2);
+                shared.layout_rev = 3;
+                shared.assumed_rev = 3;
+                backend.state_mut().current_mut().shared = Some(shared);
+                let follower = ask(&mut backend, None);
+                assert_eq!(follower.revision, Some(3));
+                let client = follower.client.expect("client view");
+                assert!(!client.controller);
+                assert!(client.committed);
+
+                // A controller whose commit the server has not echoed yet is ahead of `revision`.
+                let shared = backend.state_mut().current_mut().shared.as_mut().unwrap();
+                shared.controller = Some(1);
+                shared.assumed_rev = 4;
+                let pending = ask(&mut backend, None).client.expect("client view");
+                assert!(pending.controller);
+                assert!(!pending.committed);
+            })
+            .expect("spawn layout get test thread")
+            .join()
+            .expect("layout get test thread completes");
     }
 
     #[test]

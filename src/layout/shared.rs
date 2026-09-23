@@ -389,6 +389,122 @@ pub(crate) fn dwindle_from_shared(
     to_dwindle(tree, &|pane| known.contains(pane).then_some(*pane), true)
 }
 
+/// One [`SharedWorkspace`] read as tiling input, measured against a canonical canvas.
+///
+/// The shared document is what a session server has to go on when nobody is attached, so this is
+/// how the server places panes: the same allocators, fed from the document instead of a client's
+/// live `Workspace`. Client-local view state the document deliberately omits falls back to what a
+/// freshly attached client would use - a Scrollable strip scrolled to its first column.
+pub(crate) struct SharedTileSource<'a> {
+    workspace: &'a SharedWorkspace,
+    tree: Option<DwindleTree>,
+    canvas: (u16, u16),
+}
+
+impl<'a> SharedTileSource<'a> {
+    pub(crate) fn new(workspace: &'a SharedWorkspace, canvas: (u16, u16)) -> Self {
+        let known = workspace
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id)
+            .collect::<std::collections::HashSet<_>>();
+        Self {
+            workspace,
+            tree: workspace
+                .tree
+                .as_ref()
+                .and_then(|tree| dwindle_from_shared(tree, &known)),
+            canvas,
+        }
+    }
+}
+
+impl crate::layout::TileSource for SharedTileSource<'_> {
+    fn layout_kind(&self) -> crate::state::LayoutKind {
+        self.workspace.layout.into()
+    }
+
+    fn start_axis(&self) -> crate::state::SplitAxis {
+        self.workspace.start_axis.into()
+    }
+
+    fn split_ratios(&self) -> &[f32] {
+        &self.workspace.split_ratios
+    }
+
+    fn stored_tile_tree(&self) -> Option<&DwindleTree> {
+        self.tree.as_ref()
+    }
+
+    fn tiled_ids_by_pane_order(&self) -> Vec<PaneId> {
+        self.workspace
+            .panes
+            .iter()
+            .filter(|pane| !pane.floating)
+            .map(|pane| pane.pane_id)
+            .collect()
+    }
+
+    fn scrollable_width(&self, id: PaneId) -> f32 {
+        self.workspace
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == id)
+            .map_or(crate::state::DEFAULT_SCROLLABLE_WIDTH, |pane| {
+                pane.scrollable_width
+            })
+    }
+
+    fn scrollable_viewport(
+        &self,
+        tiled_ids: &[PaneId],
+    ) -> (Option<PaneId>, crate::state::ScrollableRevealEdge) {
+        (
+            tiled_ids.first().copied(),
+            crate::state::ScrollableRevealEdge::Left,
+        )
+    }
+
+    fn for_each_floating(&self, visit: &mut dyn FnMut(PaneId, FloatRect)) {
+        let (cols, rows) = self.canvas;
+        for pane in self.workspace.panes.iter().filter(|pane| pane.floating) {
+            if let Some(rect) = pane.rect {
+                visit(pane.pane_id, frac_rect_to_float(rect, cols, rows));
+            }
+        }
+    }
+}
+
+/// Where each pane of `workspace` sits on the document's canonical canvas, in cells.
+///
+/// Gap-free and chrome-free on purpose. Gaps, borders, and the workbar are each client's own
+/// presentation config; this is the arrangement the document itself describes, which is the same
+/// whichever client - or none - is looking at it. Scrollable columns may extend past the canvas
+/// edge, because the strip is wider than the viewport that scrolls over it.
+pub(crate) fn shared_workspace_placements(
+    workspace: &SharedWorkspace,
+    canvas: (u16, u16),
+) -> Vec<crate::layout::tiling::PanePlacement> {
+    let bounds = FloatRect {
+        x: 0.0,
+        y: 0.0,
+        w: f32::from(canvas.0.max(1)),
+        h: f32::from(canvas.1.max(1)),
+    };
+    crate::layout::workspace_target_rects_excluding_with_visible_and_float_bounds(
+        &SharedTileSource::new(workspace, canvas),
+        bounds,
+        bounds,
+        None,
+        None,
+        0.0,
+        crate::state::TileGap {
+            horizontal: 0.0,
+            vertical: 0.0,
+        },
+    )
+}
+
 /// Express a canvas-cell rect as the canvas fractions a [`SharedPane`] stores.
 ///
 /// The inverse of [`frac_rect_to_float`]. Both directions are needed by more than one caller now:
@@ -837,7 +953,7 @@ fn apply_shared_pane_fields(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{Pane, State};
+    use crate::state::{LayoutKind, Pane, State};
 
     #[test]
     fn client_scratchpad_is_excluded_from_shared_layout() {
@@ -856,6 +972,88 @@ mod tests {
                 .iter()
                 .all(|pane| pane.pane_id != scratch_id)
         }));
+    }
+
+    /// A session server measures panes from the document, a client from its live workspace. The
+    /// two must agree for every layout, or `layout get` answers differently depending on whether
+    /// anyone is attached.
+    #[test]
+    fn the_shared_document_places_panes_where_the_live_workspace_does() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let canvas = (100_u16, 30_u16);
+        {
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes.clear();
+            workspace.tile_tree = None;
+            for id in 1..=4 {
+                workspace
+                    .panes
+                    .push(Pane::new(id, 100, FloatRect::default()));
+                crate::layout::tiling::append_tiled_window(workspace, id);
+            }
+            // Uneven Scrollable widths overflow the canvas, which is the case most likely to drift.
+            for (pane, width) in workspace.panes.iter_mut().zip([0.5, 0.7, 0.3, 0.6]) {
+                pane.scrollable_width = width;
+            }
+            let mut float = Pane::new(5, 100, FloatRect::default());
+            float.floating = true;
+            float.floating_rect = FloatRect {
+                x: 10.0,
+                y: 5.0,
+                w: 30.0,
+                h: 10.0,
+            };
+            workspace.panes.push(float);
+            workspace.split_ratios[0] = 0.7;
+            // The Scrollable anchor and focus are client-local; a document reader starts at the
+            // first column, so compare against a client that has not scrolled.
+            workspace.focused_pane = None;
+            workspace.scrollable_anchor = None;
+        }
+
+        for kind in [
+            LayoutKind::Dwindle,
+            LayoutKind::Master,
+            LayoutKind::Grid,
+            LayoutKind::Columns,
+            LayoutKind::Rows,
+            LayoutKind::Scrollable,
+            LayoutKind::Monocle,
+        ] {
+            state.current_mut().workspaces[0].layout_kind = kind;
+            let bounds = FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: f32::from(canvas.0),
+                h: f32::from(canvas.1),
+            };
+            let cells = |placements: Vec<crate::layout::tiling::PanePlacement>| {
+                let mut cells: Vec<_> = placements
+                    .into_iter()
+                    .map(|placement| {
+                        (
+                            placement.id,
+                            crate::control::CellRect::from_float(placement.rect),
+                        )
+                    })
+                    .collect();
+                cells.sort_by_key(|(id, _)| *id);
+                cells
+            };
+            let live = cells(crate::layout::workspace_target_rects(
+                &state.current().workspaces[0],
+                bounds,
+                0.0,
+                crate::state::TileGap {
+                    horizontal: 0.0,
+                    vertical: 0.0,
+                },
+            ));
+            let document = shared_layout_from_state(&state, canvas);
+            let shared = cells(shared_workspace_placements(&document.workspaces[0], canvas));
+            assert_eq!(live.len(), 5, "{kind:?} places every pane");
+            assert_eq!(shared, live, "{kind:?} places panes differently");
+        }
     }
 
     #[test]

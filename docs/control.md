@@ -78,6 +78,7 @@ to a UI or session:
   "session_protocol": 9,
   "capabilities": [
     "agent-waits",
+    "layout-control",
     "pane-control",
     "published-activity",
     "remote-control",
@@ -95,6 +96,7 @@ does not affect the JSON anything else reads.
 | Command | Purpose | `--session` |
 | --- | --- | --- |
 | `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
+| `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get --target ID` | Read one semantic agent record. | yes |
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
@@ -150,7 +152,7 @@ focus on and no overlay to draw.
 
 ## Output
 
-`list-panes`, `metrics`, and `capture-pane` print human-readable output to a terminal and stable JSON
+`list-panes`, `layout get`, `metrics`, and `capture-pane` print human-readable output to a terminal and stable JSON
 when redirected. Use `--format text` or `--format json` to choose explicitly.
 
 Other successful one-shot commands print a short acknowledgement on a terminal. Redirected output
@@ -277,6 +279,84 @@ rozi split --workspace 9 --focus --argv cargo test -- --nocapture
 
 The response waits up to five seconds for PTY readiness. `pty_ready: false` means the pane still
 exists but has not reported ready yet.
+
+## Layout
+
+`layout get` reports every workspace and where each of its panes sits. `--workspace N` narrows the
+report to one workspace.
+
+```sh
+rozi layout get --format json
+rozi --session dev layout get --workspace 2 --format json
+```
+
+The report answers two separate questions, and keeps them apart:
+
+- **How the session is arranged.** `workspaces` describes the session's shared layout document.
+  The session server owns it and every client follows it, so both endpoints give the same answer.
+- **What one UI shows.** `client` and each pane's `view_rect` describe a single UI's screen: its
+  focus, the workspace it shows, and where it draws each pane. They appear only when a UI answered.
+
+```json
+{
+  "session": "dev",
+  "revision": 18,
+  "canvas": { "cols": 160, "rows": 47 },
+  "workspaces": [
+    {
+      "index": 1,
+      "name": null,
+      "layout": "dwindle",
+      "synchronized": false,
+      "panes": [
+        {
+          "id": 7,
+          "reference": { "session_instance": "…", "pane_id": 7, "generation": 1 },
+          "order": 0,
+          "floating": false,
+          "fullscreen": false,
+          "rect": { "x": 0, "y": 0, "width": 96, "height": 47 },
+          "rect_fraction": { "x": 0.0, "y": 0.0, "width": 0.6, "height": 1.0 },
+          "view_rect": { "x": 0, "y": 1, "width": 95, "height": 46 }
+        }
+      ]
+    }
+  ],
+  "client": {
+    "active_workspace": 1,
+    "focused_pane": 7,
+    "controller": true,
+    "committed": true,
+    "viewport": { "cols": 160, "rows": 48 }
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `revision` | The layout revision described. Null until something places a pane. |
+| `canvas` | The canonical canvas `rect` is measured against: the pane area of the client that last controlled the layout. |
+| `workspaces` | Every workspace in the layout document, including empty ones, so a script can see a workspace's layout before using it. `index` is one-based. A UI always reports all nine. A document the server started for a headless `split` holds only the workspaces it placed panes in; the others take each client's configured default layout. |
+| `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
+| `order` | The pane's position in the tiling order that every layout except Dwindle arranges panes in. Null for a floating pane. |
+| `rect` | Where the pane sits on the canonical canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
+| `rect_fraction` | The pane's position as fractions of the canvas, rounded to six decimal places. Floating panes are stored this way, so their fractions are exact. |
+| `view_rect` | Where this UI draws the pane, in cells of its own terminal, gaps and chrome included. Only for panes in the workspace the UI shows. |
+| `unplaced_panes` | Session endpoint only: panes the server runs that no layout places yet. |
+| `client.controller` | Whether this UI holds the layout-control lease. A UI without a shared session controls its own layout. |
+| `client.committed` | False while this UI has layout changes the server has not yet accepted, so `revision` does not describe them yet. |
+
+Tiled panes are listed in tiling order, then floating panes. Some geometry needs care:
+
+- **Scrollable:** the strip of columns can be wider than the canvas, so a `rect` can extend past
+  the right edge, and `rect_fraction` can exceed `1.0`. A UI scrolls the strip to follow focus.
+  The shared `rect` always starts the strip at its first column, while `view_rect` shows where this
+  UI has scrolled it.
+- **Monocle:** every tiled pane has the same `rect`. The focused one is drawn on top.
+- **Fullscreen:** `rect` is where the pane returns to afterwards. `view_rect` covers the screen
+  while it is fullscreen.
+- **Followers:** a follower centres the controller's canvas in its own window, so its
+  `view_rect` values can start at a negative position or run past its edges.
 
 ## Sending keys and capturing output
 

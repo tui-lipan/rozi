@@ -61,6 +61,7 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 ## Automate rozi
 
 - Inspect panes and run actions from scripts.
+- Read each workspace's layout and every pane's position, from a UI or a detached session.
 - Send keys or text, open panes, capture terminal content, and switch workspaces.
 - Drive a detached session with no client attached: list, capture, type, and open panes from a
   script or an SSH login that never starts a terminal.

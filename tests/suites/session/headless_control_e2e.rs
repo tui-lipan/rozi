@@ -195,6 +195,66 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
         .expect("a server-committed layout must satisfy the same rules a client's does");
 }
 
+/// `layout get` answers from the document the server owns, so a script can see how a session it
+/// grew is arranged before anyone attaches to draw it.
+#[test]
+fn a_detached_session_reports_its_arrangement_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+
+    let before = expect_ok(&session, ControlCommand::LayoutGet { workspace: None });
+    assert_eq!(before["revision"], serde_json::Value::Null);
+    assert_eq!(before["workspaces"], serde_json::json!([]));
+
+    let mut spawned = Vec::new();
+    for title in ["left", "right"] {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: Some(title.to_string()),
+                keep_open: false,
+                focus: false,
+                workspace: Some(3),
+            },
+        );
+        spawned.push(data["id"].as_u64().expect("spawn reported a pane id"));
+    }
+
+    let report = expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(3) });
+    assert!(report["revision"].as_u64().is_some_and(|rev| rev > 0));
+    assert!(report.get("client").is_none(), "no UI answered");
+    let cols = report["canvas"]["cols"].as_u64().expect("canvas cols");
+    let rows = report["canvas"]["rows"].as_u64().expect("canvas rows");
+    let workspaces = report["workspaces"].as_array().expect("workspaces");
+    assert_eq!(workspaces.len(), 1, "--workspace narrows the report");
+    assert_eq!(workspaces[0]["index"], serde_json::json!(3));
+    let panes = workspaces[0]["panes"].as_array().expect("panes");
+    let ids: Vec<u64> = panes
+        .iter()
+        .filter_map(|pane| pane["id"].as_u64())
+        .collect();
+    assert_eq!(ids, spawned, "tiled panes come back in tiling order");
+    // Two tiled panes share the canvas between them without overlapping or leaving a gap.
+    assert!(panes.iter().all(|pane| pane["floating"] == false));
+    let spans: Vec<(u64, u64)> = panes
+        .iter()
+        .map(|pane| {
+            let rect = &pane["rect"];
+            assert_eq!(rect["height"].as_u64(), Some(rows));
+            (
+                rect["x"].as_u64().expect("x"),
+                rect["width"].as_u64().expect("width"),
+            )
+        })
+        .collect();
+    assert_eq!(spans[0].0, 0);
+    assert_eq!(spans[0].0 + spans[0].1, spans[1].0);
+    assert_eq!(spans[1].0 + spans[1].1, cols);
+}
+
 /// The whole feature is for sessions nobody is driving. When somebody *is* driving one, opening a
 /// pane means committing a layout revision over their arrangement, and that is the controller's
 /// call - the same rule the protocol already applies to a non-controller's `SpawnPane`.

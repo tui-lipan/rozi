@@ -96,6 +96,7 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | Command | `data` |
 | --- | --- |
 | `list-panes` | Array of pane objects. |
+| `layout-get` | A layout report; see [Control CLI](control.md#layout). |
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "text": string, "title": string or null }` |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
@@ -134,6 +135,8 @@ which the server loop, and so every client, waits on.
 
 ```json
 {"cmd":"list-panes"}
+{"cmd":"layout-get"}
+{"cmd":"layout-get","workspace":2}
 {"cmd":"metrics"}
 {"cmd":"capture-pane","target":3}
 {"cmd":"capture-pane","target":3,"scrollback":200}
@@ -146,6 +149,9 @@ nonnegative line count, `"full"`, or `"last-output"`.
 
 `list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
 program data, reported status, and detected agent data when available.
+
+`layout-get.workspace` is optional and one-based. A number outside `1`-`9` fails with
+`invalid-argument`.
 
 ### Focus and input
 
@@ -254,7 +260,7 @@ or client count (including `metrics`, which counts attached clients rather than 
 never holds layout control, and receives no replay. A script cannot make an idle session look
 occupied — and equally gains nothing an attached client would not have.
 
-Supported requests are `list-panes`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
+Supported requests are `list-panes`, `layout-get`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with
 `ok: false` and a reason naming what it needed a UI for; none is silently accepted.
@@ -265,6 +271,7 @@ Differences from the same request against a UI:
 | --- | --- |
 | Any `target` | `source_pane` is ignored, and there is no focused-pane fallback. A pane id carries no session identity, so an inherited one would address a stranger in the named session. A session with one pane resolves to it; otherwise the error lists the pane ids. |
 | `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
+| `layout-get` | Read from the server's layout document. `client` and every `view_rect` are absent, since no screen exists. `unplaced_panes` lists panes the document does not place. Before anything places a pane, `revision` and `canvas` are null and `workspaces` is empty. |
 | `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
 | `new-pane` | `focus` must be `false`. Refused while any client holds layout control. The server re-reads `[[rules]]` and the configured shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |

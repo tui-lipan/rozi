@@ -71,6 +71,18 @@ pane=$("$ROZI_CMD" list-panes --format json | jq -r '.data[0].id')
 
 Use `send-text` for literal text and `send-keys` for named keys such as `Enter`, `C-c`, and `F2`.
 
+### Find where panes are
+
+```sh
+ROZI_CMD=${ROZI_BIN:-rozi}
+"$ROZI_CMD" layout get --format json |
+  jq -r '.data.workspaces[] | .index as $ws | .panes[] |
+    "\($ws) \(.id) \(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"'
+```
+
+`rect` is the pane's position on the session's shared canvas. It is the same from a UI and from
+`--session`. See [Layout](control.md#layout) for the full report.
+
 ### Read a detached session's screen
 
 ```sh

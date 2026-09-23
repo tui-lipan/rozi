@@ -282,12 +282,12 @@ pub fn insert_leaf_around_target(
     }
 }
 
-pub fn effective_tile_tree(
-    workspace: &Workspace,
+pub fn effective_tile_tree<W: crate::layout::TileSource + ?Sized>(
+    workspace: &W,
     exclude_tiled: Option<PaneId>,
 ) -> Option<DwindleTree> {
     let active_ids: Vec<PaneId> = workspace
-        .active_tiled_ids_by_pane_order()
+        .tiled_ids_by_pane_order()
         .into_iter()
         .filter(|id| Some(*id) != exclude_tiled)
         .collect();
@@ -295,15 +295,16 @@ pub fn effective_tile_tree(
         return None;
     }
 
+    let start_axis = workspace.start_axis();
     let mut tree = workspace
-        .tile_tree
-        .clone()
+        .stored_tile_tree()
+        .cloned()
         .and_then(|tree| prune_tree_to_ids(tree, &active_ids))
-        .or_else(|| build_dwindle_tree(&active_ids, workspace.start_axis, &workspace.split_ratios));
+        .or_else(|| build_dwindle_tree(&active_ids, start_axis, workspace.split_ratios()));
 
     for id in active_ids {
         if !tree.as_ref().is_some_and(|tree| tree_contains(tree, id)) {
-            tree = Some(append_tiled_leaf(tree, id, workspace.start_axis));
+            tree = Some(append_tiled_leaf(tree, id, start_axis));
         }
     }
 

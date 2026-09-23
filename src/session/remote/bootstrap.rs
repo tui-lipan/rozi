@@ -640,7 +640,7 @@ fn verify_installed(
         candidates: report
             .candidates
             .into_iter()
-            .filter(|candidate| candidate.path == path)
+            .filter(|candidate| same_remote_path(&candidate.path, &path, family))
             .collect(),
         ..report
     };
@@ -651,6 +651,15 @@ fn verify_installed(
         ProbeResult::Missing { detail } => Err(format!(
             "installed Rozi could not run on the remote host: {detail}"
         )),
+    }
+}
+
+fn same_remote_path(left: &str, right: &str, family: RemoteFamily) -> bool {
+    match family {
+        RemoteFamily::Posix => left == right,
+        RemoteFamily::Windows => left
+            .replace('/', "\\")
+            .eq_ignore_ascii_case(&right.replace('/', "\\")),
     }
 }
 
@@ -1563,6 +1572,25 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_path_comparison_follows_remote_path_rules() {
+        assert!(same_remote_path(
+            r"C:\Users\Runner\AppData\Rozi.exe",
+            r"c:/users/runner/appdata/rozi.exe",
+            RemoteFamily::Windows
+        ));
+        assert!(!same_remote_path(
+            r"C:\Users\Runner\rozi.exe",
+            r"C:\Users\Other\rozi.exe",
+            RemoteFamily::Windows
+        ));
+        assert!(!same_remote_path(
+            "/home/u/rozi",
+            "/home/U/rozi",
+            RemoteFamily::Posix
+        ));
+    }
 
     #[test]
     fn remote_invocation_uses_the_known_shell_family_not_path_syntax() {

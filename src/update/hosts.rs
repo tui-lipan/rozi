@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::session::discovery::DiscoveredSession;
+use crate::session::discovery::{DiscoveredSession, retain_busy_agent_summaries};
 use crate::session::remote::RemoteTarget;
 use crate::{AppRoot, Msg};
 
@@ -94,7 +94,7 @@ pub(crate) fn apply(
     target: RemoteTarget,
     generation: u64,
     rows: std::result::Result<Vec<DiscoveredSession>, String>,
-    agents: Vec<crate::session::protocol::AgentSummary>,
+    mut agents: Vec<crate::session::protocol::AgentSummary>,
 ) -> Update {
     if !ctx
         .state
@@ -111,6 +111,9 @@ pub(crate) fn apply(
         .retain(|row| row.remote_target.as_ref() != Some(&target));
     match rows {
         Ok(rows) => {
+            if let Some(previous) = ctx.state.remote.agents.get(&target) {
+                retain_busy_agent_summaries(&rows, &mut agents, previous);
+            }
             apply_agents(ctx, &target, agents);
             let cached = crate::ops::session::discovery::cached_sessions_for_target(&rows, &target);
             if crate::session::host_sessions_for(&ctx.state.remote.session_cache, &target)
@@ -384,7 +387,25 @@ mod tests {
                     vec![summary("dev", "working")]
                 );
 
-                // A second poll is the whole truth about the host, not a delta onto the first.
+                backend
+                    .dispatch(metadata(
+                        Vec::new(),
+                        Ok(vec![DiscoveredSession {
+                            name: "dev".into(),
+                            status: crate::session::discovery::DiscoveredSessionStatus::Busy,
+                            origin: Default::default(),
+                            ephemeral: false,
+                            host: Some(target.display_label()),
+                            remote_target: Some(target.clone()),
+                        }]),
+                    ))
+                    .unwrap();
+                assert_eq!(
+                    backend.state().remote.agents[&target],
+                    vec![summary("dev", "working")]
+                );
+
+                // Once the endpoint answers again, its new state replaces the retained summary.
                 backend
                     .dispatch(metadata(vec![summary("dev", "blocked")], Ok(Vec::new())))
                     .unwrap();

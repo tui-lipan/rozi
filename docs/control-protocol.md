@@ -101,6 +101,7 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | `pane-close` | `{ "id": number, "revision": number or null, "committed": bool, "workspace": object or absent }` |
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, or for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }` |
+| `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text` or `png_base64` fields as `capture-pane` |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
 
@@ -145,12 +146,16 @@ which the server loop, and so every client, waits on.
 {"cmd":"capture-pane","scrollback":"full"}
 {"cmd":"capture-pane","scrollback":"last-output"}
 {"cmd":"capture-pane","target":3,"render":"png"}
+{"cmd":"capture-ui","render":"png"}
 ```
 
 `capture-pane.target` defaults to `source_pane`, then the focused pane. `scrollback` is a
 nonnegative line count, `"full"`, or `"last-output"`. `render` is `"text"` (the default),
 `"ansi"`, or `"png"`; `ansi` and `png` capture the visible grid only, and fail with
 `invalid-argument` when `scrollback` is set.
+
+`capture-ui` answers from the next frame the UI paints, which the request forces. `render` works
+as it does for `capture-pane`. Only a UI answers it.
 
 `list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
 program data, reported status, and detected agent data when available.

@@ -97,7 +97,7 @@ rozi --session dev status --clear --target <PANE_ID>
 tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
 `--literal` when a key-like argument such as `C-c` must be typed literally.
 
-Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`, and
+Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`, `capture-ui`, and
 `metrics` support it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
 
 When colors or layout matter, look at the screen instead of its text:
@@ -105,6 +105,9 @@ When colors or layout matter, look at the screen instead of its text:
 screen in the pane's theme colors, and `--render ansi` keeps the colors as SGR-styled text. Both
 cover the visible screen only, not scrollback, and neither includes inline images a program drew:
 a blank area in the capture may be one.
+
+`capture-ui --render png --output ui.png` captures the whole UI as drawn instead: the bar,
+borders, overlays, and every visible pane. It needs a UI; `--session` refuses it.
 
 Re-read pane ids before acting after a delay or any layout or session change.
 

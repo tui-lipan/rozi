@@ -936,6 +936,50 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output,
                 }));
             }
+            "capture-ui" => {
+                let mut output_format = None;
+                let mut render = control::CaptureRender::Text;
+                let mut output = None;
+                while let Some(next) = iter.next() {
+                    match next.as_str() {
+                        "--render" => {
+                            let value =
+                                require_value(&mut iter, "--render requires text, ansi, or png")?;
+                            render = control::CaptureRender::parse_cli(&value)?;
+                        }
+                        "--output" => {
+                            let value = require_value(&mut iter, "--output requires a file path")?;
+                            output = Some(PathBuf::from(value));
+                        }
+                        "--format" => {
+                            let value = require_value(&mut iter, "--format requires text or json")?;
+                            if output_format
+                                .replace(parse_list_format(&value, "capture-ui")?)
+                                .is_some()
+                            {
+                                return Err(
+                                    "capture-ui --format specified more than once".to_string()
+                                );
+                            }
+                        }
+                        other => {
+                            return Err(format!("unexpected argument `{other}` after capture-ui"));
+                        }
+                    }
+                }
+                if output.is_some() && output_format.is_some() {
+                    return Err(
+                        "capture-ui --output writes the capture itself; drop --format".to_string(),
+                    );
+                }
+                let command = control::ControlCommand::CaptureUi { render };
+                return Ok(ParsedCli::Control(ControlCli {
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
+                    output,
+                }));
+            }
             "switch-workspace" => {
                 let index = iter
                     .next()
@@ -1745,6 +1789,37 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn capture_ui_takes_the_capture_pane_output_options() {
+        let args = |argv: &[&str]| {
+            parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+        };
+        let Ok(ParsedCli::Control(parsed)) =
+            args(&["capture-ui", "--render", "png", "--output", "ui.png"])
+        else {
+            panic!("capture-ui should parse");
+        };
+        assert_eq!(
+            parsed.request.command,
+            control::ControlCommand::CaptureUi {
+                render: control::CaptureRender::Png
+            }
+        );
+        assert_eq!(parsed.output, Some(PathBuf::from("ui.png")));
+
+        let Ok(ParsedCli::Control(parsed)) = args(&["capture-ui", "--format", "json"]) else {
+            panic!("capture-ui --format should parse");
+        };
+        assert_eq!(parsed.output_format, Some(ListFormat::Json));
+
+        assert!(args(&["capture-ui", "--output", "ui.png", "--format", "json"]).is_err());
+        assert!(args(&["capture-ui", "--render", "svg"]).is_err());
+        // Nothing to target: the capture is of the UI, not a pane.
+        assert!(args(&["capture-ui", "--target", "3"]).is_err());
+        // A session server draws nothing, so the CLI refuses before connecting.
+        assert!(args(&["--session", "dev", "capture-ui"]).is_err());
     }
 
     #[test]

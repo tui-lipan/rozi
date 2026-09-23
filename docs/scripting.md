@@ -101,6 +101,10 @@ rozi --session dev capture-pane --target 3 --render png --output pane.png
 `--render ansi` keeps the colors as terminal escape sequences instead; see
 [`capture-pane`](control.md#sending-keys-and-capturing-output) for both.
 
+With a UI running, `rozi capture-ui --render png --output ui.png` captures the whole screen as it
+is drawn: the bar, borders, overlays, and every visible pane. See
+[Capturing the whole UI](control.md#capturing-the-whole-ui).
+
 ### Pick and switch a branch
 
 ```sh

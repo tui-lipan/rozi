@@ -25,8 +25,8 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
 /// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
 /// names - gains a value, which is what version 2 did with the layout commands and
-/// `layout-changed`, and version 3 with `capture-pane`'s `render`.
-pub const API_SCHEMA_VERSION: u32 = 3;
+/// `layout-changed`, version 3 with `capture-pane`'s `render`, and version 4 with `capture-ui`.
+pub const API_SCHEMA_VERSION: u32 = 4;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -41,6 +41,8 @@ pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
 /// `capture-pane` honors `render`: `ansi` and `png` as well as text. An older binary ignores the
 /// field and answers with text.
 pub const CAPTURE_RENDER_CAPABILITY: &str = "capture-render";
+/// `capture-ui` returns the whole client as it is drawn, chrome and every visible pane.
+pub const CAPTURE_UI_CAPABILITY: &str = "capture-ui";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -63,6 +65,7 @@ impl ApiDescription {
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
+                CAPTURE_UI_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
@@ -96,7 +99,7 @@ pub enum CaptureScrollback {
     Named(CaptureScrollbackNamed),
 }
 
-/// What form `capture-pane` returns a pane in.
+/// What form `capture-pane` returns a pane in, and `capture-ui` the whole client.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -105,9 +108,9 @@ pub enum CaptureRender {
     #[default]
     Text,
     /// The visible grid as text with SGR color and style sequences: no cursor movement or screen
-    /// clearing, every row at the pane's width.
+    /// clearing, every row at the full width.
     Ansi,
-    /// The visible grid's text cells as a PNG image, in the pane's theme colors. Inline terminal
+    /// The visible grid's text cells as a PNG image, in the theme's colors. Inline terminal
     /// graphics are not drawn.
     Png,
 }
@@ -282,6 +285,13 @@ pub enum ControlCommand {
         target: Option<PaneId>,
         #[serde(default)]
         scrollback: Option<CaptureScrollback>,
+        #[serde(default)]
+        render: CaptureRender,
+    },
+    /// Capture the whole client as it is drawn: the bar, borders, overlays, and every visible
+    /// pane. Answered from the next frame the UI paints, so it needs a UI; a session server
+    /// draws nothing.
+    CaptureUi {
         #[serde(default)]
         render: CaptureRender,
     },
@@ -1125,6 +1135,17 @@ pub enum CaptureContent {
     /// A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the
     /// CLI decodes them before writing.
     Png { png_base64: String },
+}
+
+/// The whole client's frame, as `capture-ui` reports it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UiCapture {
+    /// The frame's size in terminal cells.
+    pub width: u16,
+    pub height: u16,
+    #[serde(flatten)]
+    pub content: CaptureContent,
 }
 
 /// What `split` answers with once the pane exists.
@@ -2143,6 +2164,34 @@ mod tests {
         assert!(
             serde_json::from_str::<ControlRequest>(r#"{"cmd":"capture-pane","render":"svg"}"#)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn capture_ui_replies_carry_the_frame_size_beside_the_capture() {
+        let capture = UiCapture {
+            width: 120,
+            height: 36,
+            content: CaptureContent::Png {
+                png_base64: "iVBO".to_string(),
+            },
+        };
+        let encoded = serde_json::to_value(&capture).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({"width": 120, "height": 36, "render": "png", "png_base64": "iVBO"})
+        );
+        assert_eq!(
+            serde_json::from_value::<UiCapture>(encoded).unwrap(),
+            capture
+        );
+
+        let request: ControlRequest = serde_json::from_str(r#"{"cmd":"capture-ui"}"#).unwrap();
+        assert_eq!(
+            request.command,
+            ControlCommand::CaptureUi {
+                render: CaptureRender::Text
+            }
         );
     }
 

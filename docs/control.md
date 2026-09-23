@@ -74,11 +74,12 @@ to a UI or session:
 ```json
 {
   "api": 1,
-  "schema": 3,
-  "session_protocol": 12,
+  "schema": 4,
+  "session_protocol": 13,
   "capabilities": [
     "agent-waits",
     "capture-render",
+    "capture-ui",
     "layout-control",
     "pane-control",
     "published-activity",
@@ -117,6 +118,7 @@ does not affect the JSON anything else reads.
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
+| `capture-ui [--render text\|ansi\|png] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
@@ -153,12 +155,12 @@ rather than as a broken command. Check with `rozi api describe` there, which lis
 `remote-control` among its capabilities.
 
 A `no` command refused against a session says what it needed a UI for. Focus, the active workspace,
-toasts, pickers, and actions are client-local by design: a session server has no screen to move
+toasts, pickers, actions, and `capture-ui` are client-local by design: a session server has no screen to move
 focus on and no overlay to draw.
 
 ## Output
 
-`list-panes`, `layout get`, `metrics`, and `capture-pane` print human-readable output to a terminal and stable JSON
+`list-panes`, `layout get`, `metrics`, `capture-pane`, and `capture-ui` print human-readable output to a terminal and stable JSON
 when redirected. Use `--format text` or `--format json` to choose explicitly.
 
 Other successful one-shot commands print a short acknowledgement on a terminal. Redirected output
@@ -524,6 +526,28 @@ color emoji, and Nerd Font symbols when a font on that machine has them. With `-
 image is rendered by the session server, with the fonts installed where it runs. A session reply
 must fit one 8 MiB protocol frame, so a capture larger than that fails with `message-too-large`;
 the UI endpoint has no such limit.
+
+### Capturing the whole UI
+
+`capture-ui` captures what the UI is showing: the bar, pane borders and titles, overlays and
+toasts, and every visible pane, at the size of the terminal Rozi runs in. It takes the same
+`--render`, `--output`, and `--format` options as `capture-pane`, with the same PNG rules.
+
+```sh
+rozi capture-ui --render png --output ui.png
+rozi capture-ui --render ansi --format text | less -R
+rozi capture-ui --format json | jq -r .data.text
+```
+
+The capture is the next frame the UI draws. Rozi draws it at once for the request, so an idle UI
+answers too, and simultaneous requests share that frame. The UI resolves the theme while drawing,
+so the colors match the screen; the theme's own background and text colors fill the cells a
+program left at its terminal defaults. As with panes, inline images a program drew are not
+included.
+
+`capture-ui` needs a UI. `--session` is refused, since a session server draws nothing; capture its
+panes one at a time with `capture-pane` instead. The reply reports the frame's `width` and `height`
+in cells alongside the capture.
 
 ## Actions, status, and notifications
 

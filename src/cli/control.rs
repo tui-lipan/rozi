@@ -427,7 +427,7 @@ fn ask_remote_endpoint(
     }
 }
 
-/// Where `capture-pane` writes the capture itself, rather than a report about it.
+/// Where `capture-pane` or `capture-ui` writes the capture itself, rather than a report about it.
 #[derive(Debug, PartialEq)]
 enum RawCapture {
     Stdout,
@@ -437,8 +437,10 @@ enum RawCapture {
 /// `--output` always writes the capture itself. Without it, only a PNG does, since there is no
 /// text report of an image; `--format json` still asks for the JSON envelope.
 fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
-    let control::ControlCommand::CapturePane { render, .. } = command.request.command else {
-        return None;
+    let render = match command.request.command {
+        control::ControlCommand::CapturePane { render, .. }
+        | control::ControlCommand::CaptureUi { render } => render,
+        _ => return None,
     };
     if let Some(path) = &command.output {
         return Some(RawCapture::File(path.clone()));
@@ -451,10 +453,11 @@ fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
 fn capture_bytes(response: &serde_json::Value) -> std::result::Result<Vec<u8>, String> {
     use base64::Engine as _;
 
+    // Pane and UI replies wrap the same tagged content in different fields.
     let data = response.get("data").cloned().unwrap_or_default();
-    let capture: control::PaneCapture =
+    let content: control::CaptureContent =
         serde_json::from_value(data).map_err(|err| format!("unexpected capture reply: {err}"))?;
-    match capture.content {
+    match content {
         control::CaptureContent::Text { mut text } | control::CaptureContent::Ansi { mut text } => {
             if !text.ends_with('\n') {
                 text.push('\n');
@@ -594,6 +597,13 @@ mod tests {
                 Some(RawCapture::File(PathBuf::from("out")))
             );
         }
+
+        // `capture-ui` follows the same rules.
+        let mut ui = capture_cli(Png, None, None);
+        ui.request.command = control::ControlCommand::CaptureUi { render: Png };
+        assert_eq!(raw_capture(&ui), Some(RawCapture::Stdout));
+        ui.request.command = control::ControlCommand::CaptureUi { render: Text };
+        assert_eq!(raw_capture(&ui), None);
     }
 
     #[test]

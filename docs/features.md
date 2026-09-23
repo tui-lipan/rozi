@@ -65,7 +65,7 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
   move, swap, resize, or close panes by id, from a UI or a detached session, and subscribe to
   layout revisions.
 - Send keys or text, open panes, capture terminal content as text, ANSI-colored text, or a PNG
-  image, and switch workspaces.
+  image, capture the whole UI as it is drawn, and switch workspaces.
 - Drive a detached session with no client attached: list, capture, type, and open panes from a
   script or an SSH login that never starts a terminal.
 - Run hooks when pane, focus, workspace, session, or profile events occur.

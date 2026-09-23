@@ -17,7 +17,7 @@ use crate::state::{PaneId, PaneIdentity};
 
 /// The documents this endpoint answers with are the CLI's contract, not this module's, so their
 /// shapes live in [`crate::control`] and both control surfaces fill the same types.
-use crate::control::{NewPaneAccepted, PaneCapture, PaneInfo};
+use crate::control::{NewPaneAccepted, PaneCapture, PaneInfo, UiCapture};
 
 pub(crate) fn handle_control_request(
     ctx: &mut Context<AppRoot>,
@@ -152,6 +152,10 @@ pub(crate) fn handle_control_request(
             scrollback,
             render,
         ),
+        ControlCommand::CaptureUi { render } => {
+            capture_ui(ctx, render, envelope.reply);
+            return Update::none();
+        }
         ControlCommand::Notify {
             message,
             title,
@@ -1285,6 +1289,43 @@ fn capture_pane(
     ControlResponse::ok(PaneCapture { id, title, content })
 }
 
+/// Answer `capture-ui` with the next frame the client paints.
+///
+/// The request forces that paint, so an idle client answers too. Concurrent requests do not wait
+/// on each other: every one registered before the paint gets that paint's frame.
+fn capture_ui(
+    ctx: &mut Context<AppRoot>,
+    render: CaptureRender,
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) {
+    let theme = &ctx.state.theme;
+    let palette = TerminalColorPalette::from_theme(theme, theme.surface.backdrop);
+    ctx.request_ui_snapshot(Callback::new(move |snapshot: tui_lipan::UiSnapshot| {
+        let frame = snapshot.frame;
+        let encoder_reply = reply.clone();
+        // A PNG of the whole client takes long enough to encode that it would stall the next
+        // frame, so the reply is built off the UI thread.
+        let spawned = std::thread::Builder::new()
+            .name("rozi-capture-ui".into())
+            .spawn(move || {
+                let response = match crate::pane::capture_ui_frame(&frame, render, palette) {
+                    Ok(content) => ControlResponse::ok(UiCapture {
+                        width: frame.width,
+                        height: frame.height,
+                        content,
+                    }),
+                    Err(response) => response,
+                };
+                let _ = encoder_reply.send(response);
+            });
+        if let Err(error) = spawned {
+            let _ = reply.send(ControlResponse::error(format!(
+                "cannot start the capture encoder: {error}"
+            )));
+        }
+    }));
+}
+
 /// Raise a toast on behalf of a script.
 ///
 /// Empty messages are rejected rather than shown: a blank toast is a bug in the caller, and it
@@ -1627,6 +1668,67 @@ mod tests {
     use crate::state::{Pane, State};
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
+
+    fn capture_ui_request(render: CaptureRender) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
+        let (reply, response) = mpsc::channel();
+        let message = crate::Msg::ControlRequest(ControlEnvelope {
+            request: ControlRequest {
+                command: ControlCommand::CaptureUi { render },
+                source_pane: None,
+                extension: None,
+            },
+            reply,
+        });
+        (message, response)
+    }
+
+    fn capture_ui_reply(response: &mpsc::Receiver<ControlResponse>) -> UiCapture {
+        let response = response
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("capture-ui should be answered");
+        assert!(response.ok, "capture-ui failed: {:?}", response.error);
+        serde_json::from_value(response.data.expect("capture-ui carries data")).unwrap()
+    }
+
+    #[test]
+    fn capture_ui_answers_every_request_from_the_next_painted_frame() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.render();
+                let drawn = backend.capture_frame();
+
+                // Both arrive before the next paint, and nothing else asks for one.
+                let (text_request, text_reply) = capture_ui_request(CaptureRender::Text);
+                let (png_request, png_reply) = capture_ui_request(CaptureRender::Png);
+                backend.enqueue(text_request);
+                backend.enqueue(png_request);
+                backend.pump().unwrap();
+
+                let text = capture_ui_reply(&text_reply);
+                assert_eq!((text.width, text.height), (drawn.width, drawn.height));
+                assert_eq!(
+                    text.content,
+                    crate::control::CaptureContent::Text {
+                        text: drawn.plain_text()
+                    }
+                );
+
+                let png = capture_ui_reply(&png_reply);
+                let crate::control::CaptureContent::Png { png_base64 } = png.content else {
+                    panic!("expected a png capture, got {:?}", png.content);
+                };
+                use base64::Engine as _;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(png_base64)
+                    .unwrap();
+                assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn stale_extension_generation_is_rejected_at_execution_time() {

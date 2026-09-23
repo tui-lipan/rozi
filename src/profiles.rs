@@ -283,41 +283,99 @@ pub(crate) fn rebase_onto_worktree(
     }
 }
 
-fn host_path_components(path: &str) -> Vec<&str> {
-    path.split(['/', '\\'])
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect()
+/// A session-host path parsed for comparison, lexically: this machine's path rules may not be the
+/// host's, and the directories need not exist here.
+#[derive(Debug, PartialEq, Eq)]
+struct HostPath<'a> {
+    /// `/`, a drive such as `C:`, or a UNC share such as `\\server\share`.
+    root: String,
+    /// Components below the root, with `.` and `..` already resolved.
+    parts: Vec<&'a str>,
+    /// Windows rules: names compare without regard to case.
+    windows: bool,
 }
 
-/// Whether a host path follows Windows rules, where names compare without regard to case: it has
-/// a drive letter or uses backslashes.
-fn windows_style(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    path.contains('\\') || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+impl<'a> HostPath<'a> {
+    /// `None` for a relative path, or one whose `..` climbs above its root: neither names a
+    /// directory whose place in a repository can be known.
+    fn parse(path: &'a str) -> Option<Self> {
+        let bytes = path.as_bytes();
+        let separator = |byte: u8| byte == b'/' || byte == b'\\';
+        let (root, rest, windows) =
+            if bytes.len() >= 2 && separator(bytes[0]) && separator(bytes[1]) {
+                // UNC: the server and share are part of the root.
+                let mut pieces = path[2..].splitn(3, ['/', '\\']);
+                let server = pieces.next().filter(|piece| !piece.is_empty())?;
+                let share = pieces.next().filter(|piece| !piece.is_empty())?;
+                (
+                    format!("\\\\{server}\\{share}"),
+                    pieces.next().unwrap_or(""),
+                    true,
+                )
+            } else if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                // `C:foo` is relative to that drive's current directory.
+                if bytes.len() > 2 && !separator(bytes[2]) {
+                    return None;
+                }
+                (path[..2].to_string(), &path[2..], true)
+            } else if bytes.first().copied().is_some_and(separator) {
+                ("/".to_string(), path, path.contains('\\'))
+            } else {
+                return None;
+            };
+        let mut parts = Vec::new();
+        for part in rest.split(['/', '\\']) {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                part => parts.push(part),
+            }
+        }
+        Some(Self {
+            root,
+            parts,
+            windows,
+        })
+    }
+
+    /// The components of `self` below `ancestor`, or `None` when `ancestor` does not contain it.
+    fn below(&self, ancestor: &HostPath) -> Option<&[&'a str]> {
+        let ignore_case = self.windows || ancestor.windows;
+        let same = |a: &str, b: &str| {
+            if ignore_case {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        };
+        (same(&self.root, &ancestor.root)
+            && ancestor.parts.len() <= self.parts.len()
+            && ancestor
+                .parts
+                .iter()
+                .zip(&self.parts)
+                .all(|(a, b)| same(a, b)))
+        .then(|| &self.parts[ancestor.parts.len()..])
+    }
 }
 
 /// The components of `cwd` below the innermost checkout containing it, or `None` when no checkout
-/// contains it. Windows-style paths match regardless of case.
+/// contains it, including when `cwd` is relative or climbs out through `..`.
 fn innermost_checkout_rest<'a>(cwd: &'a str, checkouts: &[String]) -> Option<Vec<&'a str>> {
-    let cwd_parts = host_path_components(cwd);
+    let cwd = HostPath::parse(cwd)?;
     checkouts
         .iter()
+        .filter_map(|checkout| HostPath::parse(checkout))
+        // A checkout at a bare root would contain everything on the host.
+        .filter(|checkout| !checkout.parts.is_empty())
         .filter_map(|checkout| {
-            let parts = host_path_components(checkout);
-            let ignore_case = windows_style(cwd) || windows_style(checkout);
-            let contains = !parts.is_empty()
-                && parts.len() <= cwd_parts.len()
-                && parts.iter().zip(&cwd_parts).all(|(a, b)| {
-                    if ignore_case {
-                        a.eq_ignore_ascii_case(b)
-                    } else {
-                        a == b
-                    }
-                });
-            contains.then_some(parts.len())
+            cwd.below(&checkout)
+                .map(|rest| (checkout.parts.len(), rest.to_vec()))
         })
-        .max()
-        .map(|depth| cwd_parts[depth..].to_vec())
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, rest)| rest)
 }
 
 /// `cwd` moved from the innermost checkout containing it into `target`, or `None` when no checkout
@@ -1125,6 +1183,39 @@ mod tests {
         );
     }
 
+    /// Containment is decided on lexically normalized, rooted paths: a `..` that climbs out of the
+    /// checkout, or a relative path, is never "inside the repository", which is what a remote
+    /// profile is checked against.
+    #[test]
+    fn containment_resolves_dot_dot_and_requires_a_rooted_path() {
+        let inside = |cwd: &str, checkout: &str| {
+            innermost_checkout_rest(cwd, &[checkout.to_string()]).is_some()
+        };
+        assert!(!inside("/src/rozi/../outside", "/src/rozi"));
+        assert!(!inside("src/rozi/frontend", "/src/rozi"));
+        assert!(!inside("C:\\Code\\Repo\\..\\outside", "C:\\Code\\Repo"));
+        assert!(inside("C:\\Code\\Repo\\Web", "c:\\code\\repo"));
+
+        // Resolved `..` that stays inside is fine, and so is `.`.
+        assert_eq!(
+            innermost_checkout_rest("/src/rozi/docs/../web/./app", &["/src/rozi".into()]),
+            Some(vec!["web", "app"])
+        );
+        // Climbing above the root, a drive-relative path, and another drive or share never match.
+        assert!(!inside("/src/../../etc", "/src"));
+        assert!(!inside("C:Repo\\web", "C:\\Repo"));
+        assert!(!inside("D:\\Code\\Repo\\web", "C:\\Code\\Repo"));
+        assert!(inside("\\\\host\\share\\repo\\web", "//HOST/share/repo"));
+        assert!(!inside("\\\\other\\share\\repo\\web", "//host/share/repo"));
+        // A checkout at a bare root would contain everything, so it contains nothing.
+        assert!(!inside("/etc", "/"));
+
+        assert_eq!(
+            rebase_host_path("/src/rozi/../outside", &["/src/rozi".into()], "/wt/feat"),
+            None
+        );
+    }
+
     #[test]
     fn windows_style_paths_rebase_regardless_of_case() {
         let checkouts = ["C:/Code/Repo".to_string()];
@@ -1189,6 +1280,13 @@ mod tests {
         let refused = load_worktree_profile(&config, &checkouts, true).expect_err("refused");
         assert!(refused.contains("/var/log"), "{refused}");
 
+        save("wt-escape", vec![pane(0, Some("/src/rozi/../outside"))]);
+        config.worktrees.profile = Some("wt-escape".into());
+        assert!(
+            load_worktree_profile(&config, &checkouts, true).is_err(),
+            "a `..` that climbs out of the repository is outside it"
+        );
+
         config.worktrees.profile = Some("wt-inside".into());
         assert!(matches!(
             load_worktree_profile(&config, &checkouts, true),
@@ -1197,6 +1295,7 @@ mod tests {
 
         let _ = std::fs::remove_file(profiles.join("wt-outside.toml"));
         let _ = std::fs::remove_file(profiles.join("wt-inside.toml"));
+        let _ = std::fs::remove_file(profiles.join("wt-escape.toml"));
     }
 
     #[test]

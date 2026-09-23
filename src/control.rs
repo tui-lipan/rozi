@@ -21,7 +21,12 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// protocol version. The session wire protocol bumps when two rozi binaries change how they frame
 /// messages to each other, which is nobody else's concern; this one tracks the compatibility of
 /// the JSON third-party software reads and writes.
-pub const API_SCHEMA_VERSION: u32 = 1;
+///
+/// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
+/// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
+/// names - gains a value, which is what version 2 did with the layout commands and
+/// `layout-changed`.
+pub const API_SCHEMA_VERSION: u32 = 2;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";

@@ -1285,10 +1285,13 @@ impl SessionServer {
         // what keeps "no new authority" true: nothing reaches this server headlessly that an
         // attached client could not have sent.
         if let Some(controller) = self.controller {
-            return ControlResponse::error(format!(
-                "client {controller} holds layout control of session `{}`; ask it to open the pane, or detach it first",
-                self.session_name
-            ));
+            return ControlResponse::error_with(
+                ControlErrorCode::NotController,
+                format!(
+                    "client {controller} holds layout control of session `{}`; ask it to open the pane, or detach it first",
+                    self.session_name
+                ),
+            );
         }
         // `[[rules]]`, the shell, and the command runner used here were re-read from config just
         // before this ran - see the `SessionControl` arm in `connection.rs`, which does it for
@@ -2646,6 +2649,11 @@ mod tests {
         assert!(!response.ok);
         let error = response.error.unwrap_or_default();
         assert!(error.contains("layout control"), "{error}");
+        assert_eq!(
+            response.code,
+            Some(ControlErrorCode::NotController),
+            "the same code every other layout write refuses a leased session with"
+        );
         assert!(broadcasts.is_empty(), "a refused spawn changes nothing");
         assert_eq!(server.panes.len(), 1, "and leaves no pane behind");
         assert_eq!(server.layout_rev, before_rev);

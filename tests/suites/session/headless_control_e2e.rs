@@ -445,6 +445,10 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
         },
     );
     assert!(!refused.ok, "a controller is driving this session");
+    assert_eq!(
+        refused.code,
+        Some(rozi::control::ControlErrorCode::NotController)
+    );
     let error = refused.error.unwrap_or_default();
     assert!(error.contains("layout control"), "{error}");
     assert_eq!(

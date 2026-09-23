@@ -74,7 +74,7 @@ to a UI or session:
 ```json
 {
   "api": 1,
-  "schema": 1,
+  "schema": 2,
   "session_protocol": 9,
   "capabilities": [
     "agent-waits",
@@ -190,7 +190,8 @@ Two conventions worth knowing when you validate against it:
   not recognize.
 - **Enumerations are closed.** Error codes, agent states, wait conditions, and event names are
   fixed vocabularies, which is what makes validating against them useful. A new value there is an
-  API change and moves the schema version.
+  API change and moves the schema version. The file name follows the control API version, so
+  `rozi-control-v1.schema.json` keeps its name while `x-rozi-schema-version` counts its revisions.
 
 `ControlResponse.data` is untyped in the envelope, because one envelope carries every command's
 answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `PaneCapture`,

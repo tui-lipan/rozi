@@ -69,6 +69,19 @@ pub(crate) fn repository_scope(
     repository_scope_ref(state).map(|(cwd, target)| (cwd.to_string(), target.cloned()))
 }
 
+/// Whether the focused pane's repository is not known *yet*, as opposed to known to be absent: no
+/// session is connected, or the pane has not reported where it is. A session that has just opened
+/// passes through this for a moment before its first pane reports.
+pub(crate) fn repository_scope_pending(state: &crate::state::State) -> bool {
+    if state.current().session_client.is_none() {
+        return true;
+    }
+    state
+        .focused_pane()
+        .and_then(|id| crate::pane::lifecycle::find_pane(state, id))
+        .is_none_or(|pane| pane.terminal.cwd.is_none() || pane.terminal.runtime_sequence == 0)
+}
+
 /// [`repository_scope`] by borrow, for the checks that run after every message.
 pub(crate) fn repository_scope_ref(
     state: &crate::state::State,

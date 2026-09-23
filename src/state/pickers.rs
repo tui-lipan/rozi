@@ -87,6 +87,24 @@ impl WorktreeListCache {
             .map(|(_, _, list)| list.as_slice())
     }
 
+    /// The list of the repository `cwd` belongs to: its own entry, or a list that has `cwd` as one
+    /// of its checkouts. Every checkout of a repository lists the same worktrees, so moving into a
+    /// sibling checkout needs no new request before it can show them.
+    pub fn get_repository(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+    ) -> Option<&[crate::git::worktrees::WorktreeInfo]> {
+        self.get(target, cwd).or_else(|| {
+            self.lists
+                .iter()
+                .find(|(host, _, list)| {
+                    host.as_ref() == target && list.iter().any(|tree| tree.path == cwd)
+                })
+                .map(|(_, _, list)| list.as_slice())
+        })
+    }
+
     pub fn put(
         &mut self,
         target: Option<crate::session::remote::RemoteTarget>,
@@ -1605,5 +1623,31 @@ mod worktree_cache_tests {
         );
         cache.forget(None, "/other0");
         assert!(cache.get(None, "/other0").is_none());
+    }
+
+    #[test]
+    fn a_sibling_checkout_finds_its_repositorys_list() {
+        let mut cache = WorktreeListCache::default();
+        let host = crate::session::remote::RemoteTarget::Alias("box".into());
+        cache.put(
+            None,
+            "/repo".into(),
+            vec![tree("/repo"), tree("/repo-wt/feat")],
+        );
+        assert_eq!(
+            cache.get(None, "/repo-wt/feat"),
+            None,
+            "not filed under the checkout"
+        );
+        assert_eq!(
+            cache.get_repository(None, "/repo-wt/feat").map(<[_]>::len),
+            Some(2)
+        );
+        assert_eq!(
+            cache.get_repository(Some(&host), "/repo-wt/feat"),
+            None,
+            "another host"
+        );
+        assert_eq!(cache.get_repository(None, "/elsewhere"), None);
     }
 }

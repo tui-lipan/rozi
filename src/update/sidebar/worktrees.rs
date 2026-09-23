@@ -45,15 +45,35 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
         return false;
     }
     let mut changed = false;
-    if !source_is_current(ctx) {
+    // A session that has just opened has no focused-pane repository for a moment. Keep showing
+    // the last list through that rather than clearing it and filling it back in.
+    let hold = ctx.state.sidebar.worktrees.source.is_some()
+        && crate::ops::worktrees::repository_scope_pending(&ctx.state);
+    if !hold && !source_is_current(ctx) {
         let listing = match crate::ops::worktrees::repository_scope(&ctx.state) {
             Ok((cwd, target)) => {
                 // Start from the last list for this repository rather than an empty one, so moving
                 // between projects swaps rows instead of flashing a loading state.
-                let cached = ctx.state.worktree_lists.get(target.as_ref(), &cwd);
+                let cached = ctx
+                    .state
+                    .worktree_lists
+                    .get_repository(target.as_ref(), &cwd);
+                // Moving into another checkout of the repository on screen keeps what is known
+                // about its sessions too, until the host's next answer replaces it.
+                let previous = &ctx.state.sidebar.worktrees;
+                let same_repository = previous
+                    .source
+                    .as_ref()
+                    .is_some_and(|(previous_target, _)| *previous_target == target)
+                    && previous.entries.iter().any(|tree| tree.path == cwd);
                 SidebarWorktrees {
                     loaded: cached.is_some(),
                     entries: cached.map(<[_]>::to_vec).unwrap_or_default(),
+                    sessions: if same_repository {
+                        previous.sessions.clone()
+                    } else {
+                        Default::default()
+                    },
                     source: Some((target, cwd)),
                     ..SidebarWorktrees::default()
                 }
@@ -67,7 +87,8 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
         changed = true;
     }
     let listing = &ctx.state.sidebar.worktrees;
-    if listing.source.is_some()
+    if !hold
+        && listing.source.is_some()
         && listing.pending.is_none()
         && listing.requested_token != Some(ctx.state.sidebar.git_refresh_token)
     {
@@ -183,12 +204,20 @@ mod tests {
         state.sidebar.panels[0].tabs = vec![SidebarTabId::new(super::TAB_ID)];
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new(super::TAB_ID));
         state.current_mut().session_client = Some(client);
-        let focused = state.focused_pane().expect("a focused pane");
-        crate::pane::lifecycle::find_pane_mut(state, focused)
-            .unwrap()
-            .terminal
-            .project_root = Some(REPO.into());
+        report_location(&mut backend, REPO);
         (backend, outbound)
+    }
+
+    /// The focused pane reports that its shell is in `root`, as its runtime state does.
+    fn report_location(backend: &mut TestBackend<AppRoot>, root: &str) {
+        let state = backend.state_mut();
+        let focused = state.focused_pane().expect("a focused pane");
+        let terminal = &mut crate::pane::lifecycle::find_pane_mut(state, focused)
+            .unwrap()
+            .terminal;
+        terminal.cwd = Some(root.into());
+        terminal.project_root = Some(root.into());
+        terminal.runtime_sequence += 1;
     }
 
     /// Any message runs the chokepoint that keeps the tab in step with the focused pane.
@@ -248,6 +277,62 @@ mod tests {
             // Nothing moved the refresh signal, so no second list is asked for.
             nudge(&mut backend);
             assert!(sent_worktree_requests(&outbound).is_empty());
+        });
+    }
+
+    /// Opening a checkout's new session passes through a moment where its pane has not said where
+    /// it is. The tab holds its list through that, then finds the new checkout's list by
+    /// repository instead of loading it again.
+    #[test]
+    fn opening_a_checkouts_session_keeps_the_list_on_screen() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            let epoch = backend.state().runtime_epoch;
+            let running = crate::session::protocol::WorktreeSession {
+                name: "wt-feat".into(),
+                running: true,
+            };
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: id,
+                    result: WorktreeResult::Listed {
+                        worktrees: vec![tree(REPO, false), tree(LINKED, true)],
+                        sessions: [(LINKED.to_string(), vec![running.clone()])].into(),
+                    },
+                })
+                .unwrap();
+
+            // The new session's pane exists but has not reported its directory yet.
+            {
+                let state = backend.state_mut();
+                let focused = state.focused_pane().unwrap();
+                let terminal = &mut crate::pane::lifecycle::find_pane_mut(state, focused)
+                    .unwrap()
+                    .terminal;
+                terminal.cwd = None;
+                terminal.project_root = None;
+                terminal.runtime_sequence = 0;
+            }
+            nudge(&mut backend);
+            let listing = &backend.state().sidebar.worktrees;
+            assert_eq!(
+                listing.source,
+                Some((None, REPO.into())),
+                "the list is held"
+            );
+            assert_eq!(listing.entries.len(), 2);
+
+            // It reports the checkout: the same repository's list, from the cache, still loaded.
+            report_location(&mut backend, LINKED);
+            nudge(&mut backend);
+            let listing = &backend.state().sidebar.worktrees;
+            assert_eq!(listing.source, Some((None, LINKED.into())));
+            assert!(listing.loaded, "no loading state between sessions");
+            assert_eq!(listing.entries.len(), 2);
+            assert_eq!(listing.sessions.get(LINKED), Some(&vec![running]));
         });
     }
 

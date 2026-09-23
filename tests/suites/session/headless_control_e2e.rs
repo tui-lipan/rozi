@@ -203,28 +203,34 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
 fn a_detached_session_captures_its_screen_as_ansi_and_png() {
     use base64::Engine as _;
 
+    // The program is launched directly rather than typed into the default shell, which differs by
+    // platform in quoting, and in which key submits a line.
+    #[cfg(windows)]
+    let argv = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "Write-Host \"$([char]27)[31mstyled-marker$([char]27)[0m\"",
+    ];
+    #[cfg(not(windows))]
+    let argv = ["printf", "\u{1b}[31mstyled-marker\u{1b}[0m\\n"];
+
     let server = spawn_listener(headless_settings());
     let session = server.session().to_string();
     let spawned = expect_ok(
         &session,
         ControlCommand::NewPane {
             command: None,
-            argv: None,
+            argv: Some(argv.map(str::to_string).to_vec()),
             cwd: None,
             title: None,
-            keep_open: false,
+            // The screen must outlive the program that drew it.
+            keep_open: true,
             focus: false,
             workspace: None,
         },
     );
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
-    expect_ok(
-        &session,
-        ControlCommand::SendText {
-            target: Some(pane),
-            text: "printf '\\033[31mstyled-marker\\033[0m\\n'\n".to_string(),
-        },
-    );
     capture_until(&session, pane, |text| {
         text.lines().any(|line| line.trim() == "styled-marker")
     });

@@ -874,7 +874,8 @@ try {{
   $help = & $src --help 2>$null
   if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
   Move-Item -Force -LiteralPath $src -Destination $final
-  Write-Output "installed=$final"
+  $installed = (Resolve-Path -LiteralPath $final).Path
+  Write-Output "installed=$installed"
 }} finally {{
   if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}
 }}"#

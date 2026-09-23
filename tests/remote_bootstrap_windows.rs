@@ -66,6 +66,13 @@ fn managed(data_home: &Path) -> PathBuf {
         .join("rozi.exe")
 }
 
+fn assert_same_path(reported: &str, expected: &Path) {
+    assert_eq!(
+        std::fs::canonicalize(reported).unwrap(),
+        std::fs::canonicalize(expected).unwrap()
+    );
+}
+
 fn run_case(case: &str) {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("remote home with spaces");
@@ -179,7 +186,7 @@ fn bootstrap_windows_child() {
     match case.as_str() {
         "upload" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
-            assert_eq!(path, final_path.to_string_lossy());
+            assert_same_path(&path, &final_path);
             assert_eq!(
                 std::fs::read(final_path).unwrap(),
                 std::fs::read(env!("CARGO_BIN_EXE_rozi")).unwrap()
@@ -187,7 +194,7 @@ fn bootstrap_windows_child() {
         }
         "existing" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
-            assert_eq!(path, final_path.to_string_lossy());
+            assert_same_path(&path, &final_path);
         }
         "directory" | "reparse" => {
             let error = ensure_remote_binary(&target, &config, true).unwrap_err();

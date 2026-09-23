@@ -215,9 +215,9 @@ fn apply_agents(
             .find(|earlier| earlier.same_agent(agent))
             .map(|earlier| earlier.state.as_str());
         let edges = crate::update::session::status::agent_status_edges(before, Some(&agent.state));
-        crate::pane::pty_events::maybe_notify_host_agent(
+        crate::pane::pty_events::maybe_notify_session_agent(
             &ctx.state.config,
-            &host,
+            Some(&host),
             &agent.session,
             &agent.label,
             edges.became_blocked,

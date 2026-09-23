@@ -304,8 +304,9 @@ been used stays available in the background.
 
 ## Go to an agent
 
-`a` opens **Agents**: every coding agent Rozi currently knows about, on this machine and on every
-[connected host](remote.md#connected-host-monitoring), in one list ordered by what wants attention.
+`a` opens **Agents**: coding agents in the current session, other running named local sessions, and
+every [connected host](remote.md#connected-host-monitoring), in one list ordered by what wants
+attention.
 Blocked agents lead, then working ones, then finished, then idle.
 
 ```text
@@ -325,10 +326,10 @@ row inside it, for a program running several agents at once. Nothing has to be o
 host need not be showing in a picker, and the session need not be one you have visited. A session
 already retained in the background switches in instantly, as it does from the session picker.
 
-Only rows in the session on screen carry an age. A summary from another machine is stamped by that
-machine's clock, and presenting the difference between two clocks as a duration would be wrong by
-however far they have drifted. What the [Activity tab](sidebar.md#activity) shows about a local
-agent — its current activity, project, and branch — likewise stays behind a real attachment; see
+Only rows in the session on screen carry an age. Other sessions provide semantic summaries, not a
+live run clock; a remote summary is also stamped by that machine's clock. What the
+[Activity tab](sidebar.md#activity) shows about an agent — its current activity, project, and
+branch — likewise stays behind a real attachment; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
 ## Choose startup behavior

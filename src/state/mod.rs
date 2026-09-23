@@ -230,6 +230,9 @@ pub struct State {
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
     /// the host monitors' latest snapshots, rebuilt each frame so a poll cannot leave it stale.
     pub agent_picker: Option<AgentPickerState>,
+    /// Latest metadata from running local session servers. The current session's live panes win
+    /// over their copy here; `None` means no successful local sweep has arrived.
+    pub local_agent_snapshot: Option<crate::session::discovery::LocalAgentSnapshot>,
     /// The pane the Agents view aimed at, waiting for the session that owns it to arrive.
     pub pending_agent_jump: Option<PendingAgentJump>,
     /// Live remote-host monitors, caches, and discovery. Overlay pickers stay on this struct.
@@ -522,6 +525,7 @@ impl State {
             session_picker: None,
             remote_picker: None,
             agent_picker: None,
+            local_agent_snapshot: None,
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),
             collaboration: None,

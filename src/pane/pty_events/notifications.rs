@@ -435,17 +435,14 @@ pub(crate) fn should_notify_pane_status(
     (config.notifications.pane_blocked && blocked) || (config.notifications.pane_done && done)
 }
 
-/// Alert for an agent a host monitor reported, in a session on a connected host this client holds
-/// no attachment to.
+/// Alert for an agent a metadata monitor reported in an unattached local or remote session.
 ///
 /// Gated on the same `[notifications]` switches a pane's own status alert uses: the user answered
-/// "tell me when an agent blocks / finishes" once, and the answer does not change because the
-/// agent is on another machine. The controller and attendance tests those alerts apply have no
-/// counterpart here — there is no shared layout to control, and nothing on this screen is showing
-/// the pane — which is the whole reason this alert exists.
-pub(crate) fn maybe_notify_host_agent(
+/// "tell me when an agent blocks / finishes" once. The controller and attendance tests those
+/// alerts apply have no counterpart here — this client has no attachment to the pane.
+pub(crate) fn maybe_notify_session_agent(
     config: &crate::config::Config,
-    host: &str,
+    host: Option<&str>,
     session: &str,
     label: &str,
     blocked: bool,
@@ -454,10 +451,8 @@ pub(crate) fn maybe_notify_host_agent(
     let Some(state) = host_agent_alert(config, blocked, done) else {
         return;
     };
-    crate::platform::notifications::notify(
-        "rozi",
-        &format!("{label} in {host}/{session} is {state}"),
-    );
+    let location = host.map_or_else(|| session.to_string(), |host| format!("{host}/{session}"));
+    crate::platform::notifications::notify("rozi", &format!("{label} in {location} is {state}"));
 }
 
 /// The word a host-monitor alert would announce, or `None` when the user has not asked for one.

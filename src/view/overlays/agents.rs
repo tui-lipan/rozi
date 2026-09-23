@@ -36,16 +36,15 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         format!("No agents match `{}`", picker.input.text().trim())
     };
-    // Opening a row on another machine attaches to its session on the way, which is a larger step
-    // than a focus change and is worth saying before it is taken.
-    let selected_is_remote = picker
-        .selected
-        .as_ref()
-        .is_some_and(|location| matches!(location, crate::state::AgentLocation::Elsewhere { .. }));
+    // Opening a row in another session attaches on the way, which is a larger step than a focus
+    // change and is worth saying before it is taken.
+    let selected_is_other_session = picker.selected.as_ref().is_some_and(|location| {
+        matches!(location, crate::state::AgentLocation::OtherSession { .. })
+    });
     let actions = vec![
         OverlayAction::new(
             "enter",
-            if selected_is_remote {
+            if selected_is_other_session {
                 "open there"
             } else {
                 "go to"

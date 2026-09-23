@@ -311,6 +311,8 @@ pub enum Msg {
         generation: u64,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
     },
+    /// A changed read-only sweep of this machine's running session servers.
+    LocalAgentMetadata(Option<crate::session::discovery::LocalAgentSnapshot>),
     CloseSessionPicker,
     /// Off-thread auto-refresh results for the open session picker, tagged with the opening's epoch.
     SessionsDiscovered {

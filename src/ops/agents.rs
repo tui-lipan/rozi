@@ -1,7 +1,7 @@
 //! The global Agents view: open it, move its cursor, and land on what it points at.
 //!
 //! Everything the view lists is derived state — live panes for the session on screen, host-monitor
-//! snapshots for everything else — so there is nothing here to build or refresh. What this module
+//! snapshots for other sessions — so there is nothing here to build or refresh. What this module
 //! owns is the one act the view exists for: turning "Codex is blocked on workbox/backend" into
 //! being *there*, across an attach when the session is somewhere else.
 
@@ -60,28 +60,19 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> U
             land_on_pane(ctx, pane, row.as_deref());
             close_agent_picker(ctx)
         }
-        AgentLocation::Elsewhere {
+        AgentLocation::OtherSession {
             target,
             session,
             pane,
             row,
         } => {
-            let Some(entry) = ctx
-                .state
-                .remote
-                .live_sessions
-                .iter()
-                .find(|entry| {
-                    entry.name == session && entry.remote_target.as_ref() == Some(&target)
-                })
-                .cloned()
-            else {
-                // Session rows and agent summaries come from the same monitor poll, so a summary
-                // with no session row beside it means the host has since stopped reporting it.
+            let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
+                // Session rows and agent summaries come from the same poll, so a summary without
+                // its session row can no longer be activated.
                 return Update::none();
             };
             ctx.state.pending_agent_jump = Some(PendingAgentJump {
-                target: Some(target),
+                target,
                 session,
                 pane,
                 row,
@@ -103,6 +94,25 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> U
             update
         }
     }
+}
+
+fn session_for_agent(
+    state: &crate::state::State,
+    target: Option<&crate::session::remote::RemoteTarget>,
+    session: &str,
+) -> Option<crate::session::discovery::DiscoveredSession> {
+    let sessions = match target {
+        Some(_) => state.remote.live_sessions.as_slice(),
+        None => state
+            .local_agent_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.sessions.as_slice())
+            .unwrap_or_default(),
+    };
+    sessions
+        .iter()
+        .find(|entry| entry.name == session && entry.remote_target.as_ref() == target)
+        .cloned()
 }
 
 /// Take the recorded destination if the session that owns it is now in the foreground, and land on
@@ -213,8 +223,8 @@ mod tests {
         on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend
-                .dispatch(Msg::AgentPickerActivate(AgentLocation::Elsewhere {
-                    target: RemoteTarget::Alias("workbox".into()),
+                .dispatch(Msg::AgentPickerActivate(AgentLocation::OtherSession {
+                    target: Some(RemoteTarget::Alias("workbox".into())),
                     session: "backend".into(),
                     pane: 7,
                     row: None,
@@ -222,6 +232,43 @@ mod tests {
                 .expect("activate");
             assert!(backend.state().pending_agent_jump.is_none());
         });
+    }
+
+    #[test]
+    fn agent_destination_uses_the_matching_local_or_remote_session() {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        let target = RemoteTarget::Alias("workbox".into());
+        let row = |remote_target| crate::session::discovery::DiscoveredSession {
+            name: "dev".into(),
+            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                panes: 1,
+                clients: 0,
+                has_layout: true,
+            },
+            origin: Default::default(),
+            ephemeral: false,
+            host: None,
+            remote_target,
+        };
+        state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            sessions: vec![row(None)],
+            agents: Vec::new(),
+        });
+        state.remote.live_sessions.push(row(Some(target.clone())));
+        assert_eq!(
+            session_for_agent(&state, None, "dev")
+                .unwrap()
+                .remote_target,
+            None
+        );
+        assert_eq!(
+            session_for_agent(&state, Some(&target), "dev")
+                .unwrap()
+                .remote_target,
+            Some(target)
+        );
+        assert!(session_for_agent(&state, None, "missing").is_none());
     }
 
     /// The view's reason to exist, end to end: an agent on a machine this client is not looking at
@@ -256,6 +303,34 @@ mod tests {
                 frame.contains("Blocked"),
                 "and what it is waiting on:\n{frame}"
             );
+        });
+    }
+
+    #[test]
+    fn the_overlay_lists_an_agent_in_another_local_session() {
+        on_large_stack(|| {
+            let mut backend = backend_with_panes(&[]);
+            backend.state_mut().local_agent_snapshot =
+                Some(crate::session::discovery::LocalAgentSnapshot {
+                    sessions: Vec::new(),
+                    agents: vec![crate::session::protocol::AgentSummary {
+                        session: "backend".into(),
+                        pane: 4,
+                        generation: 0,
+                        row: None,
+                        agent: "codex".into(),
+                        label: "Codex".into(),
+                        state: "blocked".into(),
+                        changed_at: 0,
+                    }],
+                });
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+                .expect("open the agents view");
+            backend.render();
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(frame.contains("Codex · backend"), "{frame}");
+            assert!(frame.contains("Blocked"), "{frame}");
         });
     }
 

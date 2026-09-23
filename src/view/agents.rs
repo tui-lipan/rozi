@@ -1,8 +1,8 @@
 //! What the global Agents view lists, as a pure projection of `State`.
 //!
 //! Kept apart from the overlay that draws it because two sources feed it and the rule joining them
-//! is the interesting part: the session in front of the user publishes live pane state, while every
-//! other machine is known only through its host monitor's semantic summaries. The overlay renders
+//! is the interesting part: the session in front of the user publishes live pane state, while other
+//! local sessions and connected hosts contribute semantic summaries. The overlay renders
 //! whatever comes out; this is where the boundary between the two is decided.
 
 use crate::state::{AgentLocation, State};
@@ -24,10 +24,8 @@ pub(crate) struct GlobalAgentRow {
     pub finished_unseen: bool,
     /// How long the status has held.
     ///
-    /// Live panes only, deliberately. A summary's `changed_at` is stamped by the *remote* machine's
-    /// wall clock, so subtracting it from this one's would report a duration wrong by however far
-    /// the two clocks have drifted — and an age is exactly the kind of field a reader trusts
-    /// without checking. No number is better than a plausible wrong one.
+    /// Live panes only. Local and remote summaries expose a change time, but the UI has no
+    /// maintained elapsed timer for them; remote clocks may also differ from this client's.
     pub age: Option<std::time::Duration>,
 }
 
@@ -99,6 +97,27 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             });
         }
     }
+    if let Some(snapshot) = &state.local_agent_snapshot {
+        for agent in &snapshot.agents {
+            if here_target.is_none() && here_session.as_deref() == Some(&agent.session) {
+                continue;
+            }
+            rows.push(GlobalAgentRow {
+                location: AgentLocation::OtherSession {
+                    target: None,
+                    session: agent.session.clone(),
+                    pane: agent.pane,
+                    row: agent.row.clone(),
+                },
+                agent: agent.label.clone(),
+                host: None,
+                session: agent.session.clone(),
+                status: agent.state.clone(),
+                finished_unseen: false,
+                age: None,
+            });
+        }
+    }
     for (target, agents) in &state.remote.agents {
         let host = target.display_label();
         for agent in agents {
@@ -111,8 +130,8 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 continue;
             }
             rows.push(GlobalAgentRow {
-                location: AgentLocation::Elsewhere {
-                    target: target.clone(),
+                location: AgentLocation::OtherSession {
+                    target: Some(target.clone()),
                     session: agent.session.clone(),
                     pane: agent.pane,
                     row: agent.row.clone(),
@@ -201,8 +220,8 @@ mod tests {
         );
         assert_eq!(
             first_agent_location(&state),
-            Some(AgentLocation::Elsewhere {
-                target: RemoteTarget::Alias("beta".into()),
+            Some(AgentLocation::OtherSession {
+                target: Some(RemoteTarget::Alias("beta".into())),
                 session: "api".into(),
                 pane: 3,
                 row: None,
@@ -256,5 +275,29 @@ mod tests {
         let rows = global_agent_rows(&state);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session, "web");
+    }
+
+    #[test]
+    fn other_local_sessions_join_remote_rows_without_repeating_the_current_session() {
+        let mut state = state_with_hosts(&[("workbox", vec![summary("dev", 9, "working")])]);
+        state.current_mut().session_name = Some("dev".into());
+        state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            sessions: Vec::new(),
+            agents: vec![summary("dev", 1, "idle"), summary("api", 2, "blocked")],
+        });
+        let rows = global_agent_rows(&state);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label(), "Codex · api");
+        assert_eq!(
+            rows[0].location,
+            AgentLocation::OtherSession {
+                target: None,
+                session: "api".into(),
+                pane: 2,
+                row: None,
+            }
+        );
+        assert_eq!(rows[1].label(), "Codex · workbox/dev");
+        assert_eq!(rows[0].age, None);
     }
 }

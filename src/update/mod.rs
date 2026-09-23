@@ -1,5 +1,6 @@
 mod attach;
 mod hosts;
+mod local_agents;
 pub(crate) use attach::spawn_state_panes_on_session;
 pub(crate) mod keybindings;
 mod overlays;
@@ -60,6 +61,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             rows,
             agents,
         } => hosts::apply(ctx, target, generation, rows, agents),
+        Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
             crate::input::routing::framework_focus_entered_pane(ctx, pane)

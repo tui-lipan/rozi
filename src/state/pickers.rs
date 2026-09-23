@@ -261,11 +261,9 @@ impl RemoteSessionIdentity {
 
 /// Where one row of the global Agents view points, and therefore what opening it has to do.
 ///
-/// The two variants are the same boundary the host monitor draws everywhere else. The session in
-/// front of the user is *here*: its panes are live, and landing on one is a focus change. Anything
-/// else is *elsewhere*, known only through its host monitor's semantic summaries — enough to say
-/// that something wants attention and where it is, and never enough to show it without attaching
-/// to that session first.
+/// The session in front of the user is *here*: its panes are live, and landing on one is a focus
+/// change. Another session is known through a local or remote semantic summary and must be opened
+/// before its pane can be focused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentLocation {
     Here {
@@ -273,8 +271,8 @@ pub enum AgentLocation {
         /// The published row within the pane, for a program running several agents.
         row: Option<String>,
     },
-    Elsewhere {
-        target: crate::session::remote::RemoteTarget,
+    OtherSession {
+        target: Option<crate::session::remote::RemoteTarget>,
         session: String,
         pane: PaneId,
         row: Option<String>,
@@ -285,13 +283,13 @@ impl AgentLocation {
     /// The pane this row lands on, once whatever owns it is on screen.
     pub fn pane(&self) -> PaneId {
         match self {
-            Self::Here { pane, .. } | Self::Elsewhere { pane, .. } => *pane,
+            Self::Here { pane, .. } | Self::OtherSession { pane, .. } => *pane,
         }
     }
 
     pub fn row(&self) -> Option<&str> {
         match self {
-            Self::Here { row, .. } | Self::Elsewhere { row, .. } => row.as_deref(),
+            Self::Here { row, .. } | Self::OtherSession { row, .. } => row.as_deref(),
         }
     }
 }

@@ -44,6 +44,14 @@ pub struct DiscoveredSession {
     pub remote_target: Option<crate::session::remote::RemoteTarget>,
 }
 
+/// One local metadata sweep. Session rows and agent summaries must travel together so an Agents
+/// view selection can attach to the same session the summary described.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalAgentSnapshot {
+    pub sessions: Vec<DiscoveredSession>,
+    pub agents: Vec<crate::session::protocol::AgentSummary>,
+}
+
 /// Where to discover sessions from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionSource {

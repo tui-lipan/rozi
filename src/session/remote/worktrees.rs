@@ -13,8 +13,8 @@ use crate::session::worktrees::{HostCall, HostReply};
 
 use super::target::RemoteTarget;
 use super::{
-    ResolvedRemote, append_ssh_destination, ssh_base_command, validate_remote_executable_token,
-    validate_remote_target,
+    ResolvedRemote, append_remote_rozi_command, append_ssh_destination, ssh_base_command,
+    validate_remote_executable_token, validate_remote_target,
 };
 
 /// The hidden flag the far side runs. It takes no arguments; the call arrives on stdin.
@@ -30,14 +30,18 @@ pub fn forward(
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = super::binary::resolve(target, config)?;
-    validate_remote_executable_token(&remote_bin)?;
+    validate_remote_executable_token(&remote_bin.path)?;
     let payload = serde_json::to_vec(call)
         .map_err(|err| format!("could not encode the worktree request: {err}"))?;
 
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
-    command.arg(RUNNER_FLAG);
+    append_remote_rozi_command(
+        &mut command,
+        &remote_bin.path,
+        &[RUNNER_FLAG],
+        remote_bin.family,
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

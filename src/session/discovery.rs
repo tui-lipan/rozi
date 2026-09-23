@@ -581,17 +581,18 @@ fn discover_remote_sessions(
     }
     let remote_bin =
         crate::session::remote::binary::resolve(target, config).map_err(std::io::Error::other)?;
-    crate::session::remote::validate_remote_executable_token(&remote_bin)
+    crate::session::remote::validate_remote_executable_token(&remote_bin.path)
         .map_err(std::io::Error::other)?;
     // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
     // rather than stall the picker's recurring discovery sweep on a TCP connect.
     let mut command = crate::session::remote::ssh_base_command(&resolved, config);
     crate::session::remote::append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
-    command.arg("sessions");
-    command.arg("list");
-    command.arg("--format");
-    command.arg("json");
+    crate::session::remote::append_remote_rozi_command(
+        &mut command,
+        &remote_bin.path,
+        &["sessions", "list", "--format", "json"],
+        remote_bin.family,
+    );
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command.output()?;
     if !output.status.success() {

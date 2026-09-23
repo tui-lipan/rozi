@@ -10,7 +10,8 @@ use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
 use super::bootstrap::{
-    append_ssh_destination, ssh_base_command, ssh_base_command_with_connect_timeout,
+    append_remote_rozi_command, append_ssh_destination, ssh_base_command,
+    ssh_base_command_with_connect_timeout,
 };
 use super::preamble::{self, RemotePreamble};
 use super::{
@@ -88,7 +89,7 @@ pub(crate) fn connect_remote_within(
     }
 
     let remote_bin = resolve_attach_binary(target, config, budget, cancel_epoch)?;
-    validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
+    validate_remote_executable_token(&remote_bin.path).map_err(RemoteConnectError::Message)?;
 
     let proxy = spawn_remote_proxy(
         &resolved,
@@ -102,7 +103,6 @@ pub(crate) fn connect_remote_within(
     let (conn, preamble) =
         read_remote_preamble(proxy, target, &resolved, config, budget, cancel_epoch)?;
     validate_remote_preamble(&preamble)?;
-    let _ = super::binary::remember(target, config, remote_bin);
     Ok((conn, preamble))
 }
 
@@ -115,7 +115,7 @@ struct SpawnedRemoteProxy {
 fn spawn_remote_proxy(
     resolved: &ResolvedRemote,
     session: &str,
-    remote_bin: &str,
+    remote_bin: &super::binary::RemoteBinary,
     config: &RemoteConfig,
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
@@ -142,13 +142,17 @@ fn spawn_remote_proxy(
         super::askpass::scope_attach(&mut command, epoch);
     }
     append_ssh_destination(&mut command, resolved);
-    command.arg(remote_bin);
-    command.arg(if recover_existing {
+    let serve_flag = if recover_existing {
         "--remote-serve-existing"
     } else {
         "--remote-serve"
-    });
-    command.arg(session);
+    };
+    append_remote_rozi_command(
+        &mut command,
+        &remote_bin.path,
+        &[serve_flag, session],
+        remote_bin.family,
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -284,7 +288,7 @@ fn resolve_attach_binary(
     config: &RemoteConfig,
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
-) -> Result<String, RemoteConnectError> {
+) -> Result<super::binary::RemoteBinary, RemoteConnectError> {
     if budget.is_some() {
         if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
             return Err(RemoteConnectError::Message(
@@ -303,20 +307,26 @@ fn resolve_attach_binary(
             return Ok(path);
         }
         let resolved = ResolvedRemote::resolve(target, config);
-        if let Some(path) = resolved.binary_path {
-            validate_remote_executable_token(&path).map_err(RemoteConnectError::Message)?;
-            return Ok(path);
+        if resolved.binary_path.is_some() {
+            return super::binary::resolve(target, config).map_err(RemoteConnectError::Message);
         }
         return Err(RemoteConnectError::Message(
             "remote Rozi path is no longer known; reopen the host to probe it again".to_string(),
         ));
     }
-    if super::askpass::may_prompt() {
+    let path = if super::askpass::may_prompt() {
         super::ensure_remote_binary_in_ui(target, config, None)
     } else {
         super::ensure_remote_binary(target, config, false)
     }
-    .map_err(RemoteConnectError::Message)
+    .map_err(RemoteConnectError::Message)?;
+    let binary = super::binary::resolve(target, config).map_err(RemoteConnectError::Message)?;
+    if binary.path != path {
+        return Err(RemoteConnectError::Message(
+            "remote Rozi path changed while preparing the connection; retry".into(),
+        ));
+    }
+    Ok(binary)
 }
 
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
@@ -383,13 +393,15 @@ pub fn kill_remote_session(
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = super::binary::resolve(target, config)?;
-    validate_remote_executable_token(&remote_bin)?;
+    validate_remote_executable_token(&remote_bin.path)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
-    command.arg("sessions");
-    command.arg("kill");
-    command.arg(session);
+    append_remote_rozi_command(
+        &mut command,
+        &remote_bin.path,
+        &["sessions", "kill", session],
+        remote_bin.family,
+    );
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command
         .output()
@@ -445,19 +457,19 @@ mod tests {
     }
 
     #[test]
-    fn kill_remote_session_rejects_hostile_configured_executable_before_spawning_ssh() {
+    fn kill_remote_session_rejects_control_characters_in_configured_executable_before_ssh() {
         let target = RemoteTarget::Alias("workbox".to_string());
         let mut config = RemoteConfig::default();
         config.hosts.insert(
             "workbox".to_string(),
             crate::config::RemoteHostConfig {
-                binary_path: Some("rozi;touch".to_string()),
+                binary_path: Some("rozi\nnext".to_string()),
                 ..crate::config::RemoteHostConfig::default()
             },
         );
         let error = kill_remote_session(&target, "dev", &config)
-            .expect_err("hostile executable must be rejected before ssh");
-        assert!(error.contains("shell metacharacters"), "{error}");
+            .expect_err("control characters must be rejected before ssh");
+        assert!(error.contains("control characters"), "{error}");
     }
 
     #[test]

@@ -156,36 +156,15 @@ pub(crate) fn validate_remote_target(target: &RemoteTarget) -> Result<(), String
     Ok(())
 }
 
-/// Validate a remote executable that OpenSSH will reconstruct into a remote shell command. Keep the
-/// contract deliberately narrower than a host alias: only ordinary single-token path characters are
-/// accepted, so whitespace, control bytes, quoting, expansion, globbing, and command separators can
-/// never be reinterpreted by the remote shell.
+/// Reject control characters that cannot safely pass through the line based remote probe. The
+/// command builder quotes the path for the detected remote shell, so ordinary punctuation and
+/// Unicode filesystem characters are valid here.
 pub(crate) fn validate_remote_executable_token(token: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err("remote executable token is empty".to_string());
     }
-    if token
-        .chars()
-        .any(|ch| ch.is_control() || ch.is_whitespace())
-    {
-        return Err(
-            "remote executable must be one shell-safe token without whitespace or control characters"
-                .to_string(),
-        );
-    }
-    if token.ends_with('\\')
-        || !token.chars().all(|ch| {
-            ch.is_ascii_alphanumeric()
-                || matches!(
-                    ch,
-                    '/' | '\\' | '.' | '_' | '-' | '+' | '=' | ':' | '@' | ','
-                )
-        })
-    {
-        return Err(
-            "remote executable contains shell metacharacters; use a simple executable path"
-                .to_string(),
-        );
+    if token.chars().any(char::is_control) {
+        return Err("remote executable path contains control characters".to_string());
     }
     Ok(())
 }
@@ -420,20 +399,12 @@ mod tests {
             "/usr/local/bin/rozi",
             "C:/Users/me/rozi.exe",
             r"C:\Users\me\rozi.exe",
+            "/data/Łukasz/My Data/rozi's build/rozi",
+            "rozi;touch /tmp/pwned",
         ] {
             validate_remote_executable_token(token).expect(token);
         }
-        for token in [
-            "ro zi",
-            "rozi\t--help",
-            "rozi\n--help",
-            "rozi;touch /tmp/pwned",
-            "rozi$(id)",
-            "rozi`id`",
-            "rozi|cat",
-            r"C:\Users\me\",
-            "",
-        ] {
+        for token in ["rozi\t--help", "rozi\n--help", "rozi\u{1b}[31m", ""] {
             assert!(
                 validate_remote_executable_token(token).is_err(),
                 "accepted hostile executable token {token:?}"

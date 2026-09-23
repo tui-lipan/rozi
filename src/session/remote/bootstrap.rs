@@ -16,7 +16,6 @@ use super::{
     RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
 };
 
-const INSTALL_DIR: &str = ".local/share/rozi/remote";
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
@@ -90,9 +89,15 @@ try_bin /usr/local/bin/rozi
 try_bin /usr/bin/rozi
 try_bin "$HOME/bin/rozi"
 try_bin "$HOME/.nix-profile/bin/rozi"
-for managed in "$HOME/.local/share/rozi/remote/"*/rozi; do
+if [ -n "${XDG_DATA_HOME:-}" ] && [ "${XDG_DATA_HOME#/}" != "$XDG_DATA_HOME" ]; then
+  data_home="$XDG_DATA_HOME"
+else
+  data_home="$HOME/.local/share"
+fi
+managed_root="$data_home/rozi/remote"
+for managed in "$managed_root/"*/rozi; do
   [ -e "$managed" ] || continue
-  try_bin "$managed" "${managed#"$HOME/"}"
+  try_bin "$managed"
 done
 printf 'probe_done=1\n'
 "#;
@@ -103,6 +108,20 @@ const WINDOWS_FAMILY_PROBE_SCRIPT: &str = "if ([System.Environment]::OSVersion.P
 /// the POSIX probe does; [`parse_probe_output`] handles both. Never treats binary output as code.
 const WINDOWS_PROBE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @'
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RoziLongPathName {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+}
+'@ -ErrorAction SilentlyContinue
+function Get-RoziLongPath($path) {
+  $buffer = New-Object System.Text.StringBuilder 32768
+  $length = [RoziLongPathName]::GetLongPathName($path, $buffer, [uint32]$buffer.Capacity)
+  if ($length -gt 0 -and $length -lt $buffer.Capacity) { return $buffer.ToString() }
+  return $path
+}
 Write-Output "platform=windows"
 $arch = $env:PROCESSOR_ARCHITECTURE
 if (-not $arch) { $arch = 'unknown' }
@@ -116,6 +135,7 @@ function Try-Bin($bin, $reported = $null) {
     if ($cmd) { $resolved = $cmd.Source }
   }
   if (-not $resolved) { return }
+  $resolved = Get-RoziLongPath $resolved
   $out = & $resolved --version 2>$null
   if (-not $reported) { $reported = $resolved }
   Write-Output "candidate=$reported"
@@ -132,10 +152,11 @@ if ($env:ROZI_PROBE_BIN) { Try-Bin $env:ROZI_PROBE_BIN }
 Try-Bin 'rozi.exe'
 Try-Bin (Join-Path $env:USERPROFILE '.local\bin\rozi.exe')
 Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
-$managedRoot = Join-Path $env:USERPROFILE '.local\share\rozi\remote'
+$dataHome = $env:LOCALAPPDATA
+if (-not $dataHome) { $dataHome = Join-Path $env:USERPROFILE '.local\share' }
+$managedRoot = Join-Path $dataHome 'rozi\remote'
 Get-ChildItem -LiteralPath $managedRoot -Directory | ForEach-Object {
-  $relative = ".local\share\rozi\remote\$($_.Name)\rozi.exe"
-  Try-Bin (Join-Path $_.FullName 'rozi.exe') $relative
+  Try-Bin (Join-Path $_.FullName 'rozi.exe')
 }
 Write-Output "probe_done=1"
 "#;
@@ -144,7 +165,16 @@ Write-Output "probe_done=1"
 pub struct ProbeReport {
     pub platform: String,
     pub machine: String,
+    /// Shell family detected from the remote host, kept separate from the client OS.
+    pub(crate) family: Option<RemoteFamily>,
     pub candidates: Vec<ProbeCandidate>,
+}
+
+impl ProbeReport {
+    pub(crate) fn remote_family(&self) -> RemoteFamily {
+        self.family
+            .unwrap_or_else(|| family_from_os(&normalize_os(&self.platform)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -214,6 +244,11 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
         &mut pending_min,
         &mut pending_max,
     );
+    report.family = match normalize_os(&report.platform).as_str() {
+        "windows" => Some(RemoteFamily::Windows),
+        "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" => Some(RemoteFamily::Posix),
+        _ => None,
+    };
     report
 }
 
@@ -307,17 +342,16 @@ fn probe_remote_report_with_connect_timeout(
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
         validate_remote_executable_token(path)?;
-        return Ok(ProbeReport {
-            platform: local_uname_platform(),
-            machine: local_uname_machine(),
-            candidates: vec![ProbeCandidate {
-                path: path.clone(),
-                speaks_remote: true,
-                version_line: String::new(),
-                protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
-                protocol_max: Some(PROTOCOL_VERSION),
-            }],
-        });
+        if !program_exists("ssh") {
+            return Err("ssh was not found on PATH (required for --remote)".to_string());
+        }
+        let family = detect_remote_family(&resolved, config, connect_timeout_secs)?;
+        return Ok(configured_binary_path_report(
+            path.clone(),
+            family,
+            normalize_os(std::env::consts::OS),
+            local_uname_machine(),
+        ));
     }
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote)".to_string());
@@ -325,7 +359,8 @@ fn probe_remote_report_with_connect_timeout(
     // The remote sshd default shell is not always POSIX (Windows defaults to `cmd.exe`). Detect the
     // family with one fixed, shell-agnostic probe, then feed the matching script to the matching
     // interpreter. Probe output is still parsed with fixed keys and never treated as argv.
-    let stdout = match detect_remote_family(&resolved, config, connect_timeout_secs)? {
+    let family = detect_remote_family(&resolved, config, connect_timeout_secs)?;
+    let stdout = match family {
         // PowerShell's `-Command -` truncates a multi-line script read from stdin (only the first
         // statements run) over OpenSSH-for-Windows; pass the script as a base64 `-EncodedCommand`
         // instead, which runs the whole thing and needs no stdin.
@@ -349,13 +384,41 @@ fn probe_remote_report_with_connect_timeout(
             PROBE_SCRIPT,
         )?,
     };
-    Ok(parse_probe_output(&stdout))
+    let mut report = parse_probe_output(&stdout);
+    report.family = Some(family);
+    Ok(report)
+}
+
+fn configured_binary_path_report(
+    path: String,
+    family: RemoteFamily,
+    client_platform: String,
+    client_machine: String,
+) -> ProbeReport {
+    ProbeReport {
+        // `binary_path` skips OS/architecture discovery. These fields remain client-derived for
+        // diagnostics, so the remote shell family must be carried independently.
+        platform: if family == RemoteFamily::Windows {
+            "windows".to_string()
+        } else {
+            client_platform
+        },
+        machine: client_machine,
+        family: Some(family),
+        candidates: vec![ProbeCandidate {
+            path,
+            speaks_remote: true,
+            version_line: String::new(),
+            protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
+            protocol_max: Some(PROTOCOL_VERSION),
+        }],
+    }
 }
 
 /// Remote sshd default-shell family, chosen up front so the probe/install scripts target the right
 /// interpreter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RemoteFamily {
+pub(crate) enum RemoteFamily {
     Posix,
     Windows,
 }
@@ -560,14 +623,14 @@ pub(crate) fn ensure_remote_binary_in_ui(
 }
 
 fn install_destination(report: &ProbeReport) -> String {
-    if normalize_os(&report.platform) == "windows" {
+    if report.remote_family() == RemoteFamily::Windows {
         format!(
-            r"%USERPROFILE%\.local\share\rozi\remote\{}\rozi.exe",
+            r"%LOCALAPPDATA%\rozi\remote\{}\rozi.exe",
             env!("CARGO_PKG_VERSION")
         )
     } else {
         format!(
-            "$HOME/{INSTALL_DIR}/{}/{INSTALL_NAME}",
+            "${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{}/{INSTALL_NAME}",
             env!("CARGO_PKG_VERSION")
         )
     }
@@ -586,17 +649,20 @@ fn ensure_with_confirmation(
         }
         let report = probe_remote_report(target, config)?;
         verify_override_targets_remote(local, &report)?;
-        let family = family_from_os(&normalize_os(&report.platform));
+        let family = report.remote_family();
         let path = install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family)?;
         return verify_installed(target, config, path);
     }
     if let Some(path) = super::binary::cached(target, config) {
-        return Ok(path);
+        return Ok(path.path);
     }
     let report = probe_remote_report(target, config)?;
     let decision = decide_install(&select_compatible(&report), config.install, interactive);
     let ask = match decision {
-        InstallDecision::Use { path } => return super::binary::remember(target, config, path),
+        InstallDecision::Use { path } => {
+            let family = report.remote_family();
+            return super::binary::remember(target, config, path, family).map(|binary| binary.path);
+        }
         InstallDecision::Fail { message } => return Err(message),
         InstallDecision::Install => false,
         InstallDecision::Ask => true,
@@ -618,19 +684,36 @@ fn verify_installed(
 ) -> Result<String, String> {
     super::binary::invalidate(target, config);
     let report = probe_remote_report(target, config)?;
+    let family = report.remote_family();
+    let candidates = report
+        .candidates
+        .iter()
+        .map(|candidate| candidate.path.clone())
+        .collect::<Vec<_>>();
     let installed = ProbeReport {
         candidates: report
             .candidates
             .into_iter()
-            .filter(|candidate| candidate.path == path)
+            .filter(|candidate| same_remote_path(&candidate.path, &path, family))
             .collect(),
         ..report
     };
     match select_compatible(&installed) {
-        ProbeResult::Found { path, .. } => super::binary::remember(target, config, path),
+        ProbeResult::Found { path, .. } => {
+            super::binary::remember(target, config, path, family).map(|binary| binary.path)
+        }
         ProbeResult::Missing { detail } => Err(format!(
-            "installed Rozi could not run on the remote host: {detail}"
+            "installed Rozi at {path:?} could not be verified on the remote host: {detail}; probe candidates: {candidates:?}"
         )),
+    }
+}
+
+fn same_remote_path(left: &str, right: &str, family: RemoteFamily) -> bool {
+    match family {
+        RemoteFamily::Posix => left == right,
+        RemoteFamily::Windows => left
+            .replace('/', "\\")
+            .eq_ignore_ascii_case(&right.replace('/', "\\")),
     }
 }
 
@@ -674,7 +757,7 @@ fn install_for_platforms(
     )
 }
 
-fn family_from_os(os: &str) -> RemoteFamily {
+pub(crate) fn family_from_os(os: &str) -> RemoteFamily {
     if os == "windows" {
         RemoteFamily::Windows
     } else {
@@ -685,8 +768,7 @@ fn family_from_os(os: &str) -> RemoteFamily {
 /// Stream `local` onto the remote and return the installed path.
 ///
 /// The payload is staged and executed before it is moved into Rozi's private, versioned runtime
-/// directory. The returned path is home-relative so it remains one shell-safe token even when the
-/// remote user's home directory contains spaces.
+/// directory. The returned path is the resolved path reported by the remote host.
 fn install_bytes(
     target: &RemoteTarget,
     config: &RemoteConfig,
@@ -719,7 +801,12 @@ fn install_bytes_posix(
     let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"set -e
-dir="$HOME/{INSTALL_DIR}/{version}"
+if [ -n "${{XDG_DATA_HOME:-}}" ] && [ "${{XDG_DATA_HOME#/}}" != "$XDG_DATA_HOME" ]; then
+  data_home="$XDG_DATA_HOME"
+else
+  data_home="$HOME/.local/share"
+fi
+dir="$data_home/rozi/remote/{version}"
 final="$dir/{INSTALL_NAME}"
 mkdir -p "$dir"
 if [ -L "$final" ] || {{ [ -e "$final" ] && [ ! -f "$final" ]; }}; then
@@ -746,7 +833,7 @@ if ! "$tmp" --help 2>/dev/null | grep -q -- '--remote'; then
   exit 1
 fi
 mv -f "$tmp" "$final"
-printf 'installed={INSTALL_DIR}/{version}/{INSTALL_NAME}\n'
+printf 'installed=%s\n' "$final"
 "#
     );
     let mut command = ssh_base_command(resolved, config);
@@ -822,7 +909,23 @@ fn install_bytes_windows(
     let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
-$dir = Join-Path $env:USERPROFILE '.local\share\rozi\remote\{version}'
+Add-Type -TypeDefinition @'
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RoziLongPathName {{
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+}}
+'@ -ErrorAction SilentlyContinue
+function Get-RoziLongPath($path) {{
+  $buffer = New-Object System.Text.StringBuilder 32768
+  $length = [RoziLongPathName]::GetLongPathName($path, $buffer, [uint32]$buffer.Capacity)
+  if ($length -gt 0 -and $length -lt $buffer.Capacity) {{ return $buffer.ToString() }}
+  return $path
+}}
+$dataHome = $env:LOCALAPPDATA
+if (-not $dataHome) {{ $dataHome = Join-Path $env:USERPROFILE '.local\share' }}
+$dir = Join-Path $dataHome 'rozi\remote\{version}'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $final = Join-Path $dir 'rozi.exe'
 $src = Join-Path $env:USERPROFILE '{temp_name}'
@@ -848,7 +951,8 @@ try {{
   $help = & $src --help 2>$null
   if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
   Move-Item -Force -LiteralPath $src -Destination $final
-  Write-Output 'installed=.local\share\rozi\remote\{version}\rozi.exe'
+  $installed = Get-RoziLongPath (Resolve-Path -LiteralPath $final).Path
+  Write-Output "installed=$installed"
 }} finally {{
   if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}
 }}"#
@@ -1191,6 +1295,51 @@ pub(crate) fn append_ssh_destination(command: &mut Command, resolved: &ResolvedR
     command.arg("--").arg(resolved.ssh_destination());
 }
 
+/// Append one Rozi invocation using quoting for the detected remote shell family. Windows
+/// invocation goes through encoded PowerShell so it works with either cmd.exe or PowerShell as
+/// sshd's configured default shell.
+pub(crate) fn append_remote_rozi_command(
+    command: &mut Command,
+    binary: &str,
+    args: &[&str],
+    family: RemoteFamily,
+) {
+    match family {
+        RemoteFamily::Posix => {
+            command.arg(shell_quote_posix(binary));
+            for arg in args {
+                command.arg(shell_quote_posix(arg));
+            }
+        }
+        RemoteFamily::Windows => {
+            let mut words = vec![binary];
+            words.extend_from_slice(args);
+            let script = format!(
+                "$words = @({}); $exe = $words[0]; $remoteArgs = @($words | Select-Object -Skip 1); & $exe @remoteArgs; exit $LASTEXITCODE",
+                words
+                    .iter()
+                    .map(|word| powershell_literal(word))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            command
+                .arg("powershell")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-EncodedCommand")
+                .arg(encode_powershell_command(&script));
+        }
+    }
+}
+
+fn shell_quote_posix(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\"'\"'"))
+}
+
+fn powershell_literal(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "''"))
+}
+
 /// Fail if the `ROZI_REMOTE_BINARY` override is a binary built for a different OS/arch than the
 /// remote host. Best-effort: an unrecognized executable format or an unknown remote platform is not
 /// treated as a mismatch, so this only blocks a confirmed wrong-target upload.
@@ -1442,7 +1591,7 @@ fn pe_target_from_file(path: &Path) -> Option<(String, String)> {
     Some(("windows".to_string(), arch.to_string()))
 }
 
-fn normalize_os(raw: &str) -> String {
+pub(crate) fn normalize_os(raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
     // MSYS/MinGW/Cygwin `uname -s` carries a version suffix (`MINGW64_NT-10.0-22631`,
     // `MSYS_NT-…`, `CYGWIN_NT-…`), and the PowerShell probe reports `windows` directly, so match on
@@ -1480,10 +1629,6 @@ fn rustc_target(os: &str, arch: &str) -> Option<&'static str> {
     }
 }
 
-fn local_uname_platform() -> String {
-    normalize_os(std::env::consts::OS)
-}
-
 fn local_uname_machine() -> String {
     normalize_arch(std::env::consts::ARCH)
 }
@@ -1491,6 +1636,112 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_binary_path_preserves_detected_remote_family() {
+        let windows_client_posix_remote = configured_binary_path_report(
+            "/opt/rozi/bin/rozi".into(),
+            RemoteFamily::Posix,
+            "windows".into(),
+            "x86_64".into(),
+        );
+        assert_eq!(
+            windows_client_posix_remote.remote_family(),
+            RemoteFamily::Posix
+        );
+
+        let posix_client_windows_remote = configured_binary_path_report(
+            r"C:\Program Files\Rozi\rozi.exe".into(),
+            RemoteFamily::Windows,
+            "linux".into(),
+            "x86_64".into(),
+        );
+        assert_eq!(
+            posix_client_windows_remote.remote_family(),
+            RemoteFamily::Windows
+        );
+    }
+
+    #[test]
+    fn installed_path_comparison_follows_remote_path_rules() {
+        assert!(same_remote_path(
+            r"C:\Users\Runner\AppData\Rozi.exe",
+            r"c:/users/runner/appdata/rozi.exe",
+            RemoteFamily::Windows
+        ));
+        assert!(!same_remote_path(
+            r"C:\Users\Runner\rozi.exe",
+            r"C:\Users\Other\rozi.exe",
+            RemoteFamily::Windows
+        ));
+        assert!(!same_remote_path(
+            "/home/u/rozi",
+            "/home/U/rozi",
+            RemoteFamily::Posix
+        ));
+    }
+
+    #[test]
+    fn remote_invocation_uses_the_known_shell_family_not_path_syntax() {
+        let mut windows = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows,
+            "rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let windows_args: Vec<_> = windows
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        let encoded = windows_args.last().unwrap();
+        let script = decode_powershell_command(encoded);
+        assert!(windows_args[0].eq_ignore_ascii_case("powershell"));
+        assert!(script.contains("'rozi.exe'"));
+
+        let mut windows_spaced = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows_spaced,
+            r"C:\Program Files\Rozi\rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let args: Vec<_> = windows_spaced
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert!(
+            decode_powershell_command(args.last().unwrap())
+                .contains(r"'C:\Program Files\Rozi\rozi.exe'")
+        );
+
+        let mut windows_unicode = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows_unicode,
+            "C:\\Users\\Łukasz\\Adam's Rozi\\rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let args: Vec<_> = windows_unicode
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert!(decode_powershell_command(args.last().unwrap()).contains("Adam''s Rozi"));
+
+        let mut posix = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut posix,
+            "/some path/rozi",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Posix,
+        );
+        let args: Vec<_> = posix.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert_eq!(args, ["'/some path/rozi'", "'--remote-serve'", "'dev'"]);
+        assert_eq!(
+            shell_quote_posix("rozi'; touch $HOME"),
+            "'rozi'\"'\"'; touch $HOME'"
+        );
+    }
 
     #[test]
     fn parse_probe_collects_candidates_and_protocol_range() {
@@ -1726,6 +1977,7 @@ protocol_max={beyond}
         let netbsd = ProbeReport {
             platform: "NetBSD".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &netbsd).expect("a NetBSD binary installs on NetBSD");
@@ -1733,6 +1985,7 @@ protocol_max={beyond}
         let linux = ProbeReport {
             platform: "Linux".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         assert!(verify_override_targets_remote(&bin, &linux).is_err());
@@ -1758,6 +2011,7 @@ protocol_max={beyond}
         let linux = ProbeReport {
             platform: "Linux".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &linux).expect("matching target installs");
@@ -1765,6 +2019,7 @@ protocol_max={beyond}
         let windows = ProbeReport {
             platform: "windows".into(),
             machine: "x86_64".into(),
+            family: None,
             candidates: Vec::new(),
         };
         assert!(verify_override_targets_remote(&bin, &windows).is_err());
@@ -1773,6 +2028,7 @@ protocol_max={beyond}
         let unknown = ProbeReport {
             platform: "unknown".into(),
             machine: "unknown".into(),
+            family: None,
             candidates: Vec::new(),
         };
         verify_override_targets_remote(&bin, &unknown).expect("unknown platform does not block");

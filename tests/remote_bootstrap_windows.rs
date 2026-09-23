@@ -28,7 +28,7 @@ fn main() {
     }
     let marker = args.iter().position(|arg| arg == "--").unwrap();
     let remote = &args[marker + 2..];
-    let requested = PathBuf::from(&remote[0]);
+    let requested = PathBuf::from(remote[0].trim_matches('"'));
     let executable = if requested.is_relative() && (remote[0].contains('\\') || remote[0].contains('/')) {
         home.join(requested)
     } else {
@@ -58,21 +58,31 @@ fn main() {
     std::fs::copy(bin.join("ssh.exe"), bin.join("scp.exe")).unwrap();
 }
 
-fn managed(home: &Path) -> PathBuf {
-    home.join(".local/share/rozi/remote")
+fn managed(data_home: &Path) -> PathBuf {
+    data_home
+        .join("rozi")
+        .join("remote")
         .join(env!("CARGO_PKG_VERSION"))
         .join("rozi.exe")
+}
+
+fn assert_same_path(reported: &str, expected: &Path) {
+    assert_eq!(
+        std::fs::canonicalize(reported).unwrap(),
+        std::fs::canonicalize(expected).unwrap()
+    );
 }
 
 fn run_case(case: &str) {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("remote home with spaces");
+    let data_home = root.path().join("local app data with spaces");
     let bin = root.path().join("transport");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
     write_transport_scripts(&bin);
 
-    let final_path = managed(&home);
+    let final_path = managed(&data_home);
     if case != "upload" {
         std::fs::create_dir_all(final_path.parent().unwrap()).unwrap();
     }
@@ -110,6 +120,7 @@ fn run_case(case: &str) {
         .env("ROZI_BOOTSTRAP_WINDOWS_CASE", case)
         .env("USERPROFILE", &home)
         .env("HOME", &home)
+        .env("LOCALAPPDATA", &data_home)
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("XDG_STATE_HOME", root.path().join("state"))
@@ -169,18 +180,13 @@ fn bootstrap_windows_child() {
         ..RemoteConfig::default()
     };
     let home = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
-    let final_path = managed(&home);
+    let data_home = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap());
+    let final_path = managed(&data_home);
 
     match case.as_str() {
         "upload" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
-            assert_eq!(
-                path,
-                format!(
-                    ".local\\share\\rozi\\remote\\{}\\rozi.exe",
-                    env!("CARGO_PKG_VERSION")
-                )
-            );
+            assert_same_path(&path, &final_path);
             assert_eq!(
                 std::fs::read(final_path).unwrap(),
                 std::fs::read(env!("CARGO_BIN_EXE_rozi")).unwrap()
@@ -188,7 +194,7 @@ fn bootstrap_windows_child() {
         }
         "existing" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
-            assert!(path.starts_with(".local\\share\\rozi\\remote\\"));
+            assert_same_path(&path, &final_path);
         }
         "directory" | "reparse" => {
             let error = ensure_remote_binary(&target, &config, true).unwrap_err();

@@ -6,9 +6,15 @@ use std::time::{Duration, Instant};
 use super::{RemoteTarget, ResolvedRemote, bootstrap, validate_remote_executable_token};
 use crate::config::RemoteConfig;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteBinary {
+    pub path: String,
+    pub family: bootstrap::RemoteFamily,
+}
+
 struct CachedBinary {
     remote: ResolvedRemote,
-    path: String,
+    binary: RemoteBinary,
     checked: Instant,
 }
 
@@ -17,13 +23,13 @@ struct CachedBinary {
 static CACHE: Mutex<Vec<CachedBinary>> = Mutex::new(Vec::new());
 const MAX_AGE: Duration = Duration::from_secs(60);
 
-pub(super) fn cached(target: &RemoteTarget, config: &RemoteConfig) -> Option<String> {
+pub(super) fn cached(target: &RemoteTarget, config: &RemoteConfig) -> Option<RemoteBinary> {
     cached_matching(target, config, true)
 }
 
 /// Last remembered path for this destination, even after the 60s hint expires.
 /// A dropped SSH link does not mean the remote executable moved.
-pub(crate) fn last_known(target: &RemoteTarget, config: &RemoteConfig) -> Option<String> {
+pub(crate) fn last_known(target: &RemoteTarget, config: &RemoteConfig) -> Option<RemoteBinary> {
     cached_matching(target, config, false)
 }
 
@@ -31,7 +37,7 @@ fn cached_matching(
     target: &RemoteTarget,
     config: &RemoteConfig,
     require_fresh: bool,
-) -> Option<String> {
+) -> Option<RemoteBinary> {
     let remote = ResolvedRemote::resolve(target, config);
     CACHE
         .lock()
@@ -41,15 +47,17 @@ fn cached_matching(
         .find(|entry| {
             entry.remote == remote && (!require_fresh || entry.checked.elapsed() < MAX_AGE)
         })
-        .map(|entry| entry.path.clone())
+        .map(|entry| entry.binary.clone())
 }
 
 pub(super) fn remember(
     target: &RemoteTarget,
     config: &RemoteConfig,
     path: String,
-) -> Result<String, String> {
+    family: bootstrap::RemoteFamily,
+) -> Result<RemoteBinary, String> {
     validate_remote_executable_token(&path)?;
+    let binary = RemoteBinary { path, family };
     let remote = ResolvedRemote::resolve(target, config);
     if let Ok(mut cache) = CACHE.lock() {
         // Expiry only controls whether discovery may reuse a hint. Reconnect deliberately reads
@@ -61,11 +69,11 @@ pub(super) fn remember(
         }
         cache.push(CachedBinary {
             remote,
-            path: path.clone(),
+            binary: binary.clone(),
             checked: Instant::now(),
         });
     }
-    Ok(path)
+    Ok(binary)
 }
 
 pub(crate) fn invalidate(target: &RemoteTarget, config: &RemoteConfig) {
@@ -76,13 +84,19 @@ pub(crate) fn invalidate(target: &RemoteTarget, config: &RemoteConfig) {
 }
 
 /// Find a compatible executable without ever installing or honoring an upload override.
-pub(crate) fn resolve(target: &RemoteTarget, config: &RemoteConfig) -> Result<String, String> {
+pub(crate) fn resolve(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+) -> Result<RemoteBinary, String> {
     super::validate_remote_target(target)?;
     if let Some(path) = cached(target, config) {
         return Ok(path);
     }
-    match bootstrap::probe_remote(target, config)? {
-        bootstrap::ProbeResult::Found { path, .. } => remember(target, config, path),
+    let report = bootstrap::probe_remote_report(target, config)?;
+    match bootstrap::select_compatible(&report) {
+        bootstrap::ProbeResult::Found { path, .. } => {
+            remember(target, config, path, report.remote_family())
+        }
         bootstrap::ProbeResult::Missing { detail } => Err(detail),
     }
 }
@@ -95,10 +109,16 @@ mod tests {
     fn cached_paths_follow_connection_settings_and_invalidation() {
         let target = RemoteTarget::Alias("binary-cache-fixture".into());
         let mut config = RemoteConfig::default();
-        remember(&target, &config, "/home/u/.local/bin/rozi".into()).unwrap();
+        remember(
+            &target,
+            &config,
+            "/home/u/.local/bin/rozi".into(),
+            bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
         assert_eq!(
-            cached(&target, &config).as_deref(),
-            Some("/home/u/.local/bin/rozi")
+            cached(&target, &config).map(|binary| binary.path),
+            Some("/home/u/.local/bin/rozi".to_string())
         );
         config.hosts.insert(
             "binary-cache-fixture".into(),
@@ -111,7 +131,15 @@ mod tests {
         config.hosts.clear();
         invalidate(&target, &config);
         assert!(cached(&target, &config).is_none());
-        assert!(remember(&target, &config, "rozi;touch /tmp/no".into()).is_err());
+        assert!(
+            remember(
+                &target,
+                &config,
+                "rozi\nnext".into(),
+                bootstrap::RemoteFamily::Posix
+            )
+            .is_err()
+        );
         assert!(cached(&target, &config).is_none());
     }
 
@@ -120,16 +148,28 @@ mod tests {
         let target = RemoteTarget::Alias("stale-binary-cache-fixture".into());
         let other_target = RemoteTarget::Alias("other-binary-cache-fixture".into());
         let config = RemoteConfig::default();
-        remember(&target, &config, "/home/u/.local/bin/rozi".into()).unwrap();
+        remember(
+            &target,
+            &config,
+            "/home/u/.local/bin/rozi".into(),
+            bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
         expire(&target, &config);
         assert!(
             cached(&target, &config).is_none(),
             "fresh lookups must still expire"
         );
-        remember(&other_target, &config, "/opt/rozi/bin/rozi".into()).unwrap();
+        remember(
+            &other_target,
+            &config,
+            "/opt/rozi/bin/rozi".into(),
+            bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
         assert_eq!(
-            last_known(&target, &config).as_deref(),
-            Some("/home/u/.local/bin/rozi")
+            last_known(&target, &config).map(|binary| binary.path),
+            Some("/home/u/.local/bin/rozi".to_string())
         );
         invalidate(&target, &config);
         invalidate(&other_target, &config);

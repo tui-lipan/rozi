@@ -299,7 +299,16 @@ fn file_tree_messages_round_trip() {
 
 #[test]
 fn only_the_exact_version_negotiates() {
-    const { assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION) };
+    const {
+        assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION);
+        assert!(PROTOCOL_VERSION > 10);
+    }
+    // Protocol 10 encoded worktree session references as strings. Accepting that peer would
+    // deserialize its next worktree listing as an error and start a reconnect loop.
+    assert!(
+        negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 10, 10).is_err(),
+        "a server with the old worktree reply shape is rejected at attach"
+    );
 
     assert_eq!(
         negotiate_protocol(

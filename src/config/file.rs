@@ -2916,7 +2916,7 @@ mod file_tests {
         apply_sidebar_config(&mut sidebar, parsed.sidebar, Vec::new(), &mut warnings);
 
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(sidebar.tabs.len(), 9);
+        assert_eq!(sidebar.tabs.len(), 10);
         assert_eq!(sidebar.panels.len(), 2);
     }
 

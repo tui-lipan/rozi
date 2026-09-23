@@ -953,6 +953,10 @@ fn post_update_sync(
     }
     panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
+    if sidebar::sync_worktrees_tab(ctx) {
+        let command = update.command.take();
+        update = Update::with_command(command);
+    }
     sidebar::sync_command_cwd(ctx);
     sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,

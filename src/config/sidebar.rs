@@ -9,7 +9,7 @@ use super::schema::{
     SidebarTreeRoot, SidebarTreeView,
 };
 
-const BUILTIN_TABS: &[&str] = &["activity", "panes", "sessions", "files", "git"];
+const BUILTIN_TABS: &[&str] = &["activity", "panes", "sessions", "files", "git", "worktrees"];
 
 /// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
 /// take no options, so a table naming one is a mistake worth warning about.
@@ -191,7 +191,10 @@ fn place_unplaced_tabs(sidebar: &mut SidebarConfig) {
     if sidebar.panels.is_empty() {
         sidebar.panels.push(Vec::new());
     }
-    sidebar.panels[0].extend(unplaced);
+    for id in unplaced {
+        let panel = home_panel(&sidebar.panels, &id);
+        sidebar.panels[panel].push(id);
+    }
 }
 
 fn build_panels(
@@ -243,11 +246,29 @@ fn build_panels(
         panels.push(resolved);
     }
 
-    let omitted: Vec<_> = ids.into_iter().filter(|id| !seen.contains(id)).collect();
-    if !omitted.is_empty() {
-        panels[0].extend(omitted);
+    for id in ids.into_iter().filter(|id| !seen.contains(id)) {
+        let panel = home_panel(&panels, &id);
+        panels[panel].push(id);
     }
     panels
+}
+
+/// The panel a tab the placement never mentioned is added to. Worktrees belongs with the other
+/// tabs that follow the focused pane's repository, so it joins the panel holding Git or Files: a
+/// placement saved before the tab existed gains it beside them instead of among the session tabs.
+/// Anything else goes to the first panel.
+fn home_panel(panels: &[Vec<SidebarTabId>], id: &SidebarTabId) -> usize {
+    if id.as_str() != "worktrees" {
+        return 0;
+    }
+    ["git", "files"]
+        .iter()
+        .find_map(|sibling| {
+            panels
+                .iter()
+                .position(|panel| panel.iter().any(|placed| placed.as_str() == *sibling))
+        })
+        .unwrap_or(0)
 }
 
 /// Cluster launcher entries under their groups so the stored order is already display order: the
@@ -393,6 +414,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                 "activity" => SidebarTab::Activity,
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
+                "worktrees" => SidebarTab::Worktrees,
                 other => match tree_view(other) {
                     Some(view) => SidebarTab::Tree {
                         view,
@@ -543,6 +565,7 @@ mod tests {
                 SidebarTabId::new("sessions"),
                 SidebarTabId::new("files"),
                 SidebarTabId::new("git"),
+                SidebarTabId::new("worktrees"),
             ]
         );
         assert_eq!(
@@ -553,7 +576,11 @@ mod tests {
                     SidebarTabId::new("panes"),
                     SidebarTabId::new("sessions"),
                 ],
-                vec![SidebarTabId::new("files"), SidebarTabId::new("git")],
+                vec![
+                    SidebarTabId::new("files"),
+                    SidebarTabId::new("git"),
+                    SidebarTabId::new("worktrees"),
+                ],
             ]
         );
     }
@@ -599,6 +626,26 @@ mod tests {
             vec![vec![SidebarTabId::new("panes"), SidebarTabId::new("files")]]
         );
         assert!(!config.split);
+    }
+
+    #[test]
+    fn a_placement_saved_before_worktrees_existed_gains_it_beside_git() {
+        let mut sidebar = SidebarConfig::default();
+        let mut warnings = Vec::new();
+        let raw: SidebarFileConfig = toml::from_str(
+            "panels = [[\"activity\", \"sessions\", \"panes\"], [\"git\", \"files\"]]",
+        )
+        .expect("sidebar parses");
+        apply_sidebar_config(&mut sidebar, raw, Vec::new(), &mut warnings);
+        let ids = |panel: &Vec<SidebarTabId>| {
+            panel
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&sidebar.panels[0]), ["activity", "sessions", "panes"]);
+        assert_eq!(ids(&sidebar.panels[1]), ["git", "files", "worktrees"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

@@ -154,7 +154,10 @@ fn stale_list_reply_does_not_replace_a_new_picker_request() {
             .dispatch(Msg::SessionWorktreeResult {
                 epoch,
                 request_id: 19,
-                result: WorktreeResult::Listed { worktrees: vec![] },
+                result: WorktreeResult::Listed {
+                    worktrees: vec![],
+                    sessions: Default::default(),
+                },
             })
             .unwrap();
         assert_eq!(
@@ -171,7 +174,10 @@ fn stale_list_reply_does_not_replace_a_new_picker_request() {
             .dispatch(Msg::SessionWorktreeResult {
                 epoch,
                 request_id: 20,
-                result: WorktreeResult::Listed { worktrees: vec![] },
+                result: WorktreeResult::Listed {
+                    worktrees: vec![],
+                    sessions: Default::default(),
+                },
             })
             .unwrap();
         assert!(
@@ -218,6 +224,7 @@ fn listed_worktrees_are_cached_and_keep_the_selection() {
                 request_id: 7,
                 result: WorktreeResult::Listed {
                     worktrees: refreshed.clone(),
+                    sessions: Default::default(),
                 },
             })
             .unwrap();

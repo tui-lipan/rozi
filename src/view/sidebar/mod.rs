@@ -4,6 +4,7 @@ mod row;
 mod sessions;
 mod tree;
 mod user_tabs;
+mod worktrees;
 
 use tui_lipan::prelude::*;
 
@@ -298,6 +299,7 @@ fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Sideba
         SidebarTab::Panes => panes::panes_rows(ctx),
         SidebarTab::Activity => agents::agents_rows(ctx),
         SidebarTab::Sessions => sessions::sessions_rows(ctx),
+        SidebarTab::Worktrees => worktrees::worktrees_rows(ctx),
         SidebarTab::Launcher { name, entries, .. } => user_tabs::launcher_rows(ctx, name, entries),
         SidebarTab::Command { name, on_click, .. } => {
             user_tabs::command_rows(ctx, name, on_click.is_some())
@@ -314,6 +316,8 @@ fn empty_text(ctx: &Context<AppRoot>, tab: &SidebarTab) -> &'static str {
         SidebarTab::Panes => "No panes",
         SidebarTab::Activity => "No activity",
         SidebarTab::Sessions => "No sessions discovered",
+        // Never empty: it always has at least its "New worktree" row or a reason.
+        SidebarTab::Worktrees => "",
         SidebarTab::Launcher { .. } => "No launcher entries",
         SidebarTab::Command { name, .. } => {
             if ctx.state.fresh_command_output(name).is_some() {

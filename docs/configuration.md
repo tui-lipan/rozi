@@ -491,8 +491,8 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `visible` | bool | `false` | Startup visibility only. |
 | `width` | integer | `32` | Clamped to `16..=80`. |
 | `position` | string | `"left"` | `"left"` or `"right"`. |
-| `tabs` | array | `["activity", "panes", "sessions", "files", "git"]` | Replaces the tab catalog. IDs must be unique. |
-| `panels` | array of one or two string arrays | `[["activity", "panes", "sessions"], ["files", "git"]]` | Orders tab IDs. Unknown and duplicate IDs are skipped. Omitted configured tabs are appended to the first panel. |
+| `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Replaces the tab catalog. IDs must be unique. |
+| `panels` | array of one or two string arrays | `[["activity", "panes", "sessions"], ["files", "git", "worktrees"]]` | Orders tab IDs. Unknown and duplicate IDs are skipped. Omitted configured tabs are appended to the first panel, except `worktrees`, which joins the panel holding `git` or `files`. |
 | `split` | bool | Inferred from panel count, `true` by default | Shows two saved panel groups. |
 | `split_ratio` | float | `0.4` | Finite value clamped to `0.15..=0.85`. |
 | `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas backdrop instead of the elevated panel fill. |

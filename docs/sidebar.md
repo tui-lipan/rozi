@@ -6,7 +6,7 @@ layout.
 
 ## Operate the sidebar
 
-The default sidebar has Activity, Panes, Sessions, Files, and Git tabs. `PageUp` and `PageDown`
+The default sidebar has Activity, Panes, Sessions, Files, Git, and Worktrees tabs. `PageUp` and `PageDown`
 switch tabs while the sidebar is visible. `\` switches between one and two panels without losing
 the saved tab assignment.
 
@@ -43,8 +43,8 @@ state, and split ratio are saved to `config.toml`. Runtime visibility and the se
 visible = false
 width = 32
 position = "left"
-tabs = ["activity", "panes", "sessions", "files", "git"]
-panels = [["activity", "panes", "sessions"], ["files", "git"]]
+tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
+panels = [["activity", "panes", "sessions"], ["files", "git", "worktrees"]]
 split = true
 split_ratio = 0.5
 background_follows_canvas = false
@@ -147,6 +147,25 @@ instead of showing an ambiguous empty tree. Remote Git status requires `git` on 
 
 Files and Git refresh while visible. Hiding the sidebar or switching both panels away from them
 stops polling.
+
+## Worktrees
+
+Worktrees lists the Git worktrees of the focused pane's repository, on that pane's session host. A
+heading names the repository and the host. Each checkout shows its branch and path, and on the right
+the session that records it as its origin, or `primary` or `locked`. The gutter bar marks the
+checkout the focused pane is in.
+
+Activating a checkout opens its session. With several sessions it shows them to choose from, and
+with none it creates a session whose first shell starts in that checkout. **+ New worktree** opens
+the new-worktree form; the checkout appears as `creating…` and its session opens when Git is done.
+
+Hover a linked checkout and click `x` twice to remove it, or press `x` twice while the sidebar is
+focused and that row is selected. The branch is kept. If Git refuses because the checkout has
+uncommitted changes, the row asks once more to force the removal. The primary checkout, a locked
+one, and one a session uses offer no `x`.
+
+The list follows the focused pane and refreshes with the Git tab, so a checkout added from a shell
+appears on its own. See [Worktrees](sessions.md#worktrees) for the picker, the CLI, and settings.
 
 ## Custom tabs
 

@@ -30,7 +30,8 @@ See [Terminal features](terminal.md).
 - Attach to sessions on another machine over SSH.
 - Use temporary sessions for work that does not need a durable name.
 - Save reusable launch setups as profiles.
-- Create Git worktrees and open each in its own session, from a picker or `rozi worktrees`.
+- Create Git worktrees and open each in its own session, from the sidebar's Worktrees tab, a picker,
+  or `rozi worktrees`.
 
 See [Sessions](sessions.md), [Remote sessions](remote.md), and [Profiles](profiles.md).
 

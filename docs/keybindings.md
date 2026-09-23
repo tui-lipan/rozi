@@ -367,7 +367,8 @@ The profile picker uses `Enter` for the same-name session, `Ctrl+O` to launch un
 `Ctrl+N` to capture, `Ctrl+R` twice to replace the current session, `Ctrl+F` to toggle the default,
 and `Ctrl+D` twice to delete. See [Profiles](profiles.md#use-the-profile-picker).
 
-**Worktrees** has no default command key; open it from the command palette or Changes sidebar.
+**Worktrees** has no default command key; open it from the command palette, or use the sidebar's
+Worktrees tab.
 Inside it, `Enter` opens a checkout's session, `Ctrl+N` creates a checkout, `Ctrl+R` refreshes,
 and `Ctrl+K` removes a linked checkout. In the new-worktree form, `Ctrl+E` adds an in-repository
 worktree directory that Git does not ignore to `.git/info/exclude`. See

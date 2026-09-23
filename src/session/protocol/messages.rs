@@ -333,6 +333,10 @@ pub enum WorktreeRequest {
 pub enum WorktreeResult {
     Listed {
         worktrees: Vec<crate::git::worktrees::WorktreeInfo>,
+        /// Sessions on the host that record each listed checkout (by its listed path) as their
+        /// origin. Checked on the host, so a client need not discover sessions to show them.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        sessions: std::collections::BTreeMap<String, Vec<String>>,
     },
     Previewed {
         path: String,

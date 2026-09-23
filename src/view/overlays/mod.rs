@@ -66,7 +66,7 @@ pub(crate) use settings::{
     pane_padding_overlay, settings_choice_overlay, settings_overlay, settings_query_selection,
     theme_picker_overlay,
 };
-pub(crate) use worktrees::worktree_overlay;
+pub(crate) use worktrees::{short_checkout_path, worktree_overlay};
 
 pub(in crate::view::overlays) use commands::settings_palette_aliases;
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_pill, hint_row};

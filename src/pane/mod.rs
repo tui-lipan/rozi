@@ -13,15 +13,33 @@ pub(crate) mod spawn_policy;
 ///
 /// Both the UI control endpoint and the session server answer this command, from two different
 /// copies of the same screen. Writing it once against [`TerminalScreen`] is what keeps `--scrollback
-/// full` from quietly meaning two things, and is why a new [`CaptureScrollback`] variant cannot be
-/// added to one endpoint and forgotten in the other.
+/// full` from quietly meaning two things, and is why a new [`CaptureScrollback`] or
+/// [`CaptureRender`] variant cannot be added to one endpoint and forgotten in the other.
 ///
-/// `Err` carries the message the caller sees; the only failure is asking for command output from a
-/// pane whose shell never reported any.
-pub(crate) fn capture_screen_text(
+/// Styled captures read the emulator's visible grid, so they refuse scrollback rather than drop its
+/// styling. A PNG takes its colors from the screen's palette, which is the theme the attached
+/// client gave it; a detached server keeps the last one it was sent.
+///
+/// `Err` is the response the caller sees.
+pub(crate) fn capture_screen(
     screen: &mut TerminalScreen,
     scrollback: Option<CaptureScrollback>,
-) -> std::result::Result<String, &'static str> {
+    render: CaptureRender,
+) -> std::result::Result<CaptureContent, ControlResponse> {
+    if render != CaptureRender::Text && scrollback.is_some() {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "ansi and png captures cover the visible screen only, not scrollback",
+        ));
+    }
+    match render {
+        CaptureRender::Text => {}
+        CaptureRender::Ansi => {
+            let text = screen.capture_frame().to_ansi_text();
+            return Ok(CaptureContent::Ansi { text });
+        }
+        CaptureRender::Png => return capture_png(screen),
+    }
     let text = match scrollback {
         None => screen.render_snapshot().text.to_string(),
         Some(CaptureScrollback::Lines(lines)) => {
@@ -32,11 +50,34 @@ pub(crate) fn capture_screen_text(
             let total = screen.total_text_lines();
             screen.export_text(0, total)
         }
-        Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => screen
-            .export_last_command_output()
-            .ok_or("no last command output (shell integration marks missing)")?,
+        Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => {
+            screen.export_last_command_output().ok_or_else(|| {
+                ControlResponse::error("no last command output (shell integration marks missing)")
+            })?
+        }
     };
-    Ok(text)
+    Ok(CaptureContent::Text { text })
+}
+
+fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, ControlResponse> {
+    use base64::Engine as _;
+    use tui_lipan::{PngOptions, PngTextRenderer};
+
+    let palette = screen.palette();
+    let options = PngOptions {
+        scale: 1,
+        text_renderer: PngTextRenderer::Auto,
+        default_fg: palette.foreground.unwrap_or(Color::White),
+        default_bg: palette.background.unwrap_or(Color::Black),
+        ansi_palette: palette.ansi,
+        ..PngOptions::default()
+    };
+    let png = screen
+        .capture_frame()
+        .to_png(&options)
+        .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
+    let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
+    Ok(CaptureContent::Png { png_base64 })
 }
 
 use std::cell::RefCell;
@@ -45,7 +86,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 #[allow(clippy::useless_attribute)]
-use crate::control::{CaptureScrollback, CaptureScrollbackNamed};
+use crate::control::{
+    CaptureContent, CaptureRender, CaptureScrollback, CaptureScrollbackNamed, ControlErrorCode,
+    ControlResponse,
+};
 use tui_lipan::prelude::*;
 
 /// Decoded Kitty graphics retained by one pane parser.
@@ -915,6 +959,90 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
 mod tests {
     use super::*;
     use tui_lipan::utils::{GridPos, GridSelection};
+
+    fn png_bytes(content: CaptureContent) -> Vec<u8> {
+        use base64::Engine as _;
+        let CaptureContent::Png { png_base64 } = content else {
+            panic!("expected a png capture, got {content:?}");
+        };
+        base64::engine::general_purpose::STANDARD
+            .decode(png_base64)
+            .expect("png capture is valid base64")
+    }
+
+    /// Width and height from a PNG's IHDR chunk.
+    fn png_size(png: &[u8]) -> (u32, u32) {
+        let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().expect("4 bytes"));
+        (field(16), field(20))
+    }
+
+    #[test]
+    fn capture_screen_keeps_text_captures_as_they_were() {
+        let mut screen = TerminalScreen::new(2, 6, 100);
+        screen.process_bytes(b"\x1b[31mred\x1b[0m");
+        let content = capture_screen(&mut screen, None, CaptureRender::Text).expect("text capture");
+        assert_eq!(
+            content,
+            CaptureContent::Text {
+                text: screen.render_snapshot().text.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn capture_screen_renders_the_visible_grid_as_an_ansi_document() {
+        let mut screen = TerminalScreen::new(2, 6, 100);
+        screen.process_bytes(b"\x1b[31mred\x1b[0m");
+        let content = capture_screen(&mut screen, None, CaptureRender::Ansi).expect("ansi capture");
+        let CaptureContent::Ansi { text } = content else {
+            panic!("expected an ansi capture, got {content:?}");
+        };
+
+        assert!(text.contains("\x1b[31mred"), "{text:?}");
+        // A document to print, not a repaint: nothing clears or moves the reader's terminal.
+        for repaint in ["\x1b[2J", "\x1b[3J", "\x1b[H", "\x1b[?25"] {
+            assert!(!text.contains(repaint), "{repaint:?} in {text:?}");
+        }
+        assert_eq!(text.lines().count(), 2);
+    }
+
+    #[test]
+    fn capture_screen_renders_a_png_in_the_screen_palette() {
+        let mut screen = TerminalScreen::new(3, 10, 100);
+        screen.process_bytes(b"hi");
+        let plain = png_bytes(capture_screen(&mut screen, None, CaptureRender::Png).expect("png"));
+        assert!(plain.starts_with(b"\x89PNG\r\n\x1a\n"));
+        // 8x16-pixel cells at scale 1.
+        assert_eq!(png_size(&plain), (80, 48));
+
+        screen.set_palette(TerminalColorPalette::new(
+            Color::Rgb(1, 2, 3),
+            Color::Rgb(4, 5, 6),
+            [Color::Rgb(7, 8, 9); 16],
+        ));
+        let themed = png_bytes(capture_screen(&mut screen, None, CaptureRender::Png).expect("png"));
+        assert_ne!(plain, themed, "the theme palette colors the image");
+    }
+
+    #[test]
+    fn styled_captures_refuse_scrollback_instead_of_dropping_its_styling() {
+        let mut screen = TerminalScreen::new(2, 6, 100);
+        for render in [CaptureRender::Ansi, CaptureRender::Png] {
+            for scrollback in [
+                CaptureScrollback::Lines(10),
+                CaptureScrollback::Named(CaptureScrollbackNamed::Full),
+                CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput),
+            ] {
+                let refused = capture_screen(&mut screen, Some(scrollback.clone()), render)
+                    .expect_err("styled capture with scrollback");
+                assert_eq!(
+                    refused.code,
+                    Some(ControlErrorCode::InvalidArgument),
+                    "{render:?} with {scrollback:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn allocation_boundary_priming_preserves_terminal_semantics_and_capacity() {

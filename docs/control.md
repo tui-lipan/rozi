@@ -74,10 +74,11 @@ to a UI or session:
 ```json
 {
   "api": 1,
-  "schema": 2,
-  "session_protocol": 9,
+  "schema": 3,
+  "session_protocol": 12,
   "capabilities": [
     "agent-waits",
+    "capture-render",
     "layout-control",
     "pane-control",
     "published-activity",
@@ -115,7 +116,7 @@ does not affect the JSON anything else reads.
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--format text\|json]` | Print pane text. | yes |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
@@ -492,6 +493,37 @@ rozi send-keys -- -n hello
 lines, `--scrollback full` returns all retained lines, and `--last-output` returns the most recent
 shell-integration command output. A full-scrollback reply can exceed 1 MiB; the CLI reads Rozi's
 responses without the incoming request size cap.
+
+`--render` picks the form of the capture:
+
+| `--render` | Result |
+| --- | --- |
+| `text` (default) | Plain text. |
+| `ansi` | The visible grid as text with SGR color and style sequences. Every row keeps the pane's width and ends with a reset; there is no cursor movement or screen clearing, so `cat` shows it in place. |
+| `png` | An image of the visible grid's text cells, in the pane's theme colors, with the cursor drawn. |
+
+`ansi` and `png` cover the visible screen only. Combining them with `--scrollback` or
+`--last-output` fails rather than dropping the styling. Both capture the terminal's text cells:
+inline graphics a program drew, such as `kitty icat` images, are not included and leave the
+cells they covered blank.
+
+`--output FILE` writes the capture itself to `FILE` and prints nothing, for any `--render`. It
+cannot be combined with `--format`. Without `--output`, a PNG goes to stdout as raw bytes, and
+Rozi refuses to write it to a terminal. `--format json` still returns the JSON envelope, with the
+image base64-encoded.
+
+```sh
+rozi capture-pane --target 3 --render png --output pane.png
+rozi capture-pane --target 3 --render png > pane.png
+rozi capture-pane --target 3 --render ansi --format text | less -R
+```
+
+A PNG uses the theme colors a UI gave the pane. A session whose panes have never been shown by a
+UI renders with default terminal colors. Text uses installed fonts, including CJK,
+color emoji, and Nerd Font symbols when a font on that machine has them. With `--session`, the
+image is rendered by the session server, with the fonts installed where it runs. A session reply
+must fit one 8 MiB protocol frame, so a capture larger than that fails with `message-too-large`;
+the UI endpoint has no such limit.
 
 ## Actions, status, and notifications
 

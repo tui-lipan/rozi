@@ -1000,7 +1000,8 @@ mod tests {
             format_control_text(
                 &control::ControlCommand::CapturePane {
                     target: Some(3),
-                    scrollback: None
+                    scrollback: None,
+                    render: control::CaptureRender::Text,
                 },
                 &capture,
                 OutputStyles::plain()

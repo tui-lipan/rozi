@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use rozi::config::ExtensionProvenance;
-use rozi::control::{ControlCommand, ControlRequest, ControlResponse};
+use rozi::control::{CaptureRender, ControlCommand, ControlRequest, ControlResponse};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::headless::run_session_control;
 use rozi::session::protocol::ServerMessage;
@@ -62,6 +62,7 @@ fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> 
             ControlCommand::CapturePane {
                 target: Some(pane),
                 scrollback: None,
+                render: CaptureRender::Text,
             },
         );
         let text = data["text"].as_str().unwrap_or_default().to_string();
@@ -132,6 +133,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
             scrollback: Some(rozi::control::CaptureScrollback::Named(
                 rozi::control::CaptureScrollbackNamed::Full,
             )),
+            render: CaptureRender::Text,
         },
     );
     assert!(
@@ -193,6 +195,87 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
     layout
         .validate()
         .expect("a server-committed layout must satisfy the same rules a client's does");
+}
+
+/// Styled captures come from the server's own screen, so a script sees colors and gets an image
+/// without any UI attached.
+#[test]
+fn a_detached_session_captures_its_screen_as_ansi_and_png() {
+    use base64::Engine as _;
+
+    // The program is launched directly rather than typed into the default shell, which differs by
+    // platform in quoting, and in which key submits a line.
+    #[cfg(windows)]
+    let argv = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "Write-Host \"$([char]27)[31mstyled-marker$([char]27)[0m\"",
+    ];
+    #[cfg(not(windows))]
+    let argv = ["printf", "\u{1b}[31mstyled-marker\u{1b}[0m\\n"];
+
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let spawned = expect_ok(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: Some(argv.map(str::to_string).to_vec()),
+            cwd: None,
+            title: None,
+            // The screen must outlive the program that drew it.
+            keep_open: true,
+            focus: false,
+            workspace: None,
+        },
+    );
+    let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
+    capture_until(&session, pane, |text| {
+        text.lines().any(|line| line.trim() == "styled-marker")
+    });
+
+    let capture = |render| {
+        expect_ok(
+            &session,
+            ControlCommand::CapturePane {
+                target: Some(pane),
+                scrollback: None,
+                render,
+            },
+        )
+    };
+    let ansi = capture(CaptureRender::Ansi);
+    assert_eq!(ansi["render"], serde_json::json!("ansi"));
+    let text = ansi["text"].as_str().expect("ansi capture carries text");
+    assert!(text.contains("\u{1b}[31mstyled-marker"), "{text:?}");
+
+    let png = capture(CaptureRender::Png);
+    assert_eq!(png["render"], serde_json::json!("png"));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(
+            png["png_base64"]
+                .as_str()
+                .expect("png capture carries data"),
+        )
+        .expect("png capture is base64");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    let refused = control(
+        &session,
+        ControlCommand::CapturePane {
+            target: Some(pane),
+            scrollback: Some(rozi::control::CaptureScrollback::Named(
+                rozi::control::CaptureScrollbackNamed::Full,
+            )),
+            render: CaptureRender::Png,
+        },
+    );
+    assert!(!refused.ok);
+    assert_eq!(
+        refused.code,
+        Some(rozi::control::ControlErrorCode::InvalidArgument)
+    );
 }
 
 /// `layout get` answers from the document the server owns, so a script can see how a session it
@@ -609,6 +692,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             scrollback: Some(rozi::control::CaptureScrollback::Named(
                 rozi::control::CaptureScrollbackNamed::Full,
             )),
+            render: CaptureRender::Text,
         },
     )["text"]
         .as_str()
@@ -659,6 +743,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         ControlCommand::CapturePane {
             target: None,
             scrollback: None,
+            render: CaptureRender::Text,
         },
     );
 
@@ -684,6 +769,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         ControlCommand::CapturePane {
             target: None,
             scrollback: None,
+            render: CaptureRender::Text,
         },
     );
     assert!(!ambiguous.ok);

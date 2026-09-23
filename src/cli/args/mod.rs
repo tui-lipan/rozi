@@ -72,6 +72,8 @@ pub(crate) struct ControlCli {
     pub(super) request: control::ControlRequest,
     /// Explicit report format. Without one, a terminal gets human output and a pipe gets JSON.
     pub(super) output_format: Option<ListFormat>,
+    /// `capture-pane --output`: write the capture itself to this file instead of reporting it.
+    pub(super) output: Option<PathBuf>,
 }
 
 /// Which rozi a control command talks to.
@@ -494,6 +496,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint,
                     request: control_request(command),
                     output_format,
+                    output: None,
                 }));
             }
             "list-panes" => {
@@ -503,6 +506,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
+                    output: None,
                 }));
             }
             "layout" | "pane" => {
@@ -515,6 +519,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
+                    output: None,
                 }));
             }
             "metrics" => {
@@ -524,6 +529,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
+                    output: None,
                 }));
             }
             "focus" => {
@@ -538,6 +544,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "send-text" => {
@@ -558,6 +565,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "send-keys" => {
@@ -597,6 +605,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "notify" => {
@@ -633,6 +642,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "status" => {
@@ -685,6 +695,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "publish" => {
@@ -846,6 +857,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "run-action" => {
@@ -856,15 +868,27 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "capture-pane" => {
                 let mut target = None;
                 let mut scrollback = None;
                 let mut output_format = None;
+                let mut render = control::CaptureRender::Text;
+                let mut output = None;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
+                        "--render" => {
+                            let value =
+                                require_value(&mut iter, "--render requires text, ansi, or png")?;
+                            render = control::CaptureRender::parse_cli(&value)?;
+                        }
+                        "--output" => {
+                            let value = require_value(&mut iter, "--output requires a file path")?;
+                            output = Some(PathBuf::from(value));
+                        }
                         "--scrollback" => {
                             let value = iter.next().ok_or_else(|| {
                                 "--scrollback requires a line count or `full`".to_string()
@@ -894,11 +918,22 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                     }
                 }
-                let command = control::ControlCommand::CapturePane { target, scrollback };
+                if output.is_some() && output_format.is_some() {
+                    return Err(
+                        "capture-pane --output writes the capture itself; drop --format"
+                            .to_string(),
+                    );
+                }
+                let command = control::ControlCommand::CapturePane {
+                    target,
+                    scrollback,
+                    render,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
+                    output,
                 }));
             }
             "switch-workspace" => {
@@ -915,6 +950,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             "move-to-workspace" => {
@@ -931,6 +967,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
+                    output: None,
                 }));
             }
             other if other.starts_with('-') => {
@@ -1518,6 +1555,47 @@ mod tests {
     }
 
     #[test]
+    fn capture_pane_parses_render_and_output() {
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["capture-pane".to_string()];
+            argv.extend(args.iter().map(|arg| arg.to_string()));
+            parse_cli_args(argv)
+        };
+        let Ok(ParsedCli::Control(capture)) = parse(&["--render", "png", "--output", "pane.png"])
+        else {
+            panic!("expected capture command");
+        };
+        assert_eq!(
+            capture.request.command,
+            control::ControlCommand::CapturePane {
+                target: None,
+                scrollback: None,
+                render: control::CaptureRender::Png,
+            }
+        );
+        assert_eq!(capture.output, Some(PathBuf::from("pane.png")));
+
+        let Ok(ParsedCli::Control(ansi)) = parse(&["--render", "ansi"]) else {
+            panic!("expected capture command");
+        };
+        assert!(matches!(
+            ansi.request.command,
+            control::ControlCommand::CapturePane {
+                render: control::CaptureRender::Ansi,
+                ..
+            }
+        ));
+        assert_eq!(ansi.output, None);
+
+        let unknown = parse(&["--render", "svg"]).expect_err("unknown render");
+        assert!(unknown.contains("text, ansi, or png"), "{unknown}");
+        let both = parse(&["--output", "pane.txt", "--format", "json"])
+            .expect_err("--output writes the capture, not a report");
+        assert!(both.contains("--format"), "{both}");
+        assert!(parse(&["--output"]).is_err());
+    }
+
+    #[test]
     fn a_session_target_routes_a_control_command_to_that_session_server() {
         let ParsedCli::Control(control) = parse_cli_args(vec![
             "--session".into(),
@@ -1538,6 +1616,7 @@ mod tests {
             control::ControlCommand::CapturePane {
                 target: Some(3),
                 scrollback: None,
+                render: control::CaptureRender::Text,
             }
         );
     }
@@ -1713,7 +1792,8 @@ mod tests {
             capture.request.command,
             control::ControlCommand::CapturePane {
                 target: None,
-                scrollback: None
+                scrollback: None,
+                render: control::CaptureRender::Text,
             }
         );
 
@@ -1727,7 +1807,8 @@ mod tests {
             capture_target.request.command,
             control::ControlCommand::CapturePane {
                 target: Some(7),
-                scrollback: None
+                scrollback: None,
+                render: control::CaptureRender::Text,
             }
         );
 
@@ -1745,7 +1826,8 @@ mod tests {
                 target: None,
                 scrollback: Some(control::CaptureScrollback::Named(
                     control::CaptureScrollbackNamed::Full
-                ))
+                )),
+                render: control::CaptureRender::Text,
             }
         );
 
@@ -1760,7 +1842,8 @@ mod tests {
                 target: None,
                 scrollback: Some(control::CaptureScrollback::Named(
                     control::CaptureScrollbackNamed::LastOutput
-                ))
+                )),
+                render: control::CaptureRender::Text,
             }
         );
 

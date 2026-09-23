@@ -25,8 +25,8 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
 /// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
 /// names - gains a value, which is what version 2 did with the layout commands and
-/// `layout-changed`.
-pub const API_SCHEMA_VERSION: u32 = 2;
+/// `layout-changed`, and version 3 with `capture-pane`'s `render`.
+pub const API_SCHEMA_VERSION: u32 = 3;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -38,6 +38,9 @@ pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
 pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
 /// `layout get` reports workspaces and pane geometry from the shared layout document.
 pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
+/// `capture-pane` honors `render`: `ansi` and `png` as well as text. An older binary ignores the
+/// field and answers with text.
+pub const CAPTURE_RENDER_CAPABILITY: &str = "capture-render";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -59,6 +62,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
+                CAPTURE_RENDER_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
@@ -90,6 +94,35 @@ pub enum CaptureScrollback {
     Lines(usize),
     /// Named capture modes (`"full"`, `"last-output"`).
     Named(CaptureScrollbackNamed),
+}
+
+/// What form `capture-pane` returns a pane in.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum CaptureRender {
+    /// Plain text, the only form that can include scrollback.
+    #[default]
+    Text,
+    /// The visible grid as text with SGR color and style sequences: no cursor movement or screen
+    /// clearing, every row at the pane's width.
+    Ansi,
+    /// The visible grid's text cells as a PNG image, in the pane's theme colors. Inline terminal
+    /// graphics are not drawn.
+    Png,
+}
+
+impl CaptureRender {
+    pub fn parse_cli(value: &str) -> std::result::Result<Self, String> {
+        match value {
+            "text" => Ok(Self::Text),
+            "ansi" => Ok(Self::Ansi),
+            "png" => Ok(Self::Png),
+            other => Err(format!(
+                "--render must be text, ansi, or png, got `{other}`"
+            )),
+        }
+    }
 }
 
 /// Named `capture-pane` scrollback modes. Serde maps these to kebab-case strings so
@@ -240,13 +273,17 @@ pub enum ControlCommand {
     RunAction {
         action: String,
     },
-    /// Capture pane text. Without `scrollback`, returns the current visible snapshot grid.
+    /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
+    /// `render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the
+    /// visible grid only.
     CapturePane {
         #[serde(default)]
         target: Option<PaneId>,
         #[serde(default)]
         scrollback: Option<CaptureScrollback>,
+        #[serde(default)]
+        render: CaptureRender,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
     SwitchWorkspace {
@@ -1069,10 +1106,25 @@ pub struct AgentListPayload(pub Vec<AgentInfo>);
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneCapture {
     pub id: PaneId,
-    pub text: String,
     /// The terminal title, which several detection rules match instead of the screen. A capture
     /// without it cannot stand in for what the detector saw.
     pub title: Option<String>,
+    #[serde(flatten)]
+    pub content: CaptureContent,
+}
+
+/// A capture's content, tagged by `render` as the request asked for it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "render", rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum CaptureContent {
+    /// Plain text.
+    Text { text: String },
+    /// SGR-styled text; print it to a terminal to see the pane's colors.
+    Ansi { text: String },
+    /// A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the
+    /// CLI decodes them before writing.
+    Png { png_base64: String },
 }
 
 /// What `split` answers with once the pane exists.
@@ -2052,11 +2104,55 @@ mod tests {
     }
 
     #[test]
+    fn capture_replies_tag_their_content_with_the_render_asked_for() {
+        let text = PaneCapture {
+            id: 3,
+            title: Some("shell".to_string()),
+            content: CaptureContent::Text {
+                text: "hi".to_string(),
+            },
+        };
+        // Text replies keep `text` where scripts already read it.
+        assert_eq!(
+            serde_json::to_value(&text).unwrap(),
+            serde_json::json!({"id": 3, "title": "shell", "render": "text", "text": "hi"})
+        );
+        let png = PaneCapture {
+            id: 3,
+            title: None,
+            content: CaptureContent::Png {
+                png_base64: "iVBO".to_string(),
+            },
+        };
+        let encoded = serde_json::to_value(&png).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({"id": 3, "title": null, "render": "png", "png_base64": "iVBO"})
+        );
+        assert_eq!(serde_json::from_value::<PaneCapture>(encoded).unwrap(), png);
+
+        let request: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"capture-pane","render":"ansi"}"#).unwrap();
+        assert!(matches!(
+            request.command,
+            ControlCommand::CapturePane {
+                render: CaptureRender::Ansi,
+                ..
+            }
+        ));
+        assert!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"capture-pane","render":"svg"}"#)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn capture_pane_command_round_trips_through_json() {
         let request = ControlRequest {
             command: ControlCommand::CapturePane {
                 target: Some(5),
                 scrollback: None,
+                render: CaptureRender::Text,
             },
             source_pane: None,
             extension: None,
@@ -2070,7 +2166,8 @@ mod tests {
             defaulted.command,
             ControlCommand::CapturePane {
                 target: None,
-                scrollback: None
+                scrollback: None,
+                render: CaptureRender::Text,
             }
         );
 
@@ -2080,7 +2177,8 @@ mod tests {
             with_scrollback.command,
             ControlCommand::CapturePane {
                 target: None,
-                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full))
+                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)),
+                render: CaptureRender::Text,
             }
         );
 
@@ -2090,7 +2188,8 @@ mod tests {
             with_last_output.command,
             ControlCommand::CapturePane {
                 target: None,
-                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput))
+                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)),
+                render: CaptureRender::Text,
             }
         );
 

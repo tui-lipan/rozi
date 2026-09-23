@@ -1094,8 +1094,9 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
         ClientMessage::Attach {
             capabilities: None,
             session: "dev".into(),
-            protocol_version: 18,
-            min_protocol_version: 12,
+            // Entirely older than this build, whatever the current version is.
+            protocol_version: PROTOCOL_VERSION - 1,
+            min_protocol_version: 1,
             label: "legacy".into(),
             read_only: true,
             shares_filesystem: true,

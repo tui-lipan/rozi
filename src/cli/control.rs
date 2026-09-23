@@ -427,9 +427,83 @@ fn ask_remote_endpoint(
     }
 }
 
+/// Where `capture-pane` writes the capture itself, rather than a report about it.
+#[derive(Debug, PartialEq)]
+enum RawCapture {
+    Stdout,
+    File(PathBuf),
+}
+
+/// `--output` always writes the capture itself. Without it, only a PNG does, since there is no
+/// text report of an image; `--format json` still asks for the JSON envelope.
+fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
+    let control::ControlCommand::CapturePane { render, .. } = command.request.command else {
+        return None;
+    };
+    if let Some(path) = &command.output {
+        return Some(RawCapture::File(path.clone()));
+    }
+    (render == control::CaptureRender::Png && command.output_format != Some(ListFormat::Json))
+        .then_some(RawCapture::Stdout)
+}
+
+/// The bytes a capture reply carries: its text, or its decoded PNG.
+fn capture_bytes(response: &serde_json::Value) -> std::result::Result<Vec<u8>, String> {
+    use base64::Engine as _;
+
+    let data = response.get("data").cloned().unwrap_or_default();
+    let capture: control::PaneCapture =
+        serde_json::from_value(data).map_err(|err| format!("unexpected capture reply: {err}"))?;
+    match capture.content {
+        control::CaptureContent::Text { mut text } | control::CaptureContent::Ansi { mut text } => {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            Ok(text.into_bytes())
+        }
+        control::CaptureContent::Png { png_base64 } => base64::engine::general_purpose::STANDARD
+            .decode(png_base64)
+            .map_err(|err| format!("capture reply carried invalid base64: {err}")),
+    }
+}
+
+fn write_raw_capture(destination: RawCapture, response: &serde_json::Value) {
+    let written = capture_bytes(response).and_then(|bytes| match &destination {
+        RawCapture::Stdout => {
+            let mut stdout = std::io::stdout().lock();
+            match stdout.write_all(&bytes).and_then(|()| stdout.flush()) {
+                // A reader that stopped early, such as `head`, already has what it wanted.
+                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+                result => result.map_err(|err| format!("cannot write the capture: {err}")),
+            }
+        }
+        RawCapture::File(path) => std::fs::write(path, &bytes)
+            .map_err(|err| format!("cannot write {}: {err}", path.display())),
+    });
+    if let Err(err) = written {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+/// Report a failed reply's error and exit 1.
+fn exit_on_failure(response: &serde_json::Value) {
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        if let Some(error) = response.get("error").and_then(|v| v.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+}
+
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     use std::io::IsTerminal;
 
+    let raw_capture = raw_capture(&command);
+    if raw_capture == Some(RawCapture::Stdout) && std::io::stdout().is_terminal() {
+        eprintln!("PNG output is binary; pass --output FILE or redirect stdout");
+        std::process::exit(2);
+    }
     let value = match command.endpoint {
         ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &command.request)?,
         ControlEndpoint::Session(session) => {
@@ -439,6 +513,11 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             ask_remote_endpoint(&target, &session, command.request.clone())?
         }
     };
+    if let Some(destination) = raw_capture {
+        exit_on_failure(&value);
+        write_raw_capture(destination, &value);
+        return Ok(());
+    }
     let line = serde_json::to_string(&value).unwrap_or_default();
     let human_output = match command.output_format {
         Some(ListFormat::Text) => true,
@@ -448,12 +527,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     if !human_output {
         println!("{line}");
     }
-    if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
-            eprintln!("{error}");
-        }
-        std::process::exit(1);
-    }
+    exit_on_failure(&value);
     if human_output {
         print!(
             "{}",
@@ -476,6 +550,88 @@ fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capture_cli(
+        render: control::CaptureRender,
+        output_format: Option<ListFormat>,
+        output: Option<&str>,
+    ) -> ControlCli {
+        ControlCli {
+            endpoint: ControlEndpoint::Ui(None),
+            request: control_request(control::ControlCommand::CapturePane {
+                target: None,
+                scrollback: None,
+                render,
+            }),
+            output_format,
+            output: output.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn only_a_png_or_an_output_file_writes_the_capture_itself() {
+        use control::CaptureRender::{Ansi, Png, Text};
+
+        // A PNG has no text report, so it is written raw unless the JSON envelope is asked for.
+        assert_eq!(
+            raw_capture(&capture_cli(Png, None, None)),
+            Some(RawCapture::Stdout)
+        );
+        assert_eq!(
+            raw_capture(&capture_cli(Png, Some(ListFormat::Text), None)),
+            Some(RawCapture::Stdout)
+        );
+        assert_eq!(
+            raw_capture(&capture_cli(Png, Some(ListFormat::Json), None)),
+            None
+        );
+        // Text and ANSI keep the usual report: human text on a terminal, JSON in a pipe.
+        assert_eq!(raw_capture(&capture_cli(Text, None, None)), None);
+        assert_eq!(raw_capture(&capture_cli(Ansi, None, None)), None);
+        for render in [Text, Ansi, Png] {
+            assert_eq!(
+                raw_capture(&capture_cli(render, None, Some("out"))),
+                Some(RawCapture::File(PathBuf::from("out")))
+            );
+        }
+    }
+
+    #[test]
+    fn capture_bytes_decode_what_the_reply_carries() {
+        use base64::Engine as _;
+
+        let reply = |content: serde_json::Value| {
+            let mut data = serde_json::json!({"id": 1, "title": null});
+            data.as_object_mut()
+                .unwrap()
+                .extend(content.as_object().unwrap().clone());
+            serde_json::json!({"ok": true, "data": data})
+        };
+        assert_eq!(
+            capture_bytes(&reply(serde_json::json!({"render": "text", "text": "a"}))),
+            Ok(b"a\n".to_vec())
+        );
+        assert_eq!(
+            capture_bytes(&reply(
+                serde_json::json!({"render": "ansi", "text": "\u{1b}[31ma\n"})
+            )),
+            Ok(b"\x1b[31ma\n".to_vec())
+        );
+        let png = b"\x89PNG\r\n\x1a\nbytes";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+        assert_eq!(
+            capture_bytes(&reply(
+                serde_json::json!({"render": "png", "png_base64": encoded})
+            )),
+            Ok(png.to_vec())
+        );
+        assert!(
+            capture_bytes(&reply(
+                serde_json::json!({"render": "png", "png_base64": "%%"})
+            ))
+            .is_err()
+        );
+    }
 
     #[test]
     fn picker_actions_are_non_terminal_even_when_they_carry_a_selection() {

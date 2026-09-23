@@ -92,6 +92,15 @@ rozi --session dev capture-pane --target 3 --scrollback full --format text
 Nothing needs to be attached. The text comes from the session server's own terminal, which is the
 same screen a client would draw.
 
+To see colors and layout rather than text, capture an image of the visible screen:
+
+```sh
+rozi --session dev capture-pane --target 3 --render png --output pane.png
+```
+
+`--render ansi` keeps the colors as terminal escape sequences instead; see
+[`capture-pane`](control.md#sending-keys-and-capturing-output) for both.
+
 ### Pick and switch a branch
 
 ```sh

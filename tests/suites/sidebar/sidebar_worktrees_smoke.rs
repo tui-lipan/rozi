@@ -75,6 +75,9 @@ fn seeded(width: u16, height: u16) -> TestBackend<AppRoot> {
         "/home/me/src/rozi-worktrees/feat-login".into(),
         vec![session("wt-feat-login", true)],
     );
+    listing
+        .sessions
+        .insert("/home/me/src/rozi".into(), vec![session("dev", true)]);
     listing.sessions.insert(
         "/home/me/src/rozi-worktrees/release".into(),
         vec![session("release", false)],
@@ -130,13 +133,14 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
             lines[master].contains('▍'),
             "the focused pane's checkout is marked:\n{text}"
         );
-        assert!(lines[master].contains("primary"), "{text}");
+        // What a checkout is and whether a session uses it share the right edge, word first.
+        assert!(lines[master].contains("primary ●"), "{text}");
 
         // A running session is a filled marker, a restorable one a ring; names stay off the row.
         let login = row("feat/login");
         assert!(lines[login].contains('●'), "{text}");
         assert!(!text.contains("wt-feat-login"), "{text}");
-        assert!(lines[row("release/0.1")].contains('○'), "{text}");
+        assert!(lines[row("release/0.1")].contains("locked ○"), "{text}");
 
         // A checkout named after its branch is one line; a folder the branch does not imply is
         // noted under it.

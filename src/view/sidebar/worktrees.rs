@@ -150,11 +150,19 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
         .iter()
         .map(|session| presence(ctx, session))
         .max();
-    if row.removing {
-        item = item.badge_text("removing…", muted);
-    } else if let Some(strongest) = strongest {
+    // The right edge is one status rail: what the checkout is, then whether a session uses it.
+    let state = if !tree.linked {
+        Some(("primary", muted))
+    } else if tree.locked {
+        Some(("locked", muted))
+    } else if tree.prunable {
+        Some(("prunable", Style::new().fg(theme.status.warning)))
+    } else {
+        None
+    };
+    let marker = strongest.map(|strongest| {
         let count = row.sessions.len();
-        let marker = if count > 1 {
+        let text = if count > 1 {
             format!("{}{count}", strongest.marker())
         } else {
             strongest.marker().to_string()
@@ -164,26 +172,27 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
             SessionPresence::Running => super::super::fg_only(&theme.accent),
             SessionPresence::Background | SessionPresence::Restorable => muted,
         };
-        item = item
-            .badge_text(marker, style)
-            .hover_badge_text(strongest.action(count > 1), muted);
-    } else {
-        let state = if !tree.linked {
-            Some(("primary", muted))
-        } else if tree.locked {
-            Some(("locked", muted))
-        } else if tree.prunable {
-            Some(("prunable", Style::new().fg(theme.status.warning)))
-        } else {
-            None
-        };
-        if let Some((state, style)) = state {
-            item = item.badge_text(state, style);
-        }
-        // Rows without a ✕ say what Enter does instead; a closable row's hover is its ✕.
-        if !row.closable {
-            item = item.hover_badge_text("new session", muted);
-        }
+        (text, style)
+    });
+    item = match (row.removing, state, marker) {
+        (true, _, _) => item.badge_text("removing…", muted),
+        (false, Some((state, state_style)), Some((marker, marker_style))) => item.badge(
+            HStack::new()
+                .gap(1)
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .child(Text::new(state).style(state_style).height(Length::Px(1)))
+                .child(Text::new(marker).style(marker_style).height(Length::Px(1))),
+        ),
+        (false, None, Some((marker, style))) => item.badge_text(marker, style),
+        (false, Some((state, style)), None) => item.badge_text(state, style),
+        (false, None, None) => item,
+    };
+    // Under the pointer the rail says what Enter does. A closable row's hover is its ✕ instead.
+    if let Some(strongest) = strongest {
+        item = item.hover_badge_text(strongest.action(row.sessions.len() > 1), muted);
+    } else if !row.closable && !row.removing {
+        item = item.hover_badge_text("new session", muted);
     }
 
     // The primary checkout is the repository the header already names.

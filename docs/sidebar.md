@@ -165,8 +165,8 @@ Sessions tab's markers:
 | `●` | Running on the host; activating attaches to it |
 | `○` | Saved; activating restores it |
 
-A number follows the marker when several sessions use the checkout. A checkout without one shows
-`primary` or `locked` when that applies. Under the pointer the marker becomes what activating the
+A number follows the marker when several sessions use the checkout. `primary`, `locked`, or
+`prunable` sits to its left when that applies. Under the pointer the marker becomes what activating the
 row does: `attach`, `switch`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. With several sessions it shows them to choose from, and

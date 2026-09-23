@@ -513,7 +513,16 @@ mod tests {
         ) else {
             panic!("preview failed");
         };
-        assert!(Path::new(&path).starts_with(canonical(&repo).join(".worktrees")));
+        // Git and `canonicalize` spell Windows paths differently, so compare the directories.
+        let path = Path::new(&path);
+        assert!(
+            path.ends_with(Path::new(".worktrees").join("feat-a")),
+            "{path:?}"
+        );
+        assert!(worktrees::same_path(
+            path.parent().and_then(Path::parent).unwrap(),
+            &repo
+        ));
         assert_eq!(unignored.as_deref(), Some(".worktrees"));
 
         let WorktreeResult::Created { unignored, .. } = create("feat/a", Some(in_repo)) else {

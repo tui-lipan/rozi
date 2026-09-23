@@ -24,10 +24,13 @@ test "${ROZI:-}" = 1 && test -n "${ROZI_SOCKET:-}"
 If that fails, UI pane control is unavailable. Never control an arbitrary focused UI from outside
 one of its panes. This check is not required when the user explicitly names a detached session.
 
-The installed binary defines current syntax. Check it when unsure:
+The installed binary defines current syntax. Check it when unsure, and check a capability before
+relying on a newer feature:
 
 ```bash
 rozi --help
+rozi agents --help
+rozi api describe    # JSON: API, schema, and session protocol versions, plus capabilities
 ```
 
 Do not run bare `rozi` for discovery. It launches or attaches the TUI. Likewise, `rozi dev` launches
@@ -97,19 +100,46 @@ rozi --session dev status --clear --target <PANE_ID>
 tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
 `--literal` when a key-like argument such as `C-c` must be typed literally.
 
-Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`, `capture-ui`, and
-`metrics` support it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
+Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`,
+`capture-ui`, `metrics`, and `agents list`/`get` support it. Capture options include
+`--scrollback 200`, `--scrollback full`, and `--last-output`.
 
 When colors or layout matter, look at the screen instead of its text:
 `capture-pane --target <PANE_ID> --render png --output pane.png` saves an image of the visible
 screen in the pane's theme colors, and `--render ansi` keeps the colors as SGR-styled text. Both
 cover the visible screen only, not scrollback, and neither includes inline images a program drew:
-a blank area in the capture may be one.
+a blank area in the capture may be one. Always pass `--output` for a PNG; Rozi refuses to write
+one to a terminal.
 
 `capture-ui --render png --output ui.png` captures the whole UI as drawn instead: the bar,
 borders, overlays, and every visible pane. It needs a UI; `--session` refuses it.
 
 Re-read pane ids before acting after a delay or any layout or session change.
+
+## Coding agents in panes
+
+Rozi detects coding-agent CLIs in panes and tracks their state: `working`, `blocked`, `idle`,
+`done`, or `unknown`. Use the `agents` commands rather than scraping the screen or typing into an
+agent pane with `send-keys`:
+
+```bash
+rozi --session dev agents list --format json
+rozi --session dev agents get --target <PANE_ID> --format json
+rozi --session dev agents read --target <PANE_ID> --scrollback 200
+rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
+rozi --session dev agents prompt --target <PANE_ID> --wait idle 'Fix the failing test'
+```
+
+`wait` and `prompt` run in the session server, so they need `--session <NAME>`. `--until` and
+`--wait` take `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), or `gone`.
+
+`agents prompt` submits the text and Enter as one operation, only to the agent incarnation it
+resolved. It never types into a `blocked` agent, which may be showing an approval dialog, and it
+refuses a `working` one unless `--allow-working` is given. Prompt another agent only when the user
+asks. `list` and `get` return an opaque `ref`; pass it back with `--ref '<json>'` instead of
+`--target` to fence a later command to that exact agent, so a replacement in the same pane fails
+instead of receiving it. Failures distinguish a gone agent, a replacement, a stale reference, and a
+timeout; do not blindly retry them.
 
 ## Target rules
 
@@ -153,15 +183,23 @@ bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"acti
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
 A detached endpoint supports `list-panes`, `layout get`, `layout set`, the `pane` commands,
-`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
+`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, `status`, and the `agents` commands.
+Input still obeys the session's input lock.
 
 ## Detached-session limits
 
-`--session` control is local. To control another host, run Rozi there:
+To control a session on another host, add `--remote <HOST>` (an SSH alias or `ssh://` URL) in
+front of `--session`. The command is forwarded over SSH and answered exactly as a local session
+would answer it:
 
 ```bash
-ssh workbox rozi --session dev capture-pane --target <PANE_ID>
+rozi --remote workbox --session dev list-panes --format json
+rozi --remote workbox --session dev agents wait --target <PANE_ID> --until idle
 ```
+
+`--remote` without `--session` is refused: a control command addresses a session server, never the
+far host's UI. An older rozi on that host reports version skew; `rozi api describe` there lists
+`remote-control` when it can serve forwarded commands.
 
 A pane created through detached `split` receives `ROZI` and `ROZI_PANE`, but no `ROZI_SOCKET` or
 `ROZI_BIN` because no UI exists. Requests carrying `ROZI_EXTENSION` are refused because a session

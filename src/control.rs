@@ -1130,7 +1130,7 @@ pub struct PaneCapture {
 pub enum CaptureContent {
     /// Plain text.
     Text { text: String },
-    /// SGR-styled text; print it to a terminal to see the pane's colors.
+    /// SGR-styled text; print it to a terminal to see the captured colors.
     Ansi { text: String },
     /// A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the
     /// CLI decodes them before writing.

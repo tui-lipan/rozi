@@ -2858,7 +2858,7 @@
           "type": "object"
         },
         {
-          "description": "SGR-styled text; print it to a terminal to see the pane's colors.",
+          "description": "SGR-styled text; print it to a terminal to see the captured colors.",
           "properties": {
             "render": {
               "const": "ansi",
@@ -3587,7 +3587,7 @@
           "type": "object"
         },
         {
-          "description": "SGR-styled text; print it to a terminal to see the pane's colors.",
+          "description": "SGR-styled text; print it to a terminal to see the captured colors.",
           "properties": {
             "render": {
               "const": "ansi",

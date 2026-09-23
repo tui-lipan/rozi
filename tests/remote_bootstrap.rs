@@ -37,8 +37,13 @@ exec /bin/sh -c "$*"
         std::fs::create_dir_all(&cargo).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_rozi"), cargo.join("rozi")).unwrap();
     }
-    let managed = home
-        .join(".local/share/rozi/remote")
+    let data_home = if case == "upload" {
+        root.path().join("data home with spaces")
+    } else {
+        root.path().join("data")
+    };
+    let managed = data_home
+        .join("rozi/remote")
         .join(env!("CARGO_PKG_VERSION"))
         .join("rozi");
     if matches!(case, "symlink" | "staged_failure") {
@@ -70,7 +75,7 @@ exec /bin/sh -c "$*"
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("XDG_STATE_HOME", root.path().join("state"))
-        .env("XDG_DATA_HOME", root.path().join("data"))
+        .env("XDG_DATA_HOME", &data_home)
         .env("XDG_CACHE_HOME", root.path().join("cache"))
         .env("XDG_RUNTIME_DIR", root.path().join("run"))
         .env_remove("ROZI_CONFIG")
@@ -200,7 +205,8 @@ fn bootstrap_child() {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
             assert_eq!(
                 Path::new(&path),
-                Path::new(".local/share/rozi/remote")
+                std::path::Path::new(&std::env::var_os("XDG_DATA_HOME").unwrap())
+                    .join("rozi/remote")
                     .join(env!("CARGO_PKG_VERSION"))
                     .join("rozi")
             );
@@ -241,7 +247,8 @@ fn bootstrap_child() {
             );
             assert!(!home.join("untouched").exists());
             assert!(
-                home.join(".local/share/rozi/remote")
+                std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap())
+                    .join("rozi/remote")
                     .join(env!("CARGO_PKG_VERSION"))
                     .join("rozi")
                     .symlink_metadata()
@@ -254,7 +261,8 @@ fn bootstrap_child() {
             assert!(ensure_remote_binary(&target, &config, true).is_err());
             assert_eq!(
                 std::fs::read(
-                    home.join(".local/share/rozi/remote")
+                    std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap())
+                        .join("rozi/remote")
                         .join(env!("CARGO_PKG_VERSION"))
                         .join("rozi")
                 )

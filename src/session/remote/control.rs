@@ -21,8 +21,8 @@ use crate::control::{ControlRequest, ControlResponse};
 
 use super::target::RemoteTarget;
 use super::{
-    ResolvedRemote, append_ssh_destination, ssh_base_command, validate_remote_executable_token,
-    validate_remote_target,
+    ResolvedRemote, append_ssh_destination, quote_remote_executable, ssh_base_command,
+    validate_remote_executable_token, validate_remote_target,
 };
 
 /// Exit status the far side uses for "the session could not be reached at all", as distinct from a
@@ -53,7 +53,7 @@ pub fn forward_control(
 
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
+    command.arg(quote_remote_executable(&remote_bin));
     command.arg("--remote-control");
     command.arg(session);
     command

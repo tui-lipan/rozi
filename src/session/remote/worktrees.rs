@@ -13,8 +13,8 @@ use crate::session::worktrees::{HostCall, HostReply};
 
 use super::target::RemoteTarget;
 use super::{
-    ResolvedRemote, append_ssh_destination, ssh_base_command, validate_remote_executable_token,
-    validate_remote_target,
+    ResolvedRemote, append_ssh_destination, quote_remote_executable, ssh_base_command,
+    validate_remote_executable_token, validate_remote_target,
 };
 
 /// The hidden flag the far side runs. It takes no arguments; the call arrives on stdin.
@@ -36,7 +36,7 @@ pub fn forward(
 
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
+    command.arg(quote_remote_executable(&remote_bin));
     command.arg(RUNNER_FLAG);
     command
         .stdin(Stdio::piped())

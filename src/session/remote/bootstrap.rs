@@ -16,7 +16,6 @@ use super::{
     RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
 };
 
-const INSTALL_DIR: &str = ".local/share/rozi/remote";
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
@@ -90,9 +89,15 @@ try_bin /usr/local/bin/rozi
 try_bin /usr/bin/rozi
 try_bin "$HOME/bin/rozi"
 try_bin "$HOME/.nix-profile/bin/rozi"
-for managed in "$HOME/.local/share/rozi/remote/"*/rozi; do
+if [ -n "${XDG_DATA_HOME:-}" ] && [ "${XDG_DATA_HOME#/}" != "$XDG_DATA_HOME" ]; then
+  data_home="$XDG_DATA_HOME"
+else
+  data_home="$HOME/.local/share"
+fi
+managed_root="$data_home/rozi/remote"
+for managed in "$managed_root/"*/rozi; do
   [ -e "$managed" ] || continue
-  try_bin "$managed" "${managed#"$HOME/"}"
+  try_bin "$managed"
 done
 printf 'probe_done=1\n'
 "#;
@@ -132,10 +137,11 @@ if ($env:ROZI_PROBE_BIN) { Try-Bin $env:ROZI_PROBE_BIN }
 Try-Bin 'rozi.exe'
 Try-Bin (Join-Path $env:USERPROFILE '.local\bin\rozi.exe')
 Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
-$managedRoot = Join-Path $env:USERPROFILE '.local\share\rozi\remote'
+$dataHome = $env:LOCALAPPDATA
+if (-not $dataHome) { $dataHome = Join-Path $env:USERPROFILE '.local\share' }
+$managedRoot = Join-Path $dataHome 'rozi\remote'
 Get-ChildItem -LiteralPath $managedRoot -Directory | ForEach-Object {
-  $relative = ".local\share\rozi\remote\$($_.Name)\rozi.exe"
-  Try-Bin (Join-Path $_.FullName 'rozi.exe') $relative
+  Try-Bin (Join-Path $_.FullName 'rozi.exe')
 }
 Write-Output "probe_done=1"
 "#;
@@ -562,12 +568,12 @@ pub(crate) fn ensure_remote_binary_in_ui(
 fn install_destination(report: &ProbeReport) -> String {
     if normalize_os(&report.platform) == "windows" {
         format!(
-            r"%USERPROFILE%\.local\share\rozi\remote\{}\rozi.exe",
+            r"%LOCALAPPDATA%\rozi\remote\{}\rozi.exe",
             env!("CARGO_PKG_VERSION")
         )
     } else {
         format!(
-            "$HOME/{INSTALL_DIR}/{}/{INSTALL_NAME}",
+            "${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{}/{INSTALL_NAME}",
             env!("CARGO_PKG_VERSION")
         )
     }
@@ -685,8 +691,7 @@ fn family_from_os(os: &str) -> RemoteFamily {
 /// Stream `local` onto the remote and return the installed path.
 ///
 /// The payload is staged and executed before it is moved into Rozi's private, versioned runtime
-/// directory. The returned path is home-relative so it remains one shell-safe token even when the
-/// remote user's home directory contains spaces.
+/// directory. The returned path is the resolved path reported by the remote host.
 fn install_bytes(
     target: &RemoteTarget,
     config: &RemoteConfig,
@@ -719,7 +724,12 @@ fn install_bytes_posix(
     let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"set -e
-dir="$HOME/{INSTALL_DIR}/{version}"
+if [ -n "${{XDG_DATA_HOME:-}}" ] && [ "${{XDG_DATA_HOME#/}}" != "$XDG_DATA_HOME" ]; then
+  data_home="$XDG_DATA_HOME"
+else
+  data_home="$HOME/.local/share"
+fi
+dir="$data_home/rozi/remote/{version}"
 final="$dir/{INSTALL_NAME}"
 mkdir -p "$dir"
 if [ -L "$final" ] || {{ [ -e "$final" ] && [ ! -f "$final" ]; }}; then
@@ -746,7 +756,7 @@ if ! "$tmp" --help 2>/dev/null | grep -q -- '--remote'; then
   exit 1
 fi
 mv -f "$tmp" "$final"
-printf 'installed={INSTALL_DIR}/{version}/{INSTALL_NAME}\n'
+printf 'installed=%s\n' "$final"
 "#
     );
     let mut command = ssh_base_command(resolved, config);
@@ -822,7 +832,9 @@ fn install_bytes_windows(
     let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
-$dir = Join-Path $env:USERPROFILE '.local\share\rozi\remote\{version}'
+$dataHome = $env:LOCALAPPDATA
+if (-not $dataHome) {{ $dataHome = Join-Path $env:USERPROFILE '.local\share' }}
+$dir = Join-Path $dataHome 'rozi\remote\{version}'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $final = Join-Path $dir 'rozi.exe'
 $src = Join-Path $env:USERPROFILE '{temp_name}'
@@ -848,7 +860,7 @@ try {{
   $help = & $src --help 2>$null
   if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
   Move-Item -Force -LiteralPath $src -Destination $final
-  Write-Output 'installed=.local\share\rozi\remote\{version}\rozi.exe'
+  Write-Output "installed=$final"
 }} finally {{
   if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}
 }}"#
@@ -1189,6 +1201,16 @@ fn multiplexing_control_path(dir: &Path) -> Option<String> {
 /// the remote command; putting `--` after the destination makes it part of that command instead.
 pub(crate) fn append_ssh_destination(command: &mut Command, resolved: &ResolvedRemote) {
     command.arg("--").arg(resolved.ssh_destination());
+}
+
+/// Quote a validated executable as one remote-shell word. POSIX uses single quotes; Windows
+/// OpenSSH's default cmd shell uses double quotes for paths containing spaces.
+pub(crate) fn quote_remote_executable(path: &str) -> String {
+    if path.contains('\\') || path.as_bytes().get(1) == Some(&b':') {
+        format!("\"{path}\"")
+    } else {
+        format!("'{path}'")
+    }
 }
 
 /// Fail if the `ROZI_REMOTE_BINARY` override is a binary built for a different OS/arch than the

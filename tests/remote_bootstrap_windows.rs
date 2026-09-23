@@ -28,7 +28,7 @@ fn main() {
     }
     let marker = args.iter().position(|arg| arg == "--").unwrap();
     let remote = &args[marker + 2..];
-    let requested = PathBuf::from(&remote[0]);
+    let requested = PathBuf::from(remote[0].trim_matches('"'));
     let executable = if requested.is_relative() && (remote[0].contains('\\') || remote[0].contains('/')) {
         home.join(requested)
     } else {
@@ -59,7 +59,8 @@ fn main() {
 }
 
 fn managed(home: &Path) -> PathBuf {
-    home.join(".local/share/rozi/remote")
+    PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
+        .join("rozi/remote")
         .join(env!("CARGO_PKG_VERSION"))
         .join("rozi.exe")
 }
@@ -110,6 +111,10 @@ fn run_case(case: &str) {
         .env("ROZI_BOOTSTRAP_WINDOWS_CASE", case)
         .env("USERPROFILE", &home)
         .env("HOME", &home)
+        .env(
+            "LOCALAPPDATA",
+            root.path().join("local app data with spaces"),
+        )
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("XDG_STATE_HOME", root.path().join("state"))

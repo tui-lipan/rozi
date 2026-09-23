@@ -587,7 +587,7 @@ fn discover_remote_sessions(
     // rather than stall the picker's recurring discovery sweep on a TCP connect.
     let mut command = crate::session::remote::ssh_base_command(&resolved, config);
     crate::session::remote::append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
+    command.arg(crate::session::remote::quote_remote_executable(&remote_bin));
     command.arg("sessions");
     command.arg("list");
     command.arg("--format");

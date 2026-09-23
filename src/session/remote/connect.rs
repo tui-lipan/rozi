@@ -10,7 +10,8 @@ use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
 use super::bootstrap::{
-    append_ssh_destination, ssh_base_command, ssh_base_command_with_connect_timeout,
+    append_ssh_destination, quote_remote_executable, ssh_base_command,
+    ssh_base_command_with_connect_timeout,
 };
 use super::preamble::{self, RemotePreamble};
 use super::{
@@ -142,7 +143,7 @@ fn spawn_remote_proxy(
         super::askpass::scope_attach(&mut command, epoch);
     }
     append_ssh_destination(&mut command, resolved);
-    command.arg(remote_bin);
+    command.arg(quote_remote_executable(remote_bin));
     command.arg(if recover_existing {
         "--remote-serve-existing"
     } else {
@@ -386,7 +387,7 @@ pub fn kill_remote_session(
     validate_remote_executable_token(&remote_bin)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(&remote_bin);
+    command.arg(quote_remote_executable(&remote_bin));
     command.arg("sessions");
     command.arg("kill");
     command.arg(session);

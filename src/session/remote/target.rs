@@ -156,29 +156,17 @@ pub(crate) fn validate_remote_target(target: &RemoteTarget) -> Result<(), String
     Ok(())
 }
 
-/// Validate a remote executable that OpenSSH will reconstruct into a remote shell command. Keep the
-/// contract deliberately narrower than a host alias: only ordinary single-token path characters are
-/// accepted, so whitespace, control bytes, quoting, expansion, globbing, and command separators can
-/// never be reinterpreted by the remote shell.
+/// Validate a remote executable path before quoting it for the remote shell.
 pub(crate) fn validate_remote_executable_token(token: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err("remote executable token is empty".to_string());
-    }
-    if token
-        .chars()
-        .any(|ch| ch.is_control() || ch.is_whitespace())
-    {
-        return Err(
-            "remote executable must be one shell-safe token without whitespace or control characters"
-                .to_string(),
-        );
     }
     if token.ends_with('\\')
         || !token.chars().all(|ch| {
             ch.is_ascii_alphanumeric()
                 || matches!(
                     ch,
-                    '/' | '\\' | '.' | '_' | '-' | '+' | '=' | ':' | '@' | ','
+                    '/' | '\\' | '.' | '_' | '-' | '+' | '=' | ':' | '@' | ',' | ' '
                 )
         })
     {
@@ -420,11 +408,11 @@ mod tests {
             "/usr/local/bin/rozi",
             "C:/Users/me/rozi.exe",
             r"C:\Users\me\rozi.exe",
+            "/data/adam/rozi/remote/space dir/rozi",
         ] {
             validate_remote_executable_token(token).expect(token);
         }
         for token in [
-            "ro zi",
             "rozi\t--help",
             "rozi\n--help",
             "rozi;touch /tmp/pwned",

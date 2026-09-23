@@ -165,6 +165,22 @@ pub(crate) fn swap_tiled_panes(workspace: &mut Workspace, a: PaneId, b: PaneId) 
     true
 }
 
+/// Set the master pane's share of `workspace`. Returns whether it changed.
+pub(crate) fn set_master_ratio(workspace: &mut Workspace, ratio: f32) -> bool {
+    crate::layout::shared::set_master_share(&mut workspace.split_ratios, ratio)
+}
+
+/// Set pane `id`'s share of the Dwindle split directly holding it, in the settled tree. Returns
+/// whether it changed.
+pub(crate) fn set_pane_split_share(workspace: &mut Workspace, id: PaneId, share: f32) -> bool {
+    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
+        return false;
+    };
+    let changed = crate::layout::tiling::set_leaf_share(&mut tree, id, share);
+    workspace.tile_tree = Some(tree);
+    changed
+}
+
 /// Set `workspace`'s tiling algorithm. Returns whether it changed; an unchanged kind leaves the
 /// workspace's directional memory alone too.
 pub(crate) fn set_workspace_layout(workspace: &mut Workspace, kind: LayoutKind) -> bool {

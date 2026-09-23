@@ -627,7 +627,7 @@
           "type": "object"
         },
         {
-          "description": "Set a workspace's tiling algorithm. `workspace` is one-based.",
+          "description": "Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.",
           "properties": {
             "cmd": {
               "const": "layout-set",
@@ -643,7 +643,22 @@
               ]
             },
             "layout": {
-              "$ref": "#/$defs/ControlLayoutKind"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ControlLayoutKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "master_ratio": {
+              "description": "The master pane's share of a Master workspace, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "workspace": {
               "format": "uint",
@@ -653,8 +668,7 @@
           },
           "required": [
             "cmd",
-            "workspace",
-            "layout"
+            "workspace"
           ],
           "type": "object"
         },
@@ -707,10 +721,26 @@
               ],
               "description": "Floating rect as fractions of the canonical canvas."
             },
+            "split_ratio": {
+              "description": "The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "target": {
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "width_ratio": {
+              "description": "The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1571,7 +1601,7 @@
           "type": "object"
         },
         {
-          "description": "Set a workspace's tiling algorithm. `workspace` is one-based.",
+          "description": "Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.",
           "properties": {
             "cmd": {
               "const": "layout-set",
@@ -1587,7 +1617,22 @@
               ]
             },
             "layout": {
-              "$ref": "#/$defs/ControlLayoutKind"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ControlLayoutKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "master_ratio": {
+              "description": "The master pane's share of a Master workspace, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "workspace": {
               "format": "uint",
@@ -1597,8 +1642,7 @@
           },
           "required": [
             "cmd",
-            "workspace",
-            "layout"
+            "workspace"
           ],
           "type": "object"
         },
@@ -1651,10 +1695,26 @@
               ],
               "description": "Floating rect as fractions of the canonical canvas."
             },
+            "split_ratio": {
+              "description": "The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "target": {
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "width_ratio": {
+              "description": "The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2497,6 +2557,7 @@
         "bell",
         "focus-changed",
         "workspace-switched",
+        "layout-changed",
         "session-attached",
         "session-detached",
         "session-renamed",
@@ -2945,6 +3006,14 @@
           ],
           "description": "Exact pane incarnation. Absent only from a UI with no session behind it."
         },
+        "split_ratio": {
+          "description": "The pane's share of the Dwindle split directly holding it. Present only for a tiled pane\nthat shares a split in a Dwindle workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "view_rect": {
           "anyOf": [
             {
@@ -2955,6 +3024,14 @@
             }
           ],
           "description": "Where the answering UI draws the pane, in its own terminal's cells, including gaps and\nchrome. Present only for panes in the UI's active workspace."
+        },
+        "width_ratio": {
+          "description": "The pane's column width as a fraction of the viewport. Present only for a tiled pane in a\nScrollable workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3408,6 +3485,14 @@
         },
         "layout": {
           "$ref": "#/$defs/ControlLayoutKind"
+        },
+        "master_ratio": {
+          "description": "The master pane's share of the width. Present only for a Master workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "name": {
           "type": [

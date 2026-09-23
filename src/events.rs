@@ -13,6 +13,7 @@ pub enum EventKind {
     Bell,
     FocusChanged,
     WorkspaceSwitched,
+    LayoutChanged,
     SessionAttached,
     SessionDetached,
     SessionRenamed,
@@ -27,13 +28,14 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::PaneStatusChanged,
         Self::Bell,
         Self::FocusChanged,
         Self::WorkspaceSwitched,
+        Self::LayoutChanged,
         Self::SessionAttached,
         Self::SessionDetached,
         Self::SessionRenamed,
@@ -55,6 +57,7 @@ impl EventKind {
             Self::Bell => "bell",
             Self::FocusChanged => "focus-changed",
             Self::WorkspaceSwitched => "workspace-switched",
+            Self::LayoutChanged => "layout-changed",
             Self::SessionAttached => "session-attached",
             Self::SessionDetached => "session-detached",
             Self::SessionRenamed => "session-renamed",
@@ -234,7 +237,7 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
-        assert_eq!(EventKind::ALL.len(), 17);
+        assert_eq!(EventKind::ALL.len(), 18);
         let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));

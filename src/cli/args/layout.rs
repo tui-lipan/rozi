@@ -7,7 +7,8 @@ use super::{ListFormat, parse_list_format, require_value};
 
 type Parsed = std::result::Result<(ControlCommand, Option<ListFormat>), String>;
 
-/// `layout get [--workspace <1-9>]` and `layout set --workspace <1-9> <LAYOUT> [--if-revision <N>]`.
+/// `layout get [--workspace <1-9>]` and
+/// `layout set --workspace <1-9> [<LAYOUT>] [--master-ratio <R>] [--if-revision <N>]`.
 pub(super) fn parse_layout_args(iter: &mut impl Iterator<Item = String>) -> Parsed {
     let subcommand = iter
         .next()
@@ -23,10 +24,16 @@ pub(super) fn parse_layout_args(iter: &mut impl Iterator<Item = String>) -> Pars
     };
     let mut flags = Flags::new(command);
     let mut layout = None;
+    let mut master_ratio = None;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--workspace" => flags.workspace(iter)?,
             "--if-revision" if command == "layout set" => flags.if_revision(iter)?,
+            "--master-ratio" if command == "layout set" => once(
+                &mut master_ratio,
+                parse_ratio(iter, "--master-ratio")?,
+                "--master-ratio",
+            )?,
             "--format" => flags.format(iter)?,
             value if command == "layout set" && !value.starts_with('-') && layout.is_none() => {
                 layout = Some(ControlLayoutKind::parse(value).ok_or_else(|| {
@@ -50,14 +57,17 @@ pub(super) fn parse_layout_args(iter: &mut impl Iterator<Item = String>) -> Pars
     let workspace = workspace.ok_or_else(|| {
         "layout set requires --workspace; a script names the workspace it reshapes".to_string()
     })?;
-    let layout = layout.ok_or_else(|| {
-        "layout set requires a layout: dwindle, master, grid, columns, rows, scrollable, or monocle"
-            .to_string()
-    })?;
+    if layout.is_none() && master_ratio.is_none() {
+        return Err(
+            "layout set requires a layout (dwindle, master, grid, columns, rows, scrollable, or monocle), --master-ratio, or both"
+                .to_string(),
+        );
+    }
     Ok((
         ControlCommand::LayoutSet {
             workspace,
             layout,
+            master_ratio,
             if_revision,
         },
         format,
@@ -91,6 +101,8 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
     let mut fullscreen = None;
     let mut rect = None;
     let mut rect_fraction = None;
+    let mut split_ratio = None;
+    let mut width_ratio = None;
     let setting = command == "pane set";
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -113,6 +125,16 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
                 parse_fraction_rect(iter)?,
                 "--rect-fraction",
             )?,
+            "--split-ratio" if setting => once(
+                &mut split_ratio,
+                parse_ratio(iter, "--split-ratio")?,
+                "--split-ratio",
+            )?,
+            "--width-ratio" if setting => once(
+                &mut width_ratio,
+                parse_ratio(iter, "--width-ratio")?,
+                "--width-ratio",
+            )?,
             "--if-revision" => flags.if_revision(iter)?,
             "--format" => flags.format(iter)?,
             other => return Err(format!("unexpected argument `{other}` after {command}")),
@@ -129,6 +151,8 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
             fullscreen,
             rect,
             rect_fraction,
+            split_ratio,
+            width_ratio,
             if_revision,
         },
         "pane move" => ControlCommand::PaneMove {
@@ -149,6 +173,15 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
         },
     };
     Ok((command, flags.format))
+}
+
+/// A ratio as typed. Its range is checked where it is applied, with the other validation.
+fn parse_ratio(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<f64, String> {
+    require_value(iter, &format!("{flag} requires a ratio such as 0.6"))?
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("{flag} requires a ratio such as 0.6"))
 }
 
 fn parse_pane_id(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<PaneId, String> {

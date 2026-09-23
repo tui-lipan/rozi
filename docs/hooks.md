@@ -32,6 +32,7 @@ Every hook receives `ROZI_EVENT`. Event fields become uppercase `ROZI_*` variabl
 | `bell` | A pane emits BEL. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
+| `layout-changed` | The attached session's layout reaches a new accepted revision. | `revision`, `author` |
 | `session-attached` | The client finishes attaching. | `session`, `client_id`, `controller`, `read_only` |
 | `session-detached` | The client intentionally leaves or switches sessions. | `session` |
 | `session-renamed` | The attached session is renamed. | `session`, `previous` |
@@ -47,6 +48,7 @@ Every hook receives `ROZI_EVENT`. Event fields become uppercase `ROZI_*` variabl
 Field details:
 
 - `workspace` is one-based.
+- `layout-changed.author` is `self`, `client`, or `server`.
 - `command` and `cwd` are empty when inherited.
 - `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`.
 - `controller` and optional status values are empty when absent.

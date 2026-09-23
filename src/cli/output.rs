@@ -881,7 +881,8 @@ mod tests {
         let text = format_control_text(
             &control::ControlCommand::LayoutSet {
                 workspace: 2,
-                layout: control::ControlLayoutKind::Grid,
+                layout: Some(control::ControlLayoutKind::Grid),
+                master_ratio: None,
                 if_revision: None,
             },
             &change,
@@ -899,7 +900,8 @@ mod tests {
         let text = format_control_text(
             &control::ControlCommand::LayoutSet {
                 workspace: 2,
-                layout: control::ControlLayoutKind::Grid,
+                layout: Some(control::ControlLayoutKind::Grid),
+                master_ratio: None,
                 if_revision: None,
             },
             &unchanged,

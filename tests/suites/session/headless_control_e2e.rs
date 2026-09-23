@@ -295,6 +295,8 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
                 height: 10,
             }),
             rect_fraction: None,
+            split_ratio: None,
+            width_ratio: None,
             if_revision: Some(revision),
         },
     );
@@ -306,7 +308,8 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
         &session,
         ControlCommand::LayoutSet {
             workspace: 1,
-            layout: rozi::control::ControlLayoutKind::Grid,
+            layout: Some(rozi::control::ControlLayoutKind::Grid),
+            master_ratio: None,
             if_revision: Some(revision),
         },
     );

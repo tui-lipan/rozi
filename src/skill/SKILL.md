@@ -63,7 +63,12 @@ rozi pane set --target <PANE_ID> --floating true --rect 10,5,80,24
 rozi pane set --target <PANE_ID> --fullscreen false --if-revision <REVISION>
 rozi pane move --target <PANE_ID> --workspace 3
 rozi pane swap --target <PANE_ID> --with <PANE_ID>
+rozi pane set --target <PANE_ID> --split-ratio 0.6      # Dwindle
+rozi pane set --target <PANE_ID> --width-ratio 0.5      # Scrollable
+rozi layout set --workspace 2 master --master-ratio 0.6
 ```
+
+Each ratio works only with the layout that uses it; anything else fails with `unsupported`.
 
 `pane close --target <PANE_ID>` ends the pane's process without asking. Run it only for a pane the
 user asked you to close, or one you opened yourself.

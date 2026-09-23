@@ -1323,7 +1323,8 @@ mod tests {
             ]),
             control::ControlCommand::LayoutSet {
                 workspace: 2,
-                layout: control::ControlLayoutKind::Master,
+                layout: Some(control::ControlLayoutKind::Master),
+                master_ratio: None,
                 if_revision: Some(7),
             }
         );
@@ -1349,6 +1350,8 @@ mod tests {
                     height: 12,
                 }),
                 rect_fraction: None,
+                split_ratio: None,
+                width_ratio: None,
                 if_revision: None,
             }
         );
@@ -1405,8 +1408,38 @@ mod tests {
             }
         );
 
+        assert_eq!(
+            command(&["layout", "set", "--workspace", "1", "--master-ratio", "0.6"]),
+            control::ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: None,
+                master_ratio: Some(0.6),
+                if_revision: None,
+            }
+        );
+        let control::ControlCommand::PaneSet {
+            split_ratio,
+            width_ratio,
+            ..
+        } = command(&["pane", "set", "--target", "4", "--split-ratio", "0.65"])
+        else {
+            panic!("expected pane set");
+        };
+        assert_eq!((split_ratio, width_ratio), (Some(0.65), None));
+
         for refused in [
-            &["pane", "move", "--target", "4"][..],
+            &["layout", "set", "--workspace", "1"][..],
+            &[
+                "layout",
+                "set",
+                "--workspace",
+                "1",
+                "--master-ratio",
+                "wide",
+            ],
+            &["pane", "set", "--target", "4", "--split-ratio"],
+            &["pane", "move", "--target", "4", "--split-ratio", "0.5"],
+            &["pane", "move", "--target", "4"],
             &["pane", "swap", "--target", "4"],
             &["pane", "close"],
             &["pane", "close", "--target", "4", "--floating", "true"],

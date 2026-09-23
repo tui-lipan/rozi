@@ -297,18 +297,30 @@ impl SessionServer {
             ControlCommand::LayoutSet {
                 workspace,
                 layout,
+                master_ratio,
                 if_revision,
-            } => self.session_layout_set(workspace, layout, if_revision, broadcasts),
+            } => match crate::control::LayoutEdit::validate(layout, master_ratio) {
+                Ok(edit) => self.session_layout_set(workspace, edit, if_revision, broadcasts),
+                Err(response) => response,
+            },
             ControlCommand::PaneSet {
                 target,
                 floating,
                 fullscreen,
                 rect,
                 rect_fraction,
+                split_ratio,
+                width_ratio,
                 if_revision,
             } => {
-                match crate::control::PaneEdit::validate(floating, fullscreen, rect, rect_fraction)
-                {
+                match crate::control::PaneEdit::validate(
+                    floating,
+                    fullscreen,
+                    rect,
+                    rect_fraction,
+                    split_ratio,
+                    width_ratio,
+                ) {
                     Ok(edit) => self.session_pane_set(target, edit, if_revision, broadcasts),
                     Err(response) => response,
                 }
@@ -550,7 +562,7 @@ impl SessionServer {
     fn session_layout_set(
         &mut self,
         workspace: usize,
-        kind: crate::control::ControlLayoutKind,
+        edit: crate::control::LayoutEdit,
         if_revision: Option<u64>,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) -> ControlResponse {
@@ -562,7 +574,15 @@ impl SessionServer {
             Err(response) => return response,
         };
         let index = workspace - 1;
-        let changed = layout.set_layout_kind(index, kind.into());
+        if let Err(response) = edit.check(layout.layout_kind_of(index)) {
+            return response;
+        }
+        let mut changed = edit
+            .kind
+            .is_some_and(|kind| layout.set_layout_kind(index, kind));
+        if let Some(ratio) = edit.master_ratio {
+            changed |= layout.set_master_ratio(index, ratio);
+        }
         self.headless_layout_change(layout, changed, index, broadcasts)
     }
 
@@ -591,7 +611,13 @@ impl SessionServer {
             .panes
             .iter()
             .any(|pane| pane.pane_id == target && pane.floating);
-        if let Err(response) = edit.check_rect_target(floating_now) {
+        if let Err(response) = edit.check_rect_target(floating_now).and_then(|()| {
+            edit.check_sizes(
+                floating_now,
+                layout.workspaces[position].layout.into(),
+                layout.pane_in_split(target),
+            )
+        }) {
             return response;
         }
         let index = layout.workspaces[position].index;
@@ -1776,6 +1802,8 @@ mod tests {
             fullscreen: None,
             rect: None,
             rect_fraction: None,
+            split_ratio: None,
+            width_ratio: None,
             if_revision,
         }
     }
@@ -1834,7 +1862,8 @@ mod tests {
             &mut server,
             ControlCommand::LayoutSet {
                 workspace: 1,
-                layout: crate::control::ControlLayoutKind::Monocle,
+                layout: Some(crate::control::ControlLayoutKind::Monocle),
+                master_ratio: None,
                 if_revision: Some(10),
             },
         );
@@ -1869,6 +1898,8 @@ mod tests {
                     height: 8,
                 }),
                 rect_fraction: None,
+                split_ratio: None,
+                width_ratio: None,
                 if_revision: None,
             },
         );
@@ -1948,6 +1979,69 @@ mod tests {
             },
         );
         assert_eq!(swap_apart.code, Some(ControlErrorCode::InvalidArgument));
+    }
+
+    #[test]
+    fn headless_ratios_size_the_layout_that_uses_them() {
+        let mut server = SessionServer::new_named("dev");
+        two_tiled(&mut server);
+        let split = |ratio| ControlCommand::PaneSet {
+            target: 5,
+            floating: None,
+            fullscreen: None,
+            rect: None,
+            rect_fraction: None,
+            split_ratio: Some(ratio),
+            width_ratio: None,
+            if_revision: None,
+        };
+
+        let (response, broadcasts) = control(&mut server, split(0.3));
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(broadcasts.len(), 1);
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(response.data.expect("change")).expect("change");
+        let shares: Vec<_> = change
+            .workspace
+            .panes
+            .iter()
+            .map(|pane| (pane.id, pane.split_ratio))
+            .collect();
+        assert_eq!(shares, vec![(4, Some(0.7)), (5, Some(0.3))]);
+        assert_eq!(
+            change.workspace.panes[0].rect.width, 56,
+            "70% of the 80-column canvas"
+        );
+
+        let (master, _) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: None,
+                master_ratio: Some(0.6),
+                if_revision: None,
+            },
+        );
+        assert_eq!(master.code, Some(ControlErrorCode::Unsupported));
+
+        let (master, _) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: Some(crate::control::ControlLayoutKind::Master),
+                master_ratio: Some(0.6),
+                if_revision: None,
+            },
+        );
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(master.data.expect("change")).expect("change");
+        assert_eq!(change.workspace.master_ratio, Some(0.6));
+        let (refused, _) = control(&mut server, split(0.5));
+        assert_eq!(
+            refused.code,
+            Some(ControlErrorCode::Unsupported),
+            "no split ratio outside Dwindle"
+        );
     }
 
     #[test]
@@ -2035,7 +2129,8 @@ mod tests {
             &mut server,
             ControlCommand::LayoutSet {
                 workspace: 3,
-                layout: crate::control::ControlLayoutKind::Columns,
+                layout: Some(crate::control::ControlLayoutKind::Columns),
+                master_ratio: None,
                 if_revision: None,
             },
         );

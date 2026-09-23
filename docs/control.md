@@ -97,8 +97,8 @@ does not affect the JSON anything else reads.
 | --- | --- | --- |
 | `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
 | `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
-| `layout set --workspace 1-9 <LAYOUT> [--if-revision N]` | Set a workspace's tiling layout. | yes |
-| `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--if-revision N]` | Float, tile, place, or fullscreen a pane. | yes |
+| `layout set --workspace 1-9 [<LAYOUT>] [--master-ratio R] [--if-revision N]` | Set a workspace's tiling layout, its master share, or both. | yes |
+| `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--split-ratio R \| --width-ratio R] [--if-revision N]` | Float, tile, place, size, or fullscreen a pane. | yes |
 | `pane move --target ID --workspace 1-9 [--if-revision N]` | Move a pane to another workspace. | yes |
 | `pane swap --target ID --with ID [--if-revision N]` | Exchange two tiled panes. | yes |
 | `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
@@ -343,9 +343,12 @@ The report answers two separate questions, and keeps them apart:
 | `canvas` | The canonical canvas `rect` is measured against: the pane area of the client that last controlled the layout. |
 | `workspaces` | Every workspace in the layout document, including empty ones, so a script can see a workspace's layout before using it. `index` is one-based. A UI always reports all nine. A document the server started for a headless `split` holds only the workspaces it placed panes in; the others take each client's configured default layout. |
 | `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
+| `master_ratio` | Master workspaces only: the master pane's share of the width. |
 | `order` | The pane's position in the tiling order that every layout except Dwindle arranges panes in. Null for a floating pane. |
 | `rect` | Where the pane sits on the canonical canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
 | `rect_fraction` | The pane's position as fractions of the canvas, rounded to six decimal places. Floating panes are stored this way, so their fractions are exact. |
+| `split_ratio` | Dwindle workspaces only: the pane's share of the split that directly holds it. Absent for a floating pane or a lone tile. |
+| `width_ratio` | Scrollable workspaces only: the pane's column width as a fraction of the viewport. |
 | `view_rect` | Where this UI draws the pane, in cells of its own terminal, gaps and chrome included. Only for panes in the workspace the UI shows. |
 | `unplaced_panes` | Session endpoint only: panes the server runs that no layout places yet. |
 | `client.controller` | Whether this UI holds the layout-control lease. A UI without a shared session controls its own layout. |
@@ -392,6 +395,19 @@ creates no new revision. A refused write changes nothing.
 | `--fullscreen true\|false` | Make the pane fullscreen, or restore it. |
 | `--rect X,Y,W,H` | Place a floating pane, in canvas cells. `X` may be negative. |
 | `--rect-fraction X,Y,W,H` | Place a floating pane, as fractions of the canvas. |
+| `--split-ratio R` | Dwindle only: set the pane's share of the split that directly holds it. |
+| `--width-ratio R` | Scrollable only: set the pane's column width as a fraction of the viewport. |
+
+`layout set --master-ratio R` sets the master pane's share of a Master workspace. You can combine
+it with the layout name (`layout set --workspace 2 master --master-ratio 0.6`) or pass it alone for
+a workspace that is already Master.
+
+Rozi's layouts do not share one sizing model, so each ratio works only with the layout that uses
+it. Using a ratio with another layout, on a floating pane, or on a lone Dwindle tile fails with
+`unsupported`. Ratios run from `0.2` to `0.8`, the same limits that apply when you drag a divider.
+A value outside that range fails with `invalid-argument`. Ratios cannot be combined with
+`--floating` or a rect in one request; float or re-tile the pane first. Sizes change at once
+instead of animating, so the program inside redraws only once.
 
 A rect places a floating pane, so it needs a pane that floats already or `--floating true`.
 Rects are clamped the same way a dragged float is: part of the pane may leave the canvas, but a
@@ -438,6 +454,21 @@ A write needs layout authority, the same as a person rearranging panes:
 - A scratch pane is client-local and has no shared layout, so `pane set` refuses it with
   `unsupported`.
 - A pane the layout does not place fails with `pane-not-found`.
+
+### Watching the layout
+
+A UI's `subscribe` stream raises `layout-changed` whenever the server accepts a layout revision
+and this UI has it:
+
+```json
+{"event":"layout-changed","data":{"revision":"19","author":"self"}}
+```
+
+`author` is `self` for this UI's own change, `client` for another client's, and `server` for a
+change made through a session endpoint. The event fires only for accepted revisions: not for a
+commit the server rejects, not for animation frames, and not for a change the server has not yet
+confirmed. A session endpoint cannot
+`subscribe`, so a script driving a detached session reads `revision` from `layout get` instead.
 
 ## Sending keys and capturing output
 

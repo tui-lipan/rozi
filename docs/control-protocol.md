@@ -163,14 +163,17 @@ program data, reported status, and detected agent data when available.
 {"cmd":"pane-set","target":7,"floating":true,"rect":{"x":10,"y":5,"width":80,"height":24}}
 {"cmd":"pane-set","target":7,"rect_fraction":{"x":0.1,"y":0.1,"width":0.5,"height":0.5}}
 {"cmd":"pane-set","target":7,"fullscreen":false,"if_revision":19}
+{"cmd":"pane-set","target":7,"split_ratio":0.6}
+{"cmd":"layout-set","workspace":2,"master_ratio":0.65}
 {"cmd":"pane-move","target":7,"workspace":3}
 {"cmd":"pane-swap","target":7,"with":4}
 {"cmd":"pane-close","target":7,"if_revision":21}
 ```
 
 `layout-set.workspace` and the `target` of every `pane-*` request are required, and none falls back
-to `source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, and
-`rect_fraction`; `rect` and `rect_fraction` exclude each other. A stale `if_revision` fails with
+to `source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, `rect_fraction`,
+`split_ratio`, and `width_ratio`; `rect` and `rect_fraction` exclude each other. `layout-set` needs
+`layout`, `master_ratio`, or both. Ratios run from `0.2` to `0.8`. A stale `if_revision` fails with
 `conflict`.
 
 ### Focus and input

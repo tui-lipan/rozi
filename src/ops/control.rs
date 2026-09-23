@@ -42,16 +42,29 @@ pub(crate) fn handle_control_request(
         ControlCommand::LayoutSet {
             workspace,
             layout,
+            master_ratio,
             if_revision,
-        } => layout_set(ctx, workspace, layout, if_revision),
+        } => match crate::control::LayoutEdit::validate(layout, master_ratio) {
+            Ok(edit) => layout_set(ctx, workspace, edit, if_revision),
+            Err(response) => response,
+        },
         ControlCommand::PaneSet {
             target,
             floating,
             fullscreen,
             rect,
             rect_fraction,
+            split_ratio,
+            width_ratio,
             if_revision,
-        } => match crate::control::PaneEdit::validate(floating, fullscreen, rect, rect_fraction) {
+        } => match crate::control::PaneEdit::validate(
+            floating,
+            fullscreen,
+            rect,
+            rect_fraction,
+            split_ratio,
+            width_ratio,
+        ) {
             Ok(edit) => pane_set(ctx, target, edit, if_revision),
             Err(response) => response,
         },
@@ -546,23 +559,23 @@ fn layout_change_reply(
 fn layout_set(
     ctx: &mut Context<AppRoot>,
     workspace: usize,
-    kind: crate::control::ControlLayoutKind,
+    edit: crate::control::LayoutEdit,
     if_revision: Option<u64>,
 ) -> ControlResponse {
+    let index = workspace.wrapping_sub(1);
     if let Err(response) = crate::control::validate_layout_workspace(Some(workspace))
-        .and_then(|()| layout_write_gate(ctx))
+        .and_then(|()| layout_write_preflight(ctx, if_revision))
+        .and_then(|()| edit.check(ctx.state.current().workspaces[index].layout_kind))
     {
         return response;
     }
-    let (revision, _) = flushed_revision(ctx);
-    if let Err(response) = crate::control::check_if_revision(if_revision, revision) {
-        return response;
+    let target = &mut ctx.state.current_mut().workspaces[index];
+    let mut changed = edit
+        .kind
+        .is_some_and(|kind| crate::ops::resize_move::set_workspace_layout(target, kind));
+    if let Some(ratio) = edit.master_ratio {
+        changed |= crate::ops::resize_move::set_master_ratio(target, ratio);
     }
-    let index = workspace - 1;
-    let changed = crate::ops::resize_move::set_workspace_layout(
-        &mut ctx.state.current_mut().workspaces[index],
-        kind.into(),
-    );
     if changed && index == ctx.state.current().active_workspace {
         ctx.state.animation = crate::layout::anim::GeometryAnimation::AxisChange;
     }
@@ -587,7 +600,18 @@ fn pane_set(
         Ok(found) => found,
         Err(response) => return response,
     };
-    if let Err(response) = edit.check_rect_target(floating_now) {
+    let in_split = {
+        let workspace = &ctx.state.current().workspaces[index];
+        crate::layout::effective_tile_tree(workspace, None)
+            .is_some_and(|tree| crate::layout::tiling::leaf_share(&tree, target).is_some())
+    };
+    if let Err(response) = edit.check_rect_target(floating_now).and_then(|()| {
+        edit.check_sizes(
+            floating_now,
+            ctx.state.current().workspaces[index].layout_kind,
+            in_split,
+        )
+    }) {
         return response;
     }
 
@@ -629,6 +653,16 @@ fn pane_set(
     if let Some(fullscreen) = edit.fullscreen {
         fullscreen_changed =
             crate::ops::resize_move::set_pane_fullscreen(workspace, target, fullscreen);
+    }
+    // Sizes snap rather than animate: a terminal resized over several frames reflows its program
+    // once per frame.
+    if let Some(width) = edit.width_ratio
+        && let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == target)
+    {
+        pane.scrollable_width = width;
+    }
+    if let Some(share) = edit.split_ratio {
+        crate::ops::resize_move::set_pane_split_share(workspace, target, share);
     }
 
     // Judged on the document, so `changed` means exactly "this commits a new revision".
@@ -2255,6 +2289,8 @@ mod tests {
             fullscreen,
             rect,
             rect_fraction: None,
+            split_ratio: None,
+            width_ratio: None,
             if_revision: None,
         }
     }
@@ -2365,6 +2401,119 @@ mod tests {
             .expect("move test thread completes");
     }
 
+    /// Absolute sizes land in the same document from a UI as from a session server, read back
+    /// through `layout get`, and are refused for layouts that do not use them.
+    #[test]
+    fn a_ui_sets_ratios_into_the_document_a_session_server_would_write() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, canvas) = three_tiled_panes();
+                let sized = |split_ratio, width_ratio| ControlCommand::PaneSet {
+                    target: 3,
+                    floating: None,
+                    fullscreen: None,
+                    rect: None,
+                    rect_fraction: None,
+                    split_ratio,
+                    width_ratio,
+                    if_revision: None,
+                };
+                let layout_set = |layout, master_ratio| ControlCommand::LayoutSet {
+                    workspace: 1,
+                    layout,
+                    master_ratio,
+                    if_revision: None,
+                };
+                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+                let steps: [(ControlCommand, Edit); 3] = [
+                    (sized(Some(0.7), None), |layout| {
+                        let edit = crate::control::PaneEdit::validate(
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(0.7),
+                            None,
+                        )
+                        .unwrap();
+                        layout.edit_pane(3, edit).unwrap()
+                    }),
+                    (
+                        layout_set(Some(crate::control::ControlLayoutKind::Master), Some(0.65)),
+                        |layout| {
+                            layout.set_layout_kind(0, crate::state::LayoutKind::Master)
+                                | layout.set_master_ratio(0, 0.65)
+                        },
+                    ),
+                    (
+                        layout_set(Some(crate::control::ControlLayoutKind::Scrollable), None),
+                        |layout| layout.set_layout_kind(0, crate::state::LayoutKind::Scrollable),
+                    ),
+                ];
+                for (command, apply) in steps {
+                    let mut expected =
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                    let expected_change = apply(&mut expected);
+                    let response = dispatch(&mut backend, command.clone());
+                    assert!(response.ok, "{command:?}: {:?}", response.error);
+                    let change: crate::control::LayoutChange =
+                        serde_json::from_value(response.data.expect("change")).expect("change");
+                    assert_eq!(change.changed, expected_change, "{command:?}");
+                    assert_eq!(
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                        expected,
+                        "{command:?}"
+                    );
+                }
+
+                let response = dispatch(&mut backend, sized(None, Some(0.4)));
+                let change: crate::control::LayoutChange =
+                    serde_json::from_value(response.data.expect("change")).expect("change");
+                let pane = change
+                    .workspace
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == 3)
+                    .expect("pane 3");
+                assert_eq!(pane.width_ratio, Some(0.4), "read back as it was set");
+                assert_eq!(pane.split_ratio, None, "no split ratio outside Dwindle");
+                assert_eq!(change.workspace.master_ratio, None);
+
+                for (command, code) in [
+                    (sized(Some(0.6), None), ControlErrorCode::Unsupported),
+                    (layout_set(None, Some(0.6)), ControlErrorCode::Unsupported),
+                    (sized(None, Some(0.9)), ControlErrorCode::InvalidArgument),
+                    (
+                        ControlCommand::PaneSet {
+                            target: 3,
+                            floating: Some(false),
+                            fullscreen: None,
+                            rect: None,
+                            rect_fraction: None,
+                            split_ratio: None,
+                            width_ratio: Some(0.5),
+                            if_revision: None,
+                        },
+                        ControlErrorCode::InvalidArgument,
+                    ),
+                ] {
+                    let before =
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                    let response = dispatch(&mut backend, command.clone());
+                    assert_eq!(response.code, Some(code), "{command:?}");
+                    assert_eq!(
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                        before,
+                        "a refused {command:?} changes nothing"
+                    );
+                }
+            })
+            .expect("spawn ratio test thread")
+            .join()
+            .expect("ratio test thread completes");
+    }
+
     #[test]
     fn moving_the_focused_pane_leaves_focus_behind_and_close_needs_no_confirmation() {
         std::thread::Builder::new()
@@ -2453,7 +2602,7 @@ mod tests {
                 ] {
                     let mut expected =
                         crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    let edit = crate::control::PaneEdit::validate(floating, fullscreen, rect, None)
+                    let edit = crate::control::PaneEdit::validate(floating, fullscreen, rect, None, None, None)
                         .expect("valid edit");
                     let expected_change = expected.edit_pane(target, edit).expect("server edit");
 
@@ -2482,7 +2631,8 @@ mod tests {
                     &mut backend,
                     ControlCommand::LayoutSet {
                         workspace: 1,
-                        layout: crate::control::ControlLayoutKind::Grid,
+                        layout: Some(crate::control::ControlLayoutKind::Grid),
+                        master_ratio: None,
                         if_revision: None,
                     },
                 );
@@ -2538,7 +2688,8 @@ mod tests {
                         &mut backend,
                         ControlCommand::LayoutSet {
                             workspace: 1,
-                            layout: crate::control::ControlLayoutKind::Rows,
+                            layout: Some(crate::control::ControlLayoutKind::Rows),
+                            master_ratio: None,
                             if_revision: Some(4),
                         }
                     )),

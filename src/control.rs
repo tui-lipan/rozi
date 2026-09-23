@@ -123,10 +123,14 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<usize>,
     },
-    /// Set a workspace's tiling algorithm. `workspace` is one-based.
+    /// Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.
     LayoutSet {
         workspace: usize,
-        layout: ControlLayoutKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layout: Option<ControlLayoutKind>,
+        /// The master pane's share of a Master workspace, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        master_ratio: Option<f64>,
         /// Refuse with `conflict` unless the layout is still at this revision.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
@@ -145,6 +149,12 @@ pub enum ControlCommand {
         /// Floating rect as fractions of the canonical canvas.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect_fraction: Option<FractionRect>,
+        /// The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        split_ratio: Option<f64>,
+        /// The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_ratio: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
     },
@@ -581,6 +591,9 @@ pub struct WorkspaceLayout {
     pub layout: ControlLayoutKind,
     /// Whether typed input is broadcast to every pane in the workspace.
     pub synchronized: bool,
+    /// The master pane's share of the width. Present only for a Master workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_ratio: Option<f64>,
     /// Tiled panes in tiling order, then floating panes.
     pub panes: Vec<PaneLayout>,
 }
@@ -604,6 +617,14 @@ pub struct PaneLayout {
     pub rect: CellRect,
     /// `rect` as fractions of the canonical canvas.
     pub rect_fraction: FractionRect,
+    /// The pane's share of the Dwindle split directly holding it. Present only for a tiled pane
+    /// that shares a split in a Dwindle workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_ratio: Option<f64>,
+    /// The pane's column width as a fraction of the viewport. Present only for a tiled pane in a
+    /// Scrollable workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_ratio: Option<f64>,
     /// Where the answering UI draws the pane, in its own terminal's cells, including gaps and
     /// chrome. Present only for panes in the UI's active workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -643,9 +664,12 @@ impl WorkspaceLayout {
             .filter(|shared| workspace.is_none_or(|wanted| wanted == shared.index + 1))
             .map(|shared| {
                 let placements = crate::layout::shared::shared_workspace_placements(shared, canvas);
-                let tiled = crate::layout::ordered_tiled_ids(
-                    &crate::layout::shared::SharedTileSource::new(shared, canvas),
-                );
+                let source = crate::layout::shared::SharedTileSource::new(shared, canvas);
+                let tiled = crate::layout::ordered_tiled_ids(&source);
+                let kind = crate::state::LayoutKind::from(shared.layout);
+                let tree = (kind == crate::state::LayoutKind::Dwindle)
+                    .then(|| crate::layout::effective_tile_tree(&source, None))
+                    .flatten();
                 let mut panes: Vec<PaneLayout> = shared
                     .panes
                     .iter()
@@ -665,6 +689,16 @@ impl WorkspaceLayout {
                             fullscreen: pane.fullscreen,
                             rect: CellRect::from_float(rect),
                             rect_fraction: FractionRect::of_canvas(rect, canvas),
+                            split_ratio: tree
+                                .as_ref()
+                                .filter(|_| !pane.floating)
+                                .and_then(|tree| {
+                                    crate::layout::tiling::leaf_share(tree, pane.pane_id)
+                                })
+                                .map(report_ratio),
+                            width_ratio: (kind == crate::state::LayoutKind::Scrollable
+                                && !pane.floating)
+                                .then(|| report_ratio(pane.scrollable_width)),
                             view_rect: None,
                         })
                     })
@@ -673,8 +707,11 @@ impl WorkspaceLayout {
                 Self {
                     index: shared.index + 1,
                     name: shared.name.clone(),
-                    layout: crate::state::LayoutKind::from(shared.layout).into(),
+                    layout: kind.into(),
                     synchronized: shared.synchronized,
+                    master_ratio: (kind == crate::state::LayoutKind::Master).then(|| {
+                        report_ratio(crate::layout::tiling::ratio_at(&shared.split_ratios, 0))
+                    }),
                     panes,
                 }
             })
@@ -750,6 +787,27 @@ pub(crate) struct PaneEdit {
     pub floating: Option<bool>,
     pub fullscreen: Option<bool>,
     pub rect: Option<RequestedRect>,
+    /// The pane's share of the Dwindle split directly holding it.
+    pub split_ratio: Option<f32>,
+    /// The pane's Scrollable column width, as a fraction of the tile viewport.
+    pub width_ratio: Option<f32>,
+}
+
+/// The range every ratio a layout write sets must lie in: the same bounds dragging a divider stops
+/// at, so a script cannot make a tile a person could not.
+pub(crate) fn validate_ratio(flag: &str, value: f64) -> std::result::Result<f32, ControlResponse> {
+    let (low, high) = (
+        f64::from(crate::state::MIN_SPLIT_RATIO),
+        f64::from(crate::state::MAX_SPLIT_RATIO),
+    );
+    if value.is_finite() && (low..=high).contains(&value) {
+        Ok(value as f32)
+    } else {
+        Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            format!("{flag} must be between {low} and {high}"),
+        ))
+    }
 }
 
 impl PaneEdit {
@@ -758,6 +816,8 @@ impl PaneEdit {
         fullscreen: Option<bool>,
         rect: Option<CellRect>,
         rect_fraction: Option<FractionRect>,
+        split_ratio: Option<f64>,
+        width_ratio: Option<f64>,
     ) -> std::result::Result<Self, ControlResponse> {
         let invalid = |message: &str| {
             Err(ControlResponse::error_with(
@@ -789,14 +849,68 @@ impl PaneEdit {
         if rect.is_some() && floating == Some(false) {
             return invalid("a rect places a floating pane; it cannot go with --floating false");
         }
-        if floating.is_none() && fullscreen.is_none() && rect.is_none() {
-            return invalid("pane set needs --floating, --fullscreen, --rect, or --rect-fraction");
+        let split_ratio = split_ratio
+            .map(|value| validate_ratio("--split-ratio", value))
+            .transpose()?;
+        let width_ratio = width_ratio
+            .map(|value| validate_ratio("--width-ratio", value))
+            .transpose()?;
+        let sizes = split_ratio.is_some() || width_ratio.is_some();
+        if sizes && (floating.is_some() || rect.is_some()) {
+            return invalid(
+                "a ratio sizes a pane where it is tiled; float or re-tile it in a separate request",
+            );
+        }
+        if floating.is_none() && fullscreen.is_none() && rect.is_none() && !sizes {
+            return invalid(
+                "pane set needs --floating, --fullscreen, --rect, --rect-fraction, --split-ratio, or --width-ratio",
+            );
         }
         Ok(Self {
             floating,
             fullscreen,
             rect,
+            split_ratio,
+            width_ratio,
         })
+    }
+
+    /// Refuse a ratio the pane's layout does not use, before anything changes. `in_split` is
+    /// whether the pane shares a Dwindle split with anything - a lone tile has no divider to move.
+    pub(crate) fn check_sizes(
+        self,
+        floating: bool,
+        layout: crate::state::LayoutKind,
+        in_split: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        use crate::state::LayoutKind;
+        let unsupported = |message: &str| {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                message,
+            ))
+        };
+        if (self.split_ratio.is_some() || self.width_ratio.is_some()) && floating {
+            return unsupported("a floating pane has no tile to size");
+        }
+        if self.split_ratio.is_some() {
+            if layout != LayoutKind::Dwindle {
+                return unsupported(
+                    "--split-ratio sizes a Dwindle split; this workspace is not Dwindle",
+                );
+            }
+            if !in_split {
+                return unsupported(
+                    "the pane is the workspace's only tile, so it has no split to size",
+                );
+            }
+        }
+        if self.width_ratio.is_some() && layout != LayoutKind::Scrollable {
+            return unsupported(
+                "--width-ratio sizes a Scrollable column; this workspace is not Scrollable",
+            );
+        }
+        Ok(())
     }
 
     /// Whether the pane ends up floating, given whether it floats now.
@@ -813,6 +927,50 @@ impl PaneEdit {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::InvalidArgument,
                 "a rect places a floating pane; pass --floating true to float a tiled one",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A validated `layout set`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LayoutEdit {
+    pub kind: Option<crate::state::LayoutKind>,
+    pub master_ratio: Option<f32>,
+}
+
+impl LayoutEdit {
+    pub(crate) fn validate(
+        layout: Option<ControlLayoutKind>,
+        master_ratio: Option<f64>,
+    ) -> std::result::Result<Self, ControlResponse> {
+        let master_ratio = master_ratio
+            .map(|value| validate_ratio("--master-ratio", value))
+            .transpose()?;
+        if layout.is_none() && master_ratio.is_none() {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "layout set needs a layout, --master-ratio, or both",
+            ));
+        }
+        Ok(Self {
+            kind: layout.map(Into::into),
+            master_ratio,
+        })
+    }
+
+    /// Refuse a master ratio for a workspace that will not be Master, before anything changes.
+    pub(crate) fn check(
+        self,
+        current: crate::state::LayoutKind,
+    ) -> std::result::Result<(), ControlResponse> {
+        if self.master_ratio.is_some()
+            && self.kind.unwrap_or(current) != crate::state::LayoutKind::Master
+        {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                "--master-ratio sizes a Master workspace; pass `master` or set it on one",
             ));
         }
         Ok(())
@@ -855,6 +1013,12 @@ pub(crate) fn validate_layout_workspace(
         }
         _ => Ok(()),
     }
+}
+
+/// A stored `f32` ratio as the report prints it: rounded to six places, so a share set to `0.6`
+/// reads back as `0.6` rather than as its nearest `f32`.
+fn report_ratio(value: f32) -> f64 {
+    (f64::from(value) * 1e6).round() / 1e6
 }
 
 impl CellRect {

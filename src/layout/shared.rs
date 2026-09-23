@@ -607,6 +607,24 @@ impl SharedLayout {
         true
     }
 
+    /// The layout kind of the workspace at zero-based `index`; a workspace the document does not
+    /// hold yet reads as the kind it would be added with.
+    pub(crate) fn layout_kind_of(&self, index: usize) -> crate::state::LayoutKind {
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.index == index)
+            .map_or_else(
+                || crate::state::Workspace::new(index).layout_kind,
+                |workspace| workspace.layout.into(),
+            )
+    }
+
+    /// Set the master pane's share of the workspace at zero-based `index`. Returns whether the
+    /// document changed.
+    pub(crate) fn set_master_ratio(&mut self, index: usize, ratio: f32) -> bool {
+        set_master_share(&mut self.workspace_mut_or_insert(index).split_ratios, ratio)
+    }
+
     /// The workspace at zero-based `index`, added empty with a fresh workspace's defaults when the
     /// document does not hold it yet.
     fn workspace_mut_or_insert(&mut self, index: usize) -> &mut SharedWorkspace {
@@ -810,10 +828,53 @@ impl SharedLayout {
                     .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
             workspace.tree = tree;
         }
+        if let Some(width) = edit.width_ratio
+            && let Some(pane) = workspace
+                .panes
+                .iter_mut()
+                .find(|pane| pane.pane_id == pane_id)
+        {
+            pane.scrollable_width = width;
+        }
+        if let Some(share) = edit.split_ratio {
+            let tree =
+                crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
+                    .map(|mut tree| {
+                        crate::layout::tiling::set_leaf_share(&mut tree, pane_id, share);
+                        tree
+                    });
+            workspace.tree = tree
+                .as_ref()
+                .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
+        }
         let changed = *workspace != before;
         self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(changed)
     }
+
+    /// Whether `pane_id` shares a split in its workspace's settled tree - whether a split ratio
+    /// has anything to size.
+    pub(crate) fn pane_in_split(&self, pane_id: PaneId) -> bool {
+        let canvas = (self.canvas_cols.max(1), self.canvas_rows.max(1));
+        self.workspace_position_of(pane_id).is_some_and(|position| {
+            crate::layout::effective_tile_tree(
+                &SharedTileSource::new(&self.workspaces[position], canvas),
+                None,
+            )
+            .is_some_and(|tree| crate::layout::tiling::leaf_share(&tree, pane_id).is_some())
+        })
+    }
+}
+
+/// Set a workspace's master share, which `allocate_master` reads from the first split ratio. Shared
+/// by the document edit and the live one, so both store the same ratios.
+pub(crate) fn set_master_share(split_ratios: &mut Vec<f32>, ratio: f32) -> bool {
+    if split_ratios.is_empty() {
+        split_ratios.push(crate::state::DEFAULT_RATIO);
+    }
+    let changed = split_ratios[0] != ratio;
+    split_ratios[0] = ratio;
+    changed
 }
 
 /// Express a canvas-cell rect as the canvas fractions a [`SharedPane`] stores.
@@ -1387,7 +1448,8 @@ mod tests {
         fullscreen: Option<bool>,
         rect: Option<crate::control::CellRect>,
     ) -> crate::control::PaneEdit {
-        crate::control::PaneEdit::validate(floating, fullscreen, rect, None).expect("valid edit")
+        crate::control::PaneEdit::validate(floating, fullscreen, rect, None, None, None)
+            .expect("valid edit")
     }
 
     fn placement(layout: &SharedLayout, id: PaneId) -> FloatRect {
@@ -1565,6 +1627,31 @@ mod tests {
             Err(SharedEditError::NotSwappable(1, 3)),
             "panes in different workspaces"
         );
+    }
+
+    fn sizes(split_ratio: Option<f64>, width_ratio: Option<f64>) -> crate::control::PaneEdit {
+        crate::control::PaneEdit::validate(None, None, None, None, split_ratio, width_ratio)
+            .expect("valid edit")
+    }
+
+    #[test]
+    fn ratios_are_set_absolutely_on_the_document() {
+        let mut layout = three_tiled();
+        assert!(layout.pane_in_split(3));
+        assert_eq!(layout.edit_pane(3, sizes(Some(0.7), None)), Ok(true));
+        assert_eq!(layout.edit_pane(3, sizes(Some(0.7), None)), Ok(false));
+        let known = [1, 2, 3].into_iter().collect();
+        let tree =
+            dwindle_from_shared(layout.workspaces[0].tree.as_ref().unwrap(), &known).unwrap();
+        assert!((crate::layout::tiling::leaf_share(&tree, 3).unwrap() - 0.7).abs() < 1e-6);
+
+        assert_eq!(layout.edit_pane(2, sizes(None, Some(0.35))), Ok(true));
+        assert_eq!(layout.workspaces[0].panes[1].scrollable_width, 0.35);
+
+        assert!(layout.set_master_ratio(0, 0.65));
+        assert!(!layout.set_master_ratio(0, 0.65));
+        assert_eq!(layout.workspaces[0].split_ratios[0], 0.65);
+        layout.validate().expect("valid");
     }
 
     #[test]

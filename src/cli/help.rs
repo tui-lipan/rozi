@@ -199,13 +199,14 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Show workspaces and where each pane sits",
             ),
             row(
-                "layout set --workspace <1-9> <LAYOUT> [--if-revision <N>]",
-                "Set a workspace's tiling layout",
+                "layout set --workspace <1-9> [<LAYOUT>] [--master-ratio <R>]",
+                "Set a workspace's layout or master share",
             ),
             row("pane set --target <ID> [--floating B] [--fullscreen B]", ""),
+            row("    [--rect X,Y,W,H | --rect-fraction X,Y,W,H]", ""),
             row(
-                "    [--rect X,Y,W,H | --rect-fraction X,Y,W,H] [--if-revision <N>]",
-                "Float, tile, place, or fullscreen a pane",
+                "    [--split-ratio <R> | --width-ratio <R>] [--if-revision <N>]",
+                "Float, place, size, or fullscreen a pane",
             ),
             row(
                 "pane move --target <ID> --workspace <1-9> [--if-revision <N>]",

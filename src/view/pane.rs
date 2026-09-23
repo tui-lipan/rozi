@@ -1238,8 +1238,10 @@ pub(crate) fn pane_element(
         .on_right_drag_end(ctx.link().callback(move |_| Msg::EndResize(id)));
 
     if ctx.state.config.pane.focus_on_hover {
-        window_region =
-            window_region.on_mouse_move(ctx.link().callback(move |_| Msg::HoverPane(id)));
+        window_region = window_region.on_mouse_move(
+            ctx.link()
+                .callback(move |event: MouseMoveEvent| Msg::HoverPane(id, event.mods)),
+        );
     }
 
     window_region = window_region

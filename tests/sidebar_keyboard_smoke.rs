@@ -960,7 +960,7 @@ fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
 
             // The pointer crosses a different pane on its way to the sidebar.
             backend
-                .dispatch(Msg::HoverPane(2))
+                .dispatch(Msg::HoverPane(2, KeyMods::NONE))
                 .expect("hover another pane");
             settle(&mut backend);
 
@@ -977,7 +977,9 @@ fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
             // Leaving the sidebar restores the normal ambient behaviour.
             let _ = backend.send_key(key(KeyCode::Esc));
             settle(&mut backend);
-            backend.dispatch(Msg::HoverPane(2)).expect("hover again");
+            backend
+                .dispatch(Msg::HoverPane(2, KeyMods::NONE))
+                .expect("hover again");
             settle(&mut backend);
             assert_eq!(
                 backend.state().current().focused_pane,

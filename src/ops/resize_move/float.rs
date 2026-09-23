@@ -1266,6 +1266,32 @@ mod tests {
     }
 
     #[test]
+    fn held_modifier_pauses_hover_focus_but_not_click_focus() {
+        use tui_lipan::KeyMods;
+
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+
+            backend
+                .dispatch(Msg::HoverPane(2, KeyMods::SHIFT))
+                .expect("modified hover");
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+
+            backend.dispatch(Msg::FocusPane(2)).expect("click pane");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+
+            backend
+                .dispatch(Msg::FocusPane(1))
+                .expect("focus first pane");
+            backend
+                .dispatch(Msg::HoverPane(2, KeyMods::NONE))
+                .expect("unmodified hover");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+        });
+    }
+
+    #[test]
     fn scrollable_hover_focus_waits_for_a_key_or_click_before_scrolling() {
         use tui_lipan::{KeyCode, KeyEvent, KeyMods};
 
@@ -1276,7 +1302,9 @@ mod tests {
                 backend.state_mut().animation = GeometryAnimation::None;
                 let before = placement_of(backend.state(), 1);
 
-                backend.dispatch(Msg::HoverPane(4)).expect("hover clipped");
+                backend
+                    .dispatch(Msg::HoverPane(4, KeyMods::NONE))
+                    .expect("hover clipped");
                 // The framework follows the app's focus request back; that echo is not intent.
                 backend
                     .dispatch(Msg::FrameworkFocusEnteredPane(Some(4)))

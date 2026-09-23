@@ -526,6 +526,36 @@ impl Default for RemoteConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HoverFocusPauseModifier {
+    None,
+    #[default]
+    Shift,
+    Ctrl,
+    Alt,
+}
+
+impl HoverFocusPauseModifier {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
+            "shift" => Some(Self::Shift),
+            "ctrl" => Some(Self::Ctrl),
+            "alt" => Some(Self::Alt),
+            _ => None,
+        }
+    }
+
+    pub fn is_held(self, mods: KeyMods) -> bool {
+        match self {
+            Self::None => false,
+            Self::Shift => mods.shift,
+            Self::Ctrl => mods.ctrl,
+            Self::Alt => mods.alt,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PaneConfig {
     /// Minimum interval between PTY resize batches. Zero forwards geometry reports immediately.
@@ -541,6 +571,8 @@ pub struct PaneConfig {
     pub highlight_focused_titlebar: bool,
     /// Whether moving the mouse over a pane focuses it.
     pub focus_on_hover: bool,
+    /// Modifier that temporarily suspends hover focus while held.
+    pub focus_on_hover_pause_modifier: HoverFocusPauseModifier,
     /// Whether the workbar (workspace tabs, mode chips, etc.) is shown.
     pub show_workbar: bool,
     /// Whether there is a 1-line gap between the workbar and the panes area.
@@ -631,6 +663,7 @@ impl Default for PaneConfig {
             highlight_focused_border: true,
             highlight_focused_titlebar: true,
             focus_on_hover: true,
+            focus_on_hover_pause_modifier: HoverFocusPauseModifier::default(),
             show_workbar: true,
             workbar_gap: true,
             workbar_background: true,

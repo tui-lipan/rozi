@@ -447,6 +447,7 @@ pub(super) struct PaneFileConfig {
     highlight_focused_border: Option<bool>,
     highlight_focused_titlebar: Option<bool>,
     focus_on_hover: Option<bool>,
+    focus_on_hover_pause_modifier: Option<String>,
     show_workbar: Option<bool>,
     workbar_gap: Option<bool>,
     workbar_background: Option<bool>,
@@ -918,6 +919,14 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
         config.pane.focus_on_hover = focus_on_hover;
+    }
+    if let Some(modifier) = &parsed.pane.focus_on_hover_pause_modifier {
+        match HoverFocusPauseModifier::parse(modifier) {
+            Some(modifier) => config.pane.focus_on_hover_pause_modifier = modifier,
+            None => warnings.push(format!(
+                "Ignored unknown pane.focus_on_hover_pause_modifier `{modifier}` (expected `none`, `shift`, `ctrl`, or `alt`)"
+            )),
+        }
     }
     if let Some(show_workbar) = parsed.pane.show_workbar {
         config.pane.show_workbar = show_workbar;
@@ -1834,6 +1843,7 @@ mod file_tests {
             highlight_focused_border = true
             highlight_focused_titlebar = false
             focus_on_hover = false
+            focus_on_hover_pause_modifier = "ctrl"
             show_workbar = false
             workbar_gap = false
             workbar_background = false
@@ -1856,6 +1866,10 @@ mod file_tests {
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
         assert_eq!(parsed.pane.highlight_focused_titlebar, Some(false));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
+        assert_eq!(
+            parsed.pane.focus_on_hover_pause_modifier.as_deref(),
+            Some("ctrl")
+        );
         assert_eq!(parsed.pane.show_workbar, Some(false));
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_background, Some(false));
@@ -1869,6 +1883,38 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn hover_focus_pause_modifier_loads_and_rejects_unknown_values() {
+        for (name, expected) in [
+            ("none", HoverFocusPauseModifier::None),
+            ("shift", HoverFocusPauseModifier::Shift),
+            ("ctrl", HoverFocusPauseModifier::Ctrl),
+            ("alt", HoverFocusPauseModifier::Alt),
+        ] {
+            let loaded = load_config_from_text(
+                &format!("[pane]\nfocus_on_hover_pause_modifier = \"{name}\""),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.pane.focus_on_hover_pause_modifier, expected);
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        }
+
+        let loaded = load_config_from_text(
+            "[pane]\nfocus_on_hover_pause_modifier = \"super\"",
+            Path::new("config.toml"),
+        );
+        assert_eq!(
+            loaded.config.pane.focus_on_hover_pause_modifier,
+            HoverFocusPauseModifier::Shift
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("super"))
+        );
     }
 
     #[test]

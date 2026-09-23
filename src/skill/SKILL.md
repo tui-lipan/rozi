@@ -61,7 +61,12 @@ Change the layout only when the user asks. Every write names what it changes and
 rozi layout set --workspace 2 master
 rozi pane set --target <PANE_ID> --floating true --rect 10,5,80,24
 rozi pane set --target <PANE_ID> --fullscreen false --if-revision <REVISION>
+rozi pane move --target <PANE_ID> --workspace 3
+rozi pane swap --target <PANE_ID> --with <PANE_ID>
 ```
+
+`pane close --target <PANE_ID>` ends the pane's process without asking. Run it only for a pane the
+user asked you to close, or one you opened yourself.
 
 Writes set a state; repeating one returns `changed:false`. Pass the `revision` from `layout get`
 as `--if-revision` so a layout someone changed meanwhile fails with `conflict` instead of being
@@ -133,8 +138,8 @@ cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is
 bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"activate":"<id>"}`;
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
-A detached endpoint supports `list-panes`, `layout get`, `layout set`, `pane set`, `metrics`,
-`send-text`, `send-keys`, `capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
+A detached endpoint supports `list-panes`, `layout get`, `layout set`, the `pane` commands,
+`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
 
 ## Detached-session limits
 

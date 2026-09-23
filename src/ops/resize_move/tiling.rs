@@ -150,6 +150,21 @@ pub(crate) fn set_pane_fullscreen(workspace: &mut Workspace, id: PaneId, fullscr
     changed
 }
 
+/// Exchange the places of tiled panes `a` and `b` in `workspace`, in its settled tree. Returns
+/// whether both were there to swap.
+pub(crate) fn swap_tiled_panes(workspace: &mut Workspace, a: PaneId, b: PaneId) -> bool {
+    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
+        return false;
+    };
+    if !swap_tree_leaves(&mut tree, a, b) {
+        return false;
+    }
+    workspace.tile_tree = Some(tree);
+    workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
+    true
+}
+
 /// Set `workspace`'s tiling algorithm. Returns whether it changed; an unchanged kind leaves the
 /// workspace's directional memory alone too.
 pub(crate) fn set_workspace_layout(workspace: &mut Workspace, kind: LayoutKind) -> bool {

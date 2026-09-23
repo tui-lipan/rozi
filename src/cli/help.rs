@@ -207,6 +207,18 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "    [--rect X,Y,W,H | --rect-fraction X,Y,W,H] [--if-revision <N>]",
                 "Float, tile, place, or fullscreen a pane",
             ),
+            row(
+                "pane move --target <ID> --workspace <1-9> [--if-revision <N>]",
+                "Move a pane to another workspace",
+            ),
+            row(
+                "pane swap --target <ID> --with <ID> [--if-revision <N>]",
+                "Exchange two tiled panes",
+            ),
+            row(
+                "pane close --target <ID> [--if-revision <N>]",
+                "Close a pane without asking",
+            ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
                 "send-text [--target <PANE_ID>] <TEXT>",

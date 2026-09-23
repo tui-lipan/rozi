@@ -55,6 +55,26 @@ pub(crate) fn handle_control_request(
             Ok(edit) => pane_set(ctx, target, edit, if_revision),
             Err(response) => response,
         },
+        ControlCommand::PaneMove {
+            target,
+            workspace,
+            if_revision,
+        } => pane_move(ctx, target, workspace, if_revision),
+        ControlCommand::PaneSwap {
+            target,
+            with,
+            if_revision,
+        } => pane_swap(ctx, target, with, if_revision),
+        ControlCommand::PaneClose {
+            target,
+            if_revision,
+        } => {
+            // Closing schedules the pane's prune once its close animation ends, so the update is
+            // this arm's to return rather than the plain redraw every other reply gets.
+            let (response, update) = pane_close(ctx, target, if_revision);
+            let _ = envelope.reply.send(response);
+            return update;
+        }
         ControlCommand::AgentsList => {
             ControlResponse::ok(crate::control::AgentListPayload(list_agents(ctx)))
         }
@@ -454,6 +474,51 @@ fn layout_write_gate(ctx: &Context<AppRoot>) -> std::result::Result<(), ControlR
     Ok(())
 }
 
+/// The checks every layout write makes before looking at its target: authority, then revision.
+fn layout_write_preflight(
+    ctx: &mut Context<AppRoot>,
+    if_revision: Option<u64>,
+) -> std::result::Result<(), ControlResponse> {
+    layout_write_gate(ctx)?;
+    let (revision, _) = flushed_revision(ctx);
+    crate::control::check_if_revision(if_revision, revision)
+}
+
+/// The zero-based workspace holding live pane `target`, and whether it floats.
+fn locate_layout_pane(
+    ctx: &Context<AppRoot>,
+    target: PaneId,
+) -> std::result::Result<(usize, bool), ControlResponse> {
+    let found = ctx
+        .state
+        .current()
+        .workspaces
+        .iter()
+        .enumerate()
+        .find_map(|(index, workspace)| {
+            workspace
+                .panes
+                .iter()
+                .find(|pane| pane.id == target && !pane.closing)
+                .map(|pane| (index, pane.floating))
+        });
+    found.ok_or_else(|| {
+        if ctx.state.scratch.panes.iter().any(|pane| pane.id == target) {
+            ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                format!(
+                    "pane {target} is a scratch pane, which is client-local and has no shared layout"
+                ),
+            )
+        } else {
+            ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {target} not found"),
+            )
+        }
+    })
+}
+
 /// Commit a layout write and describe the workspace it touched.
 fn layout_change_reply(
     ctx: &mut Context<AppRoot>,
@@ -516,41 +581,11 @@ fn pane_set(
     edit: crate::control::PaneEdit,
     if_revision: Option<u64>,
 ) -> ControlResponse {
-    if let Err(response) = layout_write_gate(ctx) {
-        return response;
-    }
-    let (revision, _) = flushed_revision(ctx);
-    if let Err(response) = crate::control::check_if_revision(if_revision, revision) {
-        return response;
-    }
-    let attachment = ctx.state.current();
-    let Some((index, floating_now)) =
-        attachment
-            .workspaces
-            .iter()
-            .enumerate()
-            .find_map(|(index, workspace)| {
-                workspace
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == target && !pane.closing)
-                    .map(|pane| (index, pane.floating))
-            })
-    else {
-        let scratch = ctx.state.scratch.panes.iter().any(|pane| pane.id == target);
-        return if scratch {
-            ControlResponse::error_with(
-                ControlErrorCode::Unsupported,
-                format!(
-                    "pane {target} is a scratch pane, which is client-local and has no shared layout"
-                ),
-            )
-        } else {
-            ControlResponse::error_with(
-                ControlErrorCode::PaneNotFound,
-                format!("pane {target} not found"),
-            )
-        };
+    let (index, floating_now) = match layout_write_preflight(ctx, if_revision)
+        .and_then(|()| locate_layout_pane(ctx, target))
+    {
+        Ok(found) => found,
+        Err(response) => return response,
     };
     if let Err(response) = edit.check_rect_target(floating_now) {
         return response;
@@ -608,6 +643,105 @@ fn pane_set(
         };
     }
     layout_change_reply(ctx, changed, index)
+}
+
+/// `pane move` from this UI. `workspace` is one-based.
+///
+/// Focus stays where it is unless the moved pane had it, and then it falls back inside the
+/// workspace the pane left, as it would if the pane had closed.
+fn pane_move(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    workspace: usize,
+    if_revision: Option<u64>,
+) -> ControlResponse {
+    let source = match crate::control::validate_layout_workspace(Some(workspace))
+        .and_then(|()| layout_write_preflight(ctx, if_revision))
+        .and_then(|()| locate_layout_pane(ctx, target))
+    {
+        Ok((source, _)) => source,
+        Err(response) => return response,
+    };
+    let destination = workspace - 1;
+    let changed = crate::ops::focus::transfer_pane(&mut ctx.state, target, source, destination);
+    if changed {
+        let active = ctx.state.current().active_workspace;
+        if source == active && !ctx.state.scratch_visible {
+            crate::ops::focus::choose_fallback_focus(&mut ctx.state);
+        } else {
+            let left = &mut ctx.state.current_mut().workspaces[source];
+            if left.focused_pane == Some(target) {
+                left.focused_pane = crate::ops::focus::first_visible_pane(left);
+            }
+        }
+        if source == active || destination == active {
+            ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+        }
+    }
+    layout_change_reply(ctx, changed, destination)
+}
+
+/// `pane swap` from this UI.
+fn pane_swap(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    with: PaneId,
+    if_revision: Option<u64>,
+) -> ControlResponse {
+    let found = layout_write_preflight(ctx, if_revision)
+        .and_then(|()| locate_layout_pane(ctx, target))
+        .and_then(|first| locate_layout_pane(ctx, with).map(|second| (first, second)));
+    let index = match found {
+        Ok(((index, false), (other_index, false))) if index == other_index && target != with => {
+            index
+        }
+        Ok(_) => {
+            return ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!(
+                    "panes {target} and {with} cannot swap; a swap exchanges two different tiled panes of one workspace"
+                ),
+            );
+        }
+        Err(response) => return response,
+    };
+    let changed = crate::ops::resize_move::swap_tiled_panes(
+        &mut ctx.state.current_mut().workspaces[index],
+        target,
+        with,
+    );
+    if changed && index == ctx.state.current().active_workspace {
+        ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+    }
+    layout_change_reply(ctx, changed, index)
+}
+
+/// `pane close` from this UI: the request is the confirmation, so `[confirm]` is not consulted.
+fn pane_close(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    if_revision: Option<u64>,
+) -> (ControlResponse, Update) {
+    let index = match layout_write_preflight(ctx, if_revision)
+        .and_then(|()| locate_layout_pane(ctx, target))
+    {
+        Ok((index, _)) => index,
+        Err(response) => return (response, Update::none()),
+    };
+    ctx.state.current_mut().engaged = true;
+    let update = crate::pane::lifecycle::close_pane(ctx, target);
+    let (revision, committed) = flushed_revision(ctx);
+    let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
+    let workspace = workspace_reports(ctx, &layout, Some(index + 1)).pop();
+    (
+        ControlResponse::ok(crate::control::PaneClosed {
+            id: target,
+            revision,
+            committed,
+            workspace,
+        }),
+        update,
+    )
 }
 
 fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
@@ -2125,6 +2259,175 @@ mod tests {
         }
     }
 
+    /// A UI with three tiled panes in workspace 1, and the canvas its shared rects are measured on.
+    fn three_tiled_panes() -> (TestBackend<crate::AppRoot>, (u16, u16)) {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let workspace = &mut backend.state_mut().current_mut().workspaces[0];
+            for id in [2, 3] {
+                workspace
+                    .panes
+                    .push(crate::state::Pane::new(id, 100, FloatRect::default()));
+                crate::layout::tiling::append_tiled_window(workspace, id);
+            }
+            for pane in &mut workspace.panes {
+                pane.pty_generation = 1;
+            }
+        }
+        let report = dispatch(&mut backend, ControlCommand::LayoutGet { workspace: None });
+        let canvas = serde_json::from_value::<crate::control::LayoutReport>(
+            report.data.expect("layout data"),
+        )
+        .expect("a LayoutReport")
+        .canvas
+        .expect("canvas");
+        (backend, (canvas.cols, canvas.rows))
+    }
+
+    /// Moves and swaps, like `pane set`, must commit the document a session server would write.
+    #[test]
+    fn a_ui_moves_and_swaps_panes_into_the_document_a_session_server_would_write() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, canvas) = three_tiled_panes();
+                let focused_before = backend.state().current().focused_pane;
+                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+                let steps: [(ControlCommand, Edit); 4] = [
+                    (
+                        ControlCommand::PaneSwap {
+                            target: 1,
+                            with: 3,
+                            if_revision: None,
+                        },
+                        |layout| layout.swap_panes(1, 3).expect("swap"),
+                    ),
+                    (
+                        ControlCommand::PaneMove {
+                            target: 2,
+                            workspace: 4,
+                            if_revision: None,
+                        },
+                        |layout| layout.move_pane(2, 3).expect("move"),
+                    ),
+                    (
+                        ControlCommand::PaneMove {
+                            target: 3,
+                            workspace: 4,
+                            if_revision: None,
+                        },
+                        |layout| layout.move_pane(3, 3).expect("move"),
+                    ),
+                    (
+                        ControlCommand::PaneMove {
+                            target: 3,
+                            workspace: 4,
+                            if_revision: None,
+                        },
+                        |layout| layout.move_pane(3, 3).expect("move"),
+                    ),
+                ];
+                for (command, apply) in steps {
+                    let mut expected =
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                    let expected_change = apply(&mut expected);
+                    let response = dispatch(&mut backend, command.clone());
+                    assert!(response.ok, "{command:?}: {:?}", response.error);
+                    let change: crate::control::LayoutChange =
+                        serde_json::from_value(response.data.expect("change")).expect("change");
+                    assert_eq!(change.changed, expected_change, "{command:?}");
+                    assert_eq!(
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                        expected,
+                        "{command:?}"
+                    );
+                }
+                let attachment = backend.state().current();
+                assert_eq!(
+                    attachment.active_workspace, 0,
+                    "a move does not follow the pane"
+                );
+                if focused_before == Some(1) {
+                    assert_eq!(attachment.focused_pane, Some(1), "unmoved focus stays put");
+                }
+                assert!(
+                    attachment
+                        .focused_pane
+                        .is_none_or(|id| attachment.workspaces[0]
+                            .panes
+                            .iter()
+                            .any(|pane| pane.id == id)),
+                    "focus never points at a pane that left the workspace"
+                );
+            })
+            .expect("spawn move test thread")
+            .join()
+            .expect("move test thread completes");
+    }
+
+    #[test]
+    fn moving_the_focused_pane_leaves_focus_behind_and_close_needs_no_confirmation() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, _) = three_tiled_panes();
+                let focused = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("a focused pane");
+                let moved = dispatch(
+                    &mut backend,
+                    ControlCommand::PaneMove {
+                        target: focused,
+                        workspace: 5,
+                        if_revision: None,
+                    },
+                );
+                assert!(moved.ok, "{:?}", moved.error);
+                let attachment = backend.state().current();
+                assert_eq!(attachment.active_workspace, 0, "the view does not follow");
+                let now = attachment.focused_pane.expect("focus fell back");
+                assert_ne!(now, focused);
+                assert!(
+                    attachment.workspaces[0]
+                        .panes
+                        .iter()
+                        .any(|pane| pane.id == now)
+                );
+
+                let closed = dispatch(
+                    &mut backend,
+                    ControlCommand::PaneClose {
+                        target: now,
+                        if_revision: None,
+                    },
+                );
+                assert!(closed.ok, "{:?}", closed.error);
+                let closed: crate::control::PaneClosed =
+                    serde_json::from_value(closed.data.expect("closed")).expect("PaneClosed");
+                assert_eq!(closed.id, now);
+                let workspace = closed.workspace.expect("the workspace it left");
+                assert!(workspace.panes.iter().all(|pane| pane.id != now));
+                assert!(
+                    backend.state().pending_destructive.is_none(),
+                    "no second-press confirmation was armed"
+                );
+
+                let gone = dispatch(
+                    &mut backend,
+                    ControlCommand::PaneClose {
+                        target: now,
+                        if_revision: None,
+                    },
+                );
+                assert_eq!(gone.code, Some(ControlErrorCode::PaneNotFound));
+            })
+            .expect("spawn close test thread")
+            .join()
+            .expect("close test thread completes");
+    }
+
     /// A UI applies `pane set` to its live workspace and a session server applies it to the shared
     /// document. The document the UI then commits has to be the one the server would have written,
     /// or the same script reshapes a session differently depending on who is attached.
@@ -2133,29 +2436,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                {
-                    let workspace = &mut backend.state_mut().current_mut().workspaces[0];
-                    for id in [2, 3] {
-                        workspace.panes.push(crate::state::Pane::new(
-                            id,
-                            100,
-                            FloatRect::default(),
-                        ));
-                        crate::layout::tiling::append_tiled_window(workspace, id);
-                    }
-                    for pane in &mut workspace.panes {
-                        pane.pty_generation = 1;
-                    }
-                }
-                let report = dispatch(&mut backend, ControlCommand::LayoutGet { workspace: None });
-                let canvas = serde_json::from_value::<crate::control::LayoutReport>(
-                    report.data.expect("layout data"),
-                )
-                .expect("a LayoutReport")
-                .canvas
-                .expect("canvas");
-                let canvas = (canvas.cols, canvas.rows);
+                let (mut backend, canvas) = three_tiled_panes();
 
                 let rect = crate::control::CellRect {
                     x: 7,

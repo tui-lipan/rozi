@@ -99,6 +99,9 @@ does not affect the JSON anything else reads.
 | `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
 | `layout set --workspace 1-9 <LAYOUT> [--if-revision N]` | Set a workspace's tiling layout. | yes |
 | `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--if-revision N]` | Float, tile, place, or fullscreen a pane. | yes |
+| `pane move --target ID --workspace 1-9 [--if-revision N]` | Move a pane to another workspace. | yes |
+| `pane swap --target ID --with ID [--if-revision N]` | Exchange two tiled panes. | yes |
+| `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get --target ID` | Read one semantic agent record. | yes |
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
@@ -363,7 +366,8 @@ Tiled panes are listed in tiling order, then floating panes. Some geometry needs
 ### Changing the layout
 
 `layout set` chooses a workspace's tiling layout. `pane set` floats, tiles, moves, or fullscreens
-one pane.
+one pane. `pane move`, `pane swap`, and `pane close` move a pane between workspaces, exchange two
+panes, and close one.
 
 ```sh
 rozi layout set --workspace 2 master
@@ -372,8 +376,8 @@ rozi pane set --target 7 --fullscreen true
 rozi --session dev pane set --target 3 --floating false --if-revision 18
 ```
 
-Every write names what it changes: `layout set` needs `--workspace`, and `pane set` needs
-`--target`. Neither falls back to focus or `ROZI_PANE`, and neither moves focus.
+Every write names what it changes: `layout set` needs `--workspace`, and every `pane` command
+needs `--target`. Neither falls back to focus or `ROZI_PANE`, and neither moves focus.
 
 A write sets a state rather than toggling it. Options you leave out keep their current value.
 Repeating a write, or asking for a state that already holds, succeeds with `changed: false`, and
@@ -393,7 +397,22 @@ A rect places a floating pane, so it needs a pane that floats already or `--floa
 Rects are clamped the same way a dragged float is: part of the pane may leave the canvas, but a
 margin always stays on screen to grab. The float lands on whole cells.
 
-The reply has the same shape from both endpoints:
+`pane move --workspace N` puts the pane at the end of workspace `N`: last in its tiling order when
+tiled, at the same rect when floating. The view does not follow the pane. If the pane had focus,
+focus moves to another pane in the workspace it left, as it would if the pane had closed. Moving a
+pane to the workspace it is in is `changed: false`.
+
+`pane swap --with ID` exchanges the places of two tiled panes in one workspace: each takes the
+other's tile and position in the tiling order. Anything else, including a floating pane or panes in
+different workspaces, fails with `invalid-argument`.
+
+`pane close` ends the pane's process and removes it from the layout. The request is the
+confirmation, so `[confirm]` is not consulted. It replies with the closed `id`, the new `revision`,
+`committed`, and the `workspace` the pane left. A session endpoint can also close a pane its layout
+does not place; `workspace` is then absent and no revision is written. Closing a pane that does not
+exist fails with `pane-not-found`.
+
+The reply to every other write has the same shape from both endpoints:
 
 ```json
 { "changed": true, "revision": 19, "committed": false, "workspace": { "index": 1, "…": "…" } }

@@ -1372,8 +1372,55 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            command(&["pane", "move", "--target", "4", "--workspace", "3"]),
+            control::ControlCommand::PaneMove {
+                target: 4,
+                workspace: 3,
+                if_revision: None,
+            }
+        );
+        assert_eq!(
+            command(&[
+                "pane",
+                "swap",
+                "--target",
+                "4",
+                "--with",
+                "6",
+                "--if-revision",
+                "2"
+            ]),
+            control::ControlCommand::PaneSwap {
+                target: 4,
+                with: 6,
+                if_revision: Some(2),
+            }
+        );
+        assert_eq!(
+            command(&["pane", "close", "--target", "4"]),
+            control::ControlCommand::PaneClose {
+                target: 4,
+                if_revision: None,
+            }
+        );
+
         for refused in [
-            &["layout", "set", "grid"][..],
+            &["pane", "move", "--target", "4"][..],
+            &["pane", "swap", "--target", "4"],
+            &["pane", "close"],
+            &["pane", "close", "--target", "4", "--floating", "true"],
+            &[
+                "pane",
+                "move",
+                "--target",
+                "4",
+                "--workspace",
+                "2",
+                "--with",
+                "5",
+            ],
+            &["layout", "set", "grid"],
             &["layout", "set", "--workspace", "1"],
             &["layout", "set", "--workspace", "1", "spiral"],
             &["layout", "get", "--if-revision", "3"],

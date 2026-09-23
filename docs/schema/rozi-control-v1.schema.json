@@ -720,6 +720,99 @@
           "type": "object"
         },
         {
+          "description": "Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "pane-move",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Exchange the places of two tiled panes in one workspace.",
+          "properties": {
+            "cmd": {
+              "const": "pane-swap",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "with": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "with"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a pane, ending its process. The request is the confirmation; `[confirm]` does not\napply.",
+          "properties": {
+            "cmd": {
+              "const": "pane-close",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "agents-list",
@@ -1557,6 +1650,99 @@
                 }
               ],
               "description": "Floating rect as fractions of the canonical canvas."
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "pane-move",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Exchange the places of two tiled panes in one workspace.",
+          "properties": {
+            "cmd": {
+              "const": "pane-swap",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "with": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "with"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a pane, ending its process. The request is the confirmation; `[confirm]` does not\napply.",
+          "properties": {
+            "cmd": {
+              "const": "pane-close",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "target": {
               "format": "uint32",
@@ -2550,6 +2736,45 @@
       "required": [
         "id",
         "text"
+      ],
+      "type": "object"
+    },
+    "PaneClosed": {
+      "description": "What `pane close` answers with.",
+      "properties": {
+        "committed": {
+          "description": "See [`LayoutChange::committed`].",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "description": "The layout revision without the pane. Unchanged when the layout never placed it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceLayout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The workspace the pane left, as it now stands. Absent when no layout placed the pane."
+        }
+      },
+      "required": [
+        "id",
+        "committed"
       ],
       "type": "object"
     },

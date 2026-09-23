@@ -564,6 +564,8 @@ pub(crate) fn automation_float_rect(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SharedEditError {
     PaneNotPlaced(PaneId),
+    /// A swap needs two different tiled panes in one workspace.
+    NotSwappable(PaneId, PaneId),
     InvalidDocument(SharedLayoutValidationError),
 }
 
@@ -571,6 +573,10 @@ impl std::fmt::Display for SharedEditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PaneNotPlaced(id) => write!(f, "pane {id} is not in the layout"),
+            Self::NotSwappable(a, b) => write!(
+                f,
+                "panes {a} and {b} cannot swap; a swap exchanges two different tiled panes of one workspace"
+            ),
             Self::InvalidDocument(error) => write!(f, "{error}"),
         }
     }
@@ -589,32 +595,157 @@ impl SharedLayout {
     /// the document changed.
     pub(crate) fn set_layout_kind(&mut self, index: usize, kind: crate::state::LayoutKind) -> bool {
         let kind = SharedLayoutKind::from(kind);
-        match self
+        let exists = self
             .workspaces
+            .iter()
+            .any(|workspace| workspace.index == index);
+        let workspace = self.workspace_mut_or_insert(index);
+        if exists && workspace.layout == kind {
+            return false;
+        }
+        workspace.layout = kind;
+        true
+    }
+
+    /// The workspace at zero-based `index`, added empty with a fresh workspace's defaults when the
+    /// document does not hold it yet.
+    fn workspace_mut_or_insert(&mut self, index: usize) -> &mut SharedWorkspace {
+        if !self
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.index == index)
+        {
+            let fresh = crate::state::Workspace::new(index);
+            self.workspaces.push(SharedWorkspace {
+                index,
+                name: None,
+                synchronized: false,
+                layout: fresh.layout_kind.into(),
+                start_axis: fresh.start_axis.into(),
+                split_ratios: fresh.split_ratios,
+                tree: None,
+                panes: Vec::new(),
+            });
+            self.workspaces.sort_by_key(|workspace| workspace.index);
+        }
+        self.workspaces
             .iter_mut()
             .find(|workspace| workspace.index == index)
-        {
-            Some(workspace) if workspace.layout == kind => false,
-            Some(workspace) => {
-                workspace.layout = kind;
-                true
-            }
-            None => {
-                let fresh = crate::state::Workspace::new(index);
-                self.workspaces.push(SharedWorkspace {
-                    index,
-                    name: None,
-                    synchronized: false,
-                    layout: kind,
-                    start_axis: fresh.start_axis.into(),
-                    split_ratios: fresh.split_ratios,
-                    tree: None,
-                    panes: Vec::new(),
-                });
-                self.workspaces.sort_by_key(|workspace| workspace.index);
-                true
-            }
+            .expect("inserted above")
+    }
+
+    /// Store the tree the layout engine would settle this workspace's live tiled panes into.
+    ///
+    /// The one normalization every structural edit ends with, on both endpoints: a client applying
+    /// the same edit settles its live tree the same way before committing, which is what makes the
+    /// two documents equal.
+    fn settle_tree(&mut self, position: usize) {
+        let canvas = (self.canvas_cols.max(1), self.canvas_rows.max(1));
+        let workspace = &self.workspaces[position];
+        let tree =
+            crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
+                .as_ref()
+                .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
+        self.workspaces[position].tree = tree;
+    }
+
+    /// Move `pane_id` to the workspace at zero-based `target`, at the end of its pane list and,
+    /// when tiled, at the end of its tiling order. A floating pane keeps its rect. Returns whether
+    /// the document changed.
+    pub(crate) fn move_pane(
+        &mut self,
+        pane_id: PaneId,
+        target: usize,
+    ) -> std::result::Result<bool, SharedEditError> {
+        let source = self
+            .workspace_position_of(pane_id)
+            .ok_or(SharedEditError::PaneNotPlaced(pane_id))?;
+        if self.workspaces[source].index == target {
+            return Ok(false);
         }
+        let panes = &mut self.workspaces[source].panes;
+        let pane = panes.remove(
+            panes
+                .iter()
+                .position(|pane| pane.pane_id == pane_id)
+                .expect("located above"),
+        );
+        self.settle_tree(source);
+        let floating = pane.floating;
+        self.workspace_mut_or_insert(target);
+        let destination = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.index == target)
+            .expect("inserted above");
+        if !floating {
+            // Settled before the pane arrives, then extended by it: the order a client's
+            // `append_tiled_window` onto its settled tree produces.
+            self.settle_tree(destination);
+            let canvas = (self.canvas_cols.max(1), self.canvas_rows.max(1));
+            let workspace = &self.workspaces[destination];
+            let settled = SharedTileSource::new(workspace, canvas);
+            let tree = crate::layout::tiling::append_tiled_leaf(
+                crate::layout::TileSource::stored_tile_tree(&settled).cloned(),
+                pane_id,
+                workspace.start_axis.into(),
+            );
+            self.workspaces[destination].tree = from_dwindle(&tree, &|id| Some(id));
+        }
+        self.workspaces[destination].panes.push(pane);
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(true)
+    }
+
+    /// Exchange the places of two tiled panes in one workspace.
+    pub(crate) fn swap_panes(
+        &mut self,
+        pane_id: PaneId,
+        other: PaneId,
+    ) -> std::result::Result<bool, SharedEditError> {
+        let position = self
+            .workspace_position_of(pane_id)
+            .ok_or(SharedEditError::PaneNotPlaced(pane_id))?;
+        let other_position = self
+            .workspace_position_of(other)
+            .ok_or(SharedEditError::PaneNotPlaced(other))?;
+        let tiled = |id: PaneId| {
+            self.workspaces[position]
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == id && !pane.floating)
+        };
+        if pane_id == other || position != other_position || !tiled(pane_id) || !tiled(other) {
+            return Err(SharedEditError::NotSwappable(pane_id, other));
+        }
+        self.settle_tree(position);
+        let known = self.workspaces[position]
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id)
+            .collect();
+        let Some(mut tree) = self.workspaces[position]
+            .tree
+            .as_ref()
+            .and_then(|tree| dwindle_from_shared(tree, &known))
+        else {
+            return Err(SharedEditError::NotSwappable(pane_id, other));
+        };
+        crate::layout::tiling::swap_tree_leaves(&mut tree, pane_id, other);
+        self.workspaces[position].tree = from_dwindle(&tree, &|id| Some(id));
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(true)
+    }
+
+    /// Drop `pane_id` from the document, re-tiling what it leaves behind. Returns the zero-based
+    /// index of the workspace it left, or `None` when the document never placed it.
+    pub(crate) fn remove_pane(&mut self, pane_id: PaneId) -> Option<usize> {
+        let position = self.workspace_position_of(pane_id)?;
+        self.workspaces[position]
+            .panes
+            .retain(|pane| pane.pane_id != pane_id);
+        self.settle_tree(position);
+        Some(self.workspaces[position].index)
     }
 
     /// Apply a validated `pane set` to the document. Returns whether it changed.
@@ -1365,6 +1496,84 @@ mod tests {
             layout.edit_pane(42, edit(None, Some(true), None)),
             Err(SharedEditError::PaneNotPlaced(42))
         );
+    }
+
+    fn tiling_order(layout: &SharedLayout, index: usize) -> Vec<PaneId> {
+        let workspace = layout
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.index == index)
+            .expect("workspace");
+        crate::layout::ordered_tiled_ids(&SharedTileSource::new(workspace, (100, 30)))
+    }
+
+    #[test]
+    fn moving_a_pane_appends_it_to_the_target_and_retiles_what_it_left() {
+        let mut layout = three_tiled();
+        assert_eq!(layout.move_pane(2, 0), Ok(false), "already there");
+
+        assert_eq!(layout.move_pane(2, 3), Ok(true));
+        assert_eq!(tiling_order(&layout, 0), vec![1, 3]);
+        assert_eq!(tiling_order(&layout, 3), vec![2]);
+        assert_eq!(layout.move_pane(3, 3), Ok(true));
+        assert_eq!(tiling_order(&layout, 3), vec![2, 3], "joins the end");
+
+        // A float travels with its rect and stays out of the target's tiling.
+        assert_eq!(layout.edit_pane(1, edit(Some(true), None, None)), Ok(true));
+        let rect = layout.workspaces[0].panes[0].rect;
+        assert_eq!(layout.move_pane(1, 3), Ok(true));
+        let moved = layout.workspaces[3]
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == 1)
+            .expect("moved");
+        assert_eq!(moved.rect, rect);
+        assert_eq!(tiling_order(&layout, 3), vec![2, 3]);
+
+        // A workspace the document lacks is created for the pane.
+        let mut partial = three_tiled();
+        partial.workspaces.retain(|workspace| workspace.index == 0);
+        assert_eq!(partial.move_pane(3, 6), Ok(true));
+        assert_eq!(tiling_order(&partial, 6), vec![3]);
+        partial.validate().expect("valid");
+        assert_eq!(
+            partial.move_pane(9, 1),
+            Err(SharedEditError::PaneNotPlaced(9))
+        );
+    }
+
+    #[test]
+    fn swapping_exchanges_two_tiled_panes_and_refuses_anything_else() {
+        let mut layout = three_tiled();
+        let before = (placement(&layout, 1), placement(&layout, 3));
+        assert_eq!(layout.swap_panes(1, 3), Ok(true));
+        assert_eq!(tiling_order(&layout, 0), vec![3, 2, 1]);
+        assert_eq!((placement(&layout, 3), placement(&layout, 1)), before);
+
+        for (a, b) in [(1, 1), (1, 42)] {
+            assert!(layout.swap_panes(a, b).is_err(), "{a} with {b}");
+        }
+        assert_eq!(layout.edit_pane(2, edit(Some(true), None, None)), Ok(true));
+        assert_eq!(
+            layout.swap_panes(1, 2),
+            Err(SharedEditError::NotSwappable(1, 2)),
+            "a floating pane has no tile to trade"
+        );
+        assert_eq!(layout.move_pane(3, 1), Ok(true));
+        assert_eq!(
+            layout.swap_panes(1, 3),
+            Err(SharedEditError::NotSwappable(1, 3)),
+            "panes in different workspaces"
+        );
+    }
+
+    #[test]
+    fn removing_a_pane_retiles_its_workspace() {
+        let mut layout = three_tiled();
+        assert_eq!(layout.remove_pane(2), Some(0));
+        assert_eq!(tiling_order(&layout, 0), vec![1, 3]);
+        assert_eq!(layout.remove_pane(2), None);
+        layout.validate().expect("valid");
     }
 
     #[test]

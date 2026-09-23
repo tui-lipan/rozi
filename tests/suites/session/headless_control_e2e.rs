@@ -341,6 +341,71 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
     );
 }
 
+/// `pane close` ends the pane's process and removes it from the layout in one step, with nobody
+/// attached to do the layout half.
+#[test]
+fn a_detached_session_can_close_a_pane_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let mut panes = Vec::new();
+    for _ in 0..2 {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
+    }
+
+    let closed = expect_ok(
+        &session,
+        ControlCommand::PaneClose {
+            target: panes[0],
+            if_revision: None,
+        },
+    );
+    assert_eq!(closed["id"].as_u64(), Some(u64::from(panes[0])));
+
+    let listed = expect_ok(&session, ControlCommand::ListPanes);
+    let ids: Vec<u64> = listed
+        .as_array()
+        .expect("panes")
+        .iter()
+        .filter_map(|pane| pane["id"].as_u64())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![u64::from(panes[1])],
+        "the closed pane is gone, not exited"
+    );
+
+    let (_client, attached) = attach_client(server.endpoint(), &session, "late client");
+    let ServerMessage::Attached {
+        layout,
+        panes: metas,
+        ..
+    } = attached
+    else {
+        panic!("expected an attach response");
+    };
+    assert!(metas.iter().all(|meta| meta.pane_id != panes[0]));
+    let layout = layout.expect("a layout");
+    assert!(
+        layout
+            .workspaces
+            .iter()
+            .all(|workspace| workspace.panes.iter().all(|pane| pane.pane_id != panes[0]))
+    );
+    layout.validate().expect("valid");
+}
+
 /// The whole feature is for sessions nobody is driving. When somebody *is* driving one, opening a
 /// pane means committing a layout revision over their arrangement, and that is the controller's
 /// call - the same rule the protocol already applies to a non-controller's `SpawnPane`.

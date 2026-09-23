@@ -440,7 +440,45 @@ fn format_layout_table(
     format_table(&headers, &rows, styles)
 }
 
-/// `layout set` and `pane set`: what happened, then the workspace as it now stands.
+/// `pane close`: which pane went, then the workspace it left, when a layout placed it.
+fn format_pane_closed_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let Some(closed) = data else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    let mut line = vec![styles.paint(
+        &format!(
+            "Closed pane {}",
+            value_u64(closed, "id").map_or_else(|| "—".to_string(), |id| id.to_string())
+        ),
+        OutputTone::Success,
+    )];
+    if let Some(revision) = value_u64(closed, "revision") {
+        line.push(styles.paint("revision", OutputTone::Muted));
+        line.push(revision.to_string());
+    }
+    if closed.get("committed").and_then(serde_json::Value::as_bool) == Some(false) {
+        line.push(styles.paint("not yet confirmed by the server", OutputTone::Warning));
+    }
+    let mut out = format!("{}\n", line.join("  "));
+    if let Some(workspace) = closed
+        .get("workspace")
+        .filter(|workspace| workspace.is_object())
+    {
+        let with_view = workspace
+            .get("panes")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|panes| panes.iter().any(|pane| pane.get("view_rect").is_some()));
+        out.push('\n');
+        out.push_str(&format_layout_table(
+            std::slice::from_ref(workspace),
+            with_view,
+            styles,
+        ));
+    }
+    out
+}
+
+/// `layout set` and the `pane` writes: what happened, then the workspace as it now stands.
 pub(super) fn format_layout_change_text(
     data: Option<&serde_json::Value>,
     styles: OutputStyles,
@@ -713,9 +751,11 @@ pub(super) fn format_control_text(
     match command {
         control::ControlCommand::ListPanes => format_panes_text(data, styles),
         control::ControlCommand::LayoutGet { .. } => format_layout_text(data, styles),
-        control::ControlCommand::LayoutSet { .. } | control::ControlCommand::PaneSet { .. } => {
-            format_layout_change_text(data, styles)
-        }
+        control::ControlCommand::LayoutSet { .. }
+        | control::ControlCommand::PaneSet { .. }
+        | control::ControlCommand::PaneMove { .. }
+        | control::ControlCommand::PaneSwap { .. } => format_layout_change_text(data, styles),
+        control::ControlCommand::PaneClose { .. } => format_pane_closed_text(data, styles),
         control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
             format_agents_text(data, styles)
         }

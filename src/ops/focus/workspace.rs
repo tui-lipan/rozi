@@ -1,7 +1,7 @@
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::scrollable_viewport_anchor;
 use crate::layout::tiling::{append_tiled_window, remove_tiled_window};
-use crate::state::{LayoutKind, State, Workspace};
+use crate::state::{LayoutKind, PaneId, State, Workspace};
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     if state.scratch_visible {
@@ -49,33 +49,17 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
         return;
     }
 
-    let Some(position) = state.current().workspaces[source_index]
+    let Some(tiled) = state.current().workspaces[source_index]
         .panes
         .iter()
-        .position(|pane| pane.id == focused)
+        .find(|pane| pane.id == focused)
+        .map(|pane| !pane.floating)
     else {
         super::choose_fallback_focus(state);
         return;
     };
-
-    let mut pane = state.current_mut().workspaces[source_index]
-        .panes
-        .remove(position);
-    let tiled = !pane.floating;
-    if tiled {
-        remove_tiled_window(&mut state.current_mut().workspaces[source_index], pane.id);
-    }
-    pane.opening = false;
-    pane.closing = false;
-
+    transfer_pane(state, focused, source_index, target_index);
     super::choose_fallback_focus(state);
-
-    if tiled {
-        append_tiled_window(&mut state.current_mut().workspaces[target_index], pane.id);
-    }
-    state.current_mut().workspaces[target_index]
-        .panes
-        .push(pane);
 
     state.current_mut().active_workspace = target_index;
     let scrollable = state.current().workspaces[target_index].layout_kind == LayoutKind::Scrollable;
@@ -104,6 +88,41 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
     }
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, target_index);
+}
+
+/// Move pane `id` from workspace `source` to the end of workspace `target`, leaving focus and the
+/// active workspace alone. A tiled pane joins the end of the target's tiling order - appended to
+/// the target's settled tree, as a session server appends it to the shared document - and a
+/// floating pane keeps its rect. Returns whether the pane was there to move.
+///
+/// The structural half of moving a pane. The interactive move follows it with focus; `pane move`
+/// leaves focus where it was.
+pub(crate) fn transfer_pane(state: &mut State, id: PaneId, source: usize, target: usize) -> bool {
+    let workspaces = &mut state.current_mut().workspaces;
+    if source == target || target >= workspaces.len() {
+        return false;
+    }
+    let Some(position) = workspaces[source]
+        .panes
+        .iter()
+        .position(|pane| pane.id == id)
+    else {
+        return false;
+    };
+    let mut pane = workspaces[source].panes.remove(position);
+    let tiled = !pane.floating;
+    if tiled {
+        remove_tiled_window(&mut workspaces[source], id);
+    }
+    pane.opening = false;
+    pane.closing = false;
+    let destination = &mut workspaces[target];
+    if tiled {
+        destination.tile_tree = crate::layout::effective_tile_tree(destination, None);
+        append_tiled_window(destination, id);
+    }
+    destination.panes.push(pane);
+    true
 }
 
 /// Move every pane from the active workspace into `target_index`, carry the source workspace

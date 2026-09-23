@@ -148,6 +148,27 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
     },
+    /// Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.
+    PaneMove {
+        target: PaneId,
+        workspace: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Exchange the places of two tiled panes in one workspace.
+    PaneSwap {
+        target: PaneId,
+        with: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Close a pane, ending its process. The request is the confirmation; `[confirm]` does not
+    /// apply.
+    PaneClose {
+        target: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
     AgentsList,
     AgentGet {
         target: AgentTarget,
@@ -678,6 +699,19 @@ pub struct LayoutChange {
     pub committed: bool,
     /// The affected workspace as it now stands, in the same shape `layout get` reports.
     pub workspace: WorkspaceLayout,
+}
+
+/// What `pane close` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneClosed {
+    pub id: PaneId,
+    /// The layout revision without the pane. Unchanged when the layout never placed it.
+    pub revision: Option<u64>,
+    /// See [`LayoutChange::committed`].
+    pub committed: bool,
+    /// The workspace the pane left, as it now stands. Absent when no layout placed the pane.
+    pub workspace: Option<WorkspaceLayout>,
 }
 
 /// A floating rect asked for in either unit, before it is measured against a canvas.

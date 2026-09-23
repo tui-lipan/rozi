@@ -64,60 +64,97 @@ pub(super) fn parse_layout_args(iter: &mut impl Iterator<Item = String>) -> Pars
     ))
 }
 
-/// `pane set --target <ID> [--floating B] [--fullscreen B] [--rect X,Y,W,H]
-/// [--rect-fraction X,Y,W,H] [--if-revision N]`.
+/// `pane set|move|swap|close --target <ID> ...`.
+///
+/// `set` takes `[--floating B] [--fullscreen B] [--rect X,Y,W,H] [--rect-fraction X,Y,W,H]`,
+/// `move` takes `--workspace <1-9>`, and `swap` takes `--with <ID>`. Every one takes
+/// `[--if-revision N]`.
 pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed {
-    match iter.next().as_deref() {
-        Some("set") => {}
-        Some(other) => return Err(format!("unknown pane subcommand `{other}`; expected set")),
-        None => return Err("pane requires a subcommand (set)".to_string()),
-    }
-    let mut flags = Flags::new("pane set");
+    let subcommand = iter
+        .next()
+        .ok_or_else(|| "pane requires a subcommand (set, move, swap, or close)".to_string())?;
+    let command = match subcommand.as_str() {
+        "set" => "pane set",
+        "move" => "pane move",
+        "swap" => "pane swap",
+        "close" => "pane close",
+        other => {
+            return Err(format!(
+                "unknown pane subcommand `{other}`; expected set, move, swap, or close"
+            ));
+        }
+    };
+    let mut flags = Flags::new(command);
     let mut target: Option<PaneId> = None;
+    let mut with: Option<PaneId> = None;
     let mut floating = None;
     let mut fullscreen = None;
     let mut rect = None;
     let mut rect_fraction = None;
+    let setting = command == "pane set";
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--target" => {
-                let value = require_value(iter, "--target requires a pane id")?;
-                let id = value
-                    .parse()
-                    .map_err(|_| "--target requires a numeric pane id".to_string())?;
-                once(&mut target, id, "--target")?;
+            "--target" => once(&mut target, parse_pane_id(iter, "--target")?, "--target")?,
+            "--with" if command == "pane swap" => {
+                once(&mut with, parse_pane_id(iter, "--with")?, "--with")?
             }
-            "--floating" => once(&mut floating, parse_bool(iter, "--floating")?, "--floating")?,
-            "--fullscreen" => once(
+            "--workspace" if command == "pane move" => flags.workspace(iter)?,
+            "--floating" if setting => {
+                once(&mut floating, parse_bool(iter, "--floating")?, "--floating")?
+            }
+            "--fullscreen" if setting => once(
                 &mut fullscreen,
                 parse_bool(iter, "--fullscreen")?,
                 "--fullscreen",
             )?,
-            "--rect" => once(&mut rect, parse_cell_rect(iter)?, "--rect")?,
-            "--rect-fraction" => once(
+            "--rect" if setting => once(&mut rect, parse_cell_rect(iter)?, "--rect")?,
+            "--rect-fraction" if setting => once(
                 &mut rect_fraction,
                 parse_fraction_rect(iter)?,
                 "--rect-fraction",
             )?,
             "--if-revision" => flags.if_revision(iter)?,
             "--format" => flags.format(iter)?,
-            other => return Err(format!("unexpected argument `{other}` after pane set")),
+            other => return Err(format!("unexpected argument `{other}` after {command}")),
         }
     }
     // Always explicit, on every endpoint: a layout write aimed by an inherited `ROZI_PANE` or by
     // focus would reshape whichever pane happened to be nearest.
-    let target = target.ok_or_else(|| "pane set requires --target <PANE_ID>".to_string())?;
-    Ok((
-        ControlCommand::PaneSet {
+    let target = target.ok_or_else(|| format!("{command} requires --target <PANE_ID>"))?;
+    let if_revision = flags.if_revision;
+    let command = match command {
+        "pane set" => ControlCommand::PaneSet {
             target,
             floating,
             fullscreen,
             rect,
             rect_fraction,
-            if_revision: flags.if_revision,
+            if_revision,
         },
-        flags.format,
-    ))
+        "pane move" => ControlCommand::PaneMove {
+            target,
+            workspace: flags
+                .workspace
+                .ok_or_else(|| "pane move requires --workspace <1-9>".to_string())?,
+            if_revision,
+        },
+        "pane swap" => ControlCommand::PaneSwap {
+            target,
+            with: with.ok_or_else(|| "pane swap requires --with <PANE_ID>".to_string())?,
+            if_revision,
+        },
+        _ => ControlCommand::PaneClose {
+            target,
+            if_revision,
+        },
+    };
+    Ok((command, flags.format))
+}
+
+fn parse_pane_id(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<PaneId, String> {
+    require_value(iter, &format!("{flag} requires a pane id"))?
+        .parse()
+        .map_err(|_| format!("{flag} requires a numeric pane id"))
 }
 
 /// Options shared by the layout commands, each accepted once.

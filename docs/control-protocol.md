@@ -97,7 +97,8 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | --- | --- |
 | `list-panes` | Array of pane objects. |
 | `layout-get` | A layout report; see [Control CLI](control.md#layout). |
-| `layout-set`, `pane-set` | `{ "changed": bool, "revision": number or null, "committed": bool, "workspace": object }`; see [Changing the layout](control.md#changing-the-layout). |
+| `layout-set`, `pane-set`, `pane-move`, `pane-swap` | `{ "changed": bool, "revision": number or null, "committed": bool, "workspace": object }`; see [Changing the layout](control.md#changing-the-layout). |
+| `pane-close` | `{ "id": number, "revision": number or null, "committed": bool, "workspace": object or absent }` |
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "text": string, "title": string or null }` |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
@@ -162,10 +163,13 @@ program data, reported status, and detected agent data when available.
 {"cmd":"pane-set","target":7,"floating":true,"rect":{"x":10,"y":5,"width":80,"height":24}}
 {"cmd":"pane-set","target":7,"rect_fraction":{"x":0.1,"y":0.1,"width":0.5,"height":0.5}}
 {"cmd":"pane-set","target":7,"fullscreen":false,"if_revision":19}
+{"cmd":"pane-move","target":7,"workspace":3}
+{"cmd":"pane-swap","target":7,"with":4}
+{"cmd":"pane-close","target":7,"if_revision":21}
 ```
 
-`layout-set.workspace` and `pane-set.target` are required, and neither falls back to
-`source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, and
+`layout-set.workspace` and the `target` of every `pane-*` request are required, and none falls back
+to `source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, and
 `rect_fraction`; `rect` and `rect_fraction` exclude each other. A stale `if_revision` fails with
 `conflict`.
 
@@ -276,7 +280,8 @@ or client count (including `metrics`, which counts attached clients rather than 
 never holds layout control, and receives no replay. A script cannot make an idle session look
 occupied — and equally gains nothing an attached client would not have.
 
-Supported requests are `list-panes`, `layout-get`, `layout-set`, `pane-set`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
+Supported requests are `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
+`pane-swap`, `pane-close`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with
 `ok: false` and a reason naming what it needed a UI for; none is silently accepted.
@@ -288,7 +293,8 @@ Differences from the same request against a UI:
 | Any `target` | `source_pane` is ignored, and there is no focused-pane fallback. A pane id carries no session identity, so an inherited one would address a stranger in the named session. A session with one pane resolves to it; otherwise the error lists the pane ids. |
 | `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
 | `layout-get` | Read from the server's layout document. `client` and every `view_rect` are absent, since no screen exists. `unplaced_panes` lists panes the document does not place. Before anything places a pane, `revision` and `canvas` are null and `workspaces` is empty. |
-| `layout-set`, `pane-set` | Applied to the server's layout document and committed as a new revision by client `0`, which every attached client applies. Refused with `not-controller` while any client holds layout control, and with `unavailable` for a session that has panes but no layout document. `committed` is always `true`. |
+| `pane-close` | Removes the pane from the layout document, then ends its process, then commits the new revision; a refused request ends nothing. A pane the document does not place is still closed, without a revision. Refused with `not-controller` while any client holds layout control. |
+| `layout-set`, `pane-set`, `pane-move`, `pane-swap` | Applied to the server's layout document and committed as a new revision by client `0`, which every attached client applies. Refused with `not-controller` while any client holds layout control, and with `unavailable` for a session that has panes but no layout document. `committed` is always `true`. |
 | `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
 | `new-pane` | `focus` must be `false`. Refused while any client holds layout control. The server re-reads `[[rules]]` and the configured shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |

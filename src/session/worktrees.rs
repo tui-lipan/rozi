@@ -234,18 +234,13 @@ pub fn run_host_call(call: HostCall) -> HostReply {
 
 /// The top-level repository directory a relative `[worktrees] directory` keeps checkouts in.
 fn repo_relative_directory() -> Result<String, String> {
-    let configured = crate::config::load_config().config.worktrees.directory;
-    let directory = configured
-        .as_deref()
-        .map(crate::config::expand_path)
-        .filter(|directory| !directory.is_absolute())
-        .ok_or("[worktrees] directory is not inside the repository; name a directory to exclude")?;
-    match directory.components().next() {
-        Some(std::path::Component::Normal(first)) => first
-            .to_str()
-            .map(str::to_string)
-            .ok_or_else(|| "[worktrees] directory is not valid UTF-8".to_string()),
-        _ => Err("[worktrees] directory does not start with a directory name".to_string()),
+    let directory = configured_directory();
+    match worktrees::checkout_root(directory.as_deref())? {
+        worktrees::CheckoutRoot::InRepository(folder) => Ok(folder.to_string()),
+        _ => Err(
+            "[worktrees] directory is not inside the repository; name a directory to exclude"
+                .to_string(),
+        ),
     }
 }
 

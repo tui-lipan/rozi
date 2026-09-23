@@ -74,7 +74,7 @@ happens to have changed directory into the checkout.
 The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews
 the default path on the session host: `<repo>-worktrees/<branch>` beside the repository by
 default, `<directory>/<repo>/<branch>` for an absolute `[worktrees] directory`, or
-`<repo>/<directory>/<branch>` for a relative one such as `.worktrees`. Edit Path to choose another
+`<repo>/<directory>/<branch>` for a single folder name such as `.worktrees`. Edit Path to choose another
 absolute host path. `Tab` and `Shift+Tab` change fields.
 
 A checkout inside the repository shows up in `git status` and is swept up by `git add -A` unless

@@ -62,10 +62,10 @@ pub fn default_path(
     if slug.is_empty() {
         return Err("worktree branch cannot be empty".to_string());
     }
-    let base = match directory {
-        Some(directory) if directory.is_absolute() => directory.join(name.as_ref()),
-        Some(directory) => source.join(directory),
-        None => parent.join(format!("{name}-worktrees")),
+    let base = match checkout_root(directory)? {
+        CheckoutRoot::Beside => parent.join(format!("{name}-worktrees")),
+        CheckoutRoot::External(directory) => directory.join(name.as_ref()),
+        CheckoutRoot::InRepository(folder) => source.join(folder),
     };
     Ok(base.join(slug))
 }
@@ -154,6 +154,58 @@ pub fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Where `[worktrees] directory` keeps new checkouts.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CheckoutRoot<'a> {
+    /// Unset: `<repo>-worktrees/<branch>` beside the repository.
+    Beside,
+    /// An absolute directory holding every repository's checkouts as `<directory>/<repo>/<branch>`.
+    External(&'a Path),
+    /// One top-level folder of the repository: `<repo>/<folder>/<branch>`.
+    InRepository(&'a str),
+}
+
+/// Interpret `[worktrees] directory`, already `~`-expanded on the session host. A relative value
+/// must be a single plain folder name such as `.worktrees`: that keeps "relative" meaning inside
+/// the repository (no `../worktrees`), and names exactly the directory an ignore rule has to
+/// cover (not `tools/` for `tools/.worktrees`).
+pub fn checkout_root(directory: Option<&Path>) -> Result<CheckoutRoot<'_>, String> {
+    let Some(directory) = directory else {
+        return Ok(CheckoutRoot::Beside);
+    };
+    if directory.is_absolute() {
+        return Ok(CheckoutRoot::External(directory));
+    }
+    let invalid = || {
+        format!(
+            "[worktrees] directory `{}` must be one folder name inside the repository, such as \
+             `.worktrees`, or an absolute path",
+            directory.display()
+        )
+    };
+    let folder = directory
+        .to_str()
+        .ok_or_else(invalid)?
+        .trim_end_matches(['/', '\\']);
+    plain_directory_name(folder).map_err(|_| invalid())?;
+    Ok(CheckoutRoot::InRepository(folder))
+}
+
+/// A name that is one directory at the top of a repository and can be written as a literal ignore
+/// rule: no separators, no `.`/`..`, and no ignore-pattern syntax.
+fn plain_directory_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.contains(['/', '\\'])
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '*' | '?' | '[' | '!' | '#'))
+    {
+        return Err(format!("`{name}` is not a plain top-level directory name"));
+    }
+    Ok(())
+}
+
 /// The repository's primary checkout, which holds its ignore rules.
 pub fn primary_checkout(cwd: &Path) -> Result<std::path::PathBuf, String> {
     list(cwd)?
@@ -188,15 +240,7 @@ pub fn directory_ignored(primary: &Path, name: &str) -> Result<bool, String> {
 /// file Git never commits. Never touches `.gitignore`. Adding an already ignored directory does
 /// nothing.
 pub fn exclude_directory(cwd: &Path, name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || matches!(name, "." | "..")
-        || name.contains(['/', '\\'])
-        || name
-            .chars()
-            .any(|ch| ch.is_control() || matches!(ch, '*' | '?' | '[' | '!' | '#'))
-    {
-        return Err(format!("`{name}` is not a plain top-level directory name"));
-    }
+    plain_directory_name(name)?;
     let primary = primary_checkout(cwd)?;
     if directory_ignored(&primary, name)? {
         return Ok(());
@@ -213,16 +257,20 @@ pub fn exclude_directory(cwd: &Path, name: &str) -> Result<(), String> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
-    let mut contents = match std::fs::read_to_string(&file) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+    // Appended rather than rewritten: the rule is purely additive, so a concurrent edit or an
+    // interrupted write can never lose what the file already held.
+    let ends_mid_line = match std::fs::read(&file) {
+        Ok(contents) => contents.last().is_some_and(|byte| *byte != b'\n'),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
         Err(err) => return Err(format!("cannot read {}: {err}", file.display())),
     };
-    if !contents.is_empty() && !contents.ends_with('\n') {
-        contents.push('\n');
-    }
-    contents.push_str(&format!("/{name}/\n"));
-    std::fs::write(&file, contents).map_err(|err| format!("cannot write {}: {err}", file.display()))
+    let rule = format!("{}/{name}/\n", if ends_mid_line { "\n" } else { "" });
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .and_then(|mut handle| std::io::Write::write_all(&mut handle, rule.as_bytes()))
+        .map_err(|err| format!("cannot write {}: {err}", file.display()))
 }
 
 /// Whether two host paths name the same directory. Git on Windows reports `C:/Users/...` where
@@ -419,6 +467,30 @@ mod tests {
             default_path(&repo, "feat/login", Some(Path::new(".worktrees"))).unwrap(),
             primary.join(".worktrees").join("feat-login")
         );
+        assert!(default_path(&repo, "feat/login", Some(Path::new("../worktrees"))).is_err());
+    }
+
+    #[test]
+    fn a_relative_directory_is_one_folder_inside_the_repository() {
+        assert_eq!(checkout_root(None), Ok(CheckoutRoot::Beside));
+        for folder in [".worktrees", "rozi-worktrees", ".worktrees/"] {
+            assert_eq!(
+                checkout_root(Some(Path::new(folder))),
+                Ok(CheckoutRoot::InRepository(folder.trim_end_matches('/'))),
+                "{folder}"
+            );
+        }
+        for invalid in ["../worktrees", "tools/.worktrees", ".", "..", "*"] {
+            assert!(
+                checkout_root(Some(Path::new(invalid))).is_err(),
+                "accepted {invalid}"
+            );
+        }
+        let absolute = std::env::temp_dir().join("worktrees");
+        assert_eq!(
+            checkout_root(Some(&absolute)),
+            Ok(CheckoutRoot::External(absolute.as_path()))
+        );
     }
 
     #[test]
@@ -436,6 +508,14 @@ mod tests {
         exclude_directory(&repo, ".worktrees").unwrap();
         assert!(directory_ignored(&primary, ".worktrees").unwrap());
         exclude_directory(&repo, ".worktrees").unwrap();
+        // Appending keeps what was there, even a last line without a newline.
+        let exclude_file = repo.join(".git").join("info").join("exclude");
+        let before = std::fs::read_to_string(&exclude_file).unwrap();
+        std::fs::write(&exclude_file, format!("{before}/scratch")).unwrap();
+        exclude_directory(&repo, "tmp").unwrap();
+        let after = std::fs::read_to_string(&exclude_file).unwrap();
+        assert!(after.starts_with(&before), "{after}");
+        assert!(after.ends_with("/scratch\n/tmp/\n"), "{after}");
         let exclude =
             std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
         assert_eq!(exclude.matches("/.worktrees/").count(), 1, "{exclude}");

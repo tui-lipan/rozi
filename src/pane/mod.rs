@@ -59,10 +59,6 @@ pub(crate) fn capture_screen(
     Ok(CaptureContent::Text { text })
 }
 
-/// Largest base64 PNG a capture returns: a session reply is one protocol frame, and the JSON
-/// around the image needs some of it.
-const MAX_PNG_BASE64: usize = crate::session::protocol::MAX_FRAME_SIZE - 64 * 1024;
-
 fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, ControlResponse> {
     use base64::Engine as _;
     use tui_lipan::{PngOptions, PngTextRenderer};
@@ -81,16 +77,6 @@ fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, C
         .to_png(&options)
         .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
     let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
-    if png_base64.len() > MAX_PNG_BASE64 {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::MessageTooLarge,
-            format!(
-                "png capture is {} KiB encoded, over the {} KiB a reply can carry",
-                png_base64.len() / 1024,
-                MAX_PNG_BASE64 / 1024
-            ),
-        ));
-    }
     Ok(CaptureContent::Png { png_base64 })
 }
 

@@ -235,7 +235,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "capture-pane [OPTIONS]",
-                "Capture text, ANSI, or PNG; JSON when piped",
+                "Capture a pane as text, ANSI, or PNG",
             ),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(

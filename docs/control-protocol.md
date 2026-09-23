@@ -150,8 +150,7 @@ which the server loop, and so every client, waits on.
 `capture-pane.target` defaults to `source_pane`, then the focused pane. `scrollback` is a
 nonnegative line count, `"full"`, or `"last-output"`. `render` is `"text"` (the default),
 `"ansi"`, or `"png"`; `ansi` and `png` capture the visible grid only, and fail with
-`invalid-argument` when `scrollback` is set. A PNG larger than a session reply can carry fails with
-`message-too-large`.
+`invalid-argument` when `scrollback` is set.
 
 `list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
 program data, reported status, and detected agent data when available.
@@ -269,18 +268,22 @@ kind, and a JSON body. One exchange is:
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":11,"min_protocol_version":11,
+{"type":"session-control","session":"dev","protocol_version":12,"min_protocol_version":12,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":11,
- "response":{"ok":true,"data":{"id":3,"text":"…","title":"zsh"}}}
+{"type":"session-control-result","effective_protocol":12,
+ "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
 `response` is the same envelope the UI endpoint returns. A wrong session name or an incompatible
 build is answered with a session-protocol `error` frame carrying `session-mismatch` or
 `protocol-mismatch` instead, because neither is a rejected command.
+
+A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
+large pane or a long `--scrollback full` export, is answered with `message-too-large` instead. The
+UI endpoint has no such limit.
 
 The connection never becomes a client. It gets no client id, does not appear in the session roster
 or client count (including `metrics`, which counts attached clients rather than open sockets),

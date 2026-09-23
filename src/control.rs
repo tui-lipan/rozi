@@ -107,7 +107,8 @@ pub enum CaptureRender {
     /// The visible grid as text with SGR color and style sequences: no cursor movement or screen
     /// clearing, every row at the pane's width.
     Ansi,
-    /// The visible grid as a PNG image, in the pane's theme colors.
+    /// The visible grid's text cells as a PNG image, in the pane's theme colors. Inline terminal
+    /// graphics are not drawn.
     Png,
 }
 

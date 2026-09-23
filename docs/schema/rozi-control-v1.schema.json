@@ -433,7 +433,7 @@
         },
         {
           "const": "png",
-          "description": "The visible grid as a PNG image, in the pane's theme colors.",
+          "description": "The visible grid's text cells as a PNG image, in the pane's theme colors. Inline terminal\ngraphics are not drawn.",
           "type": "string"
         }
       ]

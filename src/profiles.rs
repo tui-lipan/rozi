@@ -296,15 +296,23 @@ struct HostPath<'a> {
 }
 
 impl<'a> HostPath<'a> {
-    /// `None` for a relative path, or one whose `..` climbs above its root: neither names a
-    /// directory whose place in a repository can be known.
+    /// The root decides which rules apply. A drive (`C:\`) or UNC share (`\\server\share`,
+    /// or `//server/share` as Git on Windows spells it) is Windows: either slash separates, and
+    /// names compare without regard to case. A `/` root is Unix: only `/` separates, so a
+    /// backslash is part of a name, and names are case-sensitive.
+    ///
+    /// `None` for a path whose place in a repository cannot be known: a relative one, a Windows
+    /// path rooted at the current drive (`\repo`, `C:repo`), or one whose `..` climbs above
+    /// its root.
     fn parse(path: &'a str) -> Option<Self> {
         let bytes = path.as_bytes();
-        let separator = |byte: u8| byte == b'/' || byte == b'\\';
+        let windows_separator = |byte: u8| byte == b'/' || byte == b'\\';
+        const WINDOWS: &[char] = &['/', '\\'];
+        const UNIX: &[char] = &['/'];
         let (root, rest, windows) =
-            if bytes.len() >= 2 && separator(bytes[0]) && separator(bytes[1]) {
+            if bytes.len() >= 2 && windows_separator(bytes[0]) && windows_separator(bytes[1]) {
                 // UNC: the server and share are part of the root.
-                let mut pieces = path[2..].splitn(3, ['/', '\\']);
+                let mut pieces = path[2..].splitn(3, WINDOWS);
                 let server = pieces.next().filter(|piece| !piece.is_empty())?;
                 let share = pieces.next().filter(|piece| !piece.is_empty())?;
                 (
@@ -313,18 +321,17 @@ impl<'a> HostPath<'a> {
                     true,
                 )
             } else if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-                // `C:foo` is relative to that drive's current directory.
-                if bytes.len() > 2 && !separator(bytes[2]) {
+                if bytes.len() > 2 && !windows_separator(bytes[2]) {
                     return None;
                 }
                 (path[..2].to_string(), &path[2..], true)
-            } else if bytes.first().copied().is_some_and(separator) {
-                ("/".to_string(), path, path.contains('\\'))
+            } else if bytes.first() == Some(&b'/') {
+                ("/".to_string(), path, false)
             } else {
                 return None;
             };
         let mut parts = Vec::new();
-        for part in rest.split(['/', '\\']) {
+        for part in rest.split(if windows { WINDOWS } else { UNIX }) {
             match part {
                 "" | "." => {}
                 ".." => {
@@ -1209,6 +1216,16 @@ mod tests {
         assert!(!inside("\\\\other\\share\\repo\\web", "//host/share/repo"));
         // A checkout at a bare root would contain everything, so it contains nothing.
         assert!(!inside("/etc", "/"));
+
+        // A `/` root is Unix: a backslash is part of a name, and names keep their case.
+        assert_eq!(
+            innermost_checkout_rest("/src/Foo\\Bar/web", &["/src/Foo\\Bar".into()]),
+            Some(vec!["web"])
+        );
+        assert!(!inside("/src/Foo\\Bar/web", "/src/foo\\bar"));
+        assert!(!inside("/src/Foo\\Bar", "/src/Foo"));
+        // Rooted at the current drive, which is unknown here.
+        assert!(!inside("\\Code\\Repo\\web", "C:\\Code\\Repo"));
 
         assert_eq!(
             rebase_host_path("/src/rozi/../outside", &["/src/rozi".into()], "/wt/feat"),

@@ -772,7 +772,9 @@ pub(super) fn format_control_text(
             }
         }
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
-        control::ControlCommand::CapturePane { .. } => format_capture_text(data),
+        control::ControlCommand::CapturePane { .. } | control::ControlCommand::CaptureUi { .. } => {
+            format_capture_text(data)
+        }
         control::ControlCommand::NewPane { .. } => {
             let id = data.and_then(|value| value_u64(value, "id"));
             let ready = data

@@ -103,6 +103,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Popup { .. } => {
             Some("popups are drawn by a UI; a session server cannot open one")
         }
+        ControlCommand::CaptureUi { .. } => Some(
+            "capture-ui photographs a UI; a session server draws nothing (capture one pane with `capture-pane --render png`)",
+        ),
         ControlCommand::Notify { .. } => {
             Some("toasts are drawn by a UI; a session server has nowhere to show one")
         }
@@ -3018,6 +3021,9 @@ mod tests {
             },
             ControlCommand::Publish,
             ControlCommand::Subscribe { events: Vec::new() },
+            ControlCommand::CaptureUi {
+                render: crate::control::CaptureRender::Png,
+            },
         ] {
             let reason = session_control_unsupported(&command)
                 .unwrap_or_else(|| panic!("{command:?} must be refused by a session server"));

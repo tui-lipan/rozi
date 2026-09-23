@@ -60,10 +60,36 @@ pub(crate) fn capture_screen(
 }
 
 fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, ControlResponse> {
+    encode_png(&screen.capture_frame(), screen.palette())
+}
+
+/// What `capture-ui` returns for the frame the client painted, in the same forms as a pane.
+///
+/// The UI resolved most colors while drawing; `palette` supplies the rest, the cells left at the
+/// terminal's default colors.
+pub(crate) fn capture_ui_frame(
+    frame: &tui_lipan::CapturedFrame,
+    render: CaptureRender,
+    palette: TerminalColorPalette,
+) -> std::result::Result<CaptureContent, ControlResponse> {
+    match render {
+        CaptureRender::Text => Ok(CaptureContent::Text {
+            text: frame.plain_text(),
+        }),
+        CaptureRender::Ansi => Ok(CaptureContent::Ansi {
+            text: frame.to_ansi_text(),
+        }),
+        CaptureRender::Png => encode_png(frame, palette),
+    }
+}
+
+fn encode_png(
+    frame: &tui_lipan::CapturedFrame,
+    palette: TerminalColorPalette,
+) -> std::result::Result<CaptureContent, ControlResponse> {
     use base64::Engine as _;
     use tui_lipan::{PngOptions, PngTextRenderer};
 
-    let palette = screen.palette();
     let options = PngOptions {
         scale: 1,
         text_renderer: PngTextRenderer::Auto,
@@ -72,8 +98,7 @@ fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, C
         ansi_palette: palette.ansi,
         ..PngOptions::default()
     };
-    let png = screen
-        .capture_frame()
+    let png = frame
         .to_png(&options)
         .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
     let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);

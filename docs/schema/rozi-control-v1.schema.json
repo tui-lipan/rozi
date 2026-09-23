@@ -419,7 +419,7 @@
       "type": "object"
     },
     "CaptureRender": {
-      "description": "What form `capture-pane` returns a pane in.",
+      "description": "What form `capture-pane` returns a pane in, and `capture-ui` the whole client.",
       "oneOf": [
         {
           "const": "text",
@@ -428,12 +428,12 @@
         },
         {
           "const": "ansi",
-          "description": "The visible grid as text with SGR color and style sequences: no cursor movement or screen\nclearing, every row at the pane's width.",
+          "description": "The visible grid as text with SGR color and style sequences: no cursor movement or screen\nclearing, every row at the full width.",
           "type": "string"
         },
         {
           "const": "png",
-          "description": "The visible grid's text cells as a PNG image, in the pane's theme colors. Inline terminal\ngraphics are not drawn.",
+          "description": "The visible grid's text cells as a PNG image, in the theme's colors. Inline terminal\ngraphics are not drawn.",
           "type": "string"
         }
       ]
@@ -1110,6 +1110,23 @@
                 "integer",
                 "null"
               ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture the whole client as it is drawn: the bar, borders, overlays, and every visible\npane. Answered from the next frame the UI paints, so it needs a UI; a session server\ndraws nothing.",
+          "properties": {
+            "cmd": {
+              "const": "capture-ui",
+              "type": "string"
+            },
+            "render": {
+              "$ref": "#/$defs/CaptureRender",
+              "default": "text"
             }
           },
           "required": [
@@ -2096,6 +2113,23 @@
           "type": "object"
         },
         {
+          "description": "Capture the whole client as it is drawn: the bar, borders, overlays, and every visible\npane. Answered from the next frame the UI paints, so it needs a UI; a session server\ndraws nothing.",
+          "properties": {
+            "cmd": {
+              "const": "capture-ui",
+              "type": "string"
+            },
+            "render": {
+              "$ref": "#/$defs/CaptureRender",
+              "default": "text"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.",
           "properties": {
             "cmd": {
@@ -2824,7 +2858,7 @@
           "type": "object"
         },
         {
-          "description": "SGR-styled text; print it to a terminal to see the pane's colors.",
+          "description": "SGR-styled text; print it to a terminal to see the captured colors.",
           "properties": {
             "render": {
               "const": "ansi",
@@ -3532,6 +3566,82 @@
       ],
       "type": "object"
     },
+    "UiCapture": {
+      "description": "The whole client's frame, as `capture-ui` reports it.",
+      "oneOf": [
+        {
+          "description": "Plain text.",
+          "properties": {
+            "render": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "SGR-styled text; print it to a terminal to see the captured colors.",
+          "properties": {
+            "render": {
+              "const": "ansi",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the\nCLI decodes them before writing.",
+          "properties": {
+            "png_base64": {
+              "type": "string"
+            },
+            "render": {
+              "const": "png",
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "png_base64"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "height": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "description": "The frame's size in terminal cells.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
     "WireEvent": {
       "description": "One `subscribe` event as it goes out on the wire.\n\n`data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an\nevent carries grow over time and a subscriber is expected to read the ones it knows and ignore\nthe rest, so the schema describes the envelope and the closed vocabulary of event names without\nfreezing each kind's field list.",
       "properties": {
@@ -3603,5 +3713,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 3
+  "x-rozi-schema-version": 4
 }

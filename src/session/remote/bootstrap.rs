@@ -108,6 +108,20 @@ const WINDOWS_FAMILY_PROBE_SCRIPT: &str = "if ([System.Environment]::OSVersion.P
 /// the POSIX probe does; [`parse_probe_output`] handles both. Never treats binary output as code.
 const WINDOWS_PROBE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @'
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RoziLongPathName {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+}
+'@ -ErrorAction SilentlyContinue
+function Get-RoziLongPath($path) {
+  $buffer = New-Object System.Text.StringBuilder 32768
+  $length = [RoziLongPathName]::GetLongPathName($path, $buffer, [uint32]$buffer.Capacity)
+  if ($length -gt 0 -and $length -lt $buffer.Capacity) { return $buffer.ToString() }
+  return $path
+}
 Write-Output "platform=windows"
 $arch = $env:PROCESSOR_ARCHITECTURE
 if (-not $arch) { $arch = 'unknown' }
@@ -121,6 +135,7 @@ function Try-Bin($bin, $reported = $null) {
     if ($cmd) { $resolved = $cmd.Source }
   }
   if (-not $resolved) { return }
+  $resolved = Get-RoziLongPath $resolved
   $out = & $resolved --version 2>$null
   if (-not $reported) { $reported = $resolved }
   Write-Output "candidate=$reported"
@@ -860,6 +875,20 @@ fn install_bytes_windows(
     let version = env!("CARGO_PKG_VERSION");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RoziLongPathName {{
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+}}
+'@ -ErrorAction SilentlyContinue
+function Get-RoziLongPath($path) {{
+  $buffer = New-Object System.Text.StringBuilder 32768
+  $length = [RoziLongPathName]::GetLongPathName($path, $buffer, [uint32]$buffer.Capacity)
+  if ($length -gt 0 -and $length -lt $buffer.Capacity) {{ return $buffer.ToString() }}
+  return $path
+}}
 $dataHome = $env:LOCALAPPDATA
 if (-not $dataHome) {{ $dataHome = Join-Path $env:USERPROFILE '.local\share' }}
 $dir = Join-Path $dataHome 'rozi\remote\{version}'
@@ -888,7 +917,7 @@ try {{
   $help = & $src --help 2>$null
   if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
   Move-Item -Force -LiteralPath $src -Destination $final
-  $installed = (Resolve-Path -LiteralPath $final).Path
+  $installed = Get-RoziLongPath (Resolve-Path -LiteralPath $final).Path
   Write-Output "installed=$installed"
 }} finally {{
   if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}

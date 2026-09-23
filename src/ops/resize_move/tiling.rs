@@ -140,13 +140,30 @@ pub(crate) fn tile_pane(workspace: &mut Workspace, id: PaneId, at: Option<TileAt
 }
 
 /// Set pane `id`'s fullscreen flag. Returns whether it changed.
+///
+/// At most one pane per workspace is fullscreen - two would stack, and which one showed would come
+/// down to render order - so making `id` fullscreen restores any other, the rule spawning a
+/// fullscreen pane already keeps. `changed` counts those too.
 pub(crate) fn set_pane_fullscreen(workspace: &mut Workspace, id: PaneId, fullscreen: bool) -> bool {
     let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
         return false;
     };
     pane.opening = false;
-    let changed = pane.fullscreen != fullscreen;
+    let mut changed = pane.fullscreen != fullscreen;
     pane.fullscreen = fullscreen;
+    if fullscreen {
+        changed |= clear_other_fullscreen(workspace, id);
+    }
+    changed
+}
+
+/// Restore every pane of `workspace` but `keep` from fullscreen. Returns whether any was.
+pub(crate) fn clear_other_fullscreen(workspace: &mut Workspace, keep: PaneId) -> bool {
+    let mut changed = false;
+    for other in workspace.panes.iter_mut().filter(|pane| pane.id != keep) {
+        changed |= other.fullscreen;
+        other.fullscreen = false;
+    }
     changed
 }
 

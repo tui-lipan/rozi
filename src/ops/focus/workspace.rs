@@ -121,7 +121,13 @@ pub(crate) fn transfer_pane(state: &mut State, id: PaneId, source: usize, target
         destination.tile_tree = crate::layout::effective_tile_tree(destination, None);
         append_tiled_window(destination, id);
     }
+    // One fullscreen pane per workspace: an arriving fullscreen pane takes over, as a spawned one
+    // does.
+    let fullscreen = pane.fullscreen;
     destination.panes.push(pane);
+    if fullscreen {
+        crate::ops::resize_move::clear_other_fullscreen(destination, id);
+    }
     true
 }
 

@@ -710,7 +710,11 @@ impl SharedLayout {
             );
             self.workspaces[destination].tree = from_dwindle(&tree, &|id| Some(id));
         }
+        let fullscreen = pane.fullscreen;
         self.workspaces[destination].panes.push(pane);
+        if fullscreen {
+            clear_other_shared_fullscreen(&mut self.workspaces[destination], pane_id);
+        }
         self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(true)
     }
@@ -821,6 +825,9 @@ impl SharedLayout {
         if let Some(fullscreen) = edit.fullscreen {
             pane.fullscreen = fullscreen;
         }
+        if edit.fullscreen == Some(true) {
+            clear_other_shared_fullscreen(workspace, pane_id);
+        }
         if floats != floating_now {
             let tree =
                 crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
@@ -863,6 +870,18 @@ impl SharedLayout {
             )
             .is_some_and(|tree| crate::layout::tiling::leaf_share(&tree, pane_id).is_some())
         })
+    }
+}
+
+/// Restore every pane of `workspace` but `keep` from fullscreen: at most one pane per workspace is
+/// fullscreen. The document side of `clear_other_fullscreen`, so both endpoints keep the rule.
+fn clear_other_shared_fullscreen(workspace: &mut SharedWorkspace, keep: PaneId) {
+    for other in workspace
+        .panes
+        .iter_mut()
+        .filter(|pane| pane.pane_id != keep)
+    {
+        other.fullscreen = false;
     }
 }
 
@@ -1652,6 +1671,38 @@ mod tests {
         assert!(!layout.set_master_ratio(0, 0.65));
         assert_eq!(layout.workspaces[0].split_ratios[0], 0.65);
         layout.validate().expect("valid");
+    }
+
+    fn fullscreen_panes(layout: &SharedLayout) -> Vec<(usize, PaneId)> {
+        layout
+            .workspaces
+            .iter()
+            .flat_map(|workspace| {
+                workspace
+                    .panes
+                    .iter()
+                    .filter(|pane| pane.fullscreen)
+                    .map(|pane| (workspace.index, pane.pane_id))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_workspace_keeps_at_most_one_fullscreen_pane() {
+        let mut layout = three_tiled();
+        assert_eq!(layout.edit_pane(1, edit(None, Some(true), None)), Ok(true));
+        assert_eq!(layout.edit_pane(2, edit(None, Some(true), None)), Ok(true));
+        assert_eq!(
+            fullscreen_panes(&layout),
+            vec![(0, 2)],
+            "the second takes over"
+        );
+
+        // A fullscreen pane arriving in a workspace with one of its own takes over there too.
+        assert_eq!(layout.move_pane(3, 4), Ok(true));
+        assert_eq!(layout.edit_pane(3, edit(None, Some(true), None)), Ok(true));
+        assert_eq!(layout.move_pane(2, 4), Ok(true));
+        assert_eq!(fullscreen_panes(&layout), vec![(4, 2)]);
     }
 
     #[test]

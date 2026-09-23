@@ -424,6 +424,26 @@ fn workspace_reports(
     workspaces
 }
 
+/// The shared document `layout get` describes from this UI.
+///
+/// A follower reports the document it last applied, exactly as the server holds it. Rebuilding one
+/// from its own `State` would be wrong wherever the two differ: a document the server started for a
+/// headless `split` names only the workspaces it placed panes in, and the follower's other
+/// workspaces carry its local defaults, which nobody shared. A controller's own `State` *is* the
+/// layout, and it commits that document on its next update whether or not anyone asks - so that
+/// is the one it reports.
+fn reported_layout(ctx: &Context<AppRoot>) -> crate::layout::shared::SharedLayout {
+    ctx.state
+        .current()
+        .shared
+        .as_ref()
+        .filter(|shared| !shared.is_controller())
+        .and_then(|shared| shared.last_committed_layout.clone())
+        .unwrap_or_else(|| {
+            crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx))
+        })
+}
+
 /// `layout get` from this UI.
 ///
 /// The shared half is built from the document this client would commit, measured against
@@ -435,7 +455,7 @@ fn layout_report(ctx: &mut Context<AppRoot>, workspace: Option<usize>) -> Contro
         return response;
     }
     let (revision, committed) = flushed_revision(ctx);
-    let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
+    let layout = reported_layout(ctx);
     let workspaces = workspace_reports(ctx, &layout, workspace);
     let viewport = ctx.viewport();
     let attachment = ctx.state.current();
@@ -2512,6 +2532,153 @@ mod tests {
             .expect("spawn ratio test thread")
             .join()
             .expect("ratio test thread completes");
+    }
+
+    /// The one-fullscreen-pane rule holds for explicit targets, and the UI keeps it exactly as the
+    /// document edit does.
+    #[test]
+    fn explicit_fullscreen_keeps_one_fullscreen_pane_per_workspace_on_both_endpoints() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, canvas) = three_tiled_panes();
+                let fullscreen = |target| pane_set(target, None, Some(true), None);
+                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+                let steps: [(ControlCommand, Edit); 4] = [
+                    (fullscreen(1), |layout| {
+                        layout
+                            .edit_pane(
+                                1,
+                                crate::control::PaneEdit::validate(
+                                    None,
+                                    Some(true),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap()
+                    }),
+                    (fullscreen(2), |layout| {
+                        layout
+                            .edit_pane(
+                                2,
+                                crate::control::PaneEdit::validate(
+                                    None,
+                                    Some(true),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap()
+                    }),
+                    (
+                        ControlCommand::PaneMove {
+                            target: 1,
+                            workspace: 2,
+                            if_revision: None,
+                        },
+                        |layout| layout.move_pane(1, 1).unwrap(),
+                    ),
+                    (
+                        ControlCommand::PaneMove {
+                            target: 2,
+                            workspace: 2,
+                            if_revision: None,
+                        },
+                        |layout| layout.move_pane(2, 1).unwrap(),
+                    ),
+                ];
+                for (command, apply) in steps {
+                    let mut expected =
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                    apply(&mut expected);
+                    let response = dispatch(&mut backend, command.clone());
+                    assert!(response.ok, "{command:?}: {:?}", response.error);
+                    assert_eq!(
+                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                        expected,
+                        "{command:?}"
+                    );
+                }
+                let fullscreen: Vec<(usize, PaneId)> = backend
+                    .state()
+                    .current()
+                    .workspaces
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(index, workspace)| {
+                        workspace
+                            .panes
+                            .iter()
+                            .filter(|pane| pane.fullscreen)
+                            .map(move |pane| (index, pane.id))
+                    })
+                    .collect();
+                assert_eq!(
+                    fullscreen,
+                    vec![(1, 2)],
+                    "exactly one, and the arriving pane won"
+                );
+            })
+            .expect("spawn fullscreen test thread")
+            .join()
+            .expect("fullscreen test thread completes");
+    }
+
+    /// A follower reports the document the server holds, not one rebuilt from its own workspaces:
+    /// a sparse document must not grow the follower's local defaults.
+    #[test]
+    fn a_follower_reports_the_document_it_applied() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, canvas) = three_tiled_panes();
+                let mut sparse =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                sparse.workspaces.retain(|workspace| workspace.index == 0);
+                let mut follower = crate::state::SharedSessionState::new(1);
+                follower.controller = Some(2);
+                follower.layout_rev = 7;
+                follower.assumed_rev = 7;
+                follower.last_committed_layout = Some(sparse.clone());
+                backend.state_mut().current_mut().shared = Some(follower);
+
+                let response =
+                    dispatch(&mut backend, ControlCommand::LayoutGet { workspace: None });
+                let report: crate::control::LayoutReport =
+                    serde_json::from_value(response.data.expect("layout data")).expect("report");
+                let mut shared = report.workspaces.clone();
+                for workspace in &mut shared {
+                    for pane in &mut workspace.panes {
+                        pane.view_rect = None;
+                    }
+                }
+                assert_eq!(
+                    shared,
+                    crate::control::WorkspaceLayout::from_shared(
+                        &sparse,
+                        None,
+                        backend.state().current().session_instance.as_ref(),
+                    ),
+                    "exactly the session's document"
+                );
+                assert_eq!(report.revision, Some(7));
+                let shared = backend.state().current().shared.as_ref().unwrap();
+                assert_eq!(
+                    (shared.layout_rev, shared.assumed_rev),
+                    (7, 7),
+                    "reading commits nothing"
+                );
+            })
+            .expect("spawn follower test thread")
+            .join()
+            .expect("follower test thread completes");
     }
 
     #[test]

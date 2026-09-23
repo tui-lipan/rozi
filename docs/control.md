@@ -303,6 +303,9 @@ The report answers two separate questions, and keeps them apart:
 - **What one UI shows.** `client` and each pane's `view_rect` describe a single UI's screen: its
   focus, the workspace it shows, and where it draws each pane. They appear only when a UI answered.
 
+A follower reports the layout document it last received, exactly as the server holds it. A
+controlling UI reports the document it commits.
+
 ```json
 {
   "session": "dev",
@@ -393,7 +396,7 @@ creates no new revision. A refused write changes nothing.
 | --- | --- |
 | `--floating true` | Float the pane. A tiled pane lifts off centred on the tile it leaves, at the default float size of 42% of the canvas, unless you also pass a rect. A pane that already floats stays where it is. |
 | `--floating false` | Return the pane to the tiling, at the end of the tiling order. |
-| `--fullscreen true\|false` | Make the pane fullscreen, or restore it. |
+| `--fullscreen true\|false` | Make the pane fullscreen, or restore it. A workspace has at most one fullscreen pane, so making one fullscreen restores any other. |
 | `--rect X,Y,W,H` | Place a floating pane, in canvas cells. `X` may be negative. |
 | `--rect-fraction X,Y,W,H` | Place a floating pane, as fractions of the canvas. |
 | `--split-ratio R` | Dwindle only: set the pane's share of the split that directly holds it. |
@@ -415,7 +418,8 @@ Rects are clamped the same way a dragged float is: part of the pane may leave th
 margin always stays on screen to grab. The float lands on whole cells.
 
 `pane move --workspace N` puts the pane at the end of workspace `N`: last in its tiling order when
-tiled, at the same rect when floating. The view does not follow the pane. If the pane had focus,
+tiled, at the same rect when floating. A fullscreen pane stays fullscreen and restores any
+fullscreen pane already in `N`. The view does not follow the pane. If the pane had focus,
 focus moves to another pane in the workspace it left, as it would if the pane had closed. Moving a
 pane to the workspace it is in is `changed: false`.
 

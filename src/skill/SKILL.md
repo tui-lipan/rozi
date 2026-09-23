@@ -40,12 +40,43 @@ Always read live pane ids. Never infer an id from pane order, a title, or an exa
 ```bash
 # Session shown by this UI
 rozi list-panes --format json
+rozi layout get --format json
 rozi capture-pane --target <PANE_ID> --format json
 
 # Detached named session
 rozi --session dev list-panes --format json
+rozi --session dev layout get --format json
 rozi --session dev capture-pane --target <PANE_ID> --format json
 ```
+
+`layout get` shows each workspace's layout and where every pane sits. `rect` is the pane's
+position on the session's shared canvas, in cells. Every endpoint reports the same `rect`. From a
+UI, `client` gives the focused pane and the workspace it shows, and `view_rect` gives where that UI
+draws each pane. Use these rects to work out which pane is left of or above another. Do not guess
+from pane ids or titles.
+
+Change the layout only when the user asks. Every write names what it changes and never moves focus:
+
+```bash
+rozi layout set --workspace 2 master
+rozi pane set --target <PANE_ID> --floating true --rect 10,5,80,24
+rozi pane set --target <PANE_ID> --fullscreen false --if-revision <REVISION>
+rozi pane move --target <PANE_ID> --workspace 3
+rozi pane swap --target <PANE_ID> --with <PANE_ID>
+rozi pane set --target <PANE_ID> --split-ratio 0.6      # Dwindle
+rozi pane set --target <PANE_ID> --width-ratio 0.5      # Scrollable
+rozi layout set --workspace 2 master --master-ratio 0.6
+```
+
+Each ratio works only with the layout that uses it; anything else fails with `unsupported`.
+
+`pane close --target <PANE_ID>` ends the pane's process without asking. Run it only for a pane the
+user asked you to close, or one you opened yourself.
+
+Writes set a state; repeating one returns `changed:false`. Pass the `revision` from `layout get`
+as `--if-revision` so a layout someone changed meanwhile fails with `conflict` instead of being
+overwritten, then read the layout again. `not-controller` means another client is arranging the
+session: leave it alone.
 
 Inspect a pane before sending input unless the user gave an exact live id and exact input. Target
 other panes explicitly so focus never decides where input goes.
@@ -66,8 +97,8 @@ rozi --session dev status --clear --target <PANE_ID>
 tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
 `--literal` when a key-like argument such as `C-c` must be typed literally.
 
-Use `--format json` for agent-readable output. `list-panes`, `capture-pane`, and `metrics` support
-it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
+Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`, and
+`metrics` support it. Capture options include `--scrollback 200`, `--scrollback full`, and `--last-output`.
 
 Re-read pane ids before acting after a delay or any layout or session change.
 
@@ -112,8 +143,8 @@ cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is
 bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"activate":"<id>"}`;
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
-A detached endpoint supports `list-panes`, `metrics`, `send-text`, `send-keys`, `capture-pane`,
-`split`, and `status`. Input still obeys the session's input lock.
+A detached endpoint supports `list-panes`, `layout get`, `layout set`, the `pane` commands,
+`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
 
 ## Detached-session limits
 

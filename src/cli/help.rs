@@ -194,6 +194,32 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "list-panes [--format text|json]",
                 "List live panes; JSON when piped",
             ),
+            row(
+                "layout get [--workspace <1-9>] [--format text|json]",
+                "Show workspaces and where each pane sits",
+            ),
+            row(
+                "layout set --workspace <1-9> [<LAYOUT>] [--master-ratio <R>]",
+                "Set a workspace's layout or master share",
+            ),
+            row("pane set --target <ID> [--floating B] [--fullscreen B]", ""),
+            row("    [--rect X,Y,W,H | --rect-fraction X,Y,W,H]", ""),
+            row(
+                "    [--split-ratio <R> | --width-ratio <R>] [--if-revision <N>]",
+                "Float, place, size, or fullscreen a pane",
+            ),
+            row(
+                "pane move --target <ID> --workspace <1-9> [--if-revision <N>]",
+                "Move a pane to another workspace",
+            ),
+            row(
+                "pane swap --target <ID> --with <ID> [--if-revision <N>]",
+                "Exchange two tiled panes",
+            ),
+            row(
+                "pane close --target <ID> [--if-revision <N>]",
+                "Close a pane without asking",
+            ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
                 "send-text [--target <PANE_ID>] <TEXT>",

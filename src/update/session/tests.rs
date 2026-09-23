@@ -2858,3 +2858,41 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
         }],
     }
 }
+
+#[test]
+fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            backend.state_mut().current_mut().shared =
+                Some(crate::state::SharedSessionState::new(1));
+            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
+            let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+                crate::events::EventKind::LayoutChanged,
+            ])));
+            for (rev, author, expected) in [(5, 1, "self"), (6, 0, "server"), (7, 2, "client")] {
+                backend
+                    .update_level(Msg::SessionLayoutCommitted {
+                        epoch,
+                        rev,
+                        author,
+                        layout: layout.clone(),
+                    })
+                    .unwrap();
+                let event: serde_json::Value =
+                    serde_json::from_str(&events.recv().unwrap()).unwrap();
+                assert_eq!(
+                    event,
+                    serde_json::json!({
+                        "event": "layout-changed",
+                        "data": {"revision": rev.to_string(), "author": expected}
+                    })
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

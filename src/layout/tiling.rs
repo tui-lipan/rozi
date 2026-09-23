@@ -121,6 +121,49 @@ fn swap_tree_leaves_inner(tree: &mut DwindleTree, a: PaneId, b: PaneId) {
     }
 }
 
+/// Pane `id`'s share of the split that directly holds its leaf: the stored ratio when it is the
+/// first child, its complement when it is the second. `None` for a lone leaf or an absent pane.
+pub fn leaf_share(tree: &DwindleTree, id: PaneId) -> Option<f32> {
+    let DwindleTree::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = tree
+    else {
+        return None;
+    };
+    match (first.as_ref(), second.as_ref()) {
+        (DwindleTree::Leaf(leaf), _) if *leaf == id => Some(*ratio),
+        (_, DwindleTree::Leaf(leaf)) if *leaf == id => Some(1.0 - *ratio),
+        _ if tree_contains(first, id) => leaf_share(first, id),
+        _ => leaf_share(second, id),
+    }
+}
+
+/// Set pane `id`'s share of the split that directly holds its leaf; the inverse of [`leaf_share`].
+/// Returns whether the tree changed.
+pub fn set_leaf_share(tree: &mut DwindleTree, id: PaneId, share: f32) -> bool {
+    let DwindleTree::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = tree
+    else {
+        return false;
+    };
+    let wanted = match (first.as_ref(), second.as_ref()) {
+        (DwindleTree::Leaf(leaf), _) if *leaf == id => share,
+        (_, DwindleTree::Leaf(leaf)) if *leaf == id => 1.0 - share,
+        _ if tree_contains(first, id) => return set_leaf_share(first, id, share),
+        _ => return set_leaf_share(second, id, share),
+    };
+    let changed = *ratio != wanted;
+    *ratio = wanted;
+    changed
+}
+
 pub fn tree_contains(tree: &DwindleTree, id: PaneId) -> bool {
     match tree {
         DwindleTree::Leaf(leaf) => *leaf == id,
@@ -282,12 +325,12 @@ pub fn insert_leaf_around_target(
     }
 }
 
-pub fn effective_tile_tree(
-    workspace: &Workspace,
+pub fn effective_tile_tree<W: crate::layout::TileSource + ?Sized>(
+    workspace: &W,
     exclude_tiled: Option<PaneId>,
 ) -> Option<DwindleTree> {
     let active_ids: Vec<PaneId> = workspace
-        .active_tiled_ids_by_pane_order()
+        .tiled_ids_by_pane_order()
         .into_iter()
         .filter(|id| Some(*id) != exclude_tiled)
         .collect();
@@ -295,15 +338,16 @@ pub fn effective_tile_tree(
         return None;
     }
 
+    let start_axis = workspace.start_axis();
     let mut tree = workspace
-        .tile_tree
-        .clone()
+        .stored_tile_tree()
+        .cloned()
         .and_then(|tree| prune_tree_to_ids(tree, &active_ids))
-        .or_else(|| build_dwindle_tree(&active_ids, workspace.start_axis, &workspace.split_ratios));
+        .or_else(|| build_dwindle_tree(&active_ids, start_axis, workspace.split_ratios()));
 
     for id in active_ids {
         if !tree.as_ref().is_some_and(|tree| tree_contains(tree, id)) {
-            tree = Some(append_tiled_leaf(tree, id, workspace.start_axis));
+            tree = Some(append_tiled_leaf(tree, id, start_axis));
         }
     }
 
@@ -2276,5 +2320,39 @@ mod tests {
             .iter()
             .map(|p| (p.id, p.rect.x, p.rect.x + p.rect.w))
             .collect()
+    }
+
+    #[test]
+    fn a_leaf_share_reads_and_sets_the_split_directly_holding_the_pane() {
+        let mut tree = DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(2)),
+                second: Box::new(DwindleTree::Leaf(3)),
+            }),
+        };
+        assert_eq!(leaf_share(&tree, 1), Some(0.5));
+        assert!(set_leaf_share(&mut tree, 3, 0.7));
+        assert!((leaf_share(&tree, 3).unwrap() - 0.7).abs() < 1e-6);
+        assert!((leaf_share(&tree, 2).unwrap() - 0.3).abs() < 1e-6);
+        assert!(
+            !set_leaf_share(&mut tree, 3, 0.7),
+            "the same share again changes nothing"
+        );
+        assert_eq!(
+            leaf_share(&tree, 1),
+            Some(0.5),
+            "the outer split is untouched"
+        );
+        assert_eq!(leaf_share(&tree, 9), None);
+        assert_eq!(
+            leaf_share(&DwindleTree::Leaf(1), 1),
+            None,
+            "a lone tile has no split"
+        );
     }
 }

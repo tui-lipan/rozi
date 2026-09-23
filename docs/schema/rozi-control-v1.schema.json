@@ -441,6 +441,96 @@
       ],
       "type": "string"
     },
+    "CellRect": {
+      "description": "A rectangle in terminal cells. The origin can be negative or lie past the canvas: a Scrollable\nstrip is wider than the canvas it scrolls across, and a follower letterboxes a larger canonical\ncanvas into a smaller screen.",
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "y": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "CellSize": {
+      "description": "A size in terminal cells.",
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "ClientLayoutView": {
+      "description": "What one UI is looking at. Nothing here is shared with other clients.",
+      "properties": {
+        "active_workspace": {
+          "description": "One-based workspace this UI shows.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "committed": {
+          "description": "False while this UI has layout changes the server has not yet accepted, so `revision` does\nnot describe them. Always true for a follower.",
+          "type": "boolean"
+        },
+        "controller": {
+          "description": "Whether this UI holds the session's layout-control lease.",
+          "type": "boolean"
+        },
+        "focused_pane": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/CellSize",
+          "description": "This UI's terminal size."
+        }
+      },
+      "required": [
+        "active_workspace",
+        "controller",
+        "committed",
+        "viewport"
+      ],
+      "type": "object"
+    },
     "ClientResyncMetrics": {
       "description": "Clients that fell too far behind to take a pane's output, had it shed, and caught up by replay.",
       "properties": {
@@ -512,6 +602,243 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Report workspaces and where each pane sits. `workspace` is one-based and narrows the report\nto that workspace.",
+          "properties": {
+            "cmd": {
+              "const": "layout-get",
+              "type": "string"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "layout-set",
+              "type": "string"
+            },
+            "if_revision": {
+              "description": "Refuse with `conflict` unless the layout is still at this revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "layout": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ControlLayoutKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "master_ratio": {
+              "description": "The master pane's share of a Master workspace, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as\nthey are; a request that changes nothing succeeds with `changed: false`.",
+          "properties": {
+            "cmd": {
+              "const": "pane-set",
+              "type": "string"
+            },
+            "floating": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "fullscreen": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rect": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CellRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`."
+            },
+            "rect_fraction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FractionRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect as fractions of the canonical canvas."
+            },
+            "split_ratio": {
+              "description": "The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width_ratio": {
+              "description": "The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "pane-move",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Exchange the places of two tiled panes in one workspace.",
+          "properties": {
+            "cmd": {
+              "const": "pane-swap",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "with": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "with"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a pane, ending its process. The request is the confirmation; `[confirm]` does not\napply.",
+          "properties": {
+            "cmd": {
+              "const": "pane-close",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
           ],
           "type": "object"
         },
@@ -1225,6 +1552,19 @@
       ],
       "type": "string"
     },
+    "ControlLayoutKind": {
+      "description": "A tiling algorithm, as `layout get` names it.",
+      "enum": [
+        "dwindle",
+        "master",
+        "grid",
+        "columns",
+        "rows",
+        "scrollable",
+        "monocle"
+      ],
+      "type": "string"
+    },
     "ControlRequest": {
       "oneOf": [
         {
@@ -1236,6 +1576,243 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Report workspaces and where each pane sits. `workspace` is one-based and narrows the report\nto that workspace.",
+          "properties": {
+            "cmd": {
+              "const": "layout-get",
+              "type": "string"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "layout-set",
+              "type": "string"
+            },
+            "if_revision": {
+              "description": "Refuse with `conflict` unless the layout is still at this revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "layout": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ControlLayoutKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "master_ratio": {
+              "description": "The master pane's share of a Master workspace, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as\nthey are; a request that changes nothing succeeds with `changed: false`.",
+          "properties": {
+            "cmd": {
+              "const": "pane-set",
+              "type": "string"
+            },
+            "floating": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "fullscreen": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rect": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CellRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`."
+            },
+            "rect_fraction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FractionRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect as fractions of the canonical canvas."
+            },
+            "split_ratio": {
+              "description": "The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width_ratio": {
+              "description": "The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "pane-move",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Exchange the places of two tiled panes in one workspace.",
+          "properties": {
+            "cmd": {
+              "const": "pane-swap",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "with": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "with"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a pane, ending its process. The request is the confirmation; `[confirm]` does not\napply.",
+          "properties": {
+            "cmd": {
+              "const": "pane-close",
+              "type": "string"
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
           ],
           "type": "object"
         },
@@ -1980,6 +2557,7 @@
         "bell",
         "focus-changed",
         "workspace-switched",
+        "layout-changed",
         "session-attached",
         "session-detached",
         "session-renamed",
@@ -2007,6 +2585,126 @@
       "required": [
         "id",
         "generation"
+      ],
+      "type": "object"
+    },
+    "FractionRect": {
+      "description": "A rectangle as fractions of the canonical canvas, so `0.5` is half its width or height.\nFractions outside `0.0..=1.0` mean the same thing as an out-of-canvas [`CellRect`].",
+      "properties": {
+        "height": {
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "LayoutChange": {
+      "description": "What `layout set` and `pane set` answer with.",
+      "properties": {
+        "changed": {
+          "description": "False when the layout already matched the request. Nothing was committed then, and\n`revision` is unchanged.",
+          "type": "boolean"
+        },
+        "committed": {
+          "description": "False until the session server has accepted `revision`. A session endpoint commits the\nchange itself, so it always answers true; a UI sends its commit and answers before the\nserver's acknowledgement arrives.",
+          "type": "boolean"
+        },
+        "revision": {
+          "description": "The revision the layout has with this change applied.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceLayout",
+          "description": "The affected workspace as it now stands, in the same shape `layout get` reports."
+        }
+      },
+      "required": [
+        "changed",
+        "committed",
+        "workspace"
+      ],
+      "type": "object"
+    },
+    "LayoutReport": {
+      "description": "What `layout get` answers with.\n\nTwo views of one arrangement, kept apart because they are different facts. The workspaces and\neach pane's `rect` describe the session's shared layout document, which the server owns and\nevery client reconciles to: the same answer whichever endpoint is asked. `client`, and each\npane's `view_rect`, describe what one UI actually draws, which depends on its own viewport,\nchrome, and focus, and so exists only when a UI answered.\n\nA public document rather than the internal `SharedLayout` itself: that one is a synchronization\nformat versioned with the session protocol, and this is the contract scripts read.",
+      "properties": {
+        "canvas": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The canonical canvas every `rect` is measured against, in cells. It is the canvas of the\nclient that last controlled the layout. Absent with `revision`."
+        },
+        "client": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientLayoutView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "This UI's own view of the layout. Absent from a session endpoint, which has no screen."
+        },
+        "revision": {
+          "description": "Layout revision this report describes. Absent while no layout document exists, which is the\ncase for a session whose panes nothing has placed yet.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "session": {
+          "description": "Session that answered, qualified with its host when remote.",
+          "type": "string"
+        },
+        "unplaced_panes": {
+          "description": "Panes the session runs that no layout document places yet. Only a session endpoint reports\nthese; a UI places every pane it knows about.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceLayout"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "session",
+        "workspaces"
       ],
       "type": "object"
     },
@@ -2099,6 +2797,45 @@
       "required": [
         "id",
         "text"
+      ],
+      "type": "object"
+    },
+    "PaneClosed": {
+      "description": "What `pane close` answers with.",
+      "properties": {
+        "committed": {
+          "description": "See [`LayoutChange::committed`].",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "description": "The layout revision without the pane. Unchanged when the layout never placed it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceLayout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The workspace the pane left, as it now stands. Absent when no layout placed the pane."
+        }
+      },
+      "required": [
+        "id",
+        "committed"
       ],
       "type": "object"
     },
@@ -2223,6 +2960,86 @@
         "foreground_programs",
         "foreground_arguments",
         "status"
+      ],
+      "type": "object"
+    },
+    "PaneLayout": {
+      "description": "Where one pane sits.",
+      "properties": {
+        "floating": {
+          "type": "boolean"
+        },
+        "fullscreen": {
+          "description": "A fullscreen pane covers the whole screen while it is fullscreen; `rect` stays the place it\nreturns to.",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "order": {
+          "description": "Position in the workspace's tiling order, from `0`. This is the order Master, Grid, Columns,\nRows, Scrollable, and Monocle lay panes out in; absent for a floating pane.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rect": {
+          "$ref": "#/$defs/CellRect",
+          "description": "Placement on the canonical canvas, in cells, without gaps, borders, or the workbar - those\nare each client's own presentation. Every pane in Monocle shares one rect."
+        },
+        "rect_fraction": {
+          "$ref": "#/$defs/FractionRect",
+          "description": "`rect` as fractions of the canonical canvas."
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exact pane incarnation. Absent only from a UI with no session behind it."
+        },
+        "split_ratio": {
+          "description": "The pane's share of the Dwindle split directly holding it. Present only for a tiled pane\nthat shares a split in a Dwindle workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "view_rect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellRect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the answering UI draws the pane, in its own terminal's cells, including gaps and\nchrome. Present only for panes in the UI's active workspace."
+        },
+        "width_ratio": {
+          "description": "The pane's column width as a fraction of the viewport. Present only for a tiled pane in a\nScrollable workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "floating",
+        "fullscreen",
+        "rect",
+        "rect_fraction"
       ],
       "type": "object"
     },
@@ -2656,6 +3473,52 @@
         "data"
       ],
       "type": "object"
+    },
+    "WorkspaceLayout": {
+      "description": "One workspace in a [`LayoutReport`].",
+      "properties": {
+        "index": {
+          "description": "One-based, matching the workbar and `--workspace`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "layout": {
+          "$ref": "#/$defs/ControlLayoutKind"
+        },
+        "master_ratio": {
+          "description": "The master pane's share of the width. Present only for a Master workspace.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "panes": {
+          "description": "Tiled panes in tiling order, then floating panes.",
+          "items": {
+            "$ref": "#/$defs/PaneLayout"
+          },
+          "type": "array"
+        },
+        "synchronized": {
+          "description": "Whether typed input is broadcast to every pane in the workspace.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "index",
+        "layout",
+        "synchronized",
+        "panes"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://rozi.tui-lipan.dev/schema/rozi-control-v1.schema.json",
@@ -2663,5 +3526,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 1
+  "x-rozi-schema-version": 2
 }

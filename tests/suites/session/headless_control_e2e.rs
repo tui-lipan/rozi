@@ -195,6 +195,220 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
         .expect("a server-committed layout must satisfy the same rules a client's does");
 }
 
+/// `layout get` answers from the document the server owns, so a script can see how a session it
+/// grew is arranged before anyone attaches to draw it.
+#[test]
+fn a_detached_session_reports_its_arrangement_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+
+    let before = expect_ok(&session, ControlCommand::LayoutGet { workspace: None });
+    assert_eq!(before["revision"], serde_json::Value::Null);
+    assert_eq!(before["workspaces"], serde_json::json!([]));
+
+    let mut spawned = Vec::new();
+    for title in ["left", "right"] {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: Some(title.to_string()),
+                keep_open: false,
+                focus: false,
+                workspace: Some(3),
+            },
+        );
+        spawned.push(data["id"].as_u64().expect("spawn reported a pane id"));
+    }
+
+    let report = expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(3) });
+    assert!(report["revision"].as_u64().is_some_and(|rev| rev > 0));
+    assert!(report.get("client").is_none(), "no UI answered");
+    let cols = report["canvas"]["cols"].as_u64().expect("canvas cols");
+    let rows = report["canvas"]["rows"].as_u64().expect("canvas rows");
+    let workspaces = report["workspaces"].as_array().expect("workspaces");
+    assert_eq!(workspaces.len(), 1, "--workspace narrows the report");
+    assert_eq!(workspaces[0]["index"], serde_json::json!(3));
+    let panes = workspaces[0]["panes"].as_array().expect("panes");
+    let ids: Vec<u64> = panes
+        .iter()
+        .filter_map(|pane| pane["id"].as_u64())
+        .collect();
+    assert_eq!(ids, spawned, "tiled panes come back in tiling order");
+    // Two tiled panes share the canvas between them without overlapping or leaving a gap.
+    assert!(panes.iter().all(|pane| pane["floating"] == false));
+    let spans: Vec<(u64, u64)> = panes
+        .iter()
+        .map(|pane| {
+            let rect = &pane["rect"];
+            assert_eq!(rect["height"].as_u64(), Some(rows));
+            (
+                rect["x"].as_u64().expect("x"),
+                rect["width"].as_u64().expect("width"),
+            )
+        })
+        .collect();
+    assert_eq!(spans[0].0, 0);
+    assert_eq!(spans[0].0 + spans[0].1, spans[1].0);
+    assert_eq!(spans[1].0 + spans[1].1, cols);
+}
+
+/// A script can rearrange a session nobody is attached to, and what it wrote is what the next
+/// `layout get` - and the next client to attach - sees.
+#[test]
+fn a_detached_session_can_be_rearranged_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let mut panes = Vec::new();
+    for _ in 0..2 {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: Some(1),
+            },
+        );
+        panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
+    }
+    let revision =
+        expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(1) })["revision"]
+            .as_u64()
+            .expect("a revision");
+
+    let floated = expect_ok(
+        &session,
+        ControlCommand::PaneSet {
+            target: panes[1],
+            floating: Some(true),
+            fullscreen: None,
+            rect: Some(rozi::control::CellRect {
+                x: 4,
+                y: 2,
+                width: 30,
+                height: 10,
+            }),
+            rect_fraction: None,
+            split_ratio: None,
+            width_ratio: None,
+            if_revision: Some(revision),
+        },
+    );
+    assert_eq!(floated["changed"], serde_json::json!(true));
+    assert_eq!(floated["revision"].as_u64(), Some(revision + 1));
+
+    // A script holding the old revision is told the layout moved on, and changes nothing.
+    let stale = control(
+        &session,
+        ControlCommand::LayoutSet {
+            workspace: 1,
+            layout: Some(rozi::control::ControlLayoutKind::Grid),
+            master_ratio: None,
+            if_revision: Some(revision),
+        },
+    );
+    assert!(!stale.ok);
+    assert_eq!(stale.code, Some(rozi::control::ControlErrorCode::Conflict));
+
+    let report = expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(1) });
+    assert_eq!(report["revision"].as_u64(), Some(revision + 1));
+    let workspace = &report["workspaces"][0];
+    assert_eq!(workspace["layout"], serde_json::json!("dwindle"));
+    let float = workspace["panes"]
+        .as_array()
+        .and_then(|panes| panes.iter().find(|pane| pane["floating"] == true))
+        .expect("the floated pane");
+    assert_eq!(float["id"].as_u64(), Some(u64::from(panes[1])));
+    assert_eq!(
+        float["rect"],
+        serde_json::json!({"x": 4, "y": 2, "width": 30, "height": 10})
+    );
+
+    let (_client, attached) = attach_client(server.endpoint(), &session, "late client");
+    let ServerMessage::Attached { layout, .. } = attached else {
+        panic!("expected an attach response");
+    };
+    let layout = layout.expect("a layout");
+    assert!(
+        layout.workspaces[0]
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == panes[1] && pane.floating),
+        "a client attaching later finds the pane floating"
+    );
+}
+
+/// `pane close` ends the pane's process and removes it from the layout in one step, with nobody
+/// attached to do the layout half.
+#[test]
+fn a_detached_session_can_close_a_pane_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let mut panes = Vec::new();
+    for _ in 0..2 {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+            },
+        );
+        panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
+    }
+
+    let closed = expect_ok(
+        &session,
+        ControlCommand::PaneClose {
+            target: panes[0],
+            if_revision: None,
+        },
+    );
+    assert_eq!(closed["id"].as_u64(), Some(u64::from(panes[0])));
+
+    let listed = expect_ok(&session, ControlCommand::ListPanes);
+    let ids: Vec<u64> = listed
+        .as_array()
+        .expect("panes")
+        .iter()
+        .filter_map(|pane| pane["id"].as_u64())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![u64::from(panes[1])],
+        "the closed pane is gone, not exited"
+    );
+
+    let (_client, attached) = attach_client(server.endpoint(), &session, "late client");
+    let ServerMessage::Attached {
+        layout,
+        panes: metas,
+        ..
+    } = attached
+    else {
+        panic!("expected an attach response");
+    };
+    assert!(metas.iter().all(|meta| meta.pane_id != panes[0]));
+    let layout = layout.expect("a layout");
+    assert!(
+        layout
+            .workspaces
+            .iter()
+            .all(|workspace| workspace.panes.iter().all(|pane| pane.pane_id != panes[0]))
+    );
+    layout.validate().expect("valid");
+}
+
 /// The whole feature is for sessions nobody is driving. When somebody *is* driving one, opening a
 /// pane means committing a layout revision over their arrangement, and that is the controller's
 /// call - the same rule the protocol already applies to a non-controller's `SpawnPane`.
@@ -231,6 +445,10 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
         },
     );
     assert!(!refused.ok, "a controller is driving this session");
+    assert_eq!(
+        refused.code,
+        Some(rozi::control::ControlErrorCode::NotController)
+    );
     let error = refused.error.unwrap_or_default();
     assert!(error.contains("layout control"), "{error}");
     assert_eq!(

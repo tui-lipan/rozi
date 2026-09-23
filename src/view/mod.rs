@@ -27,7 +27,7 @@ pub use widget_keys::{
     sidebar_region_key, theme_picker_key, worktree_form_input_key, worktree_picker_key,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
-pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes};
+pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_active_pane_rects};
 
 use tui_lipan::prelude::*;
 

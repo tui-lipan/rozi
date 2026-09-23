@@ -15,11 +15,102 @@ use self::anim::SlideEdge;
 use self::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 pub use self::tiling::effective_tile_tree;
 use self::tiling::{
-    PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
+    DwindleTree, PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
-    insert_leaf_around_target, ratio_at,
+    collect_tree_leaves, insert_leaf_around_target, ratio_at,
 };
-use crate::state::{EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
+use crate::state::{
+    EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
+};
+
+/// What tiling geometry reads from one workspace.
+///
+/// Two things are placed by the same allocators: the client's live [`Workspace`], and a workspace
+/// of the server's [`SharedLayout`](shared::SharedLayout) document, which a session server has to
+/// measure when it answers `layout get` with nobody attached. Reading both through this trait
+/// keeps one dispatch, so the server reports the rects a controller would draw at the same canvas
+/// size rather than a second opinion that drifts from the renderer.
+pub trait TileSource {
+    fn layout_kind(&self) -> LayoutKind;
+    fn start_axis(&self) -> SplitAxis;
+    fn split_ratios(&self) -> &[f32];
+    /// The stored tile tree. It may still name panes that have left or become floating;
+    /// [`effective_tile_tree`] prunes it to the live set.
+    fn stored_tile_tree(&self) -> Option<&DwindleTree>;
+    /// Live tiled panes in pane order.
+    fn tiled_ids_by_pane_order(&self) -> Vec<PaneId>;
+    /// A tiled pane's Scrollable column width as a fraction of the tile viewport.
+    fn scrollable_width(&self, id: PaneId) -> f32;
+    /// The pane a Scrollable strip scrolls to show, and which edge it is aligned to.
+    fn scrollable_viewport(&self, tiled_ids: &[PaneId]) -> (Option<PaneId>, ScrollableRevealEdge);
+    /// Every live floating pane with its stored rect in canvas cells, before clamping.
+    fn for_each_floating(&self, visit: &mut dyn FnMut(PaneId, FloatRect));
+}
+
+impl TileSource for Workspace {
+    fn layout_kind(&self) -> LayoutKind {
+        self.layout_kind
+    }
+
+    fn start_axis(&self) -> SplitAxis {
+        self.start_axis
+    }
+
+    fn split_ratios(&self) -> &[f32] {
+        &self.split_ratios
+    }
+
+    fn stored_tile_tree(&self) -> Option<&DwindleTree> {
+        self.tile_tree.as_ref()
+    }
+
+    fn tiled_ids_by_pane_order(&self) -> Vec<PaneId> {
+        self.active_tiled_ids_by_pane_order()
+    }
+
+    fn scrollable_width(&self, id: PaneId) -> f32 {
+        self.panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .map(|pane| pane.scrollable_width)
+            .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH)
+    }
+
+    fn scrollable_viewport(&self, tiled_ids: &[PaneId]) -> (Option<PaneId>, ScrollableRevealEdge) {
+        (
+            scrollable_viewport_anchor(self, tiled_ids),
+            self.scrollable_reveal_edge,
+        )
+    }
+
+    fn for_each_floating(&self, visit: &mut dyn FnMut(PaneId, FloatRect)) {
+        for pane in self
+            .panes
+            .iter()
+            .filter(|pane| pane.floating && !pane.closing)
+        {
+            visit(pane.id, pane.floating_rect);
+        }
+    }
+}
+
+/// Live tiled panes in the order order-driven layouts consume them: tree-leaf order first, then
+/// any live tiled pane the tree does not name yet, in pane order.
+pub fn ordered_tiled_ids<W: TileSource + ?Sized>(workspace: &W) -> Vec<PaneId> {
+    let active = workspace.tiled_ids_by_pane_order();
+    let mut ordered = Vec::new();
+    if let Some(tree) = workspace.stored_tile_tree() {
+        collect_tree_leaves(tree, &mut ordered);
+        ordered.retain(|id| active.contains(id));
+        for id in &active {
+            if !ordered.contains(id) {
+                ordered.push(*id);
+            }
+        }
+    }
+
+    if ordered.is_empty() { active } else { ordered }
+}
 
 pub fn workspace_target_rects(
     workspace: &Workspace,
@@ -112,8 +203,8 @@ pub fn workspace_target_rects_excluding_with_visible(
 
 /// Variant of [`workspace_target_rects_excluding_with_visible`] with independent float bounds.
 #[allow(clippy::too_many_arguments)]
-pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
-    workspace: &Workspace,
+pub fn workspace_target_rects_excluding_with_visible_and_float_bounds<W: TileSource + ?Sized>(
+    workspace: &W,
     bounds: FloatRect,
     float_bounds: FloatRect,
     visible_bounds: Option<FloatRect>,
@@ -123,7 +214,7 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
 ) -> Vec<PanePlacement> {
     let mut placements = Vec::new();
     let tile_bounds = workspace_tile_bounds(bounds, top_gap);
-    match workspace.layout_kind {
+    match workspace.layout_kind() {
         LayoutKind::Dwindle => {
             if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
                 allocate_dwindle(&tree, tile_bounds, tile_gap, &mut placements);
@@ -135,7 +226,7 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
                 &ids,
                 tile_bounds,
                 tile_gap,
-                ratio_at(&workspace.split_ratios, 0),
+                ratio_at(workspace.split_ratios(), 0),
                 &mut placements,
             );
         }
@@ -155,17 +246,9 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
             let ids = order_driven_ids(workspace, exclude_tiled);
             let panes: Vec<(PaneId, f32)> = ids
                 .iter()
-                .map(|id| {
-                    let width = workspace
-                        .panes
-                        .iter()
-                        .find(|pane| pane.id == *id)
-                        .map(|pane| pane.scrollable_width)
-                        .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH);
-                    (*id, width)
-                })
+                .map(|id| (*id, workspace.scrollable_width(*id)))
                 .collect();
-            let anchor = scrollable_viewport_anchor(workspace, &ids);
+            let (anchor, reveal_edge) = workspace.scrollable_viewport(&ids);
             // Scroll against the on-screen intersection of canonical and local tiles — not the
             // whole local tile — so a wider follower viewport keeps letterbox centering.
             let visible_tile = visible_bounds.map_or(tile_bounds, |visible| {
@@ -178,7 +261,7 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
                 visible_tile,
                 tile_gap,
                 anchor,
-                workspace.scrollable_reveal_edge,
+                reveal_edge,
                 &mut placements,
             );
         }
@@ -188,16 +271,12 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds(
         }
     }
 
-    for pane in workspace
-        .panes
-        .iter()
-        .filter(|pane| pane.floating && !pane.closing)
-    {
+    workspace.for_each_floating(&mut |id, rect| {
         placements.push(PanePlacement {
-            id: pane.id,
-            rect: clamp_floating_rect(pane.floating_rect, float_bounds),
+            id,
+            rect: clamp_floating_rect(rect, float_bounds),
         });
-    }
+    });
 
     placements
 }
@@ -224,9 +303,11 @@ fn horizontal_tile_intersection(layout: FloatRect, local: FloatRect) -> Option<F
 
 /// Tiled ids for order-driven layouts (master/grid/columns/rows/scrollable/monocle), in tree-leaf
 /// order with the optionally moving pane excluded.
-fn order_driven_ids(workspace: &Workspace, exclude_tiled: Option<PaneId>) -> Vec<PaneId> {
-    workspace
-        .tiled_ids()
+fn order_driven_ids<W: TileSource + ?Sized>(
+    workspace: &W,
+    exclude_tiled: Option<PaneId>,
+) -> Vec<PaneId> {
+    ordered_tiled_ids(workspace)
         .into_iter()
         .filter(|id| Some(*id) != exclude_tiled)
         .collect()

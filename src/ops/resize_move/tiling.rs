@@ -52,44 +52,162 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
         )
     };
 
-    let mut insert_tiled_at = None;
-    let mut remove_from_tiling = false;
-    if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
-        pane.opening = false;
-        pane.fullscreen = false;
-        if pane.floating {
-            pane.floating_rect = clamp_floating_rect(pane.floating_rect, floating_bounds);
-            pane.floating_rect_initialized = true;
-            insert_tiled_at = Some(crate::layout::geometry::rect_center(pane.floating_rect));
-            pane.floating = false;
-            ctx.state.animation = GeometryAnimation::TileFloat;
-        } else {
-            pane.floating_rect = match (scratch, pane.floating_rect_initialized, current_rect) {
-                (true, true, _) => clamp_floating_rect(pane.floating_rect, floating_bounds),
-                (_, _, Some(tile)) => {
-                    lift_off_float_rect(tile, pane.floating_rect, floating_bounds)
-                }
-                (_, _, None) => clamp_float_rect(pane.floating_rect, floating_bounds),
-            };
-            pane.floating_rect_initialized = true;
-            pane.floating = true;
-            remove_from_tiling = true;
-            ctx.state.animation = GeometryAnimation::TileFloat;
-        }
+    let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
+        request_pane_focus(ctx, id);
+        return;
+    };
+    pane.fullscreen = false;
+    if pane.floating {
+        let rect = clamp_floating_rect(pane.floating_rect, floating_bounds);
+        pane.floating_rect = rect;
+        let point = crate::layout::geometry::rect_center(rect);
+        tile_pane(
+            ctx.state.active_workspace_mut(),
+            id,
+            Some(TileAt {
+                point,
+                bounds,
+                top_gap,
+                tile_gap,
+            }),
+        );
+    } else {
+        let rect = match (scratch, pane.floating_rect_initialized, current_rect) {
+            (true, true, _) => clamp_floating_rect(pane.floating_rect, floating_bounds),
+            (_, _, Some(tile)) => lift_off_float_rect(tile, pane.floating_rect, floating_bounds),
+            (_, _, None) => clamp_float_rect(pane.floating_rect, floating_bounds),
+        };
+        float_pane(ctx.state.active_workspace_mut(), id, rect);
     }
-
-    if insert_tiled_at.is_some() || remove_from_tiling {
-        let workspace = ctx.state.active_workspace_mut();
-        if let Some(point) = insert_tiled_at {
-            if insert_tiled_pane_at_point(workspace, id, point, bounds, top_gap, tile_gap).is_none()
-            {
-                append_tiled_window(workspace, id);
-            }
-        } else if remove_from_tiling {
-            remove_tiled_window(workspace, id);
-        }
-    }
+    ctx.state.animation = GeometryAnimation::TileFloat;
     request_pane_focus(ctx, id);
+}
+
+/// Where a pane returning to the tiling is dropped: the tile under `point` is split for it.
+pub(crate) struct TileAt {
+    pub point: (f32, f32),
+    pub bounds: FloatRect,
+    pub top_gap: f32,
+    pub tile_gap: TileGap,
+}
+
+/// Float pane `id` of `workspace` at `rect`, in that workspace's canvas cells, taking it out of the
+/// tiling. A pane that already floats just moves. Returns whether anything changed.
+///
+/// The explicit-pane half of floating: the interactive toggle decides the rect from focus and the
+/// pointer, `pane set` from its request, and both land here.
+pub(crate) fn float_pane(workspace: &mut Workspace, id: PaneId, rect: FloatRect) -> bool {
+    let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
+        return false;
+    };
+    let changed = !pane.floating || pane.floating_rect != rect;
+    pane.opening = false;
+    pane.floating_rect = rect;
+    pane.floating_rect_initialized = true;
+    if !pane.floating {
+        pane.floating = true;
+        remove_tiled_window(workspace, id);
+    }
+    changed
+}
+
+/// Return floating pane `id` of `workspace` to the tiling. With `at`, the tile under that point is
+/// split for it; otherwise, or when no tile is there, it joins at the end of the tiling order - the
+/// same place [`effective_tile_tree`](crate::layout::effective_tile_tree) gives a pane its tree
+/// does not name, which is what a session server does for the same request. Its floating rect is
+/// kept for the next lift-off. Returns whether anything changed.
+pub(crate) fn tile_pane(workspace: &mut Workspace, id: PaneId, at: Option<TileAt>) -> bool {
+    let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
+        return false;
+    };
+    if !pane.floating {
+        return false;
+    }
+    pane.opening = false;
+    pane.floating = false;
+    pane.floating_rect_initialized = true;
+    let placed = at.is_some_and(|at| {
+        insert_tiled_pane_at_point(workspace, id, at.point, at.bounds, at.top_gap, at.tile_gap)
+            .is_some()
+    });
+    if !placed {
+        // Settle the stored tree to the live tiling first, so the pane is appended to what is on
+        // screen rather than to a tree that still names panes long gone.
+        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, Some(id));
+        append_tiled_window(workspace, id);
+    }
+    true
+}
+
+/// Set pane `id`'s fullscreen flag. Returns whether it changed.
+///
+/// At most one pane per workspace is fullscreen - two would stack, and which one showed would come
+/// down to render order - so making `id` fullscreen restores any other, the rule spawning a
+/// fullscreen pane already keeps. `changed` counts those too.
+pub(crate) fn set_pane_fullscreen(workspace: &mut Workspace, id: PaneId, fullscreen: bool) -> bool {
+    let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
+        return false;
+    };
+    pane.opening = false;
+    let mut changed = pane.fullscreen != fullscreen;
+    pane.fullscreen = fullscreen;
+    if fullscreen {
+        changed |= clear_other_fullscreen(workspace, id);
+    }
+    changed
+}
+
+/// Restore every pane of `workspace` but `keep` from fullscreen. Returns whether any was.
+pub(crate) fn clear_other_fullscreen(workspace: &mut Workspace, keep: PaneId) -> bool {
+    let mut changed = false;
+    for other in workspace.panes.iter_mut().filter(|pane| pane.id != keep) {
+        changed |= other.fullscreen;
+        other.fullscreen = false;
+    }
+    changed
+}
+
+/// Exchange the places of tiled panes `a` and `b` in `workspace`, in its settled tree. Returns
+/// whether both were there to swap.
+pub(crate) fn swap_tiled_panes(workspace: &mut Workspace, a: PaneId, b: PaneId) -> bool {
+    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
+        return false;
+    };
+    if !swap_tree_leaves(&mut tree, a, b) {
+        return false;
+    }
+    workspace.tile_tree = Some(tree);
+    workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
+    true
+}
+
+/// Set the master pane's share of `workspace`. Returns whether it changed.
+pub(crate) fn set_master_ratio(workspace: &mut Workspace, ratio: f32) -> bool {
+    crate::layout::shared::set_master_share(&mut workspace.split_ratios, ratio)
+}
+
+/// Set pane `id`'s share of the Dwindle split directly holding it, in the settled tree. Returns
+/// whether it changed.
+pub(crate) fn set_pane_split_share(workspace: &mut Workspace, id: PaneId, share: f32) -> bool {
+    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
+        return false;
+    };
+    let changed = crate::layout::tiling::set_leaf_share(&mut tree, id, share);
+    workspace.tile_tree = Some(tree);
+    changed
+}
+
+/// Set `workspace`'s tiling algorithm. Returns whether it changed; an unchanged kind leaves the
+/// workspace's directional memory alone too.
+pub(crate) fn set_workspace_layout(workspace: &mut Workspace, kind: LayoutKind) -> bool {
+    if workspace.layout_kind == kind {
+        return false;
+    }
+    workspace.layout_kind = kind;
+    workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
+    true
 }
 
 pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
@@ -114,12 +232,12 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
 
     let mut toggled = false;
     if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
-        pane.opening = false;
         if !pane.fullscreen && pane.floating {
             pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
             pane.floating_rect_initialized = true;
         }
-        pane.fullscreen = !pane.fullscreen;
+        let fullscreen = !pane.fullscreen;
+        set_pane_fullscreen(ctx.state.active_workspace_mut(), id, fullscreen);
         toggled = true;
     }
     if toggled {
@@ -252,9 +370,12 @@ pub(crate) fn set_layout(
         .any(|item| matches!(&item.segment, crate::config::WorkbarSegment::Layout));
     let layout_label = {
         let workspace = ctx.state.active_workspace_mut();
-        workspace.layout_kind = kind;
-        workspace.last_move_swap = None;
-        workspace.last_directional_focus = None;
+        // Re-selecting the current layout still replays the transition below; the picker's
+        // preview relies on it.
+        if !set_workspace_layout(workspace, kind) {
+            workspace.last_move_swap = None;
+            workspace.last_directional_focus = None;
+        }
         workspace.layout_kind.label()
     };
     ctx.state.animation = GeometryAnimation::AxisChange;

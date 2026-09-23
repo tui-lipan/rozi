@@ -21,7 +21,12 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// protocol version. The session wire protocol bumps when two rozi binaries change how they frame
 /// messages to each other, which is nobody else's concern; this one tracks the compatibility of
 /// the JSON third-party software reads and writes.
-pub const API_SCHEMA_VERSION: u32 = 1;
+///
+/// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
+/// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
+/// names - gains a value, which is what version 2 did with the layout commands and
+/// `layout-changed`.
+pub const API_SCHEMA_VERSION: u32 = 2;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -31,6 +36,8 @@ pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
 /// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
 /// relying on it.
 pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
+/// `layout get` reports workspaces and pane geometry from the shared layout document.
+pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -52,6 +59,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
+                LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
@@ -114,6 +122,68 @@ impl CaptureScrollback {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum ControlCommand {
     ListPanes,
+    /// Report workspaces and where each pane sits. `workspace` is one-based and narrows the report
+    /// to that workspace.
+    LayoutGet {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<usize>,
+    },
+    /// Set a workspace's tiling algorithm, its master share, or both. `workspace` is one-based.
+    LayoutSet {
+        workspace: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layout: Option<ControlLayoutKind>,
+        /// The master pane's share of a Master workspace, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        master_ratio: Option<f64>,
+        /// Refuse with `conflict` unless the layout is still at this revision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as
+    /// they are; a request that changes nothing succeeds with `changed: false`.
+    PaneSet {
+        target: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        floating: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fullscreen: Option<bool>,
+        /// Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<CellRect>,
+        /// Floating rect as fractions of the canonical canvas.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect_fraction: Option<FractionRect>,
+        /// The pane's share of the Dwindle split directly holding it, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        split_ratio: Option<f64>,
+        /// The pane's Scrollable column width as a fraction of the viewport, from 0.2 to 0.8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_ratio: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Move a pane to another workspace, at the end of its tiling order. `workspace` is one-based.
+    PaneMove {
+        target: PaneId,
+        workspace: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Exchange the places of two tiled panes in one workspace.
+    PaneSwap {
+        target: PaneId,
+        with: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Close a pane, ending its process. The request is the confirmation; `[confirm]` does not
+    /// apply.
+    PaneClose {
+        target: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
     AgentsList,
     AgentGet {
         target: AgentTarget,
@@ -380,6 +450,613 @@ pub struct PaneInfo {
 #[serde(transparent)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneListPayload(pub Vec<PaneInfo>);
+
+/// What `layout get` answers with.
+///
+/// Two views of one arrangement, kept apart because they are different facts. The workspaces and
+/// each pane's `rect` describe the session's shared layout document, which the server owns and
+/// every client reconciles to: the same answer whichever endpoint is asked. `client`, and each
+/// pane's `view_rect`, describe what one UI actually draws, which depends on its own viewport,
+/// chrome, and focus, and so exists only when a UI answered.
+///
+/// A public document rather than the internal `SharedLayout` itself: that one is a synchronization
+/// format versioned with the session protocol, and this is the contract scripts read.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct LayoutReport {
+    /// Session that answered, qualified with its host when remote.
+    pub session: String,
+    /// Layout revision this report describes. Absent while no layout document exists, which is the
+    /// case for a session whose panes nothing has placed yet.
+    pub revision: Option<u64>,
+    /// The canonical canvas every `rect` is measured against, in cells. It is the canvas of the
+    /// client that last controlled the layout. Absent with `revision`.
+    pub canvas: Option<CellSize>,
+    pub workspaces: Vec<WorkspaceLayout>,
+    /// Panes the session runs that no layout document places yet. Only a session endpoint reports
+    /// these; a UI places every pane it knows about.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced_panes: Vec<PaneId>,
+    /// This UI's own view of the layout. Absent from a session endpoint, which has no screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<ClientLayoutView>,
+}
+
+/// A size in terminal cells.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CellSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// A rectangle in terminal cells. The origin can be negative or lie past the canvas: a Scrollable
+/// strip is wider than the canvas it scrolls across, and a follower letterboxes a larger canonical
+/// canvas into a smaller screen.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CellRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A rectangle as fractions of the canonical canvas, so `0.5` is half its width or height.
+/// Fractions outside `0.0..=1.0` mean the same thing as an out-of-canvas [`CellRect`].
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct FractionRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A tiling algorithm, as `layout get` names it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ControlLayoutKind {
+    Dwindle,
+    Master,
+    Grid,
+    Columns,
+    Rows,
+    Scrollable,
+    Monocle,
+}
+
+impl ControlLayoutKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dwindle => "dwindle",
+            Self::Master => "master",
+            Self::Grid => "grid",
+            Self::Columns => "columns",
+            Self::Rows => "rows",
+            Self::Scrollable => "scrollable",
+            Self::Monocle => "monocle",
+        }
+    }
+}
+
+impl ControlLayoutKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Dwindle,
+            Self::Master,
+            Self::Grid,
+            Self::Columns,
+            Self::Rows,
+            Self::Scrollable,
+            Self::Monocle,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str().eq_ignore_ascii_case(value))
+    }
+}
+
+impl From<ControlLayoutKind> for crate::state::LayoutKind {
+    fn from(kind: ControlLayoutKind) -> Self {
+        match kind {
+            ControlLayoutKind::Dwindle => Self::Dwindle,
+            ControlLayoutKind::Master => Self::Master,
+            ControlLayoutKind::Grid => Self::Grid,
+            ControlLayoutKind::Columns => Self::Columns,
+            ControlLayoutKind::Rows => Self::Rows,
+            ControlLayoutKind::Scrollable => Self::Scrollable,
+            ControlLayoutKind::Monocle => Self::Monocle,
+        }
+    }
+}
+
+impl From<crate::state::LayoutKind> for ControlLayoutKind {
+    fn from(kind: crate::state::LayoutKind) -> Self {
+        use crate::state::LayoutKind;
+        match kind {
+            LayoutKind::Dwindle => Self::Dwindle,
+            LayoutKind::Master => Self::Master,
+            LayoutKind::Grid => Self::Grid,
+            LayoutKind::Columns => Self::Columns,
+            LayoutKind::Rows => Self::Rows,
+            LayoutKind::Scrollable => Self::Scrollable,
+            LayoutKind::Monocle => Self::Monocle,
+        }
+    }
+}
+
+/// One workspace in a [`LayoutReport`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct WorkspaceLayout {
+    /// One-based, matching the workbar and `--workspace`.
+    pub index: usize,
+    pub name: Option<String>,
+    pub layout: ControlLayoutKind,
+    /// Whether typed input is broadcast to every pane in the workspace.
+    pub synchronized: bool,
+    /// The master pane's share of the width. Present only for a Master workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_ratio: Option<f64>,
+    /// Tiled panes in tiling order, then floating panes.
+    pub panes: Vec<PaneLayout>,
+}
+
+/// Where one pane sits.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneLayout {
+    pub id: PaneId,
+    /// Exact pane incarnation. Absent only from a UI with no session behind it.
+    pub reference: Option<crate::session::protocol::PaneRef>,
+    /// Position in the workspace's tiling order, from `0`. This is the order Master, Grid, Columns,
+    /// Rows, Scrollable, and Monocle lay panes out in; absent for a floating pane.
+    pub order: Option<usize>,
+    pub floating: bool,
+    /// A fullscreen pane covers the whole screen while it is fullscreen; `rect` stays the place it
+    /// returns to.
+    pub fullscreen: bool,
+    /// Placement on the canonical canvas, in cells, without gaps, borders, or the workbar - those
+    /// are each client's own presentation. Every pane in Monocle shares one rect.
+    pub rect: CellRect,
+    /// `rect` as fractions of the canonical canvas.
+    pub rect_fraction: FractionRect,
+    /// The pane's share of the Dwindle split directly holding it. Present only for a tiled pane
+    /// that shares a split in a Dwindle workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_ratio: Option<f64>,
+    /// The pane's column width as a fraction of the viewport. Present only for a tiled pane in a
+    /// Scrollable workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_ratio: Option<f64>,
+    /// Where the answering UI draws the pane, in its own terminal's cells, including gaps and
+    /// chrome. Present only for panes in the UI's active workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_rect: Option<CellRect>,
+}
+
+/// What one UI is looking at. Nothing here is shared with other clients.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ClientLayoutView {
+    /// One-based workspace this UI shows.
+    pub active_workspace: usize,
+    pub focused_pane: Option<PaneId>,
+    /// Whether this UI holds the session's layout-control lease.
+    pub controller: bool,
+    /// False while this UI has layout changes the server has not yet accepted, so `revision` does
+    /// not describe them. Always true for a follower.
+    pub committed: bool,
+    /// This UI's terminal size.
+    pub viewport: CellSize,
+}
+
+impl WorkspaceLayout {
+    /// Describe the workspaces of a shared layout document, optionally only the one-based
+    /// `workspace`.
+    ///
+    /// Both endpoints report through this, so a script reads one set of rects whichever answered.
+    pub(crate) fn from_shared(
+        layout: &crate::layout::shared::SharedLayout,
+        workspace: Option<usize>,
+        session_instance: Option<&crate::session::protocol::SessionInstanceId>,
+    ) -> Vec<Self> {
+        let canvas = (layout.canvas_cols.max(1), layout.canvas_rows.max(1));
+        let mut workspaces: Vec<Self> = layout
+            .workspaces
+            .iter()
+            .filter(|shared| workspace.is_none_or(|wanted| wanted == shared.index + 1))
+            .map(|shared| {
+                let placements = crate::layout::shared::shared_workspace_placements(shared, canvas);
+                let source = crate::layout::shared::SharedTileSource::new(shared, canvas);
+                let tiled = crate::layout::ordered_tiled_ids(&source);
+                let kind = crate::state::LayoutKind::from(shared.layout);
+                let tree = (kind == crate::state::LayoutKind::Dwindle)
+                    .then(|| crate::layout::effective_tile_tree(&source, None))
+                    .flatten();
+                let mut panes: Vec<PaneLayout> = shared
+                    .panes
+                    .iter()
+                    .filter_map(|pane| {
+                        let rect = crate::layout::placement_for(&placements, pane.pane_id)?;
+                        Some(PaneLayout {
+                            id: pane.pane_id,
+                            reference: session_instance.map(|instance| {
+                                crate::session::protocol::PaneRef {
+                                    session_instance: instance.clone(),
+                                    pane_id: pane.pane_id,
+                                    generation: pane.generation,
+                                }
+                            }),
+                            order: tiled.iter().position(|id| *id == pane.pane_id),
+                            floating: pane.floating,
+                            fullscreen: pane.fullscreen,
+                            rect: CellRect::from_float(rect),
+                            rect_fraction: FractionRect::of_canvas(rect, canvas),
+                            split_ratio: tree
+                                .as_ref()
+                                .filter(|_| !pane.floating)
+                                .and_then(|tree| {
+                                    crate::layout::tiling::leaf_share(tree, pane.pane_id)
+                                })
+                                .map(report_ratio),
+                            width_ratio: (kind == crate::state::LayoutKind::Scrollable
+                                && !pane.floating)
+                                .then(|| report_ratio(pane.scrollable_width)),
+                            view_rect: None,
+                        })
+                    })
+                    .collect();
+                panes.sort_by_key(|pane| pane.order.unwrap_or(usize::MAX));
+                Self {
+                    index: shared.index + 1,
+                    name: shared.name.clone(),
+                    layout: kind.into(),
+                    synchronized: shared.synchronized,
+                    master_ratio: (kind == crate::state::LayoutKind::Master).then(|| {
+                        report_ratio(crate::layout::tiling::ratio_at(&shared.split_ratios, 0))
+                    }),
+                    panes,
+                }
+            })
+            .collect();
+        workspaces.sort_by_key(|workspace| workspace.index);
+        workspaces
+    }
+}
+
+/// What `layout set` and `pane set` answer with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct LayoutChange {
+    /// False when the layout already matched the request. Nothing was committed then, and
+    /// `revision` is unchanged.
+    pub changed: bool,
+    /// The revision the layout has with this change applied.
+    pub revision: Option<u64>,
+    /// False until the session server has accepted `revision`. A session endpoint commits the
+    /// change itself, so it always answers true; a UI sends its commit and answers before the
+    /// server's acknowledgement arrives.
+    pub committed: bool,
+    /// The affected workspace as it now stands, in the same shape `layout get` reports.
+    pub workspace: WorkspaceLayout,
+}
+
+/// What `pane close` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneClosed {
+    pub id: PaneId,
+    /// The layout revision without the pane. Unchanged when the layout never placed it.
+    pub revision: Option<u64>,
+    /// See [`LayoutChange::committed`].
+    pub committed: bool,
+    /// The workspace the pane left, as it now stands. Absent when no layout placed the pane.
+    pub workspace: Option<WorkspaceLayout>,
+}
+
+/// A floating rect asked for in either unit, before it is measured against a canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum RequestedRect {
+    Cells(CellRect),
+    Fraction(FractionRect),
+}
+
+impl RequestedRect {
+    /// The rect in canvas cells.
+    pub(crate) fn to_cells(self, canvas: (u16, u16)) -> tui_lipan::prelude::FloatRect {
+        let cols = f32::from(canvas.0.max(1));
+        let rows = f32::from(canvas.1.max(1));
+        match self {
+            Self::Cells(rect) => tui_lipan::prelude::FloatRect {
+                x: rect.x as f32,
+                y: rect.y as f32,
+                w: rect.width as f32,
+                h: rect.height as f32,
+            },
+            Self::Fraction(rect) => tui_lipan::prelude::FloatRect {
+                x: rect.x as f32 * cols,
+                y: rect.y as f32 * rows,
+                w: rect.width as f32 * cols,
+                h: rect.height as f32 * rows,
+            },
+        }
+    }
+}
+
+/// A validated `pane set`: every check that does not depend on the pane's current state has
+/// already passed, so applying it can only fail on the pane itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PaneEdit {
+    pub floating: Option<bool>,
+    pub fullscreen: Option<bool>,
+    pub rect: Option<RequestedRect>,
+    /// The pane's share of the Dwindle split directly holding it.
+    pub split_ratio: Option<f32>,
+    /// The pane's Scrollable column width, as a fraction of the tile viewport.
+    pub width_ratio: Option<f32>,
+}
+
+/// The range every ratio a layout write sets must lie in: the same bounds dragging a divider stops
+/// at, so a script cannot make a tile a person could not.
+pub(crate) fn validate_ratio(flag: &str, value: f64) -> std::result::Result<f32, ControlResponse> {
+    let (low, high) = (
+        f64::from(crate::state::MIN_SPLIT_RATIO),
+        f64::from(crate::state::MAX_SPLIT_RATIO),
+    );
+    if value.is_finite() && (low..=high).contains(&value) {
+        Ok(value as f32)
+    } else {
+        Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            format!("{flag} must be between {low} and {high}"),
+        ))
+    }
+}
+
+impl PaneEdit {
+    pub(crate) fn validate(
+        floating: Option<bool>,
+        fullscreen: Option<bool>,
+        rect: Option<CellRect>,
+        rect_fraction: Option<FractionRect>,
+        split_ratio: Option<f64>,
+        width_ratio: Option<f64>,
+    ) -> std::result::Result<Self, ControlResponse> {
+        let invalid = |message: &str| {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                message,
+            ))
+        };
+        let rect = match (rect, rect_fraction) {
+            (Some(_), Some(_)) => return invalid("pass --rect or --rect-fraction, not both"),
+            (Some(rect), None) => {
+                if rect.width == 0 || rect.height == 0 {
+                    return invalid("--rect needs a positive width and height");
+                }
+                Some(RequestedRect::Cells(rect))
+            }
+            (None, Some(rect)) => {
+                let finite = [rect.x, rect.y, rect.width, rect.height]
+                    .iter()
+                    .all(|value| value.is_finite());
+                if !finite || rect.width <= 0.0 || rect.height <= 0.0 {
+                    return invalid(
+                        "--rect-fraction needs finite values and a positive width and height",
+                    );
+                }
+                Some(RequestedRect::Fraction(rect))
+            }
+            (None, None) => None,
+        };
+        if rect.is_some() && floating == Some(false) {
+            return invalid("a rect places a floating pane; it cannot go with --floating false");
+        }
+        let split_ratio = split_ratio
+            .map(|value| validate_ratio("--split-ratio", value))
+            .transpose()?;
+        let width_ratio = width_ratio
+            .map(|value| validate_ratio("--width-ratio", value))
+            .transpose()?;
+        let sizes = split_ratio.is_some() || width_ratio.is_some();
+        if sizes && (floating.is_some() || rect.is_some()) {
+            return invalid(
+                "a ratio sizes a pane where it is tiled; float or re-tile it in a separate request",
+            );
+        }
+        if floating.is_none() && fullscreen.is_none() && rect.is_none() && !sizes {
+            return invalid(
+                "pane set needs --floating, --fullscreen, --rect, --rect-fraction, --split-ratio, or --width-ratio",
+            );
+        }
+        Ok(Self {
+            floating,
+            fullscreen,
+            rect,
+            split_ratio,
+            width_ratio,
+        })
+    }
+
+    /// Refuse a ratio the pane's layout does not use, before anything changes. `in_split` is
+    /// whether the pane shares a Dwindle split with anything - a lone tile has no divider to move.
+    pub(crate) fn check_sizes(
+        self,
+        floating: bool,
+        layout: crate::state::LayoutKind,
+        in_split: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        use crate::state::LayoutKind;
+        let unsupported = |message: &str| {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                message,
+            ))
+        };
+        if (self.split_ratio.is_some() || self.width_ratio.is_some()) && floating {
+            return unsupported("a floating pane has no tile to size");
+        }
+        if self.split_ratio.is_some() {
+            if layout != LayoutKind::Dwindle {
+                return unsupported(
+                    "--split-ratio sizes a Dwindle split; this workspace is not Dwindle",
+                );
+            }
+            if !in_split {
+                return unsupported(
+                    "the pane is the workspace's only tile, so it has no split to size",
+                );
+            }
+        }
+        if self.width_ratio.is_some() && layout != LayoutKind::Scrollable {
+            return unsupported(
+                "--width-ratio sizes a Scrollable column; this workspace is not Scrollable",
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether the pane ends up floating, given whether it floats now.
+    pub(crate) fn floats(self, floating_now: bool) -> bool {
+        self.floating.unwrap_or(floating_now)
+    }
+
+    /// The refusal for a rect on a pane that stays tiled.
+    pub(crate) fn check_rect_target(
+        self,
+        floating_now: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        if self.rect.is_some() && !self.floats(floating_now) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "a rect places a floating pane; pass --floating true to float a tiled one",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A validated `layout set`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LayoutEdit {
+    pub kind: Option<crate::state::LayoutKind>,
+    pub master_ratio: Option<f32>,
+}
+
+impl LayoutEdit {
+    pub(crate) fn validate(
+        layout: Option<ControlLayoutKind>,
+        master_ratio: Option<f64>,
+    ) -> std::result::Result<Self, ControlResponse> {
+        let master_ratio = master_ratio
+            .map(|value| validate_ratio("--master-ratio", value))
+            .transpose()?;
+        if layout.is_none() && master_ratio.is_none() {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "layout set needs a layout, --master-ratio, or both",
+            ));
+        }
+        Ok(Self {
+            kind: layout.map(Into::into),
+            master_ratio,
+        })
+    }
+
+    /// Refuse a master ratio for a workspace that will not be Master, before anything changes.
+    pub(crate) fn check(
+        self,
+        current: crate::state::LayoutKind,
+    ) -> std::result::Result<(), ControlResponse> {
+        if self.master_ratio.is_some()
+            && self.kind.unwrap_or(current) != crate::state::LayoutKind::Master
+        {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                "--master-ratio sizes a Master workspace; pass `master` or set it on one",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Refuse a write whose `--if-revision` the layout has moved past.
+pub(crate) fn check_if_revision(
+    if_revision: Option<u64>,
+    current: Option<u64>,
+) -> std::result::Result<(), ControlResponse> {
+    match if_revision {
+        Some(expected) if current != Some(expected) => Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            match current {
+                Some(current) => format!(
+                    "the layout is at revision {current}, not {expected}; read it again with `layout get`"
+                ),
+                None => format!("the layout has no revision yet, not {expected}"),
+            },
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Refuse a `layout get --workspace` that names no workspace, rather than answering with an empty
+/// list a script would read as "that workspace has no panes".
+pub(crate) fn validate_layout_workspace(
+    workspace: Option<usize>,
+) -> std::result::Result<(), ControlResponse> {
+    match workspace {
+        Some(index) if !(1..=crate::state::WORKSPACE_COUNT).contains(&index) => {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!(
+                    "workspace {index} does not exist; expected 1-{}",
+                    crate::state::WORKSPACE_COUNT
+                ),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A stored `f32` ratio as the report prints it: rounded to six places, so a share set to `0.6`
+/// reads back as `0.6` rather than as its nearest `f32`.
+fn report_ratio(value: f32) -> f64 {
+    (f64::from(value) * 1e6).round() / 1e6
+}
+
+impl CellRect {
+    /// Whole cells, rounded the way a rendered rect lands on the grid.
+    pub(crate) fn from_float(rect: tui_lipan::prelude::FloatRect) -> Self {
+        Self {
+            x: rect.x.round() as i32,
+            y: rect.y.round() as i32,
+            width: rect.w.round().max(0.0) as u32,
+            height: rect.h.round().max(0.0) as u32,
+        }
+    }
+}
+
+impl FractionRect {
+    /// Rounded to six decimal places, which is finer than one cell of any canvas a terminal has.
+    ///
+    /// Geometry is `f32` internally - a stored float of `0.42` comes back as `0.41999998` - and
+    /// JSON widens it to `f64`, so without rounding a script reads `0.4199999784811949` for a pane
+    /// that is plainly 42% wide.
+    pub(crate) fn of_canvas(rect: tui_lipan::prelude::FloatRect, canvas: (u16, u16)) -> Self {
+        let fraction = |value: f32, extent: u16| {
+            let fraction = f64::from(value) / f64::from(extent.max(1));
+            (fraction * 1e6).round() / 1e6
+        };
+        Self {
+            x: fraction(rect.x, canvas.0),
+            y: fraction(rect.y, canvas.1),
+            width: fraction(rect.w, canvas.0),
+            height: fraction(rect.h, canvas.1),
+        }
+    }
+}
 
 /// The whole `data` value of an `agents list` reply. See [`PaneListPayload`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

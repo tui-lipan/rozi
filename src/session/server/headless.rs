@@ -49,7 +49,10 @@ const SERVER_LAYOUT_AUTHOR: ClientId = 0;
 /// come from somewhere else than a client's do - this side reads the authoritative server runtime
 /// state directly rather than the copy a client keeps - but the shapes are shared, so a script
 /// parses one document whichever endpoint answered it.
-use crate::control::{AgentListPayload, NewPaneAccepted, PaneCapture, PaneInfo, PaneListPayload};
+use crate::control::{
+    AgentListPayload, CellSize, LayoutReport, NewPaneAccepted, PaneCapture, PaneInfo,
+    PaneListPayload, WorkspaceLayout,
+};
 
 struct SessionAgentPrompt<'a> {
     target: AgentTarget,
@@ -67,6 +70,12 @@ struct SessionAgentPrompt<'a> {
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
         ControlCommand::ListPanes
+        | ControlCommand::LayoutGet { .. }
+        | ControlCommand::LayoutSet { .. }
+        | ControlCommand::PaneSet { .. }
+        | ControlCommand::PaneMove { .. }
+        | ControlCommand::PaneSwap { .. }
+        | ControlCommand::PaneClose { .. }
         | ControlCommand::AgentsList
         | ControlCommand::AgentGet { .. }
         | ControlCommand::AgentRead { .. }
@@ -284,6 +293,52 @@ impl SessionServer {
             ControlCommand::ListPanes => {
                 ControlResponse::ok(PaneListPayload(self.session_pane_report()))
             }
+            ControlCommand::LayoutGet { workspace } => self.session_layout_report(workspace),
+            ControlCommand::LayoutSet {
+                workspace,
+                layout,
+                master_ratio,
+                if_revision,
+            } => match crate::control::LayoutEdit::validate(layout, master_ratio) {
+                Ok(edit) => self.session_layout_set(workspace, edit, if_revision, broadcasts),
+                Err(response) => response,
+            },
+            ControlCommand::PaneSet {
+                target,
+                floating,
+                fullscreen,
+                rect,
+                rect_fraction,
+                split_ratio,
+                width_ratio,
+                if_revision,
+            } => {
+                match crate::control::PaneEdit::validate(
+                    floating,
+                    fullscreen,
+                    rect,
+                    rect_fraction,
+                    split_ratio,
+                    width_ratio,
+                ) {
+                    Ok(edit) => self.session_pane_set(target, edit, if_revision, broadcasts),
+                    Err(response) => response,
+                }
+            }
+            ControlCommand::PaneMove {
+                target,
+                workspace,
+                if_revision,
+            } => self.session_pane_move(target, workspace, if_revision, broadcasts),
+            ControlCommand::PaneSwap {
+                target,
+                with,
+                if_revision,
+            } => self.session_pane_swap(target, with, if_revision, broadcasts),
+            ControlCommand::PaneClose {
+                target,
+                if_revision,
+            } => self.session_pane_close(target, if_revision, broadcasts),
             ControlCommand::AgentsList => {
                 ControlResponse::ok(AgentListPayload(self.session_agent_report()))
             }
@@ -378,6 +433,338 @@ impl SessionServer {
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
             ),
         }
+    }
+
+    /// `layout get` from the shared layout document alone.
+    ///
+    /// The document is exactly what every client reconciles to, so this is the whole shared answer
+    /// with nothing attached. What it cannot say - focus, the active workspace, where a client
+    /// draws a pane - is client-local and left out rather than guessed.
+    fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
+        if let Err(response) = crate::control::validate_layout_workspace(workspace) {
+            return response;
+        }
+        let placed = self.layout_workspace_index();
+        let mut unplaced_panes: Vec<PaneId> = self
+            .panes
+            .keys()
+            .filter(|id| !placed.contains_key(id))
+            .copied()
+            .collect();
+        unplaced_panes.sort_unstable();
+        let layout = self.layout.as_ref();
+        ControlResponse::ok(LayoutReport {
+            session: self.session_name.clone(),
+            revision: layout.map(|_| self.layout_rev),
+            canvas: layout.map(|layout| CellSize {
+                cols: layout.canvas_cols,
+                rows: layout.canvas_rows,
+            }),
+            workspaces: layout.map_or_else(Vec::new, |layout| {
+                WorkspaceLayout::from_shared(layout, workspace, Some(&self.instance_id))
+            }),
+            unplaced_panes,
+            client: None,
+        })
+    }
+
+    /// Commit `layout` as a revision the server authored, and tell every attached client.
+    ///
+    /// Only reached with nobody holding the lease - each caller checks first - so no controller's
+    /// optimistic commit can be racing it.
+    fn commit_server_layout(
+        &mut self,
+        layout: SharedLayout,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) {
+        self.layout_rev += 1;
+        self.layout = Some(layout.clone());
+        self.mark_dirty();
+        broadcasts.push((
+            Target::Broadcast,
+            ServerMessage::LayoutCommitted {
+                rev: self.layout_rev,
+                // Client ids start at 1, so `0` is a document no client authored. Every client
+                // therefore reconciles this revision instead of recognising it as the echo of its
+                // own commit - which is right: none of them wrote it.
+                author: SERVER_LAYOUT_AUTHOR,
+                layout,
+            },
+        ));
+    }
+
+    /// The document a headless layout write starts from, once the write is allowed at all.
+    ///
+    /// A client holding the lease is arranging this session right now, and a revision from here
+    /// would reflow its screen and race its next commit - the rule `split` follows, and what keeps
+    /// "no new authority" true. A session with panes but no document has panes this server cannot
+    /// place, so there is nothing sound to edit. An empty session starts from the same empty
+    /// document a headless `split` would.
+    fn layout_for_headless_write(
+        &self,
+        if_revision: Option<u64>,
+    ) -> std::result::Result<SharedLayout, ControlResponse> {
+        if let Some(controller) = self.controller {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::NotController,
+                format!(
+                    "client {controller} holds layout control of session `{}`; change the layout there, or detach it first",
+                    self.session_name
+                ),
+            ));
+        }
+        let revision = self.layout.as_ref().map(|_| self.layout_rev);
+        crate::control::check_if_revision(if_revision, revision)?;
+        match &self.layout {
+            Some(layout) => Ok(layout.clone()),
+            None if self.panes.is_empty() => Ok(SharedLayout {
+                version: SHARED_LAYOUT_VERSION,
+                canvas_cols: HEADLESS_SPAWN_COLS,
+                canvas_rows: HEADLESS_SPAWN_ROWS,
+                workspaces: Vec::new(),
+            }),
+            None => Err(ControlResponse::error_with(
+                ControlErrorCode::Unavailable,
+                format!(
+                    "session `{}` has panes but no shared layout; attach a client once so it commits one",
+                    self.session_name
+                ),
+            )),
+        }
+    }
+
+    /// Answer a layout write: commit when it changed something, and describe the workspace.
+    fn headless_layout_change(
+        &mut self,
+        layout: SharedLayout,
+        changed: bool,
+        workspace: usize,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        if changed {
+            self.commit_server_layout(layout.clone(), broadcasts);
+        }
+        let revision = self.layout.as_ref().map(|_| self.layout_rev);
+        let Some(workspace) =
+            WorkspaceLayout::from_shared(&layout, Some(workspace + 1), Some(&self.instance_id))
+                .pop()
+        else {
+            return ControlResponse::error(format!("workspace {} is missing", workspace + 1));
+        };
+        ControlResponse::ok(crate::control::LayoutChange {
+            changed,
+            revision,
+            committed: true,
+            workspace,
+        })
+    }
+
+    fn session_layout_set(
+        &mut self,
+        workspace: usize,
+        edit: crate::control::LayoutEdit,
+        if_revision: Option<u64>,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        if let Err(response) = crate::control::validate_layout_workspace(Some(workspace)) {
+            return response;
+        }
+        let mut layout = match self.layout_for_headless_write(if_revision) {
+            Ok(layout) => layout,
+            Err(response) => return response,
+        };
+        let index = workspace - 1;
+        if let Err(response) = edit.check(layout.layout_kind_of(index)) {
+            return response;
+        }
+        let mut changed = edit
+            .kind
+            .is_some_and(|kind| layout.set_layout_kind(index, kind));
+        if let Some(ratio) = edit.master_ratio {
+            changed |= layout.set_master_ratio(index, ratio);
+        }
+        self.headless_layout_change(layout, changed, index, broadcasts)
+    }
+
+    fn session_pane_set(
+        &mut self,
+        target: PaneId,
+        edit: crate::control::PaneEdit,
+        if_revision: Option<u64>,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        let mut layout = match self.layout_for_headless_write(if_revision) {
+            Ok(layout) => layout,
+            Err(response) => return response,
+        };
+        let Some(position) = layout.workspace_position_of(target) else {
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                if self.panes.contains_key(&target) {
+                    format!("pane {target} is not placed in the session's layout")
+                } else {
+                    format!("pane {target} not found in session `{}`", self.session_name)
+                },
+            );
+        };
+        let floating_now = layout.workspaces[position]
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == target && pane.floating);
+        if let Err(response) = edit.check_rect_target(floating_now).and_then(|()| {
+            edit.check_sizes(
+                floating_now,
+                layout.workspaces[position].layout.into(),
+                layout.pane_in_split(target),
+            )
+        }) {
+            return response;
+        }
+        let index = layout.workspaces[position].index;
+        match layout.edit_pane(target, edit) {
+            Ok(changed) => self.headless_layout_change(layout, changed, index, broadcasts),
+            Err(error) => ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!("the edited layout would not be valid: {error}"),
+            ),
+        }
+    }
+
+    /// The refusal for an edit that named a pane the document cannot act on.
+    fn shared_edit_refusal(
+        &self,
+        error: crate::layout::shared::SharedEditError,
+    ) -> ControlResponse {
+        use crate::layout::shared::SharedEditError;
+        match error {
+            SharedEditError::PaneNotPlaced(id) => ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                if self.panes.contains_key(&id) {
+                    format!("pane {id} is not placed in the session's layout")
+                } else {
+                    format!("pane {id} not found in session `{}`", self.session_name)
+                },
+            ),
+            SharedEditError::NotSwappable(..) => {
+                ControlResponse::error_with(ControlErrorCode::InvalidArgument, error.to_string())
+            }
+            SharedEditError::InvalidDocument(_) => ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!("the edited layout would not be valid: {error}"),
+            ),
+        }
+    }
+
+    fn session_pane_move(
+        &mut self,
+        target: PaneId,
+        workspace: usize,
+        if_revision: Option<u64>,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        if let Err(response) = crate::control::validate_layout_workspace(Some(workspace)) {
+            return response;
+        }
+        let mut layout = match self.layout_for_headless_write(if_revision) {
+            Ok(layout) => layout,
+            Err(response) => return response,
+        };
+        match layout.move_pane(target, workspace - 1) {
+            Ok(changed) => self.headless_layout_change(layout, changed, workspace - 1, broadcasts),
+            Err(error) => self.shared_edit_refusal(error),
+        }
+    }
+
+    fn session_pane_swap(
+        &mut self,
+        target: PaneId,
+        with: PaneId,
+        if_revision: Option<u64>,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        let mut layout = match self.layout_for_headless_write(if_revision) {
+            Ok(layout) => layout,
+            Err(response) => return response,
+        };
+        let index = layout
+            .workspace_position_of(target)
+            .map(|position| layout.workspaces[position].index);
+        match (index, layout.swap_panes(target, with)) {
+            (Some(index), Ok(changed)) => {
+                self.headless_layout_change(layout, changed, index, broadcasts)
+            }
+            (_, Err(error)) => self.shared_edit_refusal(error),
+            (None, Ok(_)) => unreachable!("a swap succeeds only for a placed pane"),
+        }
+    }
+
+    /// `pane close` with nobody attached: take the pane out of the layout, end its process, and
+    /// commit the layout without it.
+    ///
+    /// Ordered so nothing is killed on a request that then fails: the document without the pane is
+    /// built and validated first, the process is ended only once that succeeded, and the revision
+    /// is committed last. A pane no document places - one this server runs but nothing has laid
+    /// out - can still be closed; there is simply no revision to write for it.
+    fn session_pane_close(
+        &mut self,
+        target: PaneId,
+        if_revision: Option<u64>,
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) -> ControlResponse {
+        if let Some(controller) = self.controller {
+            return ControlResponse::error_with(
+                ControlErrorCode::NotController,
+                format!(
+                    "client {controller} holds layout control of session `{}`; close the pane there, or detach it first",
+                    self.session_name
+                ),
+            );
+        }
+        let revision = self.layout.as_ref().map(|_| self.layout_rev);
+        if let Err(response) = crate::control::check_if_revision(if_revision, revision) {
+            return response;
+        }
+        if !self.panes.contains_key(&target) {
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {target} not found in session `{}`", self.session_name),
+            );
+        }
+        let mut layout = self.layout.clone();
+        let left = layout
+            .as_mut()
+            .and_then(|layout| layout.remove_pane(target));
+        if let Some(layout) = layout.as_ref().filter(|_| left.is_some())
+            && let Err(error) = layout.validate()
+        {
+            return ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                format!("the layout without pane {target} would not be valid: {error}"),
+            );
+        }
+
+        if let Some(pane) = self.panes.remove(&target)
+            && let Some(pty) = &pane.pty
+        {
+            let _ = pty.kill();
+        }
+        self.mark_dirty();
+        self.resolve_agent_waits();
+
+        let workspace = match (layout, left) {
+            (Some(layout), Some(index)) => {
+                self.commit_server_layout(layout.clone(), broadcasts);
+                WorkspaceLayout::from_shared(&layout, Some(index + 1), Some(&self.instance_id))
+                    .pop()
+            }
+            _ => None,
+        };
+        ControlResponse::ok(crate::control::PaneClosed {
+            id: target,
+            revision: self.layout.as_ref().map(|_| self.layout_rev),
+            committed: true,
+            workspace,
+        })
     }
 
     fn session_pane_report(&self) -> Vec<PaneInfo> {
@@ -898,10 +1285,13 @@ impl SessionServer {
         // what keeps "no new authority" true: nothing reaches this server headlessly that an
         // attached client could not have sent.
         if let Some(controller) = self.controller {
-            return ControlResponse::error(format!(
-                "client {controller} holds layout control of session `{}`; ask it to open the pane, or detach it first",
-                self.session_name
-            ));
+            return ControlResponse::error_with(
+                ControlErrorCode::NotController,
+                format!(
+                    "client {controller} holds layout control of session `{}`; ask it to open the pane, or detach it first",
+                    self.session_name
+                ),
+            );
         }
         // `[[rules]]`, the shell, and the command runner used here were re-read from config just
         // before this ran - see the `SessionControl` arm in `connection.rs`, which does it for
@@ -1014,21 +1404,7 @@ impl SessionServer {
             _ => false,
         };
 
-        self.layout_rev += 1;
-        self.layout = Some(layout.clone());
-        self.mark_dirty();
-        broadcasts.push((
-            Target::Broadcast,
-            ServerMessage::LayoutCommitted {
-                rev: self.layout_rev,
-                // Client ids start at 1, so `0` is a document no client authored. Every
-                // client therefore reconciles this revision instead of recognising it as the
-                // echo of its own commit - which is right: none of them wrote it. Nobody holds
-                // the lease while this runs; the gate at the top of this function saw to that.
-                author: SERVER_LAYOUT_AUTHOR,
-                layout,
-            },
-        ));
+        self.commit_server_layout(layout, broadcasts);
 
         ControlResponse::ok(NewPaneAccepted {
             id: pane_id,
@@ -1273,6 +1649,503 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    fn shared_pane(pane_id: PaneId, rect: Option<crate::layout::shared::FracRect>) -> SharedPane {
+        SharedPane {
+            pane_id,
+            generation: 3,
+            title: None,
+            profile_name: None,
+            cwd: None,
+            launch: None,
+            replay: false,
+            keep_open: false,
+            floating: rect.is_some(),
+            fullscreen: false,
+            rect,
+            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+        }
+    }
+
+    #[test]
+    fn layout_get_reports_the_shared_document_with_nothing_attached() {
+        let mut server = SessionServer::new_named("dev");
+        for id in [4, 5, 6] {
+            pane_with_screen(&mut server, id, b"");
+        }
+        let mut layout = one_pane_layout(4);
+        let workspace = &mut layout.workspaces[0];
+        // A deliberate 60/40 split beside a float, listed floating-first so the report has to put
+        // the tiled panes back in tiling order.
+        workspace.tree = Some(SharedTree::Split {
+            axis: SharedSplitAxis::Horizontal,
+            ratio: 0.6,
+            first: Box::new(SharedTree::Leaf { pane: 4 }),
+            second: Box::new(SharedTree::Leaf { pane: 5 }),
+        });
+        workspace.panes = vec![
+            shared_pane(
+                6,
+                Some(crate::layout::shared::FracRect {
+                    x: 0.25,
+                    y: 0.25,
+                    w: 0.5,
+                    h: 0.5,
+                }),
+            ),
+            shared_pane(4, None),
+            shared_pane(5, None),
+        ];
+        layout.validate().expect("the fixture is a valid document");
+        server.layout = Some(layout);
+        server.layout_rev = 7;
+
+        let (response, broadcasts) =
+            control(&mut server, ControlCommand::LayoutGet { workspace: None });
+        assert!(response.ok, "{:?}", response.error);
+        assert!(broadcasts.is_empty(), "reading the layout commits nothing");
+        let report: LayoutReport =
+            serde_json::from_value(response.data.expect("layout data")).expect("a LayoutReport");
+
+        assert_eq!(report.session, "dev");
+        assert_eq!(report.revision, Some(7));
+        assert_eq!(report.canvas, Some(CellSize { cols: 80, rows: 24 }));
+        assert!(report.client.is_none(), "a session server has no screen");
+        assert!(report.unplaced_panes.is_empty());
+        let [workspace] = report.workspaces.as_slice() else {
+            panic!("expected the document's one workspace");
+        };
+        assert_eq!(workspace.index, 1);
+        assert_eq!(workspace.layout, crate::control::ControlLayoutKind::Dwindle);
+        let rows: Vec<_> = workspace
+            .panes
+            .iter()
+            .map(|pane| (pane.id, pane.order, pane.floating, pane.rect))
+            .collect();
+        let rect = |x, y, width, height| crate::control::CellRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (4, Some(0), false, rect(0, 0, 48, 24)),
+                (5, Some(1), false, rect(48, 0, 32, 24)),
+                (6, None, true, rect(20, 6, 40, 12)),
+            ]
+        );
+        assert_eq!(workspace.panes[0].rect_fraction.width, 0.6);
+        assert_eq!(
+            workspace.panes[2].rect_fraction,
+            crate::control::FractionRect {
+                x: 0.25,
+                y: 0.25,
+                width: 0.5,
+                height: 0.5,
+            },
+            "a float reports the fractions it was stored with, not their f32 rounding"
+        );
+        assert_eq!(
+            workspace.panes[2].reference,
+            Some(protocol::PaneRef {
+                session_instance: server.instance_id.clone(),
+                pane_id: 6,
+                generation: 3,
+            })
+        );
+        assert!(workspace.panes.iter().all(|pane| pane.view_rect.is_none()));
+    }
+
+    #[test]
+    fn layout_get_names_panes_no_document_places_and_refuses_a_workspace_that_does_not_exist() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 2, b"");
+        pane_with_screen(&mut server, 9, b"");
+
+        let (response, _) = control(&mut server, ControlCommand::LayoutGet { workspace: None });
+        assert!(response.ok, "{:?}", response.error);
+        let report: LayoutReport =
+            serde_json::from_value(response.data.expect("layout data")).expect("a LayoutReport");
+        assert_eq!(report.revision, None);
+        assert_eq!(report.canvas, None);
+        assert!(report.workspaces.is_empty());
+        assert_eq!(report.unplaced_panes, vec![2, 9]);
+
+        server.layout = Some(one_pane_layout(2));
+        let (narrowed, _) = control(
+            &mut server,
+            ControlCommand::LayoutGet { workspace: Some(1) },
+        );
+        let report: LayoutReport =
+            serde_json::from_value(narrowed.data.expect("layout data")).expect("a LayoutReport");
+        assert_eq!(report.workspaces.len(), 1);
+        assert_eq!(report.unplaced_panes, vec![9]);
+
+        let (refused, _) = control(
+            &mut server,
+            ControlCommand::LayoutGet {
+                workspace: Some(crate::state::WORKSPACE_COUNT + 1),
+            },
+        );
+        assert!(!refused.ok);
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+    }
+
+    fn pane_set(
+        target: PaneId,
+        floating: Option<bool>,
+        if_revision: Option<u64>,
+    ) -> ControlCommand {
+        ControlCommand::PaneSet {
+            target,
+            floating,
+            fullscreen: None,
+            rect: None,
+            rect_fraction: None,
+            split_ratio: None,
+            width_ratio: None,
+            if_revision,
+        }
+    }
+
+    #[test]
+    fn a_headless_pane_set_commits_a_server_revision_only_when_something_changed() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 4, b"");
+        server.layout = Some(one_pane_layout(4));
+        server.layout_rev = 9;
+
+        let (floated, broadcasts) = control(&mut server, pane_set(4, Some(true), Some(9)));
+        assert!(floated.ok, "{:?}", floated.error);
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(floated.data.expect("change")).expect("a LayoutChange");
+        assert!(change.changed);
+        assert_eq!(change.revision, Some(10));
+        assert!(
+            change.committed,
+            "the server's own commit needs no acknowledgement"
+        );
+        assert!(change.workspace.panes[0].floating);
+        match broadcasts.as_slice() {
+            [
+                (
+                    Target::Broadcast,
+                    ServerMessage::LayoutCommitted {
+                        rev,
+                        author,
+                        layout,
+                    },
+                ),
+            ] => {
+                assert_eq!(*rev, 10);
+                assert_eq!(*author, SERVER_LAYOUT_AUTHOR);
+                assert_eq!(Some(layout), server.layout.as_ref());
+            }
+            other => panic!("expected one server-authored commit, got {other:?}"),
+        }
+
+        let (again, broadcasts) = control(&mut server, pane_set(4, Some(true), None));
+        let again: crate::control::LayoutChange =
+            serde_json::from_value(again.data.expect("change")).expect("a LayoutChange");
+        assert!(!again.changed);
+        assert_eq!(again.revision, Some(10));
+        assert!(broadcasts.is_empty(), "a no-op commits nothing");
+
+        let (stale, _) = control(&mut server, pane_set(4, Some(false), Some(9)));
+        assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
+        assert!(
+            server.layout.as_ref().unwrap().workspaces[0].panes[0].floating,
+            "a refused write leaves the document alone"
+        );
+
+        let (kind, broadcasts) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: Some(crate::control::ControlLayoutKind::Monocle),
+                master_ratio: None,
+                if_revision: Some(10),
+            },
+        );
+        assert!(kind.ok, "{:?}", kind.error);
+        assert_eq!(server.layout_rev, 11);
+        assert_eq!(broadcasts.len(), 1);
+    }
+
+    #[test]
+    fn a_headless_layout_write_is_refused_where_a_split_would_be() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 4, b"");
+        pane_with_screen(&mut server, 5, b"");
+
+        let (no_document, _) = control(&mut server, pane_set(4, Some(true), None));
+        assert_eq!(no_document.code, Some(ControlErrorCode::Unavailable));
+
+        server.layout = Some(one_pane_layout(4));
+        let (unplaced, _) = control(&mut server, pane_set(5, Some(true), None));
+        assert_eq!(unplaced.code, Some(ControlErrorCode::PaneNotFound));
+
+        let (tiled_rect, _) = control(
+            &mut server,
+            ControlCommand::PaneSet {
+                target: 4,
+                floating: None,
+                fullscreen: None,
+                rect: Some(crate::control::CellRect {
+                    x: 1,
+                    y: 1,
+                    width: 20,
+                    height: 8,
+                }),
+                rect_fraction: None,
+                split_ratio: None,
+                width_ratio: None,
+                if_revision: None,
+            },
+        );
+        assert_eq!(tiled_rect.code, Some(ControlErrorCode::InvalidArgument));
+
+        server.controller = Some(3);
+        let (leased, broadcasts) = control(&mut server, pane_set(4, Some(true), None));
+        assert_eq!(leased.code, Some(ControlErrorCode::NotController));
+        assert!(broadcasts.is_empty());
+    }
+
+    /// Panes 4 and 5 tiled in workspace 1, as a controller would have committed them.
+    fn two_tiled(server: &mut SessionServer) {
+        pane_with_screen(server, 4, b"");
+        pane_with_screen(server, 5, b"");
+        let mut layout = one_pane_layout(4);
+        layout.workspaces[0].panes.push(shared_pane(5, None));
+        layout.workspaces[0].panes[0].generation = 3;
+        layout.workspaces[0].tree = Some(SharedTree::Split {
+            axis: SharedSplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(SharedTree::Leaf { pane: 4 }),
+            second: Box::new(SharedTree::Leaf { pane: 5 }),
+        });
+        layout.validate().expect("valid fixture");
+        server.layout = Some(layout);
+        server.layout_rev = 2;
+    }
+
+    #[test]
+    fn headless_moves_and_swaps_commit_server_revisions() {
+        let mut server = SessionServer::new_named("dev");
+        two_tiled(&mut server);
+
+        let (swapped, broadcasts) = control(
+            &mut server,
+            ControlCommand::PaneSwap {
+                target: 4,
+                with: 5,
+                if_revision: Some(2),
+            },
+        );
+        assert!(swapped.ok, "{:?}", swapped.error);
+        assert_eq!(broadcasts.len(), 1);
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(swapped.data.expect("change")).expect("change");
+        assert_eq!(
+            change
+                .workspace
+                .panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            vec![5, 4]
+        );
+
+        let (moved, _) = control(
+            &mut server,
+            ControlCommand::PaneMove {
+                target: 4,
+                workspace: 7,
+                if_revision: Some(3),
+            },
+        );
+        assert!(moved.ok, "{:?}", moved.error);
+        assert_eq!(server.layout_rev, 4);
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(moved.data.expect("change")).expect("change");
+        assert_eq!(change.workspace.index, 7);
+
+        let (swap_apart, _) = control(
+            &mut server,
+            ControlCommand::PaneSwap {
+                target: 4,
+                with: 5,
+                if_revision: None,
+            },
+        );
+        assert_eq!(swap_apart.code, Some(ControlErrorCode::InvalidArgument));
+    }
+
+    #[test]
+    fn headless_ratios_size_the_layout_that_uses_them() {
+        let mut server = SessionServer::new_named("dev");
+        two_tiled(&mut server);
+        let split = |ratio| ControlCommand::PaneSet {
+            target: 5,
+            floating: None,
+            fullscreen: None,
+            rect: None,
+            rect_fraction: None,
+            split_ratio: Some(ratio),
+            width_ratio: None,
+            if_revision: None,
+        };
+
+        let (response, broadcasts) = control(&mut server, split(0.3));
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(broadcasts.len(), 1);
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(response.data.expect("change")).expect("change");
+        let shares: Vec<_> = change
+            .workspace
+            .panes
+            .iter()
+            .map(|pane| (pane.id, pane.split_ratio))
+            .collect();
+        assert_eq!(shares, vec![(4, Some(0.7)), (5, Some(0.3))]);
+        assert_eq!(
+            change.workspace.panes[0].rect.width, 56,
+            "70% of the 80-column canvas"
+        );
+
+        let (master, _) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: None,
+                master_ratio: Some(0.6),
+                if_revision: None,
+            },
+        );
+        assert_eq!(master.code, Some(ControlErrorCode::Unsupported));
+
+        let (master, _) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 1,
+                layout: Some(crate::control::ControlLayoutKind::Master),
+                master_ratio: Some(0.6),
+                if_revision: None,
+            },
+        );
+        let change: crate::control::LayoutChange =
+            serde_json::from_value(master.data.expect("change")).expect("change");
+        assert_eq!(change.workspace.master_ratio, Some(0.6));
+        let (refused, _) = control(&mut server, split(0.5));
+        assert_eq!(
+            refused.code,
+            Some(ControlErrorCode::Unsupported),
+            "no split ratio outside Dwindle"
+        );
+    }
+
+    #[test]
+    fn a_headless_close_ends_the_pane_and_commits_the_layout_without_it() {
+        let mut server = SessionServer::new_named("dev");
+        two_tiled(&mut server);
+
+        server.controller = Some(3);
+        let (leased, _) = control(
+            &mut server,
+            ControlCommand::PaneClose {
+                target: 5,
+                if_revision: None,
+            },
+        );
+        assert_eq!(leased.code, Some(ControlErrorCode::NotController));
+        assert!(
+            server.panes.contains_key(&5),
+            "a refused close kills nothing"
+        );
+        server.controller = None;
+
+        let (stale, _) = control(
+            &mut server,
+            ControlCommand::PaneClose {
+                target: 5,
+                if_revision: Some(1),
+            },
+        );
+        assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
+        assert!(server.panes.contains_key(&5));
+
+        let (closed, broadcasts) = control(
+            &mut server,
+            ControlCommand::PaneClose {
+                target: 5,
+                if_revision: Some(2),
+            },
+        );
+        assert!(closed.ok, "{:?}", closed.error);
+        assert!(!server.panes.contains_key(&5));
+        let layout = server.layout.as_ref().expect("layout");
+        assert!(layout.workspace_position_of(5).is_none());
+        assert_eq!(server.layout_rev, 3);
+        assert!(matches!(
+            broadcasts.as_slice(),
+            [(
+                Target::Broadcast,
+                ServerMessage::LayoutCommitted { rev: 3, .. }
+            )]
+        ));
+        let closed: crate::control::PaneClosed =
+            serde_json::from_value(closed.data.expect("closed")).expect("PaneClosed");
+        assert_eq!(closed.revision, Some(3));
+        assert_eq!(
+            closed
+                .workspace
+                .expect("the workspace it left")
+                .panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            vec![4]
+        );
+
+        // A pane no document places can still be closed; there is no revision to write for it.
+        pane_with_screen(&mut server, 9, b"");
+        let (orphan, broadcasts) = control(
+            &mut server,
+            ControlCommand::PaneClose {
+                target: 9,
+                if_revision: None,
+            },
+        );
+        assert!(orphan.ok, "{:?}", orphan.error);
+        assert!(broadcasts.is_empty());
+        assert!(!server.panes.contains_key(&9));
+        assert_eq!(server.layout_rev, 3);
+    }
+
+    #[test]
+    fn layout_set_on_an_empty_session_starts_its_document() {
+        let mut server = SessionServer::new_named("dev");
+        let (response, broadcasts) = control(
+            &mut server,
+            ControlCommand::LayoutSet {
+                workspace: 3,
+                layout: Some(crate::control::ControlLayoutKind::Columns),
+                master_ratio: None,
+                if_revision: None,
+            },
+        );
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(broadcasts.len(), 1);
+        let layout = server.layout.as_ref().expect("a document now exists");
+        layout.validate().expect("valid");
+        assert_eq!(layout.workspaces[0].index, 2);
+        assert_eq!(
+            crate::state::LayoutKind::from(layout.workspaces[0].layout),
+            crate::state::LayoutKind::Columns
+        );
     }
 
     #[test]
@@ -1776,6 +2649,11 @@ mod tests {
         assert!(!response.ok);
         let error = response.error.unwrap_or_default();
         assert!(error.contains("layout control"), "{error}");
+        assert_eq!(
+            response.code,
+            Some(ControlErrorCode::NotController),
+            "the same code every other layout write refuses a leased session with"
+        );
         assert!(broadcasts.is_empty(), "a refused spawn changes nothing");
         assert_eq!(server.panes.len(), 1, "and leaves no pane behind");
         assert_eq!(server.layout_rev, before_rev);

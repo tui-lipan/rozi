@@ -1,4 +1,4 @@
-use crate::layout::tiling::{DwindleTree, collect_tree_leaves};
+use crate::layout::tiling::DwindleTree;
 
 use super::{DEFAULT_RATIO, Direction, LayoutKind, MoveSwapHint, Pane, PaneId, SplitAxis};
 
@@ -85,19 +85,7 @@ impl Workspace {
     }
 
     pub fn tiled_ids(&self) -> Vec<PaneId> {
-        let active = self.active_tiled_ids_by_pane_order();
-        let mut ordered = Vec::new();
-        if let Some(tree) = self.tile_tree.as_ref() {
-            collect_tree_leaves(tree, &mut ordered);
-            ordered.retain(|id| active.contains(id));
-            for id in &active {
-                if !ordered.contains(id) {
-                    ordered.push(*id);
-                }
-            }
-        }
-
-        if ordered.is_empty() { active } else { ordered }
+        crate::layout::ordered_tiled_ids(self)
     }
 
     pub fn active_tiled_ids_by_pane_order(&self) -> Vec<PaneId> {

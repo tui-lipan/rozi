@@ -223,7 +223,9 @@
 # repository move into the new checkout; directories outside it stay put. No default: a new
 # worktree session starts as one shell in its checkout.
 #profile = "dev"
-# Where new checkouts go when you give no path, as <directory>/<repo>/<branch>. Read on the
+# Where new checkouts go when you give no path. An absolute directory holds every repository's
+# checkouts as <directory>/<repo>/<branch>; a relative one such as ".worktrees" keeps them inside
+# the repository as <repo>/.worktrees/<branch>, and Rozi warns until Git ignores it. Read on the
 # session host, so a remote session uses the remote host's config. No default: checkouts go beside
 # the repository in <repo>-worktrees/<branch>.
 #directory = "~/worktrees"

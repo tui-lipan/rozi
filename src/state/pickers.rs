@@ -127,6 +127,10 @@ pub struct WorktreeFormState {
     pub path_edited: bool,
     pub preview_revision: u64,
     pub pending_preview: Option<u64>,
+    /// The repository's top-level directory the previewed path would add, when Git does not
+    /// ignore it.
+    pub unignored: Option<String>,
+    pub pending_exclude: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -140,6 +144,8 @@ impl WorktreeFormState {
             path_edited: false,
             preview_revision: 0,
             pending_preview: None,
+            unignored: None,
+            pending_exclude: None,
             error: None,
         }
     }

@@ -19,10 +19,10 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
             worktrees::list(Path::new(&cwd)).map(|worktrees| WorktreeResult::Listed { worktrees })
         }
         WorktreeRequest::Preview { cwd, branch } => {
-            worktrees::default_path(Path::new(&cwd), &branch, directory).map(|path| {
-                WorktreeResult::Previewed {
-                    path: path.to_string_lossy().into_owned(),
-                }
+            let cwd = Path::new(&cwd);
+            worktrees::default_path(cwd, &branch, directory).map(|path| WorktreeResult::Previewed {
+                unignored: unignored_directory(cwd, &path),
+                path: path.to_string_lossy().into_owned(),
             })
         }
         WorktreeRequest::Create {
@@ -30,20 +30,47 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
             branch,
             base,
             path,
-        } => create(
-            Path::new(&cwd),
-            &branch,
-            &base,
-            path.map(PathBuf::from),
-            directory,
-        )
-        .map(|worktree| WorktreeResult::Created { worktree }),
+        } => {
+            let cwd = Path::new(&cwd);
+            create(cwd, &branch, &base, path.map(PathBuf::from), directory).map(|worktree| {
+                WorktreeResult::Created {
+                    unignored: unignored_directory(cwd, Path::new(&worktree.path)),
+                    worktree,
+                }
+            })
+        }
         WorktreeRequest::Remove { cwd, path, force } => {
             remove(Path::new(&cwd), Path::new(&path), force)
                 .map(|()| WorktreeResult::Removed { path })
         }
+        WorktreeRequest::Exclude { cwd, directory } => {
+            worktrees::exclude_directory(Path::new(&cwd), &directory)
+                .map(|()| WorktreeResult::Excluded { directory })
+        }
     };
     result.unwrap_or_else(|message| WorktreeResult::Failed { message })
+}
+
+/// The repository's top-level directory that a checkout at `path` sits in, when the checkout is
+/// inside the primary checkout and Git does not ignore that directory. Such a checkout shows up as
+/// untracked in `git status` and is swept up by `git add -A`. A check that fails is not a warning.
+pub(crate) fn unignored_directory(cwd: &Path, path: &Path) -> Option<String> {
+    let primary = worktrees::primary_checkout(cwd).ok()?;
+    let below = path
+        .strip_prefix(&primary)
+        .ok()
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            canonical(path)
+                .strip_prefix(canonical(&primary))
+                .ok()
+                .map(Path::to_path_buf)
+        })?;
+    let std::path::Component::Normal(first) = below.components().next()? else {
+        return None;
+    };
+    let first = first.to_str()?;
+    (!worktrees::directory_ignored(&primary, first).ok()?).then(|| first.to_string())
 }
 
 fn create(
@@ -102,6 +129,12 @@ pub enum HostCall {
         path: String,
         force: bool,
     },
+    /// Add a top-level directory of the repository to `.git/info/exclude`: `directory`, or the
+    /// repository-relative `[worktrees] directory` of this host.
+    Exclude {
+        cwd: Option<String>,
+        directory: Option<String>,
+    },
     /// Find the checkout containing `path` and the sessions that record it as their origin.
     Resolve {
         path: String,
@@ -124,9 +157,15 @@ pub enum HostReply {
     },
     Created {
         worktree: WorktreeInfo,
+        /// The repository's top-level directory the checkout sits in, when Git does not ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unignored: Option<String>,
     },
     Removed {
         path: String,
+    },
+    Excluded {
+        directory: String,
     },
     Resolved {
         worktree: WorktreeInfo,
@@ -153,8 +192,12 @@ pub fn run_host_call(call: HostCall) -> HostReply {
             let cwd = host_path(cwd.as_deref().unwrap_or("."))?;
             let path = path.as_deref().map(host_path).transpose()?;
             let directory = configured_directory();
-            create(&cwd, &branch, &base, path, directory.as_deref())
-                .map(|worktree| HostReply::Created { worktree })
+            create(&cwd, &branch, &base, path, directory.as_deref()).map(|worktree| {
+                HostReply::Created {
+                    unignored: unignored_directory(&cwd, Path::new(&worktree.path)),
+                    worktree,
+                }
+            })
         })(),
         HostCall::Remove { path, force } => (|| {
             let (tree, trees) = containing_worktree(&host_path(&path)?)?;
@@ -164,6 +207,16 @@ pub fn run_host_call(call: HostCall) -> HostReply {
                 .ok_or("Git reported no primary worktree")?;
             remove(&primary, Path::new(&tree.path), force)?;
             Ok(HostReply::Removed { path: tree.path })
+        })(),
+        HostCall::Exclude { cwd, directory } => (|| {
+            let cwd = host_path(cwd.as_deref().unwrap_or("."))?;
+            let directory = match directory {
+                Some(directory) => directory,
+                None => repo_relative_directory()?,
+            };
+            let directory = directory.trim_end_matches(['/', '\\']).to_string();
+            worktrees::exclude_directory(&cwd, &directory)?;
+            Ok(HostReply::Excluded { directory })
         })(),
         HostCall::Resolve { path } => (|| {
             let (tree, trees) = containing_worktree(&host_path(&path)?)?;
@@ -177,6 +230,23 @@ pub fn run_host_call(call: HostCall) -> HostReply {
         })(),
     };
     reply.unwrap_or_else(|message| HostReply::Failed { message })
+}
+
+/// The top-level repository directory a relative `[worktrees] directory` keeps checkouts in.
+fn repo_relative_directory() -> Result<String, String> {
+    let configured = crate::config::load_config().config.worktrees.directory;
+    let directory = configured
+        .as_deref()
+        .map(crate::config::expand_path)
+        .filter(|directory| !directory.is_absolute())
+        .ok_or("[worktrees] directory is not inside the repository; name a directory to exclude")?;
+    match directory.components().next() {
+        Some(std::path::Component::Normal(first)) => first
+            .to_str()
+            .map(str::to_string)
+            .ok_or_else(|| "[worktrees] directory is not valid UTF-8".to_string()),
+        _ => Err("[worktrees] directory does not start with a directory name".to_string()),
+    }
 }
 
 /// `[worktrees] directory` from this host's config, expanded here.
@@ -337,7 +407,7 @@ mod tests {
         );
         let repo_str = repo.to_string_lossy().into_owned();
 
-        let HostReply::Created { worktree } = run_host_call(HostCall::Create {
+        let HostReply::Created { worktree, .. } = run_host_call(HostCall::Create {
             cwd: Some(repo_str.clone()),
             branch: "feat/cli".into(),
             base: "HEAD".into(),
@@ -392,6 +462,102 @@ mod tests {
         );
         assert!(!checkout.exists());
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/cli"]);
+    }
+
+    /// A checkout created inside the repository reports that Git does not ignore its directory,
+    /// until that directory is excluded; one beside the repository never does.
+    #[test]
+    fn in_repository_checkouts_report_an_unignored_directory() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        crate::test_support::isolate_user_dirs();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        );
+        let cwd = repo.to_string_lossy().into_owned();
+        let create = |branch: &str, directory: Option<&Path>| {
+            execute(
+                WorktreeRequest::Create {
+                    cwd: cwd.clone(),
+                    branch: branch.into(),
+                    base: "HEAD".into(),
+                    path: None,
+                },
+                directory,
+            )
+        };
+        let in_repo = Path::new(".worktrees");
+
+        let WorktreeResult::Previewed { path, unignored } = execute(
+            WorktreeRequest::Preview {
+                cwd: cwd.clone(),
+                branch: "feat/a".into(),
+            },
+            Some(in_repo),
+        ) else {
+            panic!("preview failed");
+        };
+        assert!(Path::new(&path).starts_with(canonical(&repo).join(".worktrees")));
+        assert_eq!(unignored.as_deref(), Some(".worktrees"));
+
+        let WorktreeResult::Created { unignored, .. } = create("feat/a", Some(in_repo)) else {
+            panic!("create failed");
+        };
+        assert_eq!(unignored.as_deref(), Some(".worktrees"));
+        assert_eq!(
+            execute(
+                WorktreeRequest::Exclude {
+                    cwd: cwd.clone(),
+                    directory: ".worktrees".into(),
+                },
+                None,
+            ),
+            WorktreeResult::Excluded {
+                directory: ".worktrees".into()
+            }
+        );
+        let WorktreeResult::Created { unignored, .. } = create("feat/b", Some(in_repo)) else {
+            panic!("create failed");
+        };
+        assert_eq!(unignored, None);
+
+        let WorktreeResult::Created { unignored, .. } = create("feat/c", None) else {
+            panic!("create failed");
+        };
+        assert_eq!(
+            unignored, None,
+            "a sibling checkout is outside the repository"
+        );
+    }
+
+    #[test]
+    fn a_reply_without_the_ignore_warning_still_decodes() {
+        let reply: WorktreeResult =
+            serde_json::from_value(serde_json::json!({"kind": "previewed", "path": "/wt/x"}))
+                .expect("decodes");
+        assert_eq!(
+            reply,
+            WorktreeResult::Previewed {
+                path: "/wt/x".into(),
+                unignored: None
+            }
+        );
     }
 
     #[test]

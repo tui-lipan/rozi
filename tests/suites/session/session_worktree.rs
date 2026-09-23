@@ -149,7 +149,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         }
         other => panic!("unexpected list reply: {other:?}"),
     }
-    let WorktreeResult::Previewed { path: preview } = worktree(
+    let WorktreeResult::Previewed { path: preview, .. } = worktree(
         &mut read_only,
         17,
         WorktreeRequest::Preview {
@@ -181,6 +181,13 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         WorktreeResult::Failed { message } if message.contains("writable")
     ));
     assert!(!checkout.exists());
+    assert!(matches!(
+        worktree(&mut read_only, 18, WorktreeRequest::Exclude {
+            cwd: cwd.clone(),
+            directory: ".worktrees".into(),
+        }),
+        WorktreeResult::Failed { message } if message.contains("writable")
+    ));
 
     let created = worktree(
         &mut writable,
@@ -193,7 +200,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         },
     );
     assert!(
-        matches!(&created, WorktreeResult::Created { worktree } if worktree.linked
+        matches!(&created, WorktreeResult::Created { worktree, .. } if worktree.linked
             && std::path::Path::new(&worktree.path).canonicalize().unwrap()
                 == checkout.canonicalize().unwrap()),
         "{created:?}"

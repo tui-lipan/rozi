@@ -296,6 +296,20 @@ fn worktree_picker_visual_reference() {
             println!("wrote {}", path.display());
         }
         backend.dispatch(Msg::WorktreeNew).unwrap();
+        {
+            let form = backend
+                .state_mut()
+                .worktree_picker
+                .as_mut()
+                .unwrap()
+                .form
+                .as_mut()
+                .unwrap();
+            form.branch.set_text("feat/login".to_string());
+            form.path
+                .set_text("/home/me/src/rozi/.worktrees/feat-login".to_string());
+            form.unignored = Some(".worktrees".into());
+        }
         for (width, height) in [(72, 22), (100, 30)] {
             backend.set_viewport(Rect {
                 x: 0,

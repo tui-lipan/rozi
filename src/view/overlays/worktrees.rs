@@ -199,6 +199,8 @@ fn form_row(ctx: &Context<AppRoot>, form: &WorktreeFormState, field: WorktreeFor
                     Some(Msg::WorktreeFormClose)
                 } else if key.code == KeyCode::Enter && !key.mods.ctrl && !key.mods.alt {
                     Some(Msg::WorktreeFormSubmit)
+                } else if key.code == KeyCode::Char('e') && key.mods.ctrl && !key.mods.alt {
+                    Some(Msg::WorktreeExclude)
                 } else {
                     None
                 }
@@ -255,12 +257,24 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
     if let Some(error) = form.error.as_deref() {
         body = body.child(Text::new(error).style(Style::new().fg(theme.status.warning)));
     }
-    body = body.child(
-        hint_row()
-            .child(hint_pill(theme, "create", "enter"))
-            .child(hint_pill(theme, "next field", "tab"))
-            .child(hint_pill(theme, "cancel", "esc")),
-    );
+    if let Some(directory) = form.unignored.as_deref() {
+        body = body.child(
+            HStack::new()
+                .height(Length::Auto)
+                .padding((0, 1, 0, 2))
+                .child(
+                    Text::new(format!("{directory}/ is not ignored by Git"))
+                        .style(Style::new().fg(theme.status.warning)),
+                ),
+        );
+    }
+    let mut hints = hint_row()
+        .child(hint_pill(theme, "create", "enter"))
+        .child(hint_pill(theme, "next field", "tab"));
+    if form.unignored.is_some() && form.pending_exclude.is_none() {
+        hints = hints.child(hint_pill(theme, "exclude", "ctrl+e"));
+    }
+    body = body.child(hints.child(hint_pill(theme, "cancel", "esc")));
     action_palette_modal(ctx, "New worktree")
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)

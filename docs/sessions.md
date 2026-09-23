@@ -72,10 +72,16 @@ happens to have changed directory into the checkout.
 | `Esc` | Close the picker |
 
 The new-worktree form has **Branch**, **Base** (`HEAD` by default), and **Path**. Rozi previews
-the default path on the session host: `<repo>-worktrees/<branch>` beside the repository, or
-`<directory>/<repo>/<branch>` when `[worktrees] directory` is set. Edit Path to choose another
-absolute host path. `Tab`
-and `Shift+Tab` change fields.
+the default path on the session host: `<repo>-worktrees/<branch>` beside the repository by
+default, `<directory>/<repo>/<branch>` for an absolute `[worktrees] directory`, or
+`<repo>/<directory>/<branch>` for a relative one such as `.worktrees`. Edit Path to choose another
+absolute host path. `Tab` and `Shift+Tab` change fields.
+
+A checkout inside the repository shows up in `git status` and is swept up by `git add -A` unless
+Git ignores its directory. When it does not, the form warns under the path and `Ctrl+E` adds the
+directory to `.git/info/exclude`, which is local to your clone. Rozi never edits the committed
+`.gitignore`, and creating a checkout never changes ignore rules on its own; a checkout created
+without the rule reports the same warning.
 
 New worktree sessions start with a plain shell in the checkout; `[profile] default` does not apply.
 To seed them with a layout, set `[worktrees] profile`. Its pane directories inside any checkout of
@@ -100,10 +106,15 @@ rozi worktrees create feat/login            # new branch from HEAD, beside the r
 rozi worktrees create fix/ssh --base origin/main --open
 rozi worktrees open ~/src/rozi-worktrees/feat-login
 rozi worktrees remove ~/src/rozi-worktrees/feat-login
+rozi worktrees exclude                      # add the in-repository worktree directory to .git/info/exclude
 ```
 
 `create` checks out an existing local branch, or creates the branch from `--base` (`HEAD` by
-default). Without `--path` the checkout goes to the same default location as in the picker. It prints the new checkout's path, or a `worktree` object with `--format json`.
+default). Without `--path` the checkout goes to the same default location as in the picker. It
+prints the new checkout's path, or a `worktree` object with `--format json`. When the checkout is
+inside the repository in a directory Git does not ignore, `create` prints a warning, and the JSON
+names it as `unignored`. `rozi worktrees exclude` adds the relative `[worktrees] directory`, or a
+directory you name, to `.git/info/exclude`.
 `list --format json` prints a `worktrees` array; each entry adds the `sessions` whose recorded
 origin is that checkout.
 

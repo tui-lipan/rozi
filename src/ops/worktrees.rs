@@ -288,6 +288,8 @@ pub(crate) fn form_changed(
     form.error = None;
     if field == WorktreeFormField::Path {
         form.path_edited = true;
+        // The warning described the previewed path, not this one; a create still reports it.
+        form.unignored = None;
     }
     if field == WorktreeFormField::Branch && !form.path_edited {
         form.preview_revision = form.preview_revision.wrapping_add(1);
@@ -473,7 +475,16 @@ pub(crate) fn apply_result(
                 .as_ref()
                 .is_some_and(|picker| picker.cwd == operation.cwd);
         match (operation.kind, result) {
-            (WorktreeOperationKind::Create { .. }, WorktreeResult::Created { worktree }) => {
+            (
+                WorktreeOperationKind::Create { .. },
+                WorktreeResult::Created {
+                    worktree,
+                    unignored,
+                },
+            ) => {
+                if let Some(directory) = unignored {
+                    warn_unignored(ctx, &directory);
+                }
                 if picker_here {
                     return enter_tree(ctx, worktree);
                 }
@@ -555,8 +566,26 @@ pub(crate) fn apply_result(
     {
         form.pending_preview = None;
         match result {
-            WorktreeResult::Previewed { path } if !form.path_edited => {
+            WorktreeResult::Previewed { path, unignored } if !form.path_edited => {
                 form.path.set_text(path);
+                form.unignored = unignored;
+            }
+            WorktreeResult::Failed { message } => form.error = Some(message),
+            _ => {}
+        }
+        return Update::full();
+    }
+    if let Some(form) = picker.form.as_mut()
+        && form.pending_exclude == Some(request_id)
+    {
+        form.pending_exclude = None;
+        match result {
+            WorktreeResult::Excluded { directory } => {
+                form.unignored = None;
+                crate::pane::pty_events::notify_info(
+                    ctx,
+                    format!("Added `{directory}/` to .git/info/exclude"),
+                );
             }
             WorktreeResult::Failed { message } => form.error = Some(message),
             _ => {}
@@ -564,6 +593,48 @@ pub(crate) fn apply_result(
         return Update::full();
     }
     Update::none()
+}
+
+/// A checkout inside the repository that Git does not ignore shows up in `git status` and is swept
+/// up by `git add -A`. Said once it exists; the fix stays the user's call.
+fn warn_unignored(ctx: &mut Context<AppRoot>, directory: &str) {
+    crate::pane::pty_events::notify_warning(
+        ctx,
+        "Worktree not ignored by Git",
+        format!(
+            "`{directory}/` shows in git status. Add it to .git/info/exclude with Ctrl+E in New \
+             worktree, or `rozi worktrees exclude`."
+        ),
+    );
+}
+
+/// Add the directory the new-worktree form warned about to the repository's `.git/info/exclude`.
+/// Only on request: creating a checkout never edits Git's ignore rules by itself.
+pub(crate) fn exclude_from_form(ctx: &mut Context<AppRoot>) -> Update {
+    if !writable(ctx) {
+        crate::pane::pty_events::notify_error(ctx, "Exclude failed", "Client is read-only");
+        return Update::full();
+    }
+    let Some((cwd, directory)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
+        let form = picker.form.as_ref()?;
+        Some((picker.cwd.clone(), form.unignored.clone()?))
+    }) else {
+        return Update::none();
+    };
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return Update::none();
+    };
+    let id = request_id(ctx);
+    if let Some(form) = ctx
+        .state
+        .worktree_picker
+        .as_mut()
+        .and_then(|picker| picker.form.as_mut())
+    {
+        form.pending_exclude = Some(id);
+    }
+    client.worktree(id, WorktreeRequest::Exclude { cwd, directory });
+    Update::full()
 }
 
 #[cfg(test)]
@@ -629,6 +700,7 @@ mod tests {
                             linked: true,
                             locked: false,
                         },
+                        unignored: None,
                     },
                 })
                 .unwrap();

@@ -287,6 +287,8 @@ pub enum Msg {
     WorktreeFormCycle(bool),
     WorktreeFormClose,
     WorktreeFormSubmit,
+    /// Add the directory the new-worktree form warned about to `.git/info/exclude`.
+    WorktreeExclude,
     WorktreePreviewTick {
         epoch: u64,
         revision: u64,

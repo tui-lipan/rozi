@@ -369,7 +369,9 @@ and `Ctrl+D` twice to delete. See [Profiles](profiles.md#use-the-profile-picker)
 
 **Worktrees** has no default command key; open it from the command palette or Changes sidebar.
 Inside it, `Enter` opens a checkout's session, `Ctrl+N` creates a checkout, `Ctrl+R` refreshes,
-and `Ctrl+K` removes a linked checkout. See [Worktrees](sessions.md#worktrees).
+and `Ctrl+K` removes a linked checkout. In the new-worktree form, `Ctrl+E` adds an in-repository
+worktree directory that Git does not ignore to `.git/info/exclude`. See
+[Worktrees](sessions.md#worktrees).
 
 ## Other overlay keys
 

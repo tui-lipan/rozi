@@ -312,6 +312,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::WorktreeFormCycle(forward) => crate::ops::worktrees::form_cycle(ctx, forward),
         Msg::WorktreeFormClose => crate::ops::worktrees::close_form(ctx),
         Msg::WorktreeFormSubmit => crate::ops::worktrees::submit_form(ctx),
+        Msg::WorktreeExclude => crate::ops::worktrees::exclude_from_form(ctx),
         Msg::WorktreePreviewTick { epoch, revision } => {
             crate::ops::worktrees::preview_tick(ctx, epoch, revision)
         }

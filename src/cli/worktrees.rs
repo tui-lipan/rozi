@@ -43,22 +43,54 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                 base,
                 path,
             };
-            let worktree = match call(target.as_ref(), call_value)? {
-                HostReply::Created { worktree } => worktree,
+            let (worktree, unignored) = match call(target.as_ref(), call_value)? {
+                HostReply::Created {
+                    worktree,
+                    unignored,
+                } => (worktree, unignored),
                 other => return Err(unexpected(other)),
             };
+            if let Some(directory) = unignored.as_deref() {
+                // A warning, never a fix: creating a checkout does not edit Git's ignore rules.
+                eprintln!("warning: {directory}/ is not ignored by Git");
+                eprintln!(
+                    "hint: run `rozi{} worktrees exclude {directory}` to add it to .git/info/exclude",
+                    cli.remote
+                        .as_deref()
+                        .map(|remote| if remote.is_empty() {
+                            " --remote".to_string()
+                        } else {
+                            format!(" --remote {remote}")
+                        })
+                        .unwrap_or_default()
+                );
+            }
             if open {
                 return open_checkout(target, cli.remote, cli.config_path, worktree.path, None)
                     .map(Some);
             }
             match format {
-                ListFormat::Json => print_json(&serde_json::json!({ "worktree": worktree }))?,
+                ListFormat::Json => print_json(&match unignored {
+                    Some(directory) => {
+                        serde_json::json!({ "worktree": worktree, "unignored": directory })
+                    }
+                    None => serde_json::json!({ "worktree": worktree }),
+                })?,
                 ListFormat::Text => println!("{}", worktree.path),
             }
             Ok(None)
         }
         WorktreesCommand::Open { path, name } => {
             open_checkout(target, cli.remote, cli.config_path, path, name).map(Some)
+        }
+        WorktreesCommand::Exclude { directory, cwd } => {
+            match call(target.as_ref(), HostCall::Exclude { cwd, directory })? {
+                HostReply::Excluded { directory } => {
+                    println!("{directory}/ is excluded in .git/info/exclude");
+                    Ok(None)
+                }
+                other => Err(unexpected(other)),
+            }
         }
         WorktreesCommand::Remove { path, force } => {
             match call(target.as_ref(), HostCall::Remove { path, force })? {

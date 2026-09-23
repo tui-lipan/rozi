@@ -37,6 +37,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "remove <PATH> [--force]",
                 "Remove a linked checkout, never its branch",
             ),
+            row(
+                "exclude [DIR] [--cwd <DIR>]",
+                "Add an in-repo worktree directory to",
+            ),
+            row("", ".git/info/exclude"),
         ],
     },
     HelpSection {
@@ -45,10 +50,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         note: "",
         rows: &[
             row("--base <REV>", "Start a new branch from REV (default HEAD)"),
-            row(
-                "--path <DIR>",
-                "Checkout directory (default beside the repo)",
-            ),
+            row("--path <DIR>", "Checkout directory (default from config)"),
             row("--cwd <DIR>", "A directory in the repository"),
             row("--open", "Open the new checkout in a session"),
             row("--format text|json", "Print the new checkout"),
@@ -96,6 +98,10 @@ pub(crate) enum WorktreesCommand {
     Remove {
         path: String,
         force: bool,
+    },
+    Exclude {
+        directory: Option<String>,
+        cwd: Option<String>,
     },
 }
 
@@ -221,6 +227,13 @@ pub(super) fn parse(
                 name: flags.name,
             }
         }
+        "exclude" => {
+            flags.allow(&verb, &["--cwd"])?;
+            WorktreesCommand::Exclude {
+                directory: operand,
+                cwd: flags.cwd,
+            }
+        }
         "remove" => {
             flags.allow(&verb, &["--force"])?;
             WorktreesCommand::Remove {
@@ -230,7 +243,7 @@ pub(super) fn parse(
         }
         other => {
             return Err(format!(
-                "unknown worktrees command `{other}` (expected list, create, open, or remove)"
+                "unknown worktrees command `{other}` (expected list, create, open, remove, or exclude)"
             ));
         }
     };
@@ -358,6 +371,20 @@ mod tests {
             }
         );
         assert_eq!(
+            command(&["worktrees", "exclude"]).command,
+            WorktreesCommand::Exclude {
+                directory: None,
+                cwd: None,
+            }
+        );
+        assert_eq!(
+            command(&["worktrees", "exclude", ".worktrees", "--cwd", "~/src/rozi"]).command,
+            WorktreesCommand::Exclude {
+                directory: Some(".worktrees".into()),
+                cwd: Some("~/src/rozi".into()),
+            }
+        );
+        assert_eq!(
             command(&["worktrees", "remove", "/wt/x", "--force"]).command,
             WorktreesCommand::Remove {
                 path: "/wt/x".into(),
@@ -416,7 +443,7 @@ mod tests {
             ),
             (
                 &["worktrees", "prune"][..],
-                "unknown worktrees command `prune` (expected list, create, open, or remove)",
+                "unknown worktrees command `prune` (expected list, create, open, remove, or exclude)",
             ),
         ] {
             assert_eq!(parse(args).expect_err("must reject"), message, "{args:?}");

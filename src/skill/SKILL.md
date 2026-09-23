@@ -148,6 +148,7 @@ Git worktrees live on the session host, and `--remote <HOST>` goes before `workt
 rozi worktrees list [--cwd <DIR>] --format json
 rozi worktrees create <BRANCH> [--base <REV>] [--path <DIR>] --format json
 rozi worktrees remove <PATH> [--force]
+rozi worktrees exclude [DIR]
 ```
 
 `worktrees open` and `create --open` attach a UI, so run them only for a person at a terminal.

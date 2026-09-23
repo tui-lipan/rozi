@@ -29,8 +29,9 @@ pub fn list(cwd: &Path) -> Result<Vec<WorktreeInfo>, String> {
 }
 
 /// Where a new checkout goes when no path is given, calculated only with the server host's path
-/// rules: `<directory>/<repo>/<branch>` under a configured `directory`, otherwise the visible
-/// sibling `<repo>-worktrees/<branch>` beside the primary checkout.
+/// rules. Without a configured `directory` it is the visible sibling `<repo>-worktrees/<branch>`
+/// beside the primary checkout. An absolute `directory` holds every repository's checkouts as
+/// `<directory>/<repo>/<branch>`; a relative one is inside the repository, `<repo>/<directory>/<branch>`.
 pub fn default_path(
     cwd: &Path,
     branch: &str,
@@ -62,10 +63,8 @@ pub fn default_path(
         return Err("worktree branch cannot be empty".to_string());
     }
     let base = match directory {
-        Some(directory) if !directory.is_absolute() => {
-            return Err("[worktrees] directory must be an absolute path".to_string());
-        }
-        Some(directory) => directory.join(name.as_ref()),
+        Some(directory) if directory.is_absolute() => directory.join(name.as_ref()),
+        Some(directory) => source.join(directory),
         None => parent.join(format!("{name}-worktrees")),
     };
     Ok(base.join(slug))
@@ -153,6 +152,77 @@ pub fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
     args.push(worktree.path.into());
     command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT)?;
     Ok(())
+}
+
+/// The repository's primary checkout, which holds its ignore rules.
+pub fn primary_checkout(cwd: &Path) -> Result<std::path::PathBuf, String> {
+    list(cwd)?
+        .into_iter()
+        .next()
+        .map(|tree| std::path::PathBuf::from(tree.path))
+        .ok_or_else(|| "Git reported no primary worktree".to_string())
+}
+
+/// Whether Git ignores the top-level directory `name` of the checkout at `primary`, as
+/// `.gitignore`, `.git/info/exclude`, and the user's global excludes decide. The directory need
+/// not exist yet.
+pub fn directory_ignored(primary: &Path, name: &str) -> Result<bool, String> {
+    let output = command::run(
+        primary,
+        &[
+            "check-ignore".into(),
+            "--quiet".into(),
+            "--".into(),
+            format!("{name}/").into(),
+        ],
+        WORKTREE_LIST_TIMEOUT,
+    )?;
+    match output.status {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(git_error(&output)),
+    }
+}
+
+/// Add the top-level directory `name` to the repository's `.git/info/exclude`, the local ignore
+/// file Git never commits. Never touches `.gitignore`. Adding an already ignored directory does
+/// nothing.
+pub fn exclude_directory(cwd: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.contains(['/', '\\'])
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '*' | '?' | '[' | '!' | '#'))
+    {
+        return Err(format!("`{name}` is not a plain top-level directory name"));
+    }
+    let primary = primary_checkout(cwd)?;
+    if directory_ignored(&primary, name)? {
+        return Ok(());
+    }
+    // `--git-path` follows linked worktrees to the shared repository directory.
+    let file = command::checked(
+        &primary,
+        &argv(&["rev-parse", "--git-path", "info/exclude"]),
+        WORKTREE_LIST_TIMEOUT,
+    )?;
+    let file =
+        String::from_utf8(file).map_err(|_| "Git returned a non-UTF-8 exclude path".to_string())?;
+    let file = primary.join(file.trim_end_matches(['\n', '\r']));
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let mut contents = match std::fs::read_to_string(&file) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("cannot read {}: {err}", file.display())),
+    };
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(&format!("/{name}/\n"));
+    std::fs::write(&file, contents).map_err(|err| format!("cannot write {}: {err}", file.display()))
 }
 
 /// Whether two host paths name the same directory. Git on Windows reports `C:/Users/...` where
@@ -344,9 +414,38 @@ mod tests {
             default_path(&repo, "feat/login", Some(&directory)).unwrap(),
             directory.join("rozi").join("feat-login")
         );
+        // A relative directory is inside the repository.
         assert_eq!(
-            default_path(&repo, "feat/login", Some(Path::new("relative"))),
-            Err("[worktrees] directory must be an absolute path".to_string())
+            default_path(&repo, "feat/login", Some(Path::new(".worktrees"))).unwrap(),
+            primary.join(".worktrees").join("feat-login")
         );
+    }
+
+    #[test]
+    fn exclude_adds_a_local_ignore_rule_once_and_only_for_a_plain_directory() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("rozi");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let primary = primary_checkout(&repo).unwrap();
+
+        assert!(!directory_ignored(&primary, ".worktrees").unwrap());
+        exclude_directory(&repo, ".worktrees").unwrap();
+        assert!(directory_ignored(&primary, ".worktrees").unwrap());
+        exclude_directory(&repo, ".worktrees").unwrap();
+        let exclude =
+            std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
+        assert_eq!(exclude.matches("/.worktrees/").count(), 1, "{exclude}");
+        assert!(
+            !repo.join(".gitignore").exists(),
+            "the committed ignore file is never touched"
+        );
+
+        for name in ["", ".", "..", "a/b", "a\\b", "*", "#x", "!x"] {
+            assert!(exclude_directory(&repo, name).is_err(), "accepted {name:?}");
+        }
     }
 }

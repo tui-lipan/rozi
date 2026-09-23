@@ -321,6 +321,11 @@ pub enum WorktreeRequest {
         path: String,
         force: bool,
     },
+    /// Add a top-level directory of the repository to its `.git/info/exclude`.
+    Exclude {
+        cwd: String,
+        directory: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,12 +336,21 @@ pub enum WorktreeResult {
     },
     Previewed {
         path: String,
+        /// The repository's top-level directory this path would add, when Git does not ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unignored: Option<String>,
     },
     Created {
         worktree: crate::git::worktrees::WorktreeInfo,
+        /// As for [`Self::Previewed`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unignored: Option<String>,
     },
     Removed {
         path: String,
+    },
+    Excluded {
+        directory: String,
     },
     Failed {
         message: String,

@@ -313,8 +313,16 @@ fn probe_remote_report_with_connect_timeout(
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
         validate_remote_executable_token(path)?;
+        if !program_exists("ssh") {
+            return Err("ssh was not found on PATH (required for --remote)".to_string());
+        }
+        let family = detect_remote_family(&resolved, config, connect_timeout_secs)?;
         return Ok(ProbeReport {
-            platform: local_uname_platform(),
+            platform: if family == RemoteFamily::Windows {
+                "windows".to_string()
+            } else {
+                local_uname_platform()
+            },
             machine: local_uname_machine(),
             candidates: vec![ProbeCandidate {
                 path: path.clone(),
@@ -361,7 +369,7 @@ fn probe_remote_report_with_connect_timeout(
 /// Remote sshd default-shell family, chosen up front so the probe/install scripts target the right
 /// interpreter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RemoteFamily {
+pub(crate) enum RemoteFamily {
     Posix,
     Windows,
 }
@@ -597,12 +605,15 @@ fn ensure_with_confirmation(
         return verify_installed(target, config, path);
     }
     if let Some(path) = super::binary::cached(target, config) {
-        return Ok(path);
+        return Ok(path.path);
     }
     let report = probe_remote_report(target, config)?;
     let decision = decide_install(&select_compatible(&report), config.install, interactive);
     let ask = match decision {
-        InstallDecision::Use { path } => return super::binary::remember(target, config, path),
+        InstallDecision::Use { path } => {
+            let family = family_from_os(&normalize_os(&report.platform));
+            return super::binary::remember(target, config, path, family).map(|binary| binary.path);
+        }
         InstallDecision::Fail { message } => return Err(message),
         InstallDecision::Install => false,
         InstallDecision::Ask => true,
@@ -624,6 +635,7 @@ fn verify_installed(
 ) -> Result<String, String> {
     super::binary::invalidate(target, config);
     let report = probe_remote_report(target, config)?;
+    let family = family_from_os(&normalize_os(&report.platform));
     let installed = ProbeReport {
         candidates: report
             .candidates
@@ -633,7 +645,9 @@ fn verify_installed(
         ..report
     };
     match select_compatible(&installed) {
-        ProbeResult::Found { path, .. } => super::binary::remember(target, config, path),
+        ProbeResult::Found { path, .. } => {
+            super::binary::remember(target, config, path, family).map(|binary| binary.path)
+        }
         ProbeResult::Missing { detail } => Err(format!(
             "installed Rozi could not run on the remote host: {detail}"
         )),
@@ -680,7 +694,7 @@ fn install_for_platforms(
     )
 }
 
-fn family_from_os(os: &str) -> RemoteFamily {
+pub(crate) fn family_from_os(os: &str) -> RemoteFamily {
     if os == "windows" {
         RemoteFamily::Windows
     } else {
@@ -1203,14 +1217,49 @@ pub(crate) fn append_ssh_destination(command: &mut Command, resolved: &ResolvedR
     command.arg("--").arg(resolved.ssh_destination());
 }
 
-/// Quote a validated executable as one remote-shell word. POSIX uses single quotes; Windows
-/// OpenSSH's default cmd shell uses double quotes for paths containing spaces.
-pub(crate) fn quote_remote_executable(path: &str) -> String {
-    if path.contains('\\') || path.as_bytes().get(1) == Some(&b':') {
-        format!("\"{path}\"")
-    } else {
-        format!("'{path}'")
+/// Append one Rozi invocation using quoting for the detected remote shell family. Windows
+/// invocation goes through encoded PowerShell so it works with either cmd.exe or PowerShell as
+/// sshd's configured default shell.
+pub(crate) fn append_remote_rozi_command(
+    command: &mut Command,
+    binary: &str,
+    args: &[&str],
+    family: RemoteFamily,
+) {
+    match family {
+        RemoteFamily::Posix => {
+            command.arg(shell_quote_posix(binary));
+            for arg in args {
+                command.arg(shell_quote_posix(arg));
+            }
+        }
+        RemoteFamily::Windows => {
+            let mut words = vec![binary];
+            words.extend_from_slice(args);
+            let script = format!(
+                "$words = @({}); $exe = $words[0]; $remoteArgs = @($words | Select-Object -Skip 1); & $exe @remoteArgs; exit $LASTEXITCODE",
+                words
+                    .iter()
+                    .map(|word| powershell_literal(word))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            command
+                .arg("powershell")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-EncodedCommand")
+                .arg(encode_powershell_command(&script));
+        }
     }
+}
+
+fn shell_quote_posix(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\"'\"'"))
+}
+
+fn powershell_literal(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "''"))
 }
 
 /// Fail if the `ROZI_REMOTE_BINARY` override is a binary built for a different OS/arch than the
@@ -1464,7 +1513,7 @@ fn pe_target_from_file(path: &Path) -> Option<(String, String)> {
     Some(("windows".to_string(), arch.to_string()))
 }
 
-fn normalize_os(raw: &str) -> String {
+pub(crate) fn normalize_os(raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
     // MSYS/MinGW/Cygwin `uname -s` carries a version suffix (`MINGW64_NT-10.0-22631`,
     // `MSYS_NT-…`, `CYGWIN_NT-…`), and the PowerShell probe reports `windows` directly, so match on
@@ -1513,6 +1562,68 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_invocation_uses_the_known_shell_family_not_path_syntax() {
+        let mut windows = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows,
+            "rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let windows_args: Vec<_> = windows
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        let encoded = windows_args.last().unwrap();
+        let script = decode_powershell_command(encoded);
+        assert!(windows_args[0].eq_ignore_ascii_case("powershell"));
+        assert!(script.contains("'rozi.exe'"));
+
+        let mut windows_spaced = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows_spaced,
+            r"C:\Program Files\Rozi\rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let args: Vec<_> = windows_spaced
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert!(
+            decode_powershell_command(args.last().unwrap())
+                .contains(r"'C:\Program Files\Rozi\rozi.exe'")
+        );
+
+        let mut windows_unicode = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut windows_unicode,
+            "C:\\Users\\Łukasz\\Adam's Rozi\\rozi.exe",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Windows,
+        );
+        let args: Vec<_> = windows_unicode
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert!(decode_powershell_command(args.last().unwrap()).contains("Adam''s Rozi"));
+
+        let mut posix = Command::new("ssh");
+        append_remote_rozi_command(
+            &mut posix,
+            "/some path/rozi",
+            &["--remote-serve", "dev"],
+            RemoteFamily::Posix,
+        );
+        let args: Vec<_> = posix.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert_eq!(args, ["'/some path/rozi'", "'--remote-serve'", "'dev'"]);
+        assert_eq!(
+            shell_quote_posix("rozi'; touch $HOME"),
+            "'rozi'\"'\"'; touch $HOME'"
+        );
+    }
 
     #[test]
     fn parse_probe_collects_candidates_and_protocol_range() {

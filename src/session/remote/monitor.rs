@@ -180,8 +180,13 @@ fn connect(
     let binary = super::binary::resolve(target, &config).map_err(io::Error::other)?;
     let mut command = super::ssh_base_command(&resolved, &config);
     super::append_ssh_destination(&mut command, &resolved);
+    super::append_remote_rozi_command(
+        &mut command,
+        &binary.path,
+        &["sessions", "watch"],
+        binary.family,
+    );
     command
-        .args([binary.as_str(), "sessions", "watch"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

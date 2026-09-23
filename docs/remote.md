@@ -170,9 +170,12 @@ a host or session. Resolved paths are cached briefly and rechecked after a faile
 | `never` | Fail when no compatible binary is found. | Fail without changing the host. |
 
 Automatic installation does not replace a user-installed Rozi CLI. It provisions a runtime for the
-client's exact version under `$HOME/.local/share/rozi/remote/<version>/rozi` on POSIX hosts or
-`%USERPROFILE%\.local\share\rozi\remote\<version>\rozi.exe` on Windows. Multiple client versions
-can therefore coexist.
+client's exact version under `$XDG_DATA_HOME/rozi/remote/<version>/rozi` on POSIX hosts when
+`XDG_DATA_HOME` is absolute. An unset or relative value falls back to
+`$HOME/.local/share/rozi/remote/<version>/rozi`. On Windows, Rozi uses
+`%LOCALAPPDATA%\rozi\remote\<version>\rozi.exe`; if `LOCALAPPDATA` is unavailable, it falls back to
+`%USERPROFILE%\.local\share\rozi\remote\<version>\rozi.exe`. Multiple client versions can
+therefore coexist.
 
 When client and server platforms match, Rozi can copy the running executable. For a different
 platform, it downloads the signed manifest and matching archive for the client's exact version and

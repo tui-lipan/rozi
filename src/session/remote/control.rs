@@ -21,7 +21,7 @@ use crate::control::{ControlRequest, ControlResponse};
 
 use super::target::RemoteTarget;
 use super::{
-    ResolvedRemote, append_ssh_destination, quote_remote_executable, ssh_base_command,
+    ResolvedRemote, append_remote_rozi_command, append_ssh_destination, ssh_base_command,
     validate_remote_executable_token, validate_remote_target,
 };
 
@@ -46,16 +46,19 @@ pub fn forward_control(
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = super::binary::resolve(target, config)?;
-    validate_remote_executable_token(&remote_bin)?;
+    validate_remote_executable_token(&remote_bin.path)?;
 
     let payload = serde_json::to_vec(request)
         .map_err(|err| format!("could not encode the control request: {err}"))?;
 
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    command.arg(quote_remote_executable(&remote_bin));
-    command.arg("--remote-control");
-    command.arg(session);
+    append_remote_rozi_command(
+        &mut command,
+        &remote_bin.path,
+        &["--remote-control", session],
+        remote_bin.family,
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

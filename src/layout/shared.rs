@@ -505,6 +505,186 @@ pub(crate) fn shared_workspace_placements(
     )
 }
 
+/// The canonical canvas as a rect, for measuring and clamping against it.
+pub(crate) fn canvas_bounds(canvas: (u16, u16)) -> FloatRect {
+    FloatRect {
+        x: 0.0,
+        y: 0.0,
+        w: f32::from(canvas.0.max(1)),
+        h: f32::from(canvas.1.max(1)),
+    }
+}
+
+/// Where automation floats `pane_id`, in canonical-canvas cells.
+///
+/// A requested rect is clamped the way a dragged float is, which lets it hang partly off the canvas
+/// as long as a grab margin stays on it. Without one, a pane that already floats stays where it is,
+/// and a tiled pane lifts off centred on the tile it leaves, at the default floating size. New
+/// rects land on whole cells, since that is all a terminal can draw. Both endpoints resolve the rect here from the shared document, so the same
+/// request floats a pane to the same place whether a UI or a session server applied it.
+pub(crate) fn automation_float_rect(
+    workspace: &SharedWorkspace,
+    canvas: (u16, u16),
+    pane_id: PaneId,
+    requested: Option<FloatRect>,
+) -> Option<FloatRect> {
+    use crate::layout::geometry::{
+        clamp_floating_rect, default_floating_rect, lift_off_float_rect,
+    };
+
+    let bounds = canvas_bounds(canvas);
+    let whole_cells = |rect: FloatRect| FloatRect {
+        x: rect.x.round(),
+        y: rect.y.round(),
+        w: rect.w.round(),
+        h: rect.h.round(),
+    };
+    if let Some(requested) = requested {
+        return Some(whole_cells(clamp_floating_rect(requested, bounds)));
+    }
+    let pane = workspace
+        .panes
+        .iter()
+        .find(|pane| pane.pane_id == pane_id)?;
+    if pane.floating {
+        return pane
+            .rect
+            .map(|rect| frac_rect_to_float(rect, canvas.0, canvas.1));
+    }
+    let tile =
+        crate::layout::placement_for(&shared_workspace_placements(workspace, canvas), pane_id)?;
+    Some(whole_cells(lift_off_float_rect(
+        tile,
+        default_floating_rect(bounds, 0),
+        bounds,
+    )))
+}
+
+/// Why a shared-document edit was refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SharedEditError {
+    PaneNotPlaced(PaneId),
+    InvalidDocument(SharedLayoutValidationError),
+}
+
+impl std::fmt::Display for SharedEditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PaneNotPlaced(id) => write!(f, "pane {id} is not in the layout"),
+            Self::InvalidDocument(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl SharedLayout {
+    /// The workspace holding `pane_id`, by position in [`Self::workspaces`].
+    pub(crate) fn workspace_position_of(&self, pane_id: PaneId) -> Option<usize> {
+        self.workspaces
+            .iter()
+            .position(|workspace| workspace.panes.iter().any(|pane| pane.pane_id == pane_id))
+    }
+
+    /// Set a workspace's layout kind; `index` is zero-based. A workspace the document does not
+    /// hold yet is added, empty, so the choice is recorded for when panes arrive. Returns whether
+    /// the document changed.
+    pub(crate) fn set_layout_kind(&mut self, index: usize, kind: crate::state::LayoutKind) -> bool {
+        let kind = SharedLayoutKind::from(kind);
+        match self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.index == index)
+        {
+            Some(workspace) if workspace.layout == kind => false,
+            Some(workspace) => {
+                workspace.layout = kind;
+                true
+            }
+            None => {
+                let fresh = crate::state::Workspace::new(index);
+                self.workspaces.push(SharedWorkspace {
+                    index,
+                    name: None,
+                    synchronized: false,
+                    layout: kind,
+                    start_axis: fresh.start_axis.into(),
+                    split_ratios: fresh.split_ratios,
+                    tree: None,
+                    panes: Vec::new(),
+                });
+                self.workspaces.sort_by_key(|workspace| workspace.index);
+                true
+            }
+        }
+    }
+
+    /// Apply a validated `pane set` to the document. Returns whether it changed.
+    ///
+    /// Edits in place and validates afterwards, so a caller that must not be left holding a
+    /// refused edit applies it to a copy - which is what committing a new revision does anyway.
+    ///
+    /// Floating removes the pane from the tiling tree; returning to the tiling appends it at the
+    /// end of the tiling order - exactly what [`effective_tile_tree`](crate::layout::effective_tile_tree)
+    /// does for a pane the tree does not name, which is how a client applying the same edit to its
+    /// live workspace arrives at the same tree.
+    pub(crate) fn edit_pane(
+        &mut self,
+        pane_id: PaneId,
+        edit: crate::control::PaneEdit,
+    ) -> std::result::Result<bool, SharedEditError> {
+        let canvas = (self.canvas_cols.max(1), self.canvas_rows.max(1));
+        let position = self
+            .workspace_position_of(pane_id)
+            .ok_or(SharedEditError::PaneNotPlaced(pane_id))?;
+        let before = self.workspaces[position].clone();
+        let floating_now = before
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .is_some_and(|pane| pane.floating);
+        let floats = edit.floats(floating_now);
+        // Resolved against the document as it stands, so a lifting pane is centred on the tile it
+        // is leaving rather than on wherever the reflowed tiling puts its neighbours.
+        let float_rect = if floats {
+            automation_float_rect(
+                &before,
+                canvas,
+                pane_id,
+                edit.rect.map(|rect| rect.to_cells(canvas)),
+            )
+        } else {
+            None
+        };
+
+        let workspace = &mut self.workspaces[position];
+        let pane = workspace
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == pane_id)
+            .expect("located above");
+        pane.floating = floats;
+        if !floats {
+            pane.rect = None;
+        } else if edit.rect.is_some() || !floating_now {
+            // A float that stays put keeps its stored fractions: re-deriving them through cells
+            // would round, and report a change nobody made.
+            pane.rect = float_rect.map(|rect| float_rect_to_frac(rect, canvas.0, canvas.1));
+        }
+        if let Some(fullscreen) = edit.fullscreen {
+            pane.fullscreen = fullscreen;
+        }
+        if floats != floating_now {
+            let tree =
+                crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
+                    .as_ref()
+                    .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
+            workspace.tree = tree;
+        }
+        let changed = *workspace != before;
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(changed)
+    }
+}
+
 /// Express a canvas-cell rect as the canvas fractions a [`SharedPane`] stores.
 ///
 /// The inverse of [`frac_rect_to_float`]. Both directions are needed by more than one caller now:
@@ -1054,6 +1234,137 @@ mod tests {
             assert_eq!(live.len(), 5, "{kind:?} places every pane");
             assert_eq!(shared, live, "{kind:?} places panes differently");
         }
+    }
+
+    /// Three tiled panes in workspace 1 of a 100×30 document.
+    fn three_tiled() -> SharedLayout {
+        let mut state = State::new(Config::default(), Theme::default());
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.clear();
+        workspace.tile_tree = None;
+        for id in 1..=3 {
+            let mut pane = Pane::new(id, 100, FloatRect::default());
+            pane.pty_generation = 1;
+            workspace.panes.push(pane);
+            crate::layout::tiling::append_tiled_window(workspace, id);
+        }
+        shared_layout_from_state(&state, (100, 30))
+    }
+
+    fn edit(
+        floating: Option<bool>,
+        fullscreen: Option<bool>,
+        rect: Option<crate::control::CellRect>,
+    ) -> crate::control::PaneEdit {
+        crate::control::PaneEdit::validate(floating, fullscreen, rect, None).expect("valid edit")
+    }
+
+    fn placement(layout: &SharedLayout, id: PaneId) -> FloatRect {
+        crate::layout::placement_for(
+            &shared_workspace_placements(&layout.workspaces[0], (100, 30)),
+            id,
+        )
+        .expect("placed")
+    }
+
+    #[test]
+    fn floating_a_tiled_pane_lifts_it_off_its_tile_and_repeating_it_changes_nothing() {
+        let mut layout = three_tiled();
+        let tile = placement(&layout, 2);
+
+        assert_eq!(layout.edit_pane(2, edit(Some(true), None, None)), Ok(true));
+        let pane = &layout.workspaces[0].panes[1];
+        assert!(pane.floating);
+        let rect = placement(&layout, 2);
+        // The default float size, centred on the tile it left.
+        assert_eq!(
+            (rect.w, rect.h),
+            (42.0, 13.0),
+            "42% of the canvas, in whole cells"
+        );
+        assert!((rect.x + rect.w / 2.0 - (tile.x + tile.w / 2.0)).abs() <= 0.5);
+        assert!((rect.y + rect.h / 2.0 - (tile.y + tile.h / 2.0)).abs() <= 0.5);
+        // Out of the tree; the other two re-tile across the space.
+        let mut leaves = Vec::new();
+        let tree = dwindle_from_shared(
+            layout.workspaces[0].tree.as_ref().expect("tree"),
+            &[1, 3].into_iter().collect(),
+        )
+        .expect("tree");
+        crate::layout::tiling::collect_tree_leaves(&tree, &mut leaves);
+        assert_eq!(leaves, vec![1, 3]);
+
+        let settled = layout.clone();
+        assert_eq!(layout.edit_pane(2, edit(Some(true), None, None)), Ok(false));
+        assert_eq!(
+            layout, settled,
+            "a float that stays put keeps its exact fractions"
+        );
+    }
+
+    #[test]
+    fn a_requested_rect_is_clamped_and_retiling_appends_to_the_tiling_order() {
+        let mut layout = three_tiled();
+        let rect = crate::control::CellRect {
+            x: 400,
+            y: 5,
+            width: 40,
+            height: 10,
+        };
+        assert_eq!(
+            layout.edit_pane(1, edit(Some(true), None, Some(rect))),
+            Ok(true)
+        );
+        let placed = placement(&layout, 1);
+        assert_eq!((placed.w, placed.h), (40.0, 10.0));
+        assert!(
+            placed.x < 100.0,
+            "clamped so part of the float stays on the canvas to grab"
+        );
+        assert_eq!(
+            layout.edit_pane(1, edit(None, None, Some(rect))),
+            Ok(false),
+            "the same rect again is no change"
+        );
+
+        assert_eq!(layout.edit_pane(1, edit(Some(false), None, None)), Ok(true));
+        assert!(layout.workspaces[0].panes[0].rect.is_none());
+        let order = crate::layout::ordered_tiled_ids(&SharedTileSource::new(
+            &layout.workspaces[0],
+            (100, 30),
+        ));
+        assert_eq!(order, vec![2, 3, 1], "a re-tiled pane joins at the end");
+        layout.validate().expect("the edited document is valid");
+    }
+
+    #[test]
+    fn fullscreen_and_layout_kind_are_set_absolutely() {
+        let mut layout = three_tiled();
+        assert_eq!(layout.edit_pane(3, edit(None, Some(true), None)), Ok(true));
+        assert_eq!(layout.edit_pane(3, edit(None, Some(true), None)), Ok(false));
+        assert!(layout.workspaces[0].panes[2].fullscreen);
+
+        assert!(layout.set_layout_kind(0, LayoutKind::Grid));
+        assert!(!layout.set_layout_kind(0, LayoutKind::Grid));
+
+        // A workspace the document lacks is added, so the choice survives until panes arrive.
+        let mut partial = three_tiled();
+        partial.workspaces.retain(|workspace| workspace.index == 0);
+        assert!(partial.set_layout_kind(4, LayoutKind::Monocle));
+        assert_eq!(
+            partial
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.index)
+                .collect::<Vec<_>>(),
+            vec![0, 4]
+        );
+        partial.validate().expect("valid");
+
+        assert_eq!(
+            layout.edit_pane(42, edit(None, Some(true), None)),
+            Err(SharedEditError::PaneNotPlaced(42))
+        );
     }
 
     #[test]

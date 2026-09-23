@@ -368,13 +368,25 @@ pub(super) fn format_layout_text(data: Option<&serde_json::Value>, styles: Outpu
         ));
     }
 
-    let mut rows = Vec::new();
-    for workspace in report
+    let workspaces = report
         .get("workspaces")
         .and_then(serde_json::Value::as_array)
         .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
+        .unwrap_or_default();
+    out.push('\n');
+    out.push_str(&format_layout_table(workspaces, client.is_some(), styles));
+    out
+}
+
+/// One row per pane across `workspaces`, with a `VIEW` column when a UI answered. Empty
+/// workspaces are left out; the JSON keeps them.
+fn format_layout_table(
+    workspaces: &[serde_json::Value],
+    with_view: bool,
+    styles: OutputStyles,
+) -> String {
+    let mut rows = Vec::new();
+    for workspace in workspaces {
         let index = value_u64(workspace, "index")
             .map(|index| index.to_string())
             .unwrap_or_else(|| "—".to_string());
@@ -412,26 +424,53 @@ pub(super) fn format_layout_text(data: Option<&serde_json::Value>, styles: Outpu
                 TableCell::plain(mode),
                 TableCell::plain(format_cell_rect(pane.get("rect"))),
             ];
-            if client.is_some() {
+            if with_view {
                 row.push(TableCell::plain(format_cell_rect(pane.get("view_rect"))));
             }
             rows.push(row);
         }
     }
-    out.push('\n');
     if rows.is_empty() {
-        out.push_str(&format!(
-            "{}\n",
-            styles.paint("No panes placed.", OutputTone::Muted)
-        ));
-        return out;
+        return format!("{}\n", styles.paint("No panes placed.", OutputTone::Muted));
     }
     let mut headers = vec!["WS", "LAYOUT", "PANE", "ORDER", "MODE", "RECT"];
-    if client.is_some() {
+    if with_view {
         headers.push("VIEW");
     }
-    out.push_str(&format_table(&headers, &rows, styles));
-    out
+    format_table(&headers, &rows, styles)
+}
+
+/// `layout set` and `pane set`: what happened, then the workspace as it now stands.
+pub(super) fn format_layout_change_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let Some(change) = data else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    let flag = |key: &str| change.get(key).and_then(serde_json::Value::as_bool);
+    let mut line = vec![if flag("changed") == Some(true) {
+        styles.paint("Changed", OutputTone::Success)
+    } else {
+        styles.paint("No change", OutputTone::Muted)
+    }];
+    if let Some(revision) = value_u64(change, "revision") {
+        line.push(styles.paint("revision", OutputTone::Muted));
+        line.push(revision.to_string());
+    }
+    if flag("committed") == Some(false) {
+        line.push(styles.paint("not yet confirmed by the server", OutputTone::Warning));
+    }
+    let workspace = change.get("workspace").cloned().unwrap_or_default();
+    let with_view = workspace
+        .get("panes")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|panes| panes.iter().any(|pane| pane.get("view_rect").is_some()));
+    format!(
+        "{}\n\n{}",
+        line.join("  "),
+        format_layout_table(std::slice::from_ref(&workspace), with_view, styles)
+    )
 }
 
 pub(super) fn format_bytes(bytes: u64) -> String {
@@ -674,6 +713,9 @@ pub(super) fn format_control_text(
     match command {
         control::ControlCommand::ListPanes => format_panes_text(data, styles),
         control::ControlCommand::LayoutGet { .. } => format_layout_text(data, styles),
+        control::ControlCommand::LayoutSet { .. } | control::ControlCommand::PaneSet { .. } => {
+            format_layout_change_text(data, styles)
+        }
         control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
             format_agents_text(data, styles)
         }
@@ -787,6 +829,44 @@ pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputSty
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_change_text_says_what_happened_and_shows_the_workspace() {
+        let change = serde_json::json!({"ok": true, "data": {
+            "changed": true, "revision": 8, "committed": false,
+            "workspace": {"index": 2, "name": null, "layout": "grid", "synchronized": false,
+                "panes": [{"id": 4, "order": 0, "floating": false, "fullscreen": false,
+                           "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}]}
+        }});
+        let text = format_control_text(
+            &control::ControlCommand::LayoutSet {
+                workspace: 2,
+                layout: control::ControlLayoutKind::Grid,
+                if_revision: None,
+            },
+            &change,
+            OutputStyles::plain(),
+        );
+        assert!(text.starts_with("Changed  revision  8  not yet confirmed by the server\n"));
+        assert!(text.contains("2   grid    4     0      tiled  0,0 80×24"));
+        assert!(!text.contains("VIEW"), "no view column without view rects");
+
+        let unchanged = serde_json::json!({"ok": true, "data": {
+            "changed": false, "revision": 8, "committed": true,
+            "workspace": {"index": 2, "name": null, "layout": "grid", "synchronized": false,
+                "panes": []}
+        }});
+        let text = format_control_text(
+            &control::ControlCommand::LayoutSet {
+                workspace: 2,
+                layout: control::ControlLayoutKind::Grid,
+                if_revision: None,
+            },
+            &unchanged,
+            OutputStyles::plain(),
+        );
+        assert!(text.starts_with("No change  revision  8\n"));
+    }
 
     #[test]
     fn layout_text_lists_placed_panes_and_the_client_view_only_when_a_ui_answered() {

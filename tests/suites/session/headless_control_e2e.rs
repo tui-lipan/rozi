@@ -255,6 +255,92 @@ fn a_detached_session_reports_its_arrangement_without_any_client() {
     assert_eq!(spans[1].0 + spans[1].1, cols);
 }
 
+/// A script can rearrange a session nobody is attached to, and what it wrote is what the next
+/// `layout get` - and the next client to attach - sees.
+#[test]
+fn a_detached_session_can_be_rearranged_without_any_client() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let mut panes = Vec::new();
+    for _ in 0..2 {
+        let data = expect_ok(
+            &session,
+            ControlCommand::NewPane {
+                command: None,
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: Some(1),
+            },
+        );
+        panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
+    }
+    let revision =
+        expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(1) })["revision"]
+            .as_u64()
+            .expect("a revision");
+
+    let floated = expect_ok(
+        &session,
+        ControlCommand::PaneSet {
+            target: panes[1],
+            floating: Some(true),
+            fullscreen: None,
+            rect: Some(rozi::control::CellRect {
+                x: 4,
+                y: 2,
+                width: 30,
+                height: 10,
+            }),
+            rect_fraction: None,
+            if_revision: Some(revision),
+        },
+    );
+    assert_eq!(floated["changed"], serde_json::json!(true));
+    assert_eq!(floated["revision"].as_u64(), Some(revision + 1));
+
+    // A script holding the old revision is told the layout moved on, and changes nothing.
+    let stale = control(
+        &session,
+        ControlCommand::LayoutSet {
+            workspace: 1,
+            layout: rozi::control::ControlLayoutKind::Grid,
+            if_revision: Some(revision),
+        },
+    );
+    assert!(!stale.ok);
+    assert_eq!(stale.code, Some(rozi::control::ControlErrorCode::Conflict));
+
+    let report = expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(1) });
+    assert_eq!(report["revision"].as_u64(), Some(revision + 1));
+    let workspace = &report["workspaces"][0];
+    assert_eq!(workspace["layout"], serde_json::json!("dwindle"));
+    let float = workspace["panes"]
+        .as_array()
+        .and_then(|panes| panes.iter().find(|pane| pane["floating"] == true))
+        .expect("the floated pane");
+    assert_eq!(float["id"].as_u64(), Some(u64::from(panes[1])));
+    assert_eq!(
+        float["rect"],
+        serde_json::json!({"x": 4, "y": 2, "width": 30, "height": 10})
+    );
+
+    let (_client, attached) = attach_client(server.endpoint(), &session, "late client");
+    let ServerMessage::Attached { layout, .. } = attached else {
+        panic!("expected an attach response");
+    };
+    let layout = layout.expect("a layout");
+    assert!(
+        layout.workspaces[0]
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == panes[1] && pane.floating),
+        "a client attaching later finds the pane floating"
+    );
+}
+
 /// The whole feature is for sessions nobody is driving. When somebody *is* driving one, opening a
 /// pane means committing a layout revision over their arrangement, and that is the controller's
 /// call - the same rule the protocol already applies to a non-controller's `SpawnPane`.

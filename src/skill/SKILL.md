@@ -55,6 +55,19 @@ UI, `client` gives the focused pane and the workspace it shows, and `view_rect` 
 draws each pane. Use these rects to work out which pane is left of or above another. Do not guess
 from pane ids or titles.
 
+Change the layout only when the user asks. Every write names what it changes and never moves focus:
+
+```bash
+rozi layout set --workspace 2 master
+rozi pane set --target <PANE_ID> --floating true --rect 10,5,80,24
+rozi pane set --target <PANE_ID> --fullscreen false --if-revision <REVISION>
+```
+
+Writes set a state; repeating one returns `changed:false`. Pass the `revision` from `layout get`
+as `--if-revision` so a layout someone changed meanwhile fails with `conflict` instead of being
+overwritten, then read the layout again. `not-controller` means another client is arranging the
+session: leave it alone.
+
 Inspect a pane before sending input unless the user gave an exact live id and exact input. Target
 other panes explicitly so focus never decides where input goes.
 
@@ -120,8 +133,8 @@ cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is
 bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"activate":"<id>"}`;
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
-A detached endpoint supports `list-panes`, `layout get`, `metrics`, `send-text`, `send-keys`,
-`capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
+A detached endpoint supports `list-panes`, `layout get`, `layout set`, `pane set`, `metrics`,
+`send-text`, `send-keys`, `capture-pane`, `split`, and `status`. Input still obeys the session's input lock.
 
 ## Detached-session limits
 

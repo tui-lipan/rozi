@@ -198,6 +198,15 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "layout get [--workspace <1-9>] [--format text|json]",
                 "Show workspaces and where each pane sits",
             ),
+            row(
+                "layout set --workspace <1-9> <LAYOUT> [--if-revision <N>]",
+                "Set a workspace's tiling layout",
+            ),
+            row("pane set --target <ID> [--floating B] [--fullscreen B]", ""),
+            row(
+                "    [--rect X,Y,W,H | --rect-fraction X,Y,W,H] [--if-revision <N>]",
+                "Float, tile, place, or fullscreen a pane",
+            ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
                 "send-text [--target <PANE_ID>] <TEXT>",

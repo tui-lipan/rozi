@@ -97,6 +97,8 @@ does not affect the JSON anything else reads.
 | --- | --- | --- |
 | `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
 | `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
+| `layout set --workspace 1-9 <LAYOUT> [--if-revision N]` | Set a workspace's tiling layout. | yes |
+| `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--if-revision N]` | Float, tile, place, or fullscreen a pane. | yes |
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get --target ID` | Read one semantic agent record. | yes |
 | `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
@@ -334,7 +336,7 @@ The report answers two separate questions, and keeps them apart:
 
 | Field | Meaning |
 | --- | --- |
-| `revision` | The layout revision described. Null until something places a pane. |
+| `revision` | The layout revision described. Null until something places a pane. A controlling UI sends any change it is still holding back before it answers, and reports the revision that change will have. |
 | `canvas` | The canonical canvas `rect` is measured against: the pane area of the client that last controlled the layout. |
 | `workspaces` | Every workspace in the layout document, including empty ones, so a script can see a workspace's layout before using it. `index` is one-based. A UI always reports all nine. A document the server started for a headless `split` holds only the workspaces it placed panes in; the others take each client's configured default layout. |
 | `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
@@ -344,7 +346,7 @@ The report answers two separate questions, and keeps them apart:
 | `view_rect` | Where this UI draws the pane, in cells of its own terminal, gaps and chrome included. Only for panes in the workspace the UI shows. |
 | `unplaced_panes` | Session endpoint only: panes the server runs that no layout places yet. |
 | `client.controller` | Whether this UI holds the layout-control lease. A UI without a shared session controls its own layout. |
-| `client.committed` | False while this UI has layout changes the server has not yet accepted, so `revision` does not describe them yet. |
+| `client.committed` | False until the server has confirmed `revision`. A controlling UI sends a change without waiting for the confirmation. |
 
 Tiled panes are listed in tiling order, then floating panes. Some geometry needs care:
 
@@ -357,6 +359,66 @@ Tiled panes are listed in tiling order, then floating panes. Some geometry needs
   while it is fullscreen.
 - **Followers:** a follower centres the controller's canvas in its own window, so its
   `view_rect` values can start at a negative position or run past its edges.
+
+### Changing the layout
+
+`layout set` chooses a workspace's tiling layout. `pane set` floats, tiles, moves, or fullscreens
+one pane.
+
+```sh
+rozi layout set --workspace 2 master
+rozi pane set --target 7 --floating true --rect 10,5,80,24
+rozi pane set --target 7 --fullscreen true
+rozi --session dev pane set --target 3 --floating false --if-revision 18
+```
+
+Every write names what it changes: `layout set` needs `--workspace`, and `pane set` needs
+`--target`. Neither falls back to focus or `ROZI_PANE`, and neither moves focus.
+
+A write sets a state rather than toggling it. Options you leave out keep their current value.
+Repeating a write, or asking for a state that already holds, succeeds with `changed: false`, and
+creates no new revision. A refused write changes nothing.
+
+`pane set` accepts:
+
+| Option | Effect |
+| --- | --- |
+| `--floating true` | Float the pane. A tiled pane lifts off centred on the tile it leaves, at the default float size of 42% of the canvas, unless you also pass a rect. A pane that already floats stays where it is. |
+| `--floating false` | Return the pane to the tiling, at the end of the tiling order. |
+| `--fullscreen true\|false` | Make the pane fullscreen, or restore it. |
+| `--rect X,Y,W,H` | Place a floating pane, in canvas cells. `X` may be negative. |
+| `--rect-fraction X,Y,W,H` | Place a floating pane, as fractions of the canvas. |
+
+A rect places a floating pane, so it needs a pane that floats already or `--floating true`.
+Rects are clamped the same way a dragged float is: part of the pane may leave the canvas, but a
+margin always stays on screen to grab. The float lands on whole cells.
+
+The reply has the same shape from both endpoints:
+
+```json
+{ "changed": true, "revision": 19, "committed": false, "workspace": { "index": 1, "…": "…" } }
+```
+
+`workspace` is the affected workspace in the shape `layout get` reports it. `revision` is the
+revision the layout has with the change applied. A session endpoint commits the change itself, so
+`committed` is always `true` there. A UI sends its commit and answers before the server confirms
+it; if the server rejects the commit, the UI takes the server's layout back.
+
+`--if-revision N` refuses the write with `conflict` unless the layout is still at revision `N`. Read
+the revision with `layout get`, decide, then write with `--if-revision`, so that a change someone
+made in the meantime is not overwritten. Each successful write's reply gives the revision to pass
+to the next one.
+
+A write needs layout authority, the same as a person rearranging panes:
+
+- A UI must hold layout control. A follower fails with `not-controller`, and a read-only UI with
+  `read-only`.
+- A session endpoint refuses with `not-controller` while any client holds layout control. It
+  fails with `unavailable` for a session that has panes but no layout document, which is also when
+  `split` is refused.
+- A scratch pane is client-local and has no shared layout, so `pane set` refuses it with
+  `unsupported`.
+- A pane the layout does not place fails with `pane-not-found`.
 
 ## Sending keys and capturing output
 

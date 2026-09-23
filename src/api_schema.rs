@@ -36,6 +36,7 @@ pub fn bundle() -> Value {
     add::<crate::control::PaneListPayload>(&mut generator, &mut roots);
     add::<crate::control::PaneInfo>(&mut generator, &mut roots);
     add::<crate::control::LayoutReport>(&mut generator, &mut roots);
+    add::<crate::control::LayoutChange>(&mut generator, &mut roots);
     add::<crate::control::AgentListPayload>(&mut generator, &mut roots);
     add::<crate::control::PaneCapture>(&mut generator, &mut roots);
     add::<crate::control::NewPaneAccepted>(&mut generator, &mut roots);

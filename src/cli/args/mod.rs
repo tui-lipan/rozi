@@ -9,6 +9,7 @@ use crate::{control, session};
 
 mod agents;
 mod extensions;
+mod layout;
 mod sessions;
 mod skill;
 mod worktrees;
@@ -504,8 +505,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output_format,
                 }));
             }
-            "layout" => {
-                let (command, output_format) = parse_layout_args(&mut iter)?;
+            "layout" | "pane" => {
+                let (command, output_format) = if arg == "layout" {
+                    layout::parse_layout_args(&mut iter)?
+                } else {
+                    layout::parse_pane_args(&mut iter)?
+                };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
@@ -1008,53 +1013,6 @@ pub(super) fn parse_list_format(
     }
 }
 
-/// `layout get [--workspace <1-9>] [--format text|json]`.
-fn parse_layout_args(
-    iter: &mut impl Iterator<Item = String>,
-) -> std::result::Result<(control::ControlCommand, Option<ListFormat>), String> {
-    match iter.next().as_deref() {
-        Some("get") => {}
-        Some(other) => return Err(format!("unknown layout subcommand `{other}`; expected get")),
-        None => return Err("layout requires a subcommand (get)".to_string()),
-    }
-    let mut workspace = None;
-    let mut output_format = None;
-    while let Some(flag) = iter.next() {
-        match flag.as_str() {
-            "--workspace" => {
-                let value = require_value(iter, "--workspace requires a workspace number")?;
-                let index = value
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|index| (1..=crate::state::WORKSPACE_COUNT).contains(index))
-                    .ok_or_else(|| {
-                        format!(
-                            "--workspace requires a workspace number from 1 to {}",
-                            crate::state::WORKSPACE_COUNT
-                        )
-                    })?;
-                if workspace.replace(index).is_some() {
-                    return Err("layout get --workspace specified more than once".to_string());
-                }
-            }
-            "--format" => {
-                let value = require_value(iter, "--format requires text or json")?;
-                if output_format
-                    .replace(parse_list_format(&value, "layout get")?)
-                    .is_some()
-                {
-                    return Err("layout get --format specified more than once".to_string());
-                }
-            }
-            other => return Err(format!("unexpected argument `{other}` after layout get")),
-        }
-    }
-    Ok((
-        control::ControlCommand::LayoutGet { workspace },
-        output_format,
-    ))
-}
-
 pub(super) fn parse_output_format(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
@@ -1334,6 +1292,106 @@ mod tests {
             &["layout", "get", "--workspace", "10"],
             &["layout", "get", "--workspace", "2", "--workspace", "3"],
             &["layout", "get", "extra"],
+        ] {
+            assert!(
+                parse_cli_args(args(refused)).is_err(),
+                "{refused:?} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_and_pane_writes_parse_absolute_targets_and_refuse_ambiguous_ones() {
+        let args = |args: &[&str]| args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        let command = |parts: &[&str]| match parse_cli_args(args(parts)) {
+            Ok(ParsedCli::Control(parsed)) => parsed.request.command,
+            other => panic!(
+                "{parts:?} should parse as a control command, got {:?}",
+                other.err()
+            ),
+        };
+
+        assert_eq!(
+            command(&[
+                "layout",
+                "set",
+                "--workspace",
+                "2",
+                "Master",
+                "--if-revision",
+                "7"
+            ]),
+            control::ControlCommand::LayoutSet {
+                workspace: 2,
+                layout: control::ControlLayoutKind::Master,
+                if_revision: Some(7),
+            }
+        );
+        assert_eq!(
+            command(&[
+                "pane",
+                "set",
+                "--target",
+                "4",
+                "--floating",
+                "true",
+                "--rect",
+                "-2,3,40,12",
+            ]),
+            control::ControlCommand::PaneSet {
+                target: 4,
+                floating: Some(true),
+                fullscreen: None,
+                rect: Some(control::CellRect {
+                    x: -2,
+                    y: 3,
+                    width: 40,
+                    height: 12,
+                }),
+                rect_fraction: None,
+                if_revision: None,
+            }
+        );
+        let control::ControlCommand::PaneSet { rect_fraction, .. } = command(&[
+            "pane",
+            "set",
+            "--target",
+            "4",
+            "--rect-fraction",
+            "0.1, 0.2, 0.5, 0.25",
+        ]) else {
+            panic!("expected pane set");
+        };
+        assert_eq!(
+            rect_fraction,
+            Some(control::FractionRect {
+                x: 0.1,
+                y: 0.2,
+                width: 0.5,
+                height: 0.25,
+            })
+        );
+
+        for refused in [
+            &["layout", "set", "grid"][..],
+            &["layout", "set", "--workspace", "1"],
+            &["layout", "set", "--workspace", "1", "spiral"],
+            &["layout", "get", "--if-revision", "3"],
+            &["pane", "set", "--floating", "true"],
+            &["pane", "set", "--target", "4", "--floating", "yes"],
+            &["pane", "set", "--target", "4", "--rect", "1,2,3"],
+            &["pane", "set", "--target", "4", "--rect", "1,2,3.5,4"],
+            &[
+                "pane",
+                "set",
+                "--target",
+                "4",
+                "--fullscreen",
+                "true",
+                "--fullscreen",
+                "false",
+            ],
+            &["pane", "get", "--target", "4"],
         ] {
             assert!(
                 parse_cli_args(args(refused)).is_err(),

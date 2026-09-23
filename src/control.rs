@@ -123,6 +123,31 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<usize>,
     },
+    /// Set a workspace's tiling algorithm. `workspace` is one-based.
+    LayoutSet {
+        workspace: usize,
+        layout: ControlLayoutKind,
+        /// Refuse with `conflict` unless the layout is still at this revision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
+    /// Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as
+    /// they are; a request that changes nothing succeeds with `changed: false`.
+    PaneSet {
+        target: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        floating: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fullscreen: Option<bool>,
+        /// Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<CellRect>,
+        /// Floating rect as fractions of the canonical canvas.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect_fraction: Option<FractionRect>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_revision: Option<u64>,
+    },
     AgentsList,
     AgentGet {
         target: AgentTarget,
@@ -480,6 +505,36 @@ impl ControlLayoutKind {
     }
 }
 
+impl ControlLayoutKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Dwindle,
+            Self::Master,
+            Self::Grid,
+            Self::Columns,
+            Self::Rows,
+            Self::Scrollable,
+            Self::Monocle,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str().eq_ignore_ascii_case(value))
+    }
+}
+
+impl From<ControlLayoutKind> for crate::state::LayoutKind {
+    fn from(kind: ControlLayoutKind) -> Self {
+        match kind {
+            ControlLayoutKind::Dwindle => Self::Dwindle,
+            ControlLayoutKind::Master => Self::Master,
+            ControlLayoutKind::Grid => Self::Grid,
+            ControlLayoutKind::Columns => Self::Columns,
+            ControlLayoutKind::Rows => Self::Rows,
+            ControlLayoutKind::Scrollable => Self::Scrollable,
+            ControlLayoutKind::Monocle => Self::Monocle,
+        }
+    }
+}
+
 impl From<crate::state::LayoutKind> for ControlLayoutKind {
     fn from(kind: crate::state::LayoutKind) -> Self {
         use crate::state::LayoutKind;
@@ -605,6 +660,147 @@ impl WorkspaceLayout {
             .collect();
         workspaces.sort_by_key(|workspace| workspace.index);
         workspaces
+    }
+}
+
+/// What `layout set` and `pane set` answer with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct LayoutChange {
+    /// False when the layout already matched the request. Nothing was committed then, and
+    /// `revision` is unchanged.
+    pub changed: bool,
+    /// The revision the layout has with this change applied.
+    pub revision: Option<u64>,
+    /// False until the session server has accepted `revision`. A session endpoint commits the
+    /// change itself, so it always answers true; a UI sends its commit and answers before the
+    /// server's acknowledgement arrives.
+    pub committed: bool,
+    /// The affected workspace as it now stands, in the same shape `layout get` reports.
+    pub workspace: WorkspaceLayout,
+}
+
+/// A floating rect asked for in either unit, before it is measured against a canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum RequestedRect {
+    Cells(CellRect),
+    Fraction(FractionRect),
+}
+
+impl RequestedRect {
+    /// The rect in canvas cells.
+    pub(crate) fn to_cells(self, canvas: (u16, u16)) -> tui_lipan::prelude::FloatRect {
+        let cols = f32::from(canvas.0.max(1));
+        let rows = f32::from(canvas.1.max(1));
+        match self {
+            Self::Cells(rect) => tui_lipan::prelude::FloatRect {
+                x: rect.x as f32,
+                y: rect.y as f32,
+                w: rect.width as f32,
+                h: rect.height as f32,
+            },
+            Self::Fraction(rect) => tui_lipan::prelude::FloatRect {
+                x: rect.x as f32 * cols,
+                y: rect.y as f32 * rows,
+                w: rect.width as f32 * cols,
+                h: rect.height as f32 * rows,
+            },
+        }
+    }
+}
+
+/// A validated `pane set`: every check that does not depend on the pane's current state has
+/// already passed, so applying it can only fail on the pane itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PaneEdit {
+    pub floating: Option<bool>,
+    pub fullscreen: Option<bool>,
+    pub rect: Option<RequestedRect>,
+}
+
+impl PaneEdit {
+    pub(crate) fn validate(
+        floating: Option<bool>,
+        fullscreen: Option<bool>,
+        rect: Option<CellRect>,
+        rect_fraction: Option<FractionRect>,
+    ) -> std::result::Result<Self, ControlResponse> {
+        let invalid = |message: &str| {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                message,
+            ))
+        };
+        let rect = match (rect, rect_fraction) {
+            (Some(_), Some(_)) => return invalid("pass --rect or --rect-fraction, not both"),
+            (Some(rect), None) => {
+                if rect.width == 0 || rect.height == 0 {
+                    return invalid("--rect needs a positive width and height");
+                }
+                Some(RequestedRect::Cells(rect))
+            }
+            (None, Some(rect)) => {
+                let finite = [rect.x, rect.y, rect.width, rect.height]
+                    .iter()
+                    .all(|value| value.is_finite());
+                if !finite || rect.width <= 0.0 || rect.height <= 0.0 {
+                    return invalid(
+                        "--rect-fraction needs finite values and a positive width and height",
+                    );
+                }
+                Some(RequestedRect::Fraction(rect))
+            }
+            (None, None) => None,
+        };
+        if rect.is_some() && floating == Some(false) {
+            return invalid("a rect places a floating pane; it cannot go with --floating false");
+        }
+        if floating.is_none() && fullscreen.is_none() && rect.is_none() {
+            return invalid("pane set needs --floating, --fullscreen, --rect, or --rect-fraction");
+        }
+        Ok(Self {
+            floating,
+            fullscreen,
+            rect,
+        })
+    }
+
+    /// Whether the pane ends up floating, given whether it floats now.
+    pub(crate) fn floats(self, floating_now: bool) -> bool {
+        self.floating.unwrap_or(floating_now)
+    }
+
+    /// The refusal for a rect on a pane that stays tiled.
+    pub(crate) fn check_rect_target(
+        self,
+        floating_now: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        if self.rect.is_some() && !self.floats(floating_now) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "a rect places a floating pane; pass --floating true to float a tiled one",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Refuse a write whose `--if-revision` the layout has moved past.
+pub(crate) fn check_if_revision(
+    if_revision: Option<u64>,
+    current: Option<u64>,
+) -> std::result::Result<(), ControlResponse> {
+    match if_revision {
+        Some(expected) if current != Some(expected) => Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            match current {
+                Some(current) => format!(
+                    "the layout is at revision {current}, not {expected}; read it again with `layout get`"
+                ),
+                None => format!("the layout has no revision yet, not {expected}"),
+            },
+        )),
+        _ => Ok(()),
     }
 }
 

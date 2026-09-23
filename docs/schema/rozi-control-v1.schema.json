@@ -627,6 +627,99 @@
           "type": "object"
         },
         {
+          "description": "Set a workspace's tiling algorithm. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "layout-set",
+              "type": "string"
+            },
+            "if_revision": {
+              "description": "Refuse with `conflict` unless the layout is still at this revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "layout": {
+              "$ref": "#/$defs/ControlLayoutKind"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "workspace",
+            "layout"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as\nthey are; a request that changes nothing succeeds with `changed: false`.",
+          "properties": {
+            "cmd": {
+              "const": "pane-set",
+              "type": "string"
+            },
+            "floating": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "fullscreen": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rect": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CellRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`."
+            },
+            "rect_fraction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FractionRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect as fractions of the canonical canvas."
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "agents-list",
@@ -1381,6 +1474,99 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set a workspace's tiling algorithm. `workspace` is one-based.",
+          "properties": {
+            "cmd": {
+              "const": "layout-set",
+              "type": "string"
+            },
+            "if_revision": {
+              "description": "Refuse with `conflict` unless the layout is still at this revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "layout": {
+              "$ref": "#/$defs/ControlLayoutKind"
+            },
+            "workspace": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "workspace",
+            "layout"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set one pane's floating, fullscreen, and floating-rect state. Omitted fields are left as\nthey are; a request that changes nothing succeeds with `changed: false`.",
+          "properties": {
+            "cmd": {
+              "const": "pane-set",
+              "type": "string"
+            },
+            "floating": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "fullscreen": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "if_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rect": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CellRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect in canonical-canvas cells. Mutually exclusive with `rect_fraction`."
+            },
+            "rect_fraction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FractionRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Floating rect as fractions of the canonical canvas."
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
           ],
           "type": "object"
         },
@@ -2180,6 +2366,38 @@
         "y",
         "width",
         "height"
+      ],
+      "type": "object"
+    },
+    "LayoutChange": {
+      "description": "What `layout set` and `pane set` answer with.",
+      "properties": {
+        "changed": {
+          "description": "False when the layout already matched the request. Nothing was committed then, and\n`revision` is unchanged.",
+          "type": "boolean"
+        },
+        "committed": {
+          "description": "False until the session server has accepted `revision`. A session endpoint commits the\nchange itself, so it always answers true; a UI sends its commit and answers before the\nserver's acknowledgement arrives.",
+          "type": "boolean"
+        },
+        "revision": {
+          "description": "The revision the layout has with this change applied.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceLayout",
+          "description": "The affected workspace as it now stands, in the same shape `layout get` reports."
+        }
+      },
+      "required": [
+        "changed",
+        "committed",
+        "workspace"
       ],
       "type": "object"
     },

@@ -89,8 +89,10 @@ git push origin "v$VERSION"
 ```
 
 Pushing the tag starts the Release workflow. Do not move or reuse a release tag. Pull requests that
-change release infrastructure and manual workflow runs test packaging but cannot sign or publish;
-ordinary pull requests rely on CI and skip the release matrix.
+change release infrastructure, `Cargo.toml`, or `Cargo.lock` package every target and check the
+release scripts, but leave the test matrix to CI, which already runs it on the same commit. Manual
+workflow runs also run the test matrix. Neither can sign or publish; ordinary pull requests rely
+on CI and skip the Release workflow.
 
 When a maintainer has GitHub website access but no local Git client, the new-release form may create
 the same tag on the reviewed release commit. Publish it as a **prerelease**: this keeps the incomplete

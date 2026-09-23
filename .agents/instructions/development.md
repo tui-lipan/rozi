@@ -62,7 +62,8 @@ on all three platforms; master performs the optimized release build on Linux onl
 not trigger normal CI: `.github/workflows/release.yml` owns the exact tagged test and package matrix
 for every shipping platform. Before tag-only work starts, it proves the tagged SHA is reachable
 from `master` and has an exact-SHA successful master CI run. The workflow also runs on manual
-dispatches and pull requests that change release infrastructure. `.github/workflows/security.yml`
+dispatches and pull requests that change release infrastructure or the manifest or lockfile; a
+pull request packages every target but leaves the test matrix to CI. `.github/workflows/security.yml`
 runs `cargo audit` weekly; the regular CI's cargo-deny job checks RustSec advisories on every
 change.
 

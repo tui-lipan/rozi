@@ -1844,8 +1844,8 @@ mod tests {
                     let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
                     (field(16), field(20))
                 };
-                let (w1, h1) = size(capture_ui_reply(&one_reply));
-                let (w2, h2) = size(capture_ui_reply(&two_reply));
+                let (w1, h1) = size(capture_ui_reply(&one_reply, CaptureRender::Png));
+                let (w2, h2) = size(capture_ui_reply(&two_reply, CaptureRender::Png));
                 assert_eq!((w2, h2), (w1 * 2, h1 * 2), "each scale gets its own encode");
             })
             .unwrap()
@@ -1876,7 +1876,11 @@ mod tests {
                 );
 
                 backend.pump().unwrap();
-                let captures: Vec<UiCapture> = replies.iter().map(capture_ui_reply).collect();
+                let captures = [
+                    capture_ui_reply(&replies[0], CaptureRender::Png),
+                    capture_ui_reply(&replies[1], CaptureRender::Png),
+                    capture_ui_reply(&replies[2], CaptureRender::Text),
+                ];
                 assert_eq!(
                     captures[0], captures[1],
                     "both PNG waiters get the one encode"
@@ -1890,7 +1894,7 @@ mod tests {
                 // A request after the paint waits for a frame of its own.
                 let (request, reply) = capture_ui_request(CaptureRender::Text);
                 backend.dispatch(request).unwrap();
-                capture_ui_reply(&reply);
+                capture_ui_reply(&reply, CaptureRender::Text);
                 let next = backend.state().pending_ui_capture.clone().expect("a batch");
                 assert!(!std::rc::Rc::ptr_eq(&batch, &next));
             })

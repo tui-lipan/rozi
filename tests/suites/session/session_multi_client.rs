@@ -13,16 +13,10 @@ use rozi::session::protocol::{
 use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
-use crate::common::{attach_client, read_until, spawn_listener};
+use crate::common::{attach_client, contains, read_until, spawn_listener};
 
 const PANE_ID: u32 = 71;
 const PANE_GENERATION: u64 = 1;
-
-fn contains_output_line(output: &[u8], marker: &[u8]) -> bool {
-    output
-        .split(|byte| *byte == b'\r' || *byte == b'\n')
-        .any(|line| line == marker)
-}
 
 #[test]
 fn interleaved_pane_child() {
@@ -227,8 +221,8 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         if let Frame::PaneBytes { bytes, .. } = frame {
             first_output.extend_from_slice(bytes);
         }
-        // Only the helper emits this line, so echoed input cannot satisfy the wait.
-        contains_output_line(&first_output, first_marker)
+        // Only the helper emits this marker, so echoed input cannot satisfy the wait.
+        contains(&first_output, first_marker)
     });
 
     let layout = pane_layout();
@@ -255,12 +249,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
             }
             _ => {}
         }
-        #[cfg(windows)]
-        eprintln!(
-            "interleaved frame: {frame:?}; committed={committed}; output={:?}",
-            String::from_utf8_lossy(&second_output)
-        );
-        committed && contains_output_line(&second_output, second_marker)
+        committed && contains(&second_output, second_marker)
     });
 }
 

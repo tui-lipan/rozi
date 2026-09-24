@@ -37,6 +37,8 @@ exclude = [
 
 [dependencies]
 # 0.13.0: terminal screen capture to styled ANSI and PNG, with font fallback and theme palettes.
+# 0.16.0: keeps a Kitty image that reaches the UI in the same relayed chunk as the `clear` before it.
+# 0.16.1: PNG captures draw Powerline caps flush with the segment they close.
 tui-lipan = { version = "0.16.1", features = [
   "terminal",
   "terminal-images",

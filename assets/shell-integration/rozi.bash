@@ -135,7 +135,7 @@ esac
 # `\[…\]` marks the escape sequence as zero-width for readline's prompt-length accounting.
 case "$PS1" in
 *'\[\e]133;B\e\\\]'*) ;;
-*) PS1="${PS1}\[\e]133;B\e\\\]" ;;
+*) PS1="${PS1}"'\[\e]133;B\e\\\]' ;;
 esac
 
 # Installed last so none of this script's own setup commands above spuriously trigger `C`/`D`

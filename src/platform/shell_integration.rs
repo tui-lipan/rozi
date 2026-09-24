@@ -474,6 +474,15 @@ mod tests {
     }
 
     #[test]
+    fn bash_appends_the_prompt_end_marker_its_guard_matches() {
+        // Double quotes fold `\e\\\]` into `\e\\]`, which prints a stray `]` after every prompt
+        // and leaves readline's zero-width region open.
+        let marker = r"'\[\e]133;B\e\\\]'";
+        assert!(BASH_SCRIPT.contains(&format!("*{marker}*)")));
+        assert!(BASH_SCRIPT.contains(&format!(r#"PS1="${{PS1}}"{marker}"#)));
+    }
+
+    #[test]
     fn zsh_precmd_does_not_assign_its_read_only_status_parameter() {
         assert!(!ZSH_SCRIPT.contains("local status"));
         assert!(ZSH_SCRIPT.contains("local command_status=$?"));

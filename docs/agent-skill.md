@@ -50,7 +50,7 @@ Check the user installation:
 rozi skill status --global
 ```
 
-For managed Rozi installations, `rozi update` refreshes global and previously registered project
+For managed Rozi installations, `rozi update` and `rozi update --rollback` refresh global and previously registered project
 skills when their contents still match what Rozi installed. It leaves locally edited skills alone
 and prints a warning. A project skill installed before this tracking was introduced cannot be
 identified safely unless you run the update from that project; then Rozi warns about it. Run

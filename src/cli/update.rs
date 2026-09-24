@@ -144,17 +144,11 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
             }
             // This process still contains the old embedded skill. Ask the newly activated
             // command for its document, then reconcile only recorded, unchanged installations.
-            if let Err(error) =
-                refresh_skills(installation.command_path(), &result.version.to_string())
-            {
-                eprintln!(
-                    "{}",
-                    styles.paint(
-                        &format!("Skill refresh warning: {error}"),
-                        OutputTone::Warning
-                    )
-                );
-            }
+            report_skill_refresh(
+                installation.command_path(),
+                &result.version.to_string(),
+                styles,
+            );
         }
         UpdateCommand::Rollback => {
             let result = installation.rollback().map_err(|error| match error {
@@ -169,9 +163,26 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                 styles.paint("Rolled back", OutputTone::Success),
                 styles.paint(&format!("v{}", result.version), OutputTone::Accent)
             );
+            report_skill_refresh(
+                installation.command_path(),
+                &result.version.to_string(),
+                styles,
+            );
         }
     }
     Ok(())
+}
+
+fn report_skill_refresh(command_path: &std::path::Path, version: &str, styles: OutputStyles) {
+    if let Err(error) = refresh_skills(command_path, version) {
+        eprintln!(
+            "{}",
+            styles.paint(
+                &format!("Skill refresh warning: {error}"),
+                OutputTone::Warning
+            )
+        );
+    }
 }
 
 fn refresh_skills(command_path: &std::path::Path, version: &str) -> Result<(), String> {

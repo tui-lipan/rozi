@@ -1107,6 +1107,11 @@ body {
     padding: 0 !important;
     color: inherit !important;
 }
+/* Protocol JSON shown indented runs long, so its lines sit closer together. */
+.vp-doc div.ndjson pre,
+.vp-doc div.ndjson code {
+    line-height: 1.4 !important;
+}
 /* Lang label (top-right) */
 .vp-doc div[class*="language-"]::before {
     font-size: 11px !important;

@@ -10,6 +10,36 @@ const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const LANDING_TITLE = "rozi — a tiling terminal multiplexer";
 
 /**
+ * Indent JSON for reading, but keep any object or array that fits within
+ * `width` columns on one line: a row such as `{ "id": "main", "label": "main" }`
+ * spread over four lines only makes the example taller.
+ */
+function formatJson(value: unknown, width = 80, indent = "", prefix = 0): string {
+  const flat = (v: unknown): string =>
+    Array.isArray(v)
+      ? `[${v.map(flat).join(", ")}]`
+      : v !== null && typeof v === "object"
+        ? Object.keys(v).length === 0
+          ? "{}"
+          : `{ ${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${flat(x)}`).join(", ")} }`
+        : JSON.stringify(v);
+  const oneLine = flat(value);
+  if (value === null || typeof value !== "object" || indent.length + prefix + oneLine.length <= width) {
+    return oneLine;
+  }
+  const inner = indent + "  ";
+  if (Array.isArray(value)) {
+    const items = value.map((item) => inner + formatJson(item, width, inner));
+    return `[\n${items.join(",\n")}\n${indent}]`;
+  }
+  const members = Object.entries(value).map(([key, item]) => {
+    const name = `${JSON.stringify(key)}: `;
+    return inner + name + formatJson(item, width, inner, name.length);
+  });
+  return `{\n${members.join(",\n")}\n${indent}}`;
+}
+
+/**
  * Read from the manifest rather than written down here. The version used to be
  * typed into three files, which is three chances for the site to advertise a
  * release that does not exist.
@@ -222,11 +252,12 @@ export default defineConfig({
         if (messages.some((message, i) => JSON.stringify(message) !== lines[i])) {
           return fence(tokens, idx, options, env, self);
         }
-        token.content = messages.map((message) => JSON.stringify(message, null, 2)).join("\n\n") + "\n";
+        token.content = messages.map((message) => formatJson(message)).join("\n\n") + "\n";
         const html = fence(tokens, idx, options, env, self);
         token.content = raw;
         const label = lines.length > 1 ? "json · one message per line" : "json · sent as one line";
         return html
+          .replace(/^<div class="language-json/, '<div class="ndjson language-json')
           .replace(/<span class="lang">json<\/span>/, `<span class="lang">${label}</span>`)
           .replace(/<code>/, '<code class="vp-copy-ignore">')
           .replace(/<\/pre>/, `<span class="ndjson-raw" hidden>${md.utils.escapeHtml(raw)}</span></pre>`);

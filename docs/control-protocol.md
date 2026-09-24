@@ -267,14 +267,15 @@ immediate.
 | --- | --- | --- |
 | `text` | string | Answer once this literal text appears within one visible row. Not empty, and no line breaks. |
 | `settle_ms` | integer | Answer once the visible screen has not changed for this many milliseconds. With `text`, counted from when the text appears. |
-| `timeout_ms` | integer | Required. Fail with `timeout` after this many milliseconds, from 1 to 3600000 (one hour). |
+| `timeout_ms` | integer | Required. Fail with `timeout` if the wait has not resolved this many milliseconds after the request arrived, from 1 to 3600000 (one hour). |
 
 `wait` needs `text`, `settle_ms`, or both, and `settle_ms` must be less than `timeout_ms`; anything
 else fails with `invalid-argument` before anything is sent or waited for.
 
 - `capture-pane` matches the screen as it is, so text already showing answers at once.
 - `send-text` and `send-keys` write their input first and match only output that arrives after it.
-  Text on screen when the input was written does not count, even once it has scrolled.
+  Text on screen when the input was written does not count, even once it has scrolled. `settle_ms`
+  counts from when the input was written.
 - A changed screen means changed characters, colors, or styles. Cursor movement, title changes, and
   redraws of identical content are not changes.
 - `timeout` and `pane-not-running` (the program exited, or the pane closed) carry the capture in

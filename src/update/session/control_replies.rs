@@ -292,14 +292,15 @@ pub(crate) fn flush_pending_control_input(
         return;
     }
     if let Some(client) = ctx.state.pty_client_for_pane(pane_id) {
-        client.send_input(pane_id, generation, local, bytes);
-        crate::ops::capture_wait::queued_input_sent(
+        match crate::ops::capture_wait::mark_queued_input(
             &mut ctx.state,
             pane_id,
             generation,
             local,
-            &client,
-        );
+        ) {
+            Some(token) => client.send_marked_input(pane_id, generation, local, bytes, token),
+            None => client.send_input(pane_id, generation, local, bytes),
+        }
     }
 }
 

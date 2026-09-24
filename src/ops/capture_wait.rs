@@ -4,14 +4,15 @@
 //! The UI answers from its own copy of each pane's screen, with the same evaluator the session
 //! server uses ([`crate::pane::capture_wait`]). What differs is how a send finds its baseline. The
 //! UI's copy lags the server's: output the program produced before the input may still be on its
-//! way. So a send asks the server to mark its input ([`ClientMessage::MarkInput`]), and the wait
-//! takes its baseline when the mark comes back, by which point that earlier output has landed.
+//! way. So a send writes its input marked ([`ClientMessage::MarkedInput`]); the server answers the
+//! mark in the same step as writing the input, and the wait takes its baseline when the answer
+//! comes back. Output ahead of the answer is older than the input, and output behind it is not.
 //!
 //! Replies go out through the control connection's channel, which the listener holds open for the
 //! wait's own timeout plus a margin (see [`crate::control`]). A tick runs while any wait is
 //! pending, so a deadline or a settle period passes even on a quiet screen.
 //!
-//! [`ClientMessage::MarkInput`]: crate::session::protocol::ClientMessage::MarkInput
+//! [`ClientMessage::MarkedInput`]: crate::session::protocol::ClientMessage::MarkedInput
 
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -44,16 +45,16 @@ struct UiCaptureWait {
     local: bool,
     generation: u64,
     plan: WaitPlan,
+    /// When the request came in; its deadline runs from here, even while the baseline is pending.
     started: Instant,
     stage: Stage,
     reply: Sender<ControlResponse>,
 }
 
 enum Stage {
-    /// Input is queued behind a pane that is still starting; the mark goes out after it.
-    Queued {
-        token: u64,
-    },
+    /// Input is queued behind a pane that is still starting; it is marked when the queue is
+    /// written.
+    Queued,
     /// Input is on its way; the wait starts when the server's mark comes back.
     Marking {
         token: u64,
@@ -90,16 +91,11 @@ fn register(
     let started = Instant::now();
     let epoch = ctx.state.runtime_epoch;
     let (pane_id, local, generation, stage) = if plan.after_input {
-        let input = crate::ops::control::deliver_send(ctx, target, &request.command)?;
-        let waits = &mut ctx.state.capture_waits;
-        waits.next_token += 1;
-        let token = waits.next_token;
+        let token = ctx.state.capture_waits.next_token();
+        let input = crate::ops::control::deliver_send(ctx, target, &request.command, token)?;
         let stage = if input.starting {
-            Stage::Queued { token }
+            Stage::Queued
         } else {
-            if let Some(client) = &input.client {
-                client.mark_input(token);
-            }
             Stage::Marking { token }
         };
         (input.id, input.local, input.generation, stage)
@@ -117,9 +113,9 @@ fn register(
                 format!("pane {id} not found"),
             ));
         };
-        let screen = pane
-            .terminal
-            .with_screen_mut(|screen| ScreenWait::start(&plan.wait, screen, false, started));
+        let screen = pane.terminal.with_screen_mut(|screen| {
+            ScreenWait::start(&plan.wait, screen, false, started, started)
+        });
         (id, local, pane.pty_generation, Stage::Watching(screen))
     };
     ctx.state.capture_waits.waits.push(UiCaptureWait {
@@ -149,49 +145,63 @@ pub(crate) fn pane_exited(ctx: &mut Context<AppRoot>, pane_id: PaneId, local: bo
     pane_output(ctx, pane_id, local);
 }
 
-/// Queued input for a starting pane was just written; send the marks that were waiting on it.
-pub(crate) fn queued_input_sent(
+impl UiCaptureWaits {
+    fn next_token(&mut self) -> u64 {
+        self.next_token += 1;
+        self.next_token
+    }
+}
+
+/// A starting pane's queued input is about to be written: the mark it should carry, when a send
+/// queued behind that pane is waiting on it. The queue goes out as one write, so every such wait
+/// shares the one mark.
+pub(crate) fn mark_queued_input(
     state: &mut crate::state::State,
     pane_id: PaneId,
     generation: u64,
     local: bool,
-    client: &crate::session::client::SessionClient,
-) {
-    for wait in &mut state.capture_waits.waits {
-        if let Stage::Queued { token } = wait.stage
+) -> Option<u64> {
+    let waits = &mut state.capture_waits;
+    let queued = |wait: &UiCaptureWait| {
+        matches!(wait.stage, Stage::Queued)
             && (wait.pane_id, wait.generation, wait.local) == (pane_id, generation, local)
-        {
-            client.mark_input(token);
-            wait.stage = Stage::Marking { token };
-        }
+    };
+    if !waits.waits.iter().any(queued) {
+        return None;
     }
+    let token = waits.next_token();
+    for wait in waits.waits.iter_mut().filter(|wait| queued(wait)) {
+        wait.stage = Stage::Marking { token };
+    }
+    Some(token)
 }
 
-/// The server answered a mark: every byte of that send's input has reached the pane, and all
-/// output from before it is on this client's screen.
+/// The server answered a mark: that send's input has reached the pane, and this client's screen
+/// holds all output from before it and none from after.
 pub(crate) fn input_marked(ctx: &mut Context<AppRoot>, token: u64) -> Update {
+    let now = Instant::now();
     let state = &mut ctx.state;
-    let Some(index) = state
-        .capture_waits
-        .waits
-        .iter()
-        .position(|wait| matches!(wait.stage, Stage::Marking { token: t } if t == token))
-    else {
-        return Update::none();
-    };
-    let wait = &state.capture_waits.waits[index];
-    let (pane_id, local, generation, started) =
-        (wait.pane_id, wait.local, wait.generation, wait.started);
-    let conditions = wait.plan.wait.clone();
-    if let Some(pane) = find_pane_in_namespace_mut(state, pane_id, local)
-        .filter(|pane| pane.pty_generation == generation)
-    {
-        let screen = pane
-            .terminal
-            .with_screen_mut(|screen| ScreenWait::start(&conditions, screen, true, started));
-        state.capture_waits.waits[index].stage = Stage::Watching(screen);
+    let mut waits = std::mem::take(&mut state.capture_waits.waits);
+    let mut marked = false;
+    for wait in &mut waits {
+        if !matches!(wait.stage, Stage::Marking { token: t } if t == token) {
+            continue;
+        }
+        marked = true;
+        if let Some(pane) = find_pane_in_namespace_mut(state, wait.pane_id, wait.local)
+            .filter(|pane| pane.pty_generation == wait.generation)
+        {
+            let screen = pane.terminal.with_screen_mut(|screen| {
+                ScreenWait::start(&wait.plan.wait, screen, true, wait.started, now)
+            });
+            wait.stage = Stage::Watching(screen);
+        }
     }
-    evaluate(ctx, None);
+    waits.append(&mut state.capture_waits.waits);
+    state.capture_waits.waits = waits;
+    if marked {
+        evaluate(ctx, None);
+    }
     Update::none()
 }
 
@@ -240,7 +250,7 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
                             .with_screen_mut(|terminal| screen.observe(terminal, now));
                         screen.status(now)
                     }
-                    Stage::Queued { .. } | Stage::Marking { .. } => {
+                    Stage::Queued | Stage::Marking { .. } => {
                         let deadline =
                             wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
                         if now >= deadline {

@@ -67,13 +67,15 @@ impl SessionServer {
                 format!("pane {pane_id} not found"),
             ));
         };
+        let now = Instant::now();
         let screen = ScreenWait::start(
             &plan.wait,
             pane.screen_without_change(),
             plan.after_input,
-            Instant::now(),
+            now,
+            now,
         );
-        if screen.status(Instant::now()) == WaitStatus::Ready {
+        if screen.status(now) == WaitStatus::Ready {
             return Some(self.capture_wait_response(pane_id, &plan, WaitEnd::Ready));
         }
         let (generation, seen) = (pane.generation, pane.content_generation);

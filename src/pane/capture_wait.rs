@@ -256,14 +256,19 @@ pub(crate) struct ScreenWait {
 }
 
 impl ScreenWait {
-    /// Start waiting on `screen` as it is now. With `after_input`, text already on screen does not
-    /// count; the wait is for what the input produces.
+    /// Start waiting on `screen` as it is now, `now`. With `after_input`, text already on screen
+    /// does not count; the wait is for what the input produces.
+    ///
+    /// The deadline runs from `requested`, when the caller asked. A send's baseline can come later
+    /// than that, once its input is known to have landed; the quiet a settle waits for is only
+    /// counted from the baseline, since nothing before it was watched.
     ///
     /// `wait` must already have passed [`PaneWait::validate`].
     pub(crate) fn start(
         wait: &PaneWait,
         screen: &mut TerminalScreen,
         after_input: bool,
+        requested: Instant,
         now: Instant,
     ) -> Self {
         let look = Look::take(screen);
@@ -276,7 +281,7 @@ impl ScreenWait {
         Self {
             text,
             settle: wait.settle_ms.map(Duration::from_millis),
-            deadline: now + Duration::from_millis(wait.timeout_ms),
+            deadline: requested + Duration::from_millis(wait.timeout_ms),
             baseline,
             matched_at,
             cells: look.cells,
@@ -299,18 +304,17 @@ impl ScreenWait {
         }
     }
 
-    /// Where the wait stands at `now`. A wait that resolves on its deadline counts as resolved.
+    /// Where the wait stands at `now`. A wait that resolves on its deadline counts as resolved;
+    /// one that resolves any later has timed out, however soon it is looked at.
     pub(crate) fn status(&self, now: Instant) -> WaitStatus {
-        let ready = self.matched_at.is_some_and(|matched_at| match self.settle {
-            None => true,
-            Some(settle) => now >= self.changed_at.max(matched_at) + settle,
+        let ready_at = self.matched_at.map(|matched_at| match self.settle {
+            None => matched_at,
+            Some(settle) => self.changed_at.max(matched_at) + settle,
         });
-        if ready {
-            WaitStatus::Ready
-        } else if now >= self.deadline {
-            WaitStatus::TimedOut
-        } else {
-            WaitStatus::Pending
+        match ready_at {
+            Some(ready_at) if ready_at <= self.deadline && now >= ready_at => WaitStatus::Ready,
+            _ if now >= self.deadline => WaitStatus::TimedOut,
+            _ => WaitStatus::Pending,
         }
     }
 }
@@ -335,7 +339,8 @@ mod tests {
     fn text_resolves_once_it_is_drawn() {
         let mut screen = screen();
         let now = Instant::now();
-        let mut waiting = ScreenWait::start(&wait(Some("done"), None), &mut screen, false, now);
+        let mut waiting =
+            ScreenWait::start(&wait(Some("done"), None), &mut screen, false, now, now);
         assert_eq!(waiting.status(now), WaitStatus::Pending);
 
         screen.process_bytes(b"working\r\n");
@@ -352,7 +357,7 @@ mod tests {
         let mut screen = screen();
         screen.process_bytes(b"ready> ");
         let now = Instant::now();
-        let waiting = ScreenWait::start(&wait(Some("ready> "), None), &mut screen, false, now);
+        let waiting = ScreenWait::start(&wait(Some("ready> "), None), &mut screen, false, now, now);
         assert_eq!(waiting.status(now), WaitStatus::Ready);
     }
 
@@ -361,7 +366,7 @@ mod tests {
         let mut screen = screen();
         screen.process_bytes(b"$ make\r\nok\r\n$ ");
         let now = Instant::now();
-        let mut waiting = ScreenWait::start(&wait(Some("$ "), None), &mut screen, true, now);
+        let mut waiting = ScreenWait::start(&wait(Some("$ "), None), &mut screen, true, now, now);
         assert_eq!(waiting.status(now), WaitStatus::Pending);
 
         // The echo lands on the old prompt row, and output scrolls the old prompts up.
@@ -379,7 +384,7 @@ mod tests {
         let mut screen = screen();
         screen.process_bytes(b"> ");
         let now = Instant::now();
-        let mut waiting = ScreenWait::start(&wait(Some("pong"), None), &mut screen, true, now);
+        let mut waiting = ScreenWait::start(&wait(Some("pong"), None), &mut screen, true, now, now);
         screen.process_bytes(b"ping pong");
         waiting.observe(&mut screen, now);
         assert_eq!(waiting.status(now), WaitStatus::Ready);
@@ -390,7 +395,8 @@ mod tests {
         let mut screen = screen();
         let start = Instant::now();
         let ms = Duration::from_millis;
-        let mut waiting = ScreenWait::start(&wait(None, Some(100)), &mut screen, false, start);
+        let mut waiting =
+            ScreenWait::start(&wait(None, Some(100)), &mut screen, false, start, start);
         assert_eq!(waiting.status(start + ms(99)), WaitStatus::Pending);
 
         screen.process_bytes(b"tick");
@@ -408,8 +414,13 @@ mod tests {
         let mut screen = screen();
         let start = Instant::now();
         let ms = Duration::from_millis;
-        let mut waiting =
-            ScreenWait::start(&wait(Some("done"), Some(100)), &mut screen, false, start);
+        let mut waiting = ScreenWait::start(
+            &wait(Some("done"), Some(100)),
+            &mut screen,
+            false,
+            start,
+            start,
+        );
         assert_eq!(waiting.status(start + ms(500)), WaitStatus::Pending);
 
         screen.process_bytes(b"done");
@@ -422,7 +433,8 @@ mod tests {
     fn a_wait_times_out_at_its_deadline() {
         let mut screen = screen();
         let start = Instant::now();
-        let waiting = ScreenWait::start(&wait(Some("never"), None), &mut screen, false, start);
+        let waiting =
+            ScreenWait::start(&wait(Some("never"), None), &mut screen, false, start, start);
         assert_eq!(
             waiting.status(start + Duration::from_millis(4_999)),
             WaitStatus::Pending
@@ -434,6 +446,88 @@ mod tests {
     }
 
     #[test]
+    fn text_that_lands_on_the_deadline_resolves_and_any_later_times_out() {
+        let ms = Duration::from_millis;
+        for (lands, expected) in [
+            (ms(5_000), WaitStatus::Ready),
+            (ms(5_001), WaitStatus::TimedOut),
+        ] {
+            let mut screen = screen();
+            let start = Instant::now();
+            let mut waiting =
+                ScreenWait::start(&wait(Some("done"), None), &mut screen, false, start, start);
+            screen.process_bytes(b"done");
+            waiting.observe(&mut screen, start + lands);
+            assert_eq!(
+                waiting.status(start + lands),
+                expected,
+                "landing at {lands:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_settle_that_completes_past_the_deadline_times_out() {
+        let mut screen = screen();
+        let start = Instant::now();
+        let ms = Duration::from_millis;
+        let mut waiting = ScreenWait::start(
+            &wait(Some("done"), Some(100)),
+            &mut screen,
+            false,
+            start,
+            start,
+        );
+        screen.process_bytes(b"done");
+        waiting.observe(&mut screen, start + ms(4_901));
+        assert_eq!(waiting.status(start + ms(4_999)), WaitStatus::Pending);
+        // The quiet would only be complete at 5001ms, so the deadline itself ends it.
+        assert_eq!(waiting.status(start + ms(5_000)), WaitStatus::TimedOut);
+        assert_eq!(waiting.status(start + ms(5_001)), WaitStatus::TimedOut);
+
+        let mut screen = self::screen();
+        let mut waiting = ScreenWait::start(
+            &wait(Some("done"), Some(100)),
+            &mut screen,
+            false,
+            start,
+            start,
+        );
+        screen.process_bytes(b"done");
+        waiting.observe(&mut screen, start + ms(4_900));
+        assert_eq!(waiting.status(start + ms(5_000)), WaitStatus::Ready);
+    }
+
+    #[test]
+    fn a_late_baseline_counts_quiet_from_itself_and_keeps_the_request_deadline() {
+        let mut screen = screen();
+        let requested = Instant::now();
+        let ms = Duration::from_millis;
+        // The input took 800ms to be marked: none of that was watched, so none of it is quiet.
+        let baseline = requested + ms(800);
+        let waiting = ScreenWait::start(
+            &wait(None, Some(500)),
+            &mut screen,
+            true,
+            requested,
+            baseline,
+        );
+        assert_eq!(waiting.status(baseline), WaitStatus::Pending);
+        assert_eq!(waiting.status(baseline + ms(499)), WaitStatus::Pending);
+        assert_eq!(waiting.status(baseline + ms(500)), WaitStatus::Ready);
+
+        // The deadline is still the caller's: 5s from the request, not from the baseline.
+        let waiting = ScreenWait::start(
+            &wait(Some("never"), None),
+            &mut screen,
+            true,
+            requested,
+            baseline,
+        );
+        assert_eq!(waiting.status(requested + ms(5_000)), WaitStatus::TimedOut);
+    }
+
+    #[test]
     fn a_scrolled_view_still_waits_on_the_live_screen() {
         let mut screen = screen();
         for line in 0..20 {
@@ -441,7 +535,8 @@ mod tests {
         }
         screen.set_scrollback(10);
         let now = Instant::now();
-        let mut waiting = ScreenWait::start(&wait(Some("fresh"), None), &mut screen, false, now);
+        let mut waiting =
+            ScreenWait::start(&wait(Some("fresh"), None), &mut screen, false, now, now);
         screen.process_bytes(b"fresh");
         waiting.observe(&mut screen, now);
         assert_eq!(waiting.status(now), WaitStatus::Ready);

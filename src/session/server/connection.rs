@@ -85,6 +85,26 @@ impl SessionServer {
         activity
     }
 
+    /// Write a client's pane input, if that client may type into the pane.
+    fn accept_pane_input(
+        &mut self,
+        id: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        bytes: &[u8],
+    ) {
+        let owner = local.then_some(id);
+        let may_operate = if local {
+            self.client_attached(id) && !self.client_read_only(id)
+        } else {
+            self.client_may_input(id)
+        };
+        if may_operate {
+            self.handle_pane_input(owner, pane_id, generation, bytes);
+        }
+    }
+
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
         match frame {
             Frame::PaneBytes {
@@ -92,17 +112,7 @@ impl SessionServer {
                 local,
                 generation,
                 bytes,
-            } => {
-                let owner = local.then_some(id);
-                let may_operate = if local {
-                    self.client_attached(id) && !self.client_read_only(id)
-                } else {
-                    self.client_may_input(id)
-                };
-                if may_operate {
-                    self.handle_pane_input(owner, pane_id, generation, &bytes);
-                }
-            }
+            } => self.accept_pane_input(id, pane_id, local, generation, &bytes),
             Frame::Control(message) => {
                 let is_attach = matches!(message, ClientMessage::Attach { .. });
                 // Both answer one question and hang up: neither ever becomes a client, so both
@@ -658,7 +668,14 @@ impl SessionServer {
                 self.input_locked = locked;
                 vec![(Target::Broadcast, self.clients_changed())]
             }
-            ClientMessage::MarkInput { token } => {
+            ClientMessage::MarkedInput {
+                pane_id,
+                local,
+                generation,
+                bytes,
+                token,
+            } => {
+                self.accept_pane_input(client_id, pane_id, local, generation, &bytes);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
             ClientMessage::Pong { seq: _ } => {

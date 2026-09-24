@@ -3102,6 +3102,75 @@ fn colliding_local_and_shared_pane_input_is_namespaced() {
     );
 }
 
+/// A UI waiting on a send's answer takes its baseline at `InputMarked`. The pane's answer to the
+/// input must therefore reach the client after the mark, however soon the program replies: the
+/// server writes the input and queues the mark in one step, before it drains the PTY again.
+#[test]
+fn marked_input_is_answered_ahead_of_the_output_it_causes() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    const PANE: PaneId = 7;
+    const GENERATION: u64 = 1;
+    let spawned = server.handle_message(
+        client,
+        colliding_spawn(PANE, false, GENERATION, "printf 'READY\\n'; cat"),
+    );
+    assert!(
+        matches!(
+            spawned.as_slice(),
+            [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+        ),
+        "spawn failed: {spawned:?}"
+    );
+    wait_until(&mut server, |server| {
+        pane_text(server, None, PANE).contains("READY")
+    });
+    clear_outboxes(&mut server, &[client]);
+
+    server.process_client_frame(
+        client,
+        Frame::Control(ClientMessage::MarkedInput {
+            pane_id: PANE,
+            local: false,
+            generation: GENERATION,
+            bytes: b"PING\n".to_vec(),
+            token: 9,
+        }),
+    );
+    wait_until(&mut server, |server| {
+        pane_text(server, None, PANE).contains("PING")
+    });
+
+    let frames = decode_outbox_frames(server.client_mut(client).unwrap());
+    let mark = frames
+        .iter()
+        .position(|frame| {
+            matches!(frame, DecodedOutboxFrame::Control(message)
+                if matches!(**message, ServerMessage::InputMarked { token: 9 }))
+        })
+        .expect("the input is marked");
+    let output = |frames: &[DecodedOutboxFrame]| -> Vec<u8> {
+        frames
+            .iter()
+            .filter_map(|frame| match frame {
+                DecodedOutboxFrame::Pane { bytes, .. } => Some(bytes.clone()),
+                DecodedOutboxFrame::Control(_) => None,
+            })
+            .flatten()
+            .collect()
+    };
+    let before = String::from_utf8_lossy(&output(&frames[..mark])).into_owned();
+    let after = String::from_utf8_lossy(&output(&frames[mark..])).into_owned();
+    assert!(
+        !before.contains("PING"),
+        "answer ahead of the mark: {before:?}"
+    );
+    assert!(
+        after.contains("PING"),
+        "answer missing after the mark: {after:?}"
+    );
+}
+
 #[test]
 fn read_only_and_locked_follower_input_is_denied() {
     let mut server = SessionServer::new_named("dev");

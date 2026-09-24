@@ -586,7 +586,7 @@ rozi capture-pane --target 3 --settle 500ms --timeout 30s --render png --output 
 | --- | --- |
 | `--wait-for TEXT` | `TEXT` appears within one row of the visible screen. It is matched literally, including spaces at the end of a row. |
 | `--settle DURATION` | The visible screen has not changed for `DURATION`. |
-| `--timeout DURATION` | Required with either option. At most one hour. |
+| `--timeout DURATION` | Required with either option, counted from when the request arrives. At most one hour. |
 
 Durations are written `500ms`, `30s`, or `2m`; a bare number is seconds. With both `--wait-for`
 and `--settle`, rozi waits for the text first, then for the screen to stay unchanged.
@@ -597,7 +597,8 @@ The two commands wait differently:
   the settle period starts when the request arrives.
 - `send-text` and `send-keys` wait for the answer to their own input. Only output that arrives
   after the input counts, so a prompt or a previous result already on screen does not satisfy
-  `--wait-for`, even after it scrolls up. `--capture text|ansi|png` returns the screen once the
+  `--wait-for`, even after it scrolls up. The settle period starts once the input has been written,
+  not when the request arrives. `--capture text|ansi|png` returns the screen once the
   wait resolves, with `--scale`, `--output`, and `--format` as for `capture-pane`. Without
   `--capture`, the reply only says the wait resolved.
 
@@ -605,7 +606,8 @@ The two commands wait differently:
 screen, moves only the cursor, or changes only its title counts as settled. A screen scrolled back
 into history still waits on the live screen.
 
-A wait that runs out of time fails with `timeout`. A pane that exits or closes first fails with
+A wait that has not resolved by its timeout fails with `timeout`, even if the text shows up or the
+settle period ends a moment later. A pane that exits or closes first fails with
 `pane-not-running`; output it printed just before exiting still counts. Unless the pane is gone,
 the reply carries the capture as the screen stood at the end, which the CLI prints (or writes to
 `--output`) before exiting `1`.

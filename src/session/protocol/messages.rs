@@ -270,14 +270,18 @@ pub enum ClientMessage {
     Pong {
         seq: u64,
     },
-    /// Ask for [`ServerMessage::InputMarked`] with the same `token`.
+    /// Pane input that also asks for [`ServerMessage::InputMarked`] with the same `token`.
     ///
-    /// The server handles a connection's frames in order and writes pane input as it reads it, so
-    /// the answer means every input frame sent before this one has reached its pane. It travels the
-    /// same queue as pane output, so a client holding it has also received all output that was
-    /// forwarded before then - which is how a UI tells a program's answer from what was already
-    /// on screen.
-    MarkInput {
+    /// The server writes the bytes and queues the answer in one step, before it looks at the pane's
+    /// output again. Everything the pane forwarded before the answer was produced before this input
+    /// reached it, and everything after may be the input's own response - which is how a UI tells a
+    /// program's answer from what was already on screen. A separate mark frame could not say this:
+    /// the server may drain the answer to the input between reading the two.
+    MarkedInput {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        bytes: Vec<u8>,
         token: u64,
     },
     Rename {
@@ -598,7 +602,7 @@ pub enum ServerMessage {
     Ping {
         seq: u64,
     },
-    /// Answer to [`ClientMessage::MarkInput`].
+    /// Answer to [`ClientMessage::MarkedInput`].
     InputMarked {
         token: u64,
     },

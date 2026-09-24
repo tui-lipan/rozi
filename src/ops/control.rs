@@ -1150,7 +1150,16 @@ fn control_input_target(
 
 /// Write control input to the PTY, or append it to the pane's type-ahead queue while the spawn is
 /// still in flight (see [`crate::state::State::pending_control_input`]).
-fn deliver_control_input(ctx: &mut Context<AppRoot>, target: &InputTarget, bytes: Vec<u8>) {
+///
+/// A `mark` asks the server to answer it in the same step as writing the bytes (see
+/// [`crate::session::protocol::ClientMessage::MarkedInput`]). Queued input carries no mark; its
+/// waits are marked when the queue is written.
+fn deliver_control_input(
+    ctx: &mut Context<AppRoot>,
+    target: &InputTarget,
+    bytes: Vec<u8>,
+    mark: Option<u64>,
+) {
     if target.starting {
         ctx.state
             .pending_control_input
@@ -1160,7 +1169,12 @@ fn deliver_control_input(ctx: &mut Context<AppRoot>, target: &InputTarget, bytes
         return;
     }
     if let Some(client) = target.client.as_ref() {
-        client.send_input(target.id, target.generation, target.local, bytes);
+        match mark {
+            Some(token) => {
+                client.send_marked_input(target.id, target.generation, target.local, bytes, token);
+            }
+            None => client.send_input(target.id, target.generation, target.local, bytes),
+        }
     }
 }
 
@@ -1169,7 +1183,7 @@ fn send_text(ctx: &mut Context<AppRoot>, target: Option<PaneId>, text: String) -
         Ok(target) => target,
         Err(response) => return response,
     };
-    deliver_control_input(ctx, &target, text.into_bytes());
+    deliver_control_input(ctx, &target, text.into_bytes(), None);
     ControlResponse::empty()
 }
 
@@ -1179,7 +1193,7 @@ fn send_keys(
     keys: Vec<String>,
     literal: bool,
 ) -> ControlResponse {
-    match send_keys_to(ctx, target, &keys, literal) {
+    match send_keys_to(ctx, target, &keys, literal, None) {
         Ok(_) => ControlResponse::empty(),
         Err(response) => response,
     }
@@ -1190,6 +1204,7 @@ fn send_keys_to(
     target: Option<PaneId>,
     keys: &[String],
     literal: bool,
+    mark: Option<u64>,
 ) -> std::result::Result<InputTarget, ControlResponse> {
     let target = control_input_target(ctx, target)?;
 
@@ -1210,24 +1225,27 @@ fn send_keys_to(
         }
     }
 
-    deliver_control_input(ctx, &target, bytes);
+    deliver_control_input(ctx, &target, bytes, mark);
     Ok(target)
 }
 
-/// Write a `send-text` or `send-keys` request's input as it would be without a wait, and say
-/// where it went.
+/// Write a `send-text` or `send-keys` request's input as it would be without a wait, marked with
+/// `mark` unless the pane is still starting, and say where it went.
 pub(super) fn deliver_send(
     ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
     command: &ControlCommand,
+    mark: u64,
 ) -> std::result::Result<InputTarget, ControlResponse> {
     match command {
         ControlCommand::SendText { text, .. } => {
             let target = control_input_target(ctx, target)?;
-            deliver_control_input(ctx, &target, text.clone().into_bytes());
+            deliver_control_input(ctx, &target, text.clone().into_bytes(), Some(mark));
             Ok(target)
         }
-        ControlCommand::SendKeys { keys, literal, .. } => send_keys_to(ctx, target, keys, *literal),
+        ControlCommand::SendKeys { keys, literal, .. } => {
+            send_keys_to(ctx, target, keys, *literal, Some(mark))
+        }
         _ => Err(ControlResponse::error("not a send command")),
     }
 }
@@ -3323,16 +3341,19 @@ mod tests {
                     },
                 );
                 let sent: Vec<_> = outbound.try_iter().collect();
-                assert!(matches!(
-                    sent[0],
-                    ClientOutbound::PaneInput { pane_id: 1, .. }
-                ));
-                let ClientOutbound::Control(ClientMessage::MarkInput { token }) = sent[1] else {
-                    panic!("the input is followed by its mark, got {:?}", sent[1]);
+                let [
+                    ClientOutbound::Control(ClientMessage::MarkedInput {
+                        pane_id: 1, token, ..
+                    }),
+                ] = sent.as_slice()
+                else {
+                    panic!("the input carries its own mark, got {sent:?}");
                 };
+                let token = *token;
 
-                // Until the mark is back, the screen may still be missing output from before the
-                // input, so nothing on it can count yet - not even a fresh-looking prompt.
+                // The server answers the mark in the same step as writing the input, so anything
+                // ahead of the answer is older than the input - not even a fresh-looking prompt
+                // counts.
                 feed(&mut backend, b"make\r\nold output\r\n$ ");
                 assert!(response.try_recv().is_err());
                 let epoch = backend.state().runtime_epoch;
@@ -3352,6 +3373,137 @@ mod tests {
             .expect("spawn ui send-wait test")
             .join()
             .expect("ui send-wait test completes");
+    }
+
+    #[test]
+    fn a_ui_send_settle_counts_quiet_only_from_its_mark() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                let outbound = attach_test_session(&mut backend);
+                feed(&mut backend, b"$ ");
+                let response = ask(
+                    &mut backend,
+                    ControlCommand::SendText {
+                        target: Some(1),
+                        text: "go\r".into(),
+                        wait: Some(crate::control::PaneWait {
+                            text: None,
+                            settle_ms: Some(40),
+                            timeout_ms: 5_000,
+                        }),
+                        capture: None,
+                        scale: None,
+                    },
+                );
+                let token = outbound
+                    .try_iter()
+                    .find_map(|sent| match sent {
+                        ClientOutbound::Control(ClientMessage::MarkedInput { token, .. }) => {
+                            Some(token)
+                        }
+                        _ => None,
+                    })
+                    .expect("the input carries its own mark");
+
+                // The mark is slow to come back: longer than the whole settle period.
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::SessionInputMarked { epoch, token })
+                    .expect("dispatch the mark");
+                assert!(
+                    response.try_recv().is_err(),
+                    "nothing was watched before the mark, so none of it is quiet"
+                );
+
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                backend
+                    .dispatch(crate::Msg::CaptureWaitTick)
+                    .expect("dispatch tick");
+                let answer = response
+                    .try_recv()
+                    .expect("the quiet after the mark answers");
+                assert!(answer.ok, "{answer:?}");
+            })
+            .expect("spawn ui settle test")
+            .join()
+            .expect("ui settle test completes");
+    }
+
+    #[test]
+    fn ui_send_waits_queued_behind_a_starting_pane_share_the_mark_on_its_first_write() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                let outbound = attach_test_session(&mut backend);
+                {
+                    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                    pane.pty_generation = 4;
+                    pane.terminal.status = ManagedTerminalStatus::Starting;
+                }
+                let send = |text: &str, wait: &str| ControlCommand::SendText {
+                    target: Some(1),
+                    text: text.into(),
+                    wait: pane_wait(Some(wait), 5_000),
+                    capture: None,
+                    scale: None,
+                };
+                let first = ask(&mut backend, send("one\r", "ONE"));
+                let second = ask(&mut backend, send("two\r", "TWO"));
+                assert!(outbound.try_recv().is_err(), "input waits for the PTY");
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::SessionSpawnResult {
+                        epoch,
+                        pane_id: 1,
+                        local: false,
+                        generation: 4,
+                        pid: Some(11),
+                        ok: true,
+                        error: None,
+                    })
+                    .expect("dispatch spawn result");
+                let sent: Vec<_> = outbound.try_iter().collect();
+                let [
+                    ClientOutbound::Control(ClientMessage::MarkedInput {
+                        pane_id: 1,
+                        generation: 4,
+                        bytes,
+                        token,
+                        ..
+                    }),
+                ] = sent.as_slice()
+                else {
+                    panic!("the queue goes out as one marked write, got {sent:?}");
+                };
+                assert_eq!(bytes, b"one\rtwo\r");
+
+                backend
+                    .dispatch(crate::Msg::SessionInputMarked {
+                        epoch,
+                        token: *token,
+                    })
+                    .expect("dispatch the mark");
+                let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+                backend
+                    .dispatch(crate::Msg::SessionOutput {
+                        epoch,
+                        pane_id: 1,
+                        local: false,
+                        generation,
+                        bytes: b"ONE\r\nTWO\r\n".to_vec(),
+                    })
+                    .expect("dispatch pane output");
+                assert!(first.try_recv().expect("first answered").ok);
+                assert!(second.try_recv().expect("second answered").ok);
+            })
+            .expect("spawn queued ui wait test")
+            .join()
+            .expect("queued ui wait test completes");
     }
 
     #[test]

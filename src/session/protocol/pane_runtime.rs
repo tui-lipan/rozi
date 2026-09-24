@@ -336,6 +336,10 @@ pub struct PaneRuntimeState {
     pub rows: Vec<PublishedRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration: Option<Box<AgentIntegrationReport>>,
+    /// Whether the session server is recording this pane with `rozi record`. Clients mark the pane
+    /// for as long as it is, so a recording is never invisible.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recording: bool,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`super::ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap

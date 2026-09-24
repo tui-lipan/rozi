@@ -237,6 +237,8 @@ pub struct TerminalPane {
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
+    /// The session server is recording this pane (`rozi record`).
+    pub recording: bool,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
     pub agent_integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
     /// Set when this agent pane's effective status transitions from `working` to a quiescent state
@@ -407,6 +409,7 @@ impl TerminalPane {
             foreground_executable: None,
             foreground_arguments: Vec::new(),
             reported_status: None,
+            recording: false,
             detected_agent: None,
             agent_integration: None,
             finished_unseen: false,
@@ -475,6 +478,7 @@ impl TerminalPane {
             self.project_root = None;
             self.git_branch = None;
             self.reported_status = None;
+            self.recording = false;
             self.detected_agent = None;
             self.agent_integration = None;
             self.finished_unseen = false;

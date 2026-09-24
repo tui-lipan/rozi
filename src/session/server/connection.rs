@@ -149,6 +149,7 @@ impl SessionServer {
                 if is_query
                     && !self.agent_waits.contains_key(&id)
                     && !self.capture_waits.contains_key(&id)
+                    && !self.holds_recording_reply(id)
                 {
                     self.set_close_after_flush(id);
                 }

@@ -128,6 +128,25 @@ pub struct ServerRuntimeMetrics {
     pub attach_seed: AttachSeedMetrics,
     pub client_resync: ClientResyncMetrics,
     pub resurrection: ResurrectionMetrics,
+    /// Pane recordings (`rozi record`). Absent from a server that predates them.
+    #[serde(default)]
+    pub recordings: RecordingMetrics,
+}
+
+/// Pane recordings on a session server.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingMetrics {
+    /// Recordings running now.
+    pub active: u64,
+    /// Recordings this server has started and finished.
+    pub started: u64,
+    pub finished: u64,
+    /// Frames and bytes written, across running and finished recordings.
+    pub frames: u64,
+    pub bytes: u64,
+    /// Changes coalesced away because a writer fell behind, across running and finished recordings.
+    pub dropped: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

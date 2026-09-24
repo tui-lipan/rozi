@@ -31,6 +31,7 @@ pub use headless::session_control_unsupported;
 mod lease;
 mod pane_log;
 mod panes;
+mod recordings;
 mod resurrect;
 pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
@@ -152,6 +153,11 @@ pub struct SessionServer {
     clients: Vec<ClientConn>,
     agent_waits: HashMap<ClientId, waits::PendingAgentWait>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
+    /// Pane recordings running now, by id.
+    recordings: recordings::Recordings,
+    next_recording_id: u64,
+    /// Counts from recordings this server has started and finished, for `metrics`.
+    recording_totals: crate::runtime_metrics::RecordingMetrics,
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
@@ -1358,6 +1364,9 @@ impl SessionServer {
             clients: Vec::new(),
             agent_waits: HashMap::new(),
             capture_waits: HashMap::new(),
+            recordings: recordings::Recordings::new(),
+            next_recording_id: 0,
+            recording_totals: crate::runtime_metrics::RecordingMetrics::default(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
@@ -1468,6 +1477,7 @@ impl SessionServer {
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.resolve_capture_waits();
+        self.pump_recordings();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);
         if let Err(err) = self.drain_snapshot_results() {
@@ -1495,6 +1505,13 @@ impl SessionServer {
         } else if let Err(err) = self.snapshot_before_shutdown() {
             eprintln!("rozi: final session snapshot failed: {err}");
         }
+        // Before the PTYs are killed, so a recording ends on the session's last screen rather than
+        // on every pane exiting.
+        self.finish_recordings_for_shutdown(if self.forget_snapshot {
+            crate::recording::EndReason::SessionEnded
+        } else {
+            crate::recording::EndReason::ServerShutdown
+        });
         for pane in self.panes.values() {
             if let Some(pty) = &pane.pty {
                 let _ = pty.kill();
@@ -1600,6 +1617,7 @@ impl SessionServer {
             },
             client_resync,
             resurrection: self.resurrection_metrics,
+            recordings: self.recording_metrics(),
         }
     }
 

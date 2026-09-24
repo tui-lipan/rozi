@@ -114,6 +114,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.command_phase = state.command_phase;
     pane.terminal.last_exit_status = state.last_exit_status;
     pane.terminal.reported_status = state.status;
+    pane.terminal.recording = state.recording;
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.agent_integration = state.integration;
     pane.terminal.work_started_at = state.work_started_at;

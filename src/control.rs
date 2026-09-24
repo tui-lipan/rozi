@@ -28,8 +28,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
 /// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
 /// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
-/// 7 with the `spans` render and its `image_pixels`.
-pub const API_SCHEMA_VERSION: u32 = 7;
+/// 7 with the `spans` render and its `image_pixels`, and version 8 with the `record-*` commands and
+/// the `rozi-recording` file format.
+pub const API_SCHEMA_VERSION: u32 = 8;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -55,6 +56,9 @@ pub const CAPTURE_WAIT_CAPABILITY: &str = "capture-wait";
 /// `capture-pane` and `capture-ui` accept `render: "spans"`, and `image_pixels` with it. An older
 /// binary refuses the render as an invalid request.
 pub const CAPTURE_SPANS_CAPABILITY: &str = "capture-spans";
+/// A session server records a pane with `record-start`, `record-stop`, `record-list`, and
+/// `record-mark`, and `list-panes` and `metrics` report recordings.
+pub const RECORD_PANE_CAPABILITY: &str = "record-pane";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -84,6 +88,7 @@ impl ApiDescription {
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
+                RECORD_PANE_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
             ],
@@ -578,6 +583,42 @@ pub enum ControlCommand {
         #[serde(default)]
         level: NotifyLevel,
     },
+    /// Start recording a pane's screen to `output`, a file on the session server's host. Served by
+    /// a session server only: it records the pane's canonical screen with or without a UI.
+    /// Every change is written, at most `max_fps` times a second, until `record-stop`, the pane
+    /// exiting, the session ending, or a limit. `follow` holds the reply until the recording ends
+    /// and stops it when the request's connection closes.
+    RecordStart {
+        #[serde(default)]
+        target: Option<PaneId>,
+        /// An absolute path. The CLI resolves a relative one against its working directory.
+        output: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_fps: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+        /// Replace an existing regular file at `output`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follow: bool,
+    },
+    /// Stop a recording and answer once its file is complete. `id` may be left out when only one
+    /// recording is running.
+    RecordStop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+    },
+    /// List the recordings running in the session.
+    RecordList,
+    /// Add a labelled mark to a recording, or to every running recording when `id` is left out.
+    RecordMark {
+        label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+    },
     Pick {
         #[serde(default)]
         title: Option<String>,
@@ -681,6 +722,9 @@ pub struct PaneInfo {
     /// to see what the rules currently say about the screen it just took.
     pub agent: Option<String>,
     pub agent_state: Option<String>,
+    /// The session server is recording this pane; `record list` says where.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recording: bool,
 }
 
 /// The whole `data` value of a `list-panes` reply.
@@ -1549,6 +1593,67 @@ pub struct PaneLoggingState {
     pub enabled: bool,
     /// Where the log is being written, absent once logging is off.
     pub path: Option<String>,
+}
+
+/// Longest label `record-mark` keeps, in characters.
+pub const MAX_RECORDING_MARK_CHARS: usize = 256;
+/// `record-start`'s frame-rate ceiling when none is given, and the range one may take.
+pub const DEFAULT_RECORDING_MAX_FPS: u32 = 30;
+pub const MAX_RECORDING_MAX_FPS: u32 = 120;
+/// How long a recording runs when no `duration_ms` is given, and the longest one may be.
+pub const DEFAULT_RECORDING_DURATION_MS: u64 = 24 * 60 * 60 * 1000;
+pub const MAX_RECORDING_DURATION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+/// How large a recording grows when no `max_bytes` is given.
+pub const DEFAULT_RECORDING_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// A running recording, as `record-start` and `record-list` report it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingInfo {
+    pub id: u64,
+    pub session: String,
+    pub pane: PaneId,
+    /// Where the file is, on the session server's host.
+    pub path: String,
+    pub started_at_unix_ms: u64,
+    pub elapsed_ms: u64,
+    pub max_fps: u32,
+    pub duration_ms: u64,
+    pub max_bytes: u64,
+    /// Held by a foreground `record pane`, which stops it on exit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
+    #[serde(flatten)]
+    pub totals: crate::recording::RecordingTotals,
+}
+
+/// A finished recording, as `record-stop` and a followed `record-start` report it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingStopped {
+    pub id: u64,
+    pub pane: PaneId,
+    pub path: String,
+    pub reason: crate::recording::EndReason,
+    pub elapsed_ms: u64,
+    /// Why writing failed, for a `write-failed` reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(flatten)]
+    pub totals: crate::recording::RecordingTotals,
+}
+
+/// What `record-list` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingListPayload(pub Vec<RecordingInfo>);
+
+/// What `record-mark` answers with: the recordings that got the mark.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingMarked {
+    pub ids: Vec<u64>,
 }
 
 /// What `agents prompt` answers with when it was asked not to wait.
@@ -2449,6 +2554,7 @@ mod tests {
             status_reason: None,
             agent: None,
             agent_state: None,
+            recording: false,
         };
 
         let value = serde_json::to_value(&pane).expect("a pane record serializes");

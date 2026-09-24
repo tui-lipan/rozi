@@ -278,6 +278,13 @@ pub(crate) fn handle_control_request(
             ControlErrorCode::Unsupported,
             "agent wait is server-owned; select a named session with --session",
         ),
+        ControlCommand::RecordStart { .. }
+        | ControlCommand::RecordStop { .. }
+        | ControlCommand::RecordList
+        | ControlCommand::RecordMark { .. } => ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            "pane recording is server-owned; select a named session with --session",
+        ),
         ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
             ControlErrorCode::Unsupported,
             "agent prompt is server-owned; select a named session with --session",
@@ -390,6 +397,7 @@ impl PaneInfo {
             agent_state: runtime
                 .as_ref()
                 .map(|runtime| runtime.state.as_str().to_string()),
+            recording: pane.terminal.recording,
         }
     }
 }

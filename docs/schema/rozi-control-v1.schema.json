@@ -3850,7 +3850,7 @@
           "type": "string"
         }
       ],
-      "description": "A color as the program chose it: an ANSI name, a 256-color index from 16 to 255, or\n`\"#rrggbb\"`. Resolve a name through [`SpanFrame::palette`]; indexes 16-255 are the standard\nxterm cube and gray ramp."
+      "description": "A color, kept symbolic rather than resolved: an ANSI name, a 256-color index from 16 to 255, or\n`\"#rrggbb\"`. ANSI slots 0-15 are always names, however the program asked for them. Resolve a\nname through [`SpanFrame::palette`]; indexes 16-255 are the standard xterm cube and gray ramp."
     },
     "SpanCursor": {
       "description": "Where the cursor is and how it is drawn.\n\nA pane capture takes the shape and blink from what the program asked for, a blinking block\nuntil it asks; a UI capture from the focused widget. A blinking cursor is reported as lit.",
@@ -3997,7 +3997,7 @@
           "type": "integer"
         },
         "png_base64": {
-          "description": "Those pixels as a base64 PNG at `pixel_width` x `pixel_height`, with alpha, when the\ncapture asked for `image_pixels`.",
+          "description": "Those pixels as a base64 PNG at `pixel_width` x `pixel_height`, with alpha, when the\ncapture asked for `image_pixels`. Pixels on a cell that does not show the image are\ntransparent, so the PNG holds only what the capture shows.",
           "type": [
             "string",
             "null"

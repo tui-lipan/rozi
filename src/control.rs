@@ -1402,9 +1402,9 @@ pub struct SpanRun {
     pub strikethrough: bool,
 }
 
-/// A color as the program chose it: an ANSI name, a 256-color index from 16 to 255, or
-/// `"#rrggbb"`. Resolve a name through [`SpanFrame::palette`]; indexes 16-255 are the standard
-/// xterm cube and gray ramp.
+/// A color, kept symbolic rather than resolved: an ANSI name, a 256-color index from 16 to 255, or
+/// `"#rrggbb"`. ANSI slots 0-15 are always names, however the program asked for them. Resolve a
+/// name through [`SpanFrame::palette`]; indexes 16-255 are the standard xterm cube and gray ramp.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -1511,7 +1511,8 @@ pub struct SpanImage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible: Option<Vec<Vec<(i16, u16)>>>,
     /// Those pixels as a base64 PNG at `pixel_width` x `pixel_height`, with alpha, when the
-    /// capture asked for `image_pixels`.
+    /// capture asked for `image_pixels`. Pixels on a cell that does not show the image are
+    /// transparent, so the PNG holds only what the capture shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub png_base64: Option<String>,
 }
@@ -2756,7 +2757,7 @@ mod tests {
             Some(ControlErrorCode::InvalidArgument)
         );
 
-        // A reply's frame reads back whole, and a color takes the form the program chose.
+        // A reply's frame reads back whole, and a color keeps its symbolic form.
         let content = CaptureContent::Spans {
             frame: SpanFrame {
                 format: SPAN_FRAME_FORMAT.into(),

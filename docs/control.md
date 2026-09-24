@@ -658,8 +658,9 @@ the reply as `data.frame`. A frame looks like this, shortened:
 - **Only what differs.** A run lists only the colors and attributes that differ from the default:
   `fg`, `bg`, `underline_color`, `bold`, `dim`, `italic`, `underline` (`single`, `double`,
   `curly`, `dotted`, or `dashed`), `reverse`, and `strikethrough`.
-- **Colors.** A pane's colors stay as the program chose them: an ANSI name such as `red` or
-  `bright-black`, a 256-color index, or `#rrggbb`. `palette` says what the names, and the default
+- **Colors.** A pane's colors stay symbolic rather than being resolved: an ANSI name such as `red`
+  or `bright-black`, a 256-color index, or `#rrggbb`. The 16 ANSI colors are always names, however
+  the program asked for them. `palette` says what the names, and the default
   foreground and background, look like in this capture, with the same theme colors a PNG uses.
   `capture-ui` colors are mostly `#rrggbb`, because the UI resolves them as it draws.
 - **Cursor.** Its position, whether it is shown, its shape (`block`, `hollow-block`,
@@ -669,12 +670,14 @@ the reply as `data.frame`. A frame looks like this, shortened:
   pixels. The cells under an image hold `▀` half blocks in its colors, so the runs there are a
   coarse copy of the picture, not text. When something covers part of an image, `visible` lists,
   row by row, the column ranges still showing it. `--image-pixels` adds each image's pixels as a
-  base64 PNG; a session reply with a large image can then exceed 8 MiB.
+  base64 PNG, with the covered parts transparent, so it shows no more than a `png` capture does.
+  A session reply with a large image can then exceed 8 MiB.
 
 The frame has its own `version`, which changes only when a field changes meaning or is removed.
 New fields can appear at any time, so ignore fields you do not know. `--scale` does not apply, and
 `--image-pixels` works with `--render spans` only. The
 [protocol reference](control-protocol.md#spans-frames) lists every field.
+
 ### Capturing the whole UI
 
 ![A rozi window captured with capture-ui: Neovim editing a Rust file, a shell showing the rozi logo with icat, and a shell that ran cargo run](assets/capture-ui.png)

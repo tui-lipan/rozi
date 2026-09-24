@@ -248,10 +248,11 @@ default style at the end of a row are left out: a column past the last run is a 
 colors, and a blank row is `[]`. A wide character covers two columns of its run's `width`, so
 `width` can exceed the number of characters in `text`.
 
-A color is one of three forms, kept as the program chose it:
+A color stays symbolic rather than being resolved to RGB, in one of three forms:
 
 - an ANSI name: `"black"`, `"red"`, `"green"`, `"yellow"`, `"blue"`, `"magenta"`, `"cyan"`,
-  `"white"`, or one of those prefixed with `bright-`, such as `"bright-black"`;
+  `"white"`, or one of those prefixed with `bright-`, such as `"bright-black"`. ANSI slots 0–15
+  are always named, so `SGR 31` and `SGR 38;5;1` are both `"red"` and can share a run;
 - a number from 16 to 255, a 256-color palette index. Indexes 16–255 are the standard xterm color
   cube and gray ramp, and do not appear in `palette`;
 - `"#rrggbb"`.
@@ -262,7 +263,11 @@ it first. The cells under a visible image hold `▀` half blocks in its top and 
 runs there describe a coarse copy of the picture. `visible` is absent when the image shows in every
 cell of its area; otherwise it has one entry per row of the area, each an array of `[x, width]`
 column ranges still showing the image. `png_base64` holds the pixels as a PNG, with alpha, when the
-request set `image_pixels`.
+request set `image_pixels`. Pixels on a cell that does not show the image, because something covers
+it or it is off the grid, are fully transparent, so the PNG never reveals what the capture hides.
+Pixels are placed on cells as a `png` capture draws them: fitted inside the image's cells from the
+top-left corner, keeping their shape, in cells twice as tall as they are wide. A pixel that
+straddles a hidden cell is cleared.
 
 ### Layout changes
 

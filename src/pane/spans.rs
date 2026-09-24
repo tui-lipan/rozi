@@ -1,8 +1,10 @@
 //! The `spans` capture: a [`CapturedFrame`] as styled runs, compact enough to read whole.
 
 use base64::Engine as _;
+use std::sync::Arc;
 use tui_lipan::prelude::*;
-use tui_lipan::{CapturedFrame, CapturedImage, CellRun, CursorShape, UnderlineStyle};
+
+use tui_lipan::{CapturedFrame, CapturedImage, CellRun, CursorShape, PngOptions, UnderlineStyle};
 
 use crate::control::{
     AnsiColorName, ControlResponse, SPAN_FRAME_FORMAT, SPAN_FRAME_VERSION, SpanColor, SpanCursor,
@@ -30,8 +32,8 @@ const ANSI_NAMES: [AnsiColorName; 16] = [
 
 /// `frame` as a [`SpanFrame`], its palette resolved the way a PNG of it is drawn.
 ///
-/// Colors stay as the frame holds them, so a pane's `red` is still `red`; the palette says what
-/// that looked like. `image_pixels` must already be checked against the render.
+/// Colors stay symbolic, so a pane's `red` is still `red`, with ANSI slots 0-15 always named; the
+/// palette says what that looked like. `image_pixels` must already be checked against the render.
 pub(crate) fn span_frame(
     frame: &CapturedFrame,
     palette: TerminalColorPalette,
@@ -40,7 +42,7 @@ pub(crate) fn span_frame(
     let images = frame
         .images
         .iter()
-        .map(|image| span_image(image, image_pixels))
+        .map(|image| span_image(image, (frame.width, frame.height), image_pixels))
         .collect::<std::result::Result<_, _>>()?;
     Ok(SpanFrame {
         format: SPAN_FRAME_FORMAT.to_string(),
@@ -189,6 +191,7 @@ fn hex((r, g, b): (u8, u8, u8)) -> String {
 
 fn span_image(
     image: &CapturedImage,
+    frame_size: (u16, u16),
     pixels: bool,
 ) -> std::result::Result<SpanImage, ControlResponse> {
     let area = image.area;
@@ -218,9 +221,11 @@ fn span_image(
             .collect()
     });
     let png_base64 = if pixels {
-        let png = image
-            .to_png()
-            .map_err(|error| ControlResponse::error(format!("image capture failed: {error}")))?;
+        let png = match shown_pixels(image, frame_size) {
+            Some(rgba) => CapturedImage::new(image.area, image.width, image.height, rgba).to_png(),
+            None => image.to_png(),
+        }
+        .map_err(|error| ControlResponse::error(format!("image capture failed: {error}")))?;
         Some(base64::engine::general_purpose::STANDARD.encode(png))
     } else {
         None
@@ -235,6 +240,65 @@ fn span_image(
         visible,
         png_base64,
     })
+}
+
+/// `image`'s pixels with every one that lands on a cell not showing it made transparent, or `None`
+/// when every cell shows it. A cell is hidden when something covers it or it lies outside the frame.
+///
+/// Pixels are placed on cells the way a PNG capture draws them: fitted inside the area from its
+/// top-left corner, keeping their shape, in cells of [`PngOptions::default`]'s proportions. A pixel
+/// that straddles a hidden cell is cleared, so nothing covered can be read back.
+fn shown_pixels(image: &CapturedImage, (frame_w, frame_h): (u16, u16)) -> Option<Arc<[u8]>> {
+    let area = image.area;
+    let shows = |col: u16, row: u16| {
+        let (x, y) = (
+            i32::from(area.x) + i32::from(col),
+            i32::from(area.y) + i32::from(row),
+        );
+        (0..i32::from(frame_w)).contains(&x)
+            && (0..i32::from(frame_h)).contains(&y)
+            && image
+                .visible
+                .get(usize::from(row) * usize::from(area.w) + usize::from(col))
+                .copied()
+                .unwrap_or(false)
+    };
+    if (0..area.h).all(|row| (0..area.w).all(|col| shows(col, row))) {
+        return None;
+    }
+    let (width, height) = (u64::from(image.width), u64::from(image.height));
+    let mut rgba = image.rgba.to_vec();
+    let options = PngOptions::default();
+    let (cell_w, cell_h) = (
+        u64::from(options.cell_width.max(1)),
+        u64::from(options.cell_height.max(1)),
+    );
+    // As tui-lipan fits an image: the largest size that keeps its shape, rounded, at least a pixel.
+    let (box_w, box_h) = (u64::from(area.w) * cell_w, u64::from(area.h) * cell_h);
+    let ratio = (box_w as f64 / width as f64).min(box_h as f64 / height as f64);
+    let fitted_w = ((width as f64 * ratio).round() as u64).clamp(1, box_w);
+    let fitted_h = ((height as f64 * ratio).round() as u64).clamp(1, box_h);
+    // The cells source pixel `at` of `source` covers once drawn `drawn` wide, in cells of `cell`.
+    let cells = |at: u64, source: u64, drawn: u64, cell: u64, count: u16| {
+        let first = at * drawn / source / cell;
+        let last = ((at + 1) * drawn).div_ceil(source).saturating_sub(1) / cell;
+        let last_cell = u64::from(count) - 1;
+        first.min(last_cell) as u16..=last.min(last_cell) as u16
+    };
+    for sy in 0..height {
+        let rows = cells(sy, height, fitted_h, cell_h, area.h);
+        for sx in 0..width {
+            let cols = cells(sx, width, fitted_w, cell_w, area.w);
+            let hidden = rows
+                .clone()
+                .any(|row| cols.clone().any(|col| !shows(col, row)));
+            if hidden {
+                let at = ((sy * width + sx) * 4) as usize;
+                rgba[at..at + 4].fill(0);
+            }
+        }
+    }
+    Some(rgba.into())
 }
 
 #[cfg(test)]
@@ -465,6 +529,75 @@ mod tests {
             (3, 2),
             "the image's own size, not its cells'"
         );
+    }
+
+    #[test]
+    fn exported_pixels_hide_what_the_capture_hides() {
+        let area = Rect {
+            x: 1,
+            y: 0,
+            w: 4,
+            h: 2,
+        };
+        let rgba: Vec<u8> = (1..=6u8).flat_map(|n| [n, n, n, 255]).collect();
+        let mut image = CapturedImage::new(area, 3, 2, rgba.into());
+        assert_eq!(shown_pixels(&image, (6, 2)), None, "nothing is hidden");
+
+        // Drawn 32x21 over cells 8x16: the top-left pixel covers only the top row's first two
+        // cells, the others reach the covered third cell or the bottom row.
+        image.visible = vec![true, true, false, true, false, false, false, false];
+        let kept = |rgba: &[u8]| {
+            rgba.chunks(4)
+                .map(|pixel| pixel[3] != 0)
+                .collect::<Vec<_>>()
+        };
+        let masked = shown_pixels(&image, (6, 2)).expect("some cells are hidden");
+        assert_eq!(kept(&masked), [true, false, false, false, false, false]);
+        assert_eq!(
+            &masked[..4],
+            &[1, 1, 1, 255],
+            "a shown pixel keeps its color"
+        );
+        assert!(
+            masked[4..].iter().all(|&byte| byte == 0),
+            "hidden pixels keep nothing"
+        );
+
+        // Past the frame's right edge counts as hidden too: here the last cell of each row.
+        image.visible = vec![true; 8];
+        let clipped = shown_pixels(&image, (4, 2)).expect("a cell is off the frame");
+        assert_eq!(kept(&clipped), [true, true, false, true, true, false]);
+
+        image.visible = vec![true, true, false, true, false, false, false, false];
+        let frame = CapturedFrame {
+            viewport: Rect {
+                x: 0,
+                y: 0,
+                w: 6,
+                h: 2,
+            },
+            width: 6,
+            height: 2,
+            cells: vec![
+                tui_lipan::CapturedCell {
+                    symbol: " ".into(),
+                    fg: Color::Reset,
+                    bg: Color::Reset,
+                    underline_color: Color::Reset,
+                    modifiers: Default::default(),
+                };
+                12
+            ],
+            cursor: None,
+            images: vec![image.clone()],
+        };
+        let spans = span_frame(&frame, TerminalColorPalette::default(), true).unwrap();
+        let exported = base64::engine::general_purpose::STANDARD
+            .decode(spans.images[0].png_base64.as_deref().unwrap())
+            .unwrap();
+        let expected = CapturedImage::new(area, 3, 2, masked).to_png().unwrap();
+        assert_eq!(exported, expected, "the frame exports the masked pixels");
+        assert_ne!(exported, image.to_png().unwrap());
     }
 
     #[test]

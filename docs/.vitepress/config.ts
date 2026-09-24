@@ -10,6 +10,36 @@ const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const LANDING_TITLE = "rozi — a tiling terminal multiplexer";
 
 /**
+ * Indent JSON for reading, but keep any object or array that fits within
+ * `width` columns on one line: a row such as `{ "id": "main", "label": "main" }`
+ * spread over four lines only makes the example taller.
+ */
+function formatJson(value: unknown, width = 80, indent = "", prefix = 0): string {
+  const flat = (v: unknown): string =>
+    Array.isArray(v)
+      ? `[${v.map(flat).join(", ")}]`
+      : v !== null && typeof v === "object"
+        ? Object.keys(v).length === 0
+          ? "{}"
+          : `{ ${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${flat(x)}`).join(", ")} }`
+        : JSON.stringify(v);
+  const oneLine = flat(value);
+  if (value === null || typeof value !== "object" || indent.length + prefix + oneLine.length <= width) {
+    return oneLine;
+  }
+  const inner = indent + "  ";
+  if (Array.isArray(value)) {
+    const items = value.map((item) => inner + formatJson(item, width, inner));
+    return `[\n${items.join(",\n")}\n${indent}]`;
+  }
+  const members = Object.entries(value).map(([key, item]) => {
+    const name = `${JSON.stringify(key)}: `;
+    return inner + name + formatJson(item, width, inner, name.length);
+  });
+  return `{\n${members.join(",\n")}\n${indent}}`;
+}
+
+/**
  * Read from the manifest rather than written down here. The version used to be
  * typed into three files, which is three chances for the site to advertise a
  * release that does not exist.
@@ -175,7 +205,65 @@ export default defineConfig({
     ],
   ],
 
-  markdown: { theme: { light: "night-owl", dark: "night-owl" } },
+  markdown: {
+    theme: { light: "night-owl", dark: "night-owl" },
+    // A long command synopsis in a table cell has to wrap, but only between
+    // words: a break after the hyphen of `[--format` reads as two flags. Each
+    // word becomes an unbreakable span; the spaces between them stay plain
+    // text, so copying the chip still gives the original string. A word too
+    // long for a narrow column, such as a path, keeps its break points.
+    config(md) {
+      md.renderer.rules.code_inline = (tokens, idx, _options, _env, self) => {
+        const token = tokens[idx];
+        const body = token.content
+          .split(" ")
+          .map((word) => {
+            const html = md.utils.escapeHtml(word);
+            return word.length > 0 && word.length <= 24 ? `<span class="cw">${html}</span>` : html;
+          })
+          .join(" ");
+        return `<code${self.renderAttrs(token)}>${body}</code>`;
+      };
+
+      // Protocol examples are newline-delimited JSON: one message per line is
+      // the format, so the source keeps them on one line. Long ones are shown
+      // indented here, while the copy button copies the original lines from a
+      // hidden copy (VitePress copies text content minus `.vp-copy-ignore`).
+      // A list of many short commands reads better as it is, and a line the
+      // author already spaced out for reading is left alone.
+      const fence = md.renderer.rules.fence!;
+      md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+        const token = tokens[idx];
+        const raw = token.content;
+        const lines = raw.split("\n").filter((line) => line.trim());
+        if (
+          token.info.trim() !== "json" ||
+          lines.length > 3 ||
+          !lines.some((line) => line.length > 80)
+        ) {
+          return fence(tokens, idx, options, env, self);
+        }
+        let messages: unknown[];
+        try {
+          messages = lines.map((line) => JSON.parse(line));
+        } catch {
+          return fence(tokens, idx, options, env, self);
+        }
+        if (messages.some((message, i) => JSON.stringify(message) !== lines[i])) {
+          return fence(tokens, idx, options, env, self);
+        }
+        token.content = messages.map((message) => formatJson(message)).join("\n\n") + "\n";
+        const html = fence(tokens, idx, options, env, self);
+        token.content = raw;
+        const label = lines.length > 1 ? "json · one message per line" : "json · sent as one line";
+        return html
+          .replace(/^<div class="language-json/, '<div class="ndjson language-json')
+          .replace(/<span class="lang">json<\/span>/, `<span class="lang">${label}</span>`)
+          .replace(/<code>/, '<code class="vp-copy-ignore">')
+          .replace(/<\/pre>/, `<span class="ndjson-raw" hidden>${md.utils.escapeHtml(raw)}</span></pre>`);
+      };
+    },
+  },
 
   // `/` is served from `index.md`, so its <h1> would title the tab "rozi
   // documentation | rozi" even though the landing page renders a hero rather

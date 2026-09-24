@@ -19,7 +19,10 @@ pub(super) const SKILL_HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("install [--global]", "Install the Rozi skill"),
+            row(
+                "install [--global] [--force]",
+                "Install or refresh the Rozi skill",
+            ),
             row("uninstall [--global]", "Remove the installed Rozi skill"),
             row("status [--global]", "Show skill installation status"),
             row("print", "Print the skill to stdout"),
@@ -35,6 +38,7 @@ pub(super) const SKILL_HELP_SECTIONS: &[HelpSection] = &[
                 "Install, uninstall, or status for this user",
             ),
             row("-h, --help", "Print help"),
+            row("    --force", "Replace a modified or untracked skill"),
         ],
     },
 ];
@@ -57,10 +61,22 @@ pub(crate) fn run_skill_cli(command: SkillCommand) -> Result<()> {
             print_skill();
             Ok(())
         }
-        SkillCommand::Install { global } => {
+        SkillCommand::Install { global, force } => {
             let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
-            let report = skill::install(&paths, crate::agent_detection::claude_cli_available())
-                .map_err(std::io::Error::other)?;
+            let state_dir = crate::platform::paths::state_dir(
+                &crate::platform::paths::PlatformEnv::from_process(),
+            );
+            let managed = skill::install_managed(
+                &paths,
+                &state_dir,
+                crate::agent_detection::claude_cli_available(),
+                force,
+            )
+            .map_err(std::io::Error::other)?;
+            let report = skill::InstallReport {
+                skill_file: managed.skill_file,
+                claude: managed.claude,
+            };
             print!(
                 "{}",
                 style_first_line(
@@ -74,6 +90,10 @@ pub(crate) fn run_skill_cli(command: SkillCommand) -> Result<()> {
         SkillCommand::Uninstall { global } => {
             let paths = skill::default_paths(global).map_err(std::io::Error::other)?;
             let report = skill::uninstall(&paths).map_err(std::io::Error::other)?;
+            let state_dir = crate::platform::paths::state_dir(
+                &crate::platform::paths::PlatformEnv::from_process(),
+            );
+            skill::forget_install(&paths, &state_dir).map_err(std::io::Error::other)?;
             let tone = if report.removed.is_empty() {
                 OutputTone::Warning
             } else {

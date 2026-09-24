@@ -6,8 +6,11 @@ use std::path::{Component, Path, PathBuf};
 
 pub const SKILL_MD: &str = include_str!("SKILL.md");
 
+mod managed;
 #[cfg(windows)]
 mod windows;
+
+pub use managed::{forget_install, install_managed, refresh_managed};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillPaths {
@@ -93,6 +96,7 @@ pub fn print_skill() {
     print!("{SKILL_MD}");
 }
 
+#[cfg(test)]
 pub fn install(paths: &SkillPaths, claude_available: bool) -> Result<InstallReport, String> {
     install_canonical(paths)?;
     let claude = if claude_available {

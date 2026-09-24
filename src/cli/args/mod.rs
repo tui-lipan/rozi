@@ -229,7 +229,7 @@ pub(crate) enum ExtensionsCommand {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SkillCommand {
-    Install { global: bool },
+    Install { global: bool, force: bool },
     Uninstall { global: bool },
     Status { global: bool },
     Print,

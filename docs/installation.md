@@ -80,6 +80,9 @@ rozi update --rollback
 `rozi update --check` checks for a newer release without installing it. `rozi update` downloads
 and activates the current release, drawing a progress meter on stderr while the archive arrives.
 `rozi update --rollback` activates the previously installed version without another download.
+After a successful update, Rozi also refreshes unchanged agent skills installed by
+`rozi skill install`. Modified or untracked copies are left alone with a warning; see
+[Agent skill](agent-skill.md#check-refresh-or-remove).
 
 The TUI also checks on its own, on a worker thread shortly after a client starts and every six
 hours it stays open. It stays silent when rozi is current or the network is unavailable. A newer

@@ -1042,6 +1042,12 @@ body {
 .vp-doc code .cw {
     white-space: nowrap;
 }
+/* A cell that opens with code hangs its wrapped lines a step in, so a line
+   that continues a command is visibly not the start of another. */
+.vp-doc td:has(> code:first-child) {
+    padding-left: calc(12px + 1.4em);
+    text-indent: -1.4em;
+}
 
 /* A link whose text is inline code - [`tui-lipan`](…) - is still a link.
    Without this the rule above wins and the link renders identically to the

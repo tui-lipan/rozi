@@ -1,8 +1,8 @@
 # Overview
 
-rozi is a terminal multiplexer for local, remote, and agent-driven development. It arranges
-terminal panes the way a tiling window manager arranges windows, keeps named sessions running
-after you leave, and connects to sessions on other machines over SSH.
+rozi is a tiling terminal multiplexer: it arranges terminal panes the way a tiling window manager
+arranges windows. It keeps named sessions running after you leave, reaches other machines over SSH,
+and shows which coding agents need you. You can change any of it live, from inside rozi.
 
 Shells, editors, system monitors, test servers, and coding agents are all ordinary panes. The
 sidebar can additionally show which coding agents are working, finished, or waiting for your input,

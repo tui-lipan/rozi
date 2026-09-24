@@ -5,7 +5,7 @@
 <h1 align="center">rozi</h1>
 
 <p align="center">
-  A modern terminal workspace for local, remote, and agent-driven development.
+  A tiling terminal multiplexer. Your terminals, tiled like a window manager.
 </p>
 
 <p align="center">
@@ -20,11 +20,10 @@
   <img src="assets/demo.gif" alt="A rozi session opening, splitting, resizing, and arranging terminal panes" width="860">
 </p>
 
-rozi is a terminal multiplexer that tiles terminals like a window manager, keeps named sessions
-running after you detach, and connects to sessions on other machines over SSH. It shows which
-coding agents are working or waiting for you, while treating them as ordinary terminal programs
-alongside your shells, editors, and monitors. Everything you can do interactively, you can also
-script from the CLI, hooks, and extensions.
+rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other
+machines over SSH, and shows which coding agents need you. You can change any of it live, from
+inside rozi: themes, pane frames, layouts, and keys preview as you browse and save to one config
+file. Everything you can do interactively, you can also script from the CLI, hooks, and extensions.
 
 | Tiling workspace | Persistent sessions | Remote machines |
 | --- | --- | --- |

@@ -426,9 +426,10 @@ html.rozi-intro-pending .lp {
     line-height: 1.45;
     letter-spacing: -0.015em;
     color: var(--vp-c-text-1);
-    /* Two lines, not three. Centred display text that stacks into short
-       ragged lines is what made the column read as thin. */
-    max-width: 40ch;
+    /* One line on desktop; a narrow screen breaks it evenly rather than
+       leaving one word alone on the second line. */
+    max-width: 48ch;
+    text-wrap: balance;
 }
 .lp-sub {
     margin: 14px auto 0;
@@ -1477,5 +1478,30 @@ html.rozi-intro-pending .lp {
             height: 1400px;
             opacity: 0;
         }
+    }
+}
+
+/* ── Make it yours ───────────────────────────────────────────────────── */
+
+/* The second row mirrors the first: picture on the left. The copy comes
+   first in the markup so it still leads when the band stacks on a phone. */
+.lp-capture + .lp-capture {
+    margin-top: 44px;
+}
+.lp-two.lp-capture-flip {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+.lp-capture-flip > :first-child {
+    order: 2;
+}
+.lp-capture .rz-gallery {
+    margin: 0;
+}
+@media (max-width: 1000px) {
+    .lp-two.lp-capture-flip {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lp-capture-flip > :first-child {
+        order: 0;
     }
 }

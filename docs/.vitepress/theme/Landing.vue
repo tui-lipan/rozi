@@ -58,40 +58,40 @@ const facts: [string, string][] = [
    page under it is where the detail belongs. */
 const features = [
   {
-    title: "Automatic pane layouts",
-    body: "New panes split the focused pane along the side with more room. Rozi has seven layouts, and panes can float, fill the screen, or move with the mouse.",
+    title: "Panes arrange themselves",
+    body: "Each new pane splits the focused one along its longer side, so the screen stays balanced without dragging borders. Switch between seven layouts, float a pane, or fill the screen with one key.",
     link: "/layouts-and-panes",
     linkText: "Layouts and panes",
   },
   {
-    title: "Named sessions keep running",
-    body: "A background server owns every PTY in a named session. Detach, then use rozi sessions attach dev to return to its layout, running programs, and scrollback from another window or over SSH.",
+    title: "Sessions keep running",
+    body: "Detach and your shells, editors, and servers carry on. Come back later, from another window, to the same panes and scrollback. After a reboot, rozi restores the layout, the commands, and their history.",
     link: "/sessions",
     linkText: "Sessions",
   },
   {
-    title: "Configuration reloads on save",
-    body: "Rozi reloads config.toml when you save it without closing panes. Changes made in the command palette are written back to the file.",
-    link: "/themes",
-    linkText: "Themes",
+    title: "Other machines over SSH",
+    body: "rozi --remote devbox opens a session on another machine, installs rozi there if you allow it, and reconnects after a dropped link. Remote sessions are listed next to local ones.",
+    link: "/remote",
+    linkText: "Remote sessions",
   },
   {
-    title: "Terminal features",
-    body: `Rozi supports mouse reporting, selection, inline images, true color, scrollback search, and a vi-style copy mode. It includes ${stats.themes} themes, and the active theme sets pane colors.`,
+    title: "Coding agents at a glance",
+    body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or finished, on its border, its workspace tab, and in the sidebar. ${stats.agents} agents are built in, and you can add your own.`,
+    link: "/agents",
+    linkText: "Agent detection",
+  },
+  {
+    title: "Change it live",
+    body: "Themes, frames, layouts, and keys change from inside rozi, previewed as you browse. Your choice is saved to config.toml, and an edit to the file applies the moment you save it.",
+    link: "/customize",
+    linkText: "Customize rozi",
+  },
+  {
+    title: "A complete terminal in every pane",
+    body: "True color, inline images, mouse support, scrollback search, and a vi-style copy mode. With shell integration, new panes open in the directory you are working in.",
     link: "/terminal",
     linkText: "Terminal features",
-  },
-  {
-    title: "Coding-agent status detection",
-    body: `Rozi reads coding-agent CLI output and marks the pane as working, blocked, or finished. The state appears on the pane border, workspace tab, and sidebar. Definitions for ${stats.agents} agents are included as editable tables.`,
-    link: "/sidebar",
-    linkText: "Agent activity",
-  },
-  {
-    title: "Windows support",
-    body: "On Windows, Rozi uses ConPTY for terminals and named pipes for IPC. It stores runtime files in a SID-protected directory. Its native executables require no separate runtime.",
-    link: "/platform-support",
-    linkText: "Platform support",
   },
 ];
 
@@ -103,14 +103,14 @@ const features = [
  * above and then listing prefix chords.
  */
 const firstKeys = [
-  { key: "Enter", mod: "Alt-Enter", what: "Open another pane" },
-  { key: "h j k l", mod: "Alt-h…l", what: "Move focus by direction" },
-  { key: "f", mod: "Alt-f", what: "Fullscreen the focused pane" },
-  { key: "t", mod: "Alt-t", what: "Let the pane float on top" },
-  { key: "1…9", mod: "Alt-1…9", what: "Jump to a workspace" },
-  { key: "p", mod: "Alt-p", what: "Search every command" },
-  { key: "?", mod: "Alt-?", what: "Show all keys" },
-  { key: "d", mod: "Alt-d", what: "Leave. A named session lives on" },
+  { key: "Enter", mod: "Alt+Enter", what: "Open another pane" },
+  { key: "h j k l", mod: "Alt+H…L", what: "Move focus by direction" },
+  { key: "f", mod: "Alt+F", what: "Fullscreen the focused pane" },
+  { key: "t", mod: "Alt+T", what: "Float the pane on top" },
+  { key: "1…9", mod: "Alt+1…9", what: "Jump to a workspace" },
+  { key: "p", mod: "Alt+P", what: "Search every command" },
+  { key: "?", mod: "Alt+?", what: "Show and edit every key" },
+  { key: "d", mod: "Alt+D", what: "Leave; named sessions keep running" },
 ];
 
 /**
@@ -131,7 +131,7 @@ const catalog: {
     linkText: "Layouts and panes",
     names: [
       "Seven layouts",
-      "aspect-ratio splits",
+      "shape-aware splits",
       "floating",
       "fullscreen",
       "move, swap, and promote",
@@ -167,32 +167,32 @@ const catalog: {
     linkText: "Sessions",
     names: [
       "Named sessions",
-      "temporary sessions with brief recovery",
-      "multi-client",
-      "layout-control lease",
+      "temporary sessions",
+      "several windows per session",
+      "shared sessions",
       "remote over SSH",
-      "resurrect",
+      "restore after reboot",
       "autosave",
       "profiles",
-      "bare launch opens the session picker",
-      "session launcher",
+      "session picker",
     ],
   },
   {
     title: "Look and feel",
-    link: "/configuration",
-    linkText: "Configuration",
+    link: "/customize",
+    linkText: "Customize rozi",
     names: [
       `${stats.themes} themes`,
       "system theme",
-      "hot reload",
-      "terminal palette",
+      "live reload",
+      "host terminal colors",
       "workbar segments",
       "powerline caps",
       "titlebar styles",
       "sidebar tabs",
-      "settings dialog",
-      "alert marks",
+      "Settings with live preview",
+      "keybinding editor",
+      "attention alerts",
       "notifications and sounds",
     ],
   },
@@ -215,7 +215,7 @@ const catalog: {
       "user commands",
       "extensions",
       "agent skill",
-      "editor navigator",
+      "Vim and Neovim navigation",
     ],
   },
   {
@@ -228,9 +228,8 @@ const catalog: {
       "signed releases",
       "managed updates",
       "rollback",
-      "published performance measurements",
-      "bounded work queues",
-      "private IPC endpoints",
+      "published benchmarks",
+      "private control sockets",
       "MPL-2.0",
     ],
   },
@@ -396,12 +395,13 @@ restart = "on-failure"`);
             <h1 class="lp-wordmark">rozi</h1>
           </div>
           <p class="lp-tagline">
-            A terminal multiplexer with automatic pane layouts.
+            Your terminals, tiled like a window manager.
           </p>
           <p class="lp-sub">
-            A bare launch opens the session picker. Only named sessions persist.
-            Temporary sessions remain recoverable for a short time after the
-            client exits. Linux, macOS, and Windows are supported.
+            rozi arranges panes as you open them, keeps named sessions running
+            after you leave, reaches other machines over SSH, and shows which
+            coding agents need you. Change any of it live, from inside rozi. On
+            Linux, macOS, and Windows.
           </p>
 
           <InstallTabs />
@@ -443,7 +443,7 @@ restart = "on-failure"`);
       <section class="lp-section">
         <header class="lp-head">
           <h2>Included features</h2>
-          <p class="lp-head-note">Available with the default configuration</p>
+          <p class="lp-head-note">All of it works out of the box</p>
         </header>
         <div class="lp-features">
           <article v-for="f in features" :key="f.title" class="lp-feature">
@@ -456,59 +456,60 @@ restart = "on-failure"`);
 
       <section class="lp-section">
         <header class="lp-head">
-          <h2>Screenshots from the command line</h2>
-          <p class="lp-head-note">For agents, scripts, and bug reports</p>
+          <h2>Make it yours</h2>
+          <p class="lp-head-note">Previewed live · saved to config.toml · no restart</p>
         </header>
         <div class="lp-two lp-capture">
           <div>
             <p class="lp-lead">
-              <code>rozi capture-ui</code> returns the screen as rozi drew it:
-              every pane, border, and overlay, and the images programs displayed.
-              <code>rozi capture-pane</code> does the same for one pane, and works
-              on a detached session too. Ask for plain text, ANSI, or a PNG, so a
-              coding agent can look at what it is working in.
+              Open <b>Settings</b> and move through a list: the theme, the pane
+              frames, or the layout change behind the picker as you go.
+              <kbd>Enter</kbd> keeps a value and writes it to
+              <code>config.toml</code>; <kbd>Esc</kbd> puts the old one back.
             </p>
-            <div class="lp-code">
-              <pre><code><span class="tk-comment"># the whole window, twice the size</span>
-rozi capture-ui --render png --scale 2 --output ui.png
-<span class="tk-comment"># one pane, as text with its colors</span>
-rozi capture-pane --target 3 --render ansi
-<span class="tk-comment"># a pane in a session with no window open</span>
-rozi --session dev capture-pane --target 3 \
-    --render png --output pane.png</code></pre>
-            </div>
-            <p class="lp-lead lp-capture-note">
-              Captures are fast enough to record from. The clip is one: a
-              capture every frame, put together with the recording recipe.
+            <p class="lp-lead">
+              Every tab here is the same workspace. Only the lines under the
+              picture differ, and the programs in the panes pick up the theme
+              too.
             </p>
-            <a class="lp-more" :href="withBase('/control#capturing-the-whole-ui')"
-              >Capturing the screen →</a
-            >
-            <a
-              class="lp-more lp-more-next"
-              :href="withBase('/recipes#record-a-pane-or-the-whole-ui-as-a-gif')"
-              >Recording recipe →</a
+            <a class="lp-more" :href="withBase('/customize')">Customize rozi →</a>
+            <a class="lp-more lp-more-next" :href="withBase('/themes')"
+              >{{ stats.themes }} themes →</a
             >
           </div>
-          <figure class="lp-shot">
-            <video
-              ref="captureVideo"
-              :src="captureClip"
-              :poster="capturePoster"
-              :controls="captureStill"
-              width="1920"
-              height="1152"
-              muted
-              loop
-              playsinline
-              preload="metadata"
-              aria-label="A rozi window with an editor and two shells. In one shell, rozi capture-ui saves a screenshot, and icat shows that screenshot inside the pane."
-            ></video>
-            <figcaption>
-              Every frame is a <code>rozi capture-ui</code> PNG, not a screen
-              recording.
-            </figcaption>
-          </figure>
+          <CaptureGallery title="~/src/rozi — dev">
+            <img src="../../assets/captures/workspace.webp" alt="A rozi workspace with Neovim, a Git log, lazygit, and btop in the default theme" data-label="rozi" data-code='[theme]\nname = "rozi"'>
+            <img src="../../assets/captures/theme-tokyo-night.webp" alt="The same workspace in the Tokyo Night theme" data-label="Tokyo Night" data-code='[theme]\nname = "tokyo-night"'>
+            <img src="../../assets/captures/theme-rose-pine-dawn.webp" alt="The same workspace in the light Rose Pine Dawn theme" data-label="Rose Pine Dawn" data-code='[theme]\nname = "rose-pine-dawn"'>
+            <img src="../../assets/captures/style-merged.webp" alt="Panes whose frames join into one grid, with rounded titles in the border" data-label="Merged" data-code='[pane]\nborder_mode = "merged"\ntitlebar = "integrated"\ntitle_style = "round"'>
+            <img src="../../assets/captures/style-powerline.webp" alt="Thick pane frames with arrow-shaped titles, tabs, and badges" data-label="Powerline" data-code='[pane]\nborder_style = "thick"\ntitle_style = "arrow"\nworkbar_style = "arrow"\nworkbar_tab_style = "arrow"'>
+            <img src="../../assets/captures/personalized.webp" alt="Gruvbox Dark, a master layout, merged thick frames, a bottom workbar, and the sidebar on the right" data-label="All together" data-code='[theme]\nname = "gruvbox-dark"\n\n[pane]\nborder_mode = "merged"\nborder_style = "thick"\nworkbar_at_bottom = true\n\n[sidebar]\nvisible = true\nposition = "right"'>
+          </CaptureGallery>
+        </div>
+
+        <div class="lp-two lp-capture lp-capture-flip">
+          <div>
+            <h3 class="lp-h3">Rebind keys without a manual</h3>
+            <p class="lp-lead">
+              <kbd>Ctrl+A</kbd> then <kbd>?</kbd> lists every key in effect.
+              Pick a command, press the new chord, and rozi shows it before
+              saving, including any command that already uses it. The binding
+              works the moment you confirm.
+            </p>
+            <p class="lp-lead">
+              The prefix and the held modifier are rows in the same list, so
+              moving from <kbd>Alt</kbd> to <kbd>Super</kbd> takes one change.
+            </p>
+            <a class="lp-more" :href="withBase('/keybindings#edit-keybindings-in-rozi')"
+              >Edit keybindings →</a
+            >
+          </div>
+          <CaptureGallery mode="steps" title="Keybindings">
+            <img src="../../assets/captures/keys-find.webp" alt="The Keybindings overlay filtered to new pane" data-label="Find it">
+            <img src="../../assets/captures/keys-record.webp" alt="The recording card showing the chord Ctrl+Alt+N" data-label="Press a key">
+            <img src="../../assets/captures/keys-conflict.webp" alt="The recording card warning that Alt+W is already bound to Close pane" data-label="See conflicts">
+            <img src="../../assets/captures/keys-saved.webp" alt="The Keybindings list showing New pane bound to Ctrl+Alt+N" data-label="Saved">
+          </CaptureGallery>
         </div>
       </section>
 
@@ -518,8 +519,9 @@ rozi --session dev capture-pane --target 3 \
             <h2>First five minutes</h2>
           </header>
           <p class="lp-lead">
-            Default commands support prefix keys and Alt shortcuts. You can
-            rebind both schemes or use <kbd>Super</kbd> as the modifier.
+            Every command works two ways: press the prefix, then a key, or
+            hold <kbd>Alt</kbd> and press the key. Rebind either, or hold
+            <kbd>Super</kbd> instead.
           </p>
           <table class="lp-keytable">
             <thead>
@@ -532,7 +534,7 @@ rozi --session dev capture-pane --target 3 \
             <tbody>
               <tr v-for="row in firstKeys" :key="row.what">
                 <td class="lp-keycell">
-                  <kbd>Ctrl-a</kbd><kbd>{{ row.key }}</kbd>
+                  <kbd>Ctrl+A</kbd><kbd>{{ row.key }}</kbd>
                 </td>
                 <td class="lp-keycell">
                   <kbd class="mod">{{ row.mod }}</kbd>
@@ -551,9 +553,11 @@ rozi --session dev capture-pane --target 3 \
             <h2>Configuration file</h2>
           </header>
           <p class="lp-lead">
-            On Linux and macOS, the path is
-            <code>~/.config/rozi/config.toml</code>. Rozi reloads it on save. If
-            parsing fails, Rozi uses the defaults and reports the error.
+            Everything Settings changes lives in one file,
+            <code>~/.config/rozi/config.toml</code> on Linux and macOS. rozi
+            applies it when you save, without closing a pane, and a mistake
+            never takes it down: a bad value falls back to its default with a
+            warning.
           </p>
           <div class="lp-code">
             <pre><code v-html="CONFIG_SAMPLE"></code></pre>
@@ -622,8 +626,66 @@ rozi --session dev capture-pane --target 3 \
 
       <section class="lp-section">
         <header class="lp-head">
+          <h2>Screenshots from the command line</h2>
+          <p class="lp-head-note">For agents, scripts, and bug reports</p>
+        </header>
+        <div class="lp-two lp-capture">
+          <div>
+            <p class="lp-lead">
+              <code>rozi capture-ui</code> returns the screen as rozi drew it:
+              every pane, border, and overlay, and the images programs displayed.
+              <code>rozi capture-pane</code> does the same for one pane, and works
+              on a detached session too. Ask for plain text, ANSI, or a PNG, so a
+              coding agent can look at what it is working in.
+            </p>
+            <div class="lp-code">
+              <pre><code><span class="tk-comment"># the whole window, twice the size</span>
+rozi capture-ui --render png --scale 2 --output ui.png
+<span class="tk-comment"># one pane, as text with its colors</span>
+rozi capture-pane --target 3 --render ansi
+<span class="tk-comment"># a pane in a session with no window open</span>
+rozi --session dev capture-pane --target 3 \
+    --render png --output pane.png</code></pre>
+            </div>
+            <p class="lp-lead lp-capture-note">
+              Captures are fast enough to record from. The clip is one: a
+              capture every frame, put together with the recording recipe.
+            </p>
+            <a class="lp-more" :href="withBase('/control#capturing-the-whole-ui')"
+              >Capturing the screen →</a
+            >
+            <a
+              class="lp-more lp-more-next"
+              :href="withBase('/recipes#record-a-pane-or-the-whole-ui-as-a-gif')"
+              >Recording recipe →</a
+            >
+          </div>
+          <figure class="lp-shot">
+            <video
+              ref="captureVideo"
+              :src="captureClip"
+              :poster="capturePoster"
+              :controls="captureStill"
+              width="1920"
+              height="1152"
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              aria-label="A rozi window with an editor and two shells. In one shell, rozi capture-ui saves a screenshot, and icat shows that screenshot inside the pane."
+            ></video>
+            <figcaption>
+              Every frame is a <code>rozi capture-ui</code> PNG, not a screen
+              recording.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <header class="lp-head">
           <h2>Feature index</h2>
-          <p class="lp-head-note">These entries apply to the current release</p>
+          <p class="lp-head-note">Everything in v{{ theme.roziVersion }}</p>
         </header>
         <div class="lp-index">
           <article v-for="group in catalog" :key="group.title" class="lp-area">

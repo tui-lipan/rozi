@@ -1,8 +1,7 @@
 # rozi documentation
 
-rozi is a terminal multiplexer for local, remote, and agent-driven development. It tiles terminal
-panes, keeps named sessions running after you leave, connects to other machines over SSH, and shows
-which coding agents need your input.
+rozi is a tiling terminal multiplexer. It arranges panes as you open them, keeps named sessions
+running after you leave, reaches other machines over SSH, and shows which coding agents need you.
 
 These pages are also published at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev).
 

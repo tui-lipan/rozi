@@ -132,7 +132,7 @@
     cursor: zoom-in;
 }
 /* The first image sizes the stage; the rest stack on top of it. */
-.vp-doc .rz-gallery-stage img {
+.rz-gallery .rz-gallery-stage img {
     position: absolute;
     inset: 0;
     display: block;
@@ -144,18 +144,18 @@
     opacity: 0;
     transition: opacity 0.35s ease;
 }
-.vp-doc .rz-gallery-stage img:first-child {
+.rz-gallery .rz-gallery-stage img:first-child {
     position: relative;
     height: auto;
     aspect-ratio: auto 16 / 9;
 }
-.vp-doc .rz-gallery-stage img.active {
+.rz-gallery .rz-gallery-stage img.active {
     opacity: 1;
 }
 
 /* Steps: a numbered track under the frame. The active step carries a
    progress bar while autoplay runs, so the reader can see it will move. */
-.vp-doc .rz-gallery-steps {
+.rz-gallery .rz-gallery-steps {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 8px;
@@ -163,7 +163,7 @@
     padding: 0;
     list-style: none;
 }
-.vp-doc .rz-gallery-steps li {
+.rz-gallery .rz-gallery-steps li {
     margin: 0;
 }
 .rz-gallery-step {
@@ -239,13 +239,13 @@
 .rz-gallery-caption {
     margin-top: 12px;
 }
-.vp-doc .rz-gallery-caption p {
+.rz-gallery .rz-gallery-caption p {
     margin: 0;
     font-size: 14px;
     line-height: 1.6;
     color: var(--vp-c-text-2);
 }
-.vp-doc .rz-gallery-caption pre {
+.rz-gallery .rz-gallery-caption pre {
     margin: 10px 0 0;
     padding: 12px 16px;
     overflow-x: auto;
@@ -253,7 +253,7 @@
     border: 1px solid var(--vp-c-divider);
     border-radius: 8px;
 }
-.vp-doc .rz-gallery-caption code {
+.rz-gallery .rz-gallery-caption code {
     padding: 0;
     font-size: 13px;
     line-height: 1.7;
@@ -304,7 +304,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .vp-doc .rz-gallery-stage img {
+    .rz-gallery .rz-gallery-stage img {
         transition: none;
     }
 }

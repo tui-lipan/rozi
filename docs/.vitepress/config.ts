@@ -7,7 +7,7 @@ import { repoLinksPlugin } from "./repoLinks";
 const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
 /** What the landing page calls itself, in a tab and when shared. */
-const LANDING_TITLE = "rozi - a tiling terminal multiplexer";
+const LANDING_TITLE = "rozi — a tiling terminal multiplexer";
 
 /**
  * Read from the manifest rather than written down here. The version used to be
@@ -105,7 +105,7 @@ const ROZI_FACTS = (() => {
 export default defineConfig({
   title: "rozi",
   description:
-    "A tiling terminal multiplexer with self-arranging panes, named sessions, and live config reload on Linux, macOS, and Windows.",
+    "A tiling terminal multiplexer: panes that arrange themselves, sessions that keep running, and remote machines over SSH. For Linux, macOS, and Windows.",
   cleanUrls: true,
   lastUpdated: true,
   appearance: "force-dark",
@@ -136,7 +136,7 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "Split your terminal into panes, arrange them automatically, and pick up where you left off.",
+          "Your terminals, tiled like a window manager. Panes arrange themselves, sessions keep running, and everything changes live.",
       },
     ],
     // Decide whether the landing intro plays before the browser paints, so the

@@ -1031,7 +1031,7 @@ body {
 .vp-doc :is(td, th) :not(pre) > code {
     white-space: normal;
     line-height: 1.95;
-    padding: 1px 6px;
+    padding: 1px 6px 1px 2px;
     color: #c9a8ff;
     background: #1e1834;
     border-color: transparent;
@@ -1042,11 +1042,15 @@ body {
 .vp-doc code .cw {
     white-space: nowrap;
 }
-/* A cell that opens with code hangs its wrapped lines a step in, so a line
-   that continues a command is visibly not the start of another. */
-.vp-doc td:has(> code:first-child) {
-    padding-left: calc(12px + 1.4em);
-    text-indent: -1.4em;
+/* Every line of the highlight starts at the same edge, but only the first
+   line gets the full inset: continuation lines sit a little further left, so
+   a wrapped line is visibly not the start of another command. The spacer is
+   generated content, so copying the chip still gives the original text. */
+.vp-doc :is(td, th) > code::before,
+.vp-doc :is(td, th) :not(pre) > code::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
 }
 
 /* A link whose text is inline code - [`tui-lipan`](…) - is still a link.

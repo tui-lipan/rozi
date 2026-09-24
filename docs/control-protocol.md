@@ -275,7 +275,8 @@ else fails with `invalid-argument` before anything is sent or waited for.
 - `capture-pane` matches the screen as it is, so text already showing answers at once.
 - `send-text` and `send-keys` write their input first and match only output that arrives after it.
   Text on screen when the input was written does not count, even once it has scrolled. `settle_ms`
-  counts from when the input was written.
+  counts from once the input has been confirmed and the screen right after it taken as the
+  baseline, which on a UI attached to a remote session can be measurably later than the write.
 - A changed screen means changed characters, colors, or styles. Cursor movement, title changes, and
   redraws of identical content are not changes.
 - `timeout` and `pane-not-running` (the program exited, or the pane closed) carry the capture in

@@ -597,10 +597,11 @@ The two commands wait differently:
   the settle period starts when the request arrives.
 - `send-text` and `send-keys` wait for the answer to their own input. Only output that arrives
   after the input counts, so a prompt or a previous result already on screen does not satisfy
-  `--wait-for`, even after it scrolls up. The settle period starts once the input has been written,
-  not when the request arrives. `--capture text|ansi|png` returns the screen once the
-  wait resolves, with `--scale`, `--output`, and `--format` as for `capture-pane`. Without
-  `--capture`, the reply only says the wait resolved.
+  `--wait-for`, even after it scrolls up. The settle period starts once the session has confirmed
+  the input and rozi has taken the screen as it stood right after it, not when the request arrives.
+  Over a remote attachment that can be measurably later than the write itself.
+  `--capture text|ansi|png` returns the screen once the wait resolves, with `--scale`, `--output`,
+  and `--format` as for `capture-pane`. Without `--capture`, the reply only says the wait resolved.
 
 "Changed" means the characters, colors, or styles on screen changed. A program that redraws the same
 screen, moves only the cursor, or changes only its title counts as settled. A screen scrolled back

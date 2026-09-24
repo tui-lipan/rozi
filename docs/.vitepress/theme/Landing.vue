@@ -7,13 +7,28 @@ import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
 import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
 import { highlightToml } from "./toml";
+import captureClip from "../../assets/capture-ui.mp4";
+import capturePoster from "../../assets/capture-ui-poster.webp";
 
 /* The pre-paint script in config.ts has already decided this and hidden the
    page accordingly; reading its class back is what keeps the two in step. */
 const introPlaying = ref(false);
+/* The capture clip is left paused, with controls, for anybody who asked for
+   less motion; everybody else sees it loop. Started here rather than with
+   `autoplay` so the server-rendered page never plays it before that is known. */
+const captureVideo = ref<HTMLVideoElement | null>(null);
+const captureStill = ref(false);
 onMounted(() => {
   introPlaying.value =
     document.documentElement.classList.contains("rozi-intro-pending");
+  captureStill.value = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  if (!captureStill.value) {
+    captureVideo.value?.play().catch(() => {
+      captureStill.value = true;
+    });
+  }
 });
 
 // From Cargo.toml via config.ts - see NavTitleMeta.vue.
@@ -193,6 +208,8 @@ const catalog: {
       "notify",
       "run-action",
       "capture-pane",
+      "capture-ui",
+      "PNG and ANSI screenshots",
       `${stats.hookEvents} hook events`,
       "services",
       "user commands",
@@ -434,6 +451,64 @@ restart = "on-failure"`);
             <p>{{ f.body }}</p>
             <a :href="withBase(f.link)">{{ f.linkText }} →</a>
           </article>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <header class="lp-head">
+          <h2>Screenshots from the command line</h2>
+          <p class="lp-head-note">For agents, scripts, and bug reports</p>
+        </header>
+        <div class="lp-two lp-capture">
+          <div>
+            <p class="lp-lead">
+              <code>rozi capture-ui</code> returns the screen as rozi drew it:
+              every pane, border, and overlay, and the images programs displayed.
+              <code>rozi capture-pane</code> does the same for one pane, and works
+              on a detached session too. Ask for plain text, ANSI, or a PNG, so a
+              coding agent can look at what it is working in.
+            </p>
+            <div class="lp-code">
+              <pre><code><span class="tk-comment"># the whole window, twice the size</span>
+rozi capture-ui --render png --scale 2 --output ui.png
+<span class="tk-comment"># one pane, as text with its colors</span>
+rozi capture-pane --target 3 --render ansi
+<span class="tk-comment"># a pane in a session with no window open</span>
+rozi --session dev capture-pane --target 3 \
+    --render png --output pane.png</code></pre>
+            </div>
+            <p class="lp-lead lp-capture-note">
+              Captures are fast enough to record from. The clip is one: a
+              capture every frame, put together with the recording recipe.
+            </p>
+            <a class="lp-more" :href="withBase('/control#capturing-the-whole-ui')"
+              >Capturing the screen →</a
+            >
+            <a
+              class="lp-more lp-more-next"
+              :href="withBase('/recipes#record-a-pane-or-the-whole-ui-as-a-gif')"
+              >Recording recipe →</a
+            >
+          </div>
+          <figure class="lp-shot">
+            <video
+              ref="captureVideo"
+              :src="captureClip"
+              :poster="capturePoster"
+              :controls="captureStill"
+              width="1920"
+              height="1152"
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              aria-label="A rozi window with an editor and two shells. In one shell, rozi capture-ui saves a screenshot, and icat shows that screenshot inside the pane."
+            ></video>
+            <figcaption>
+              Every frame is a <code>rozi capture-ui</code> PNG, not a screen
+              recording.
+            </figcaption>
+          </figure>
         </div>
       </section>
 

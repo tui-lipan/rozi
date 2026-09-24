@@ -538,10 +538,12 @@ the UI endpoint has no such limit.
 
 ### Capturing the whole UI
 
-`capture-ui` captures what the UI is showing: the bar, pane borders and titles, overlays and
-toasts, and every visible pane, at the size of the terminal Rozi runs in. It takes the same
-`--render`, `--scale`, `--output`, and `--format` options as `capture-pane`, with the same PNG
-rules.
+![A rozi window captured with capture-ui: Neovim editing a Rust file, a shell showing the rozi logo with icat, and a shell that ran cargo run](assets/capture-ui.png)
+
+The image above is `rozi capture-ui --render png --scale 2`. `capture-ui` captures what the UI
+is showing: the bar, pane borders and titles, overlays and toasts, and every visible pane, at the
+size of the terminal Rozi runs in. It takes the same `--render`, `--scale`, `--output`, and
+`--format` options as `capture-pane`, with the same PNG rules.
 
 ```sh
 rozi capture-ui --render png --output ui.png

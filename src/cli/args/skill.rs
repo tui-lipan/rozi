@@ -2,6 +2,7 @@ use super::{ParsedCli, SkillCommand};
 
 pub(super) fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli, String> {
     let mut global = false;
+    let mut force = false;
     let mut command = None;
     for arg in args {
         match arg.as_str() {
@@ -11,6 +12,12 @@ pub(super) fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli
                     return Err("--global specified more than once".to_string());
                 }
                 global = true;
+            }
+            "--force" => {
+                if force {
+                    return Err("--force specified more than once".to_string());
+                }
+                force = true;
             }
             "install" | "uninstall" | "status" | "print" if command.is_none() => {
                 command = Some(arg.as_str());
@@ -25,20 +32,21 @@ pub(super) fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli
     }
     match command {
         None => {
-            if global {
-                return Err("--global requires a skill command".to_string());
+            if global || force {
+                return Err("--global and --force require a skill command".to_string());
             }
             Ok(ParsedCli::SkillHelp)
         }
         Some("print") => {
-            if global {
-                return Err("skill print does not accept --global".to_string());
+            if global || force {
+                return Err("skill print does not accept --global or --force".to_string());
             }
             Ok(ParsedCli::Skill(SkillCommand::Print))
         }
-        Some("install") => Ok(ParsedCli::Skill(SkillCommand::Install { global })),
-        Some("uninstall") => Ok(ParsedCli::Skill(SkillCommand::Uninstall { global })),
-        Some("status") => Ok(ParsedCli::Skill(SkillCommand::Status { global })),
+        Some("install") => Ok(ParsedCli::Skill(SkillCommand::Install { global, force })),
+        Some("uninstall") if !force => Ok(ParsedCli::Skill(SkillCommand::Uninstall { global })),
+        Some("status") if !force => Ok(ParsedCli::Skill(SkillCommand::Status { global })),
+        Some("uninstall" | "status") => Err("--force only applies to skill install".to_string()),
         Some(other) => Err(format!("unknown skill command `{other}`")),
     }
 }
@@ -71,7 +79,10 @@ mod tests {
         assert!(matches!(
             parse_cli_args(vec!["skill".into(), "install".into(), "--global".into()])
                 .expect("parses"),
-            ParsedCli::Skill(SkillCommand::Install { global: true })
+            ParsedCli::Skill(SkillCommand::Install {
+                global: true,
+                force: false
+            })
         ));
     }
 }

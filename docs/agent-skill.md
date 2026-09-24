@@ -50,8 +50,17 @@ Check the user installation:
 rozi skill status --global
 ```
 
-Run the matching install command again after upgrading Rozi. It replaces the managed skill with the
-copy embedded in the current binary.
+For managed Rozi installations, `rozi update` and `rozi update --rollback` refresh global and previously registered project
+skills when their contents still match what Rozi installed. It leaves locally edited skills alone
+and prints a warning. A project skill installed before this tracking was introduced cannot be
+identified safely unless you run the update from that project; then Rozi warns about it. Run
+`rozi skill install --force` there (or add `--global` for the user copy) to replace and register it.
+
+`rozi skill install` is safe to rerun: it refreshes an unchanged registered copy and refuses to
+replace a modified or untracked copy without `--force`. Rozi stores installation paths, the
+installed content hash, and the Rozi version in its state directory. If a skill refresh fails,
+the binary update still succeeds and prints a warning. Restart coding-agent sessions to load the
+refreshed instructions.
 
 Remove only the managed project or user installation:
 

@@ -1682,10 +1682,16 @@ mod tests {
         (message, response)
     }
 
-    fn capture_ui_reply(response: &mpsc::Receiver<ControlResponse>) -> UiCapture {
+    fn capture_ui_reply(
+        response: &mpsc::Receiver<ControlResponse>,
+        render: CaptureRender,
+    ) -> UiCapture {
+        // Windows may discover and load a system font on the PNG encoder thread while the
+        // parallel test suite is busy. Keep the bound, with room for that first render.
+        let timeout = if cfg!(windows) { 30 } else { 10 };
         let response = response
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("capture-ui should be answered");
+            .recv_timeout(std::time::Duration::from_secs(timeout))
+            .unwrap_or_else(|error| panic!("capture-ui {render:?} should be answered: {error}"));
         assert!(response.ok, "capture-ui failed: {:?}", response.error);
         serde_json::from_value(response.data.expect("capture-ui carries data")).unwrap()
     }
@@ -1706,7 +1712,7 @@ mod tests {
                 backend.enqueue(png_request);
                 backend.pump().unwrap();
 
-                let text = capture_ui_reply(&text_reply);
+                let text = capture_ui_reply(&text_reply, CaptureRender::Text);
                 assert_eq!((text.width, text.height), (drawn.width, drawn.height));
                 assert_eq!(
                     text.content,
@@ -1715,7 +1721,7 @@ mod tests {
                     }
                 );
 
-                let png = capture_ui_reply(&png_reply);
+                let png = capture_ui_reply(&png_reply, CaptureRender::Png);
                 let crate::control::CaptureContent::Png { png_base64 } = png.content else {
                     panic!("expected a png capture, got {:?}", png.content);
                 };

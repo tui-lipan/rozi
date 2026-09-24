@@ -142,6 +142,13 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                     styles.paint("up to date", OutputTone::Success)
                 );
             }
+            // This process still contains the old embedded skill. Ask the newly activated
+            // command for its document, then reconcile only recorded, unchanged installations.
+            report_skill_refresh(
+                installation.command_path(),
+                &result.version.to_string(),
+                styles,
+            );
         }
         UpdateCommand::Rollback => {
             let result = installation.rollback().map_err(|error| match error {
@@ -156,7 +163,73 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                 styles.paint("Rolled back", OutputTone::Success),
                 styles.paint(&format!("v{}", result.version), OutputTone::Accent)
             );
+            report_skill_refresh(
+                installation.command_path(),
+                &result.version.to_string(),
+                styles,
+            );
         }
+    }
+    Ok(())
+}
+
+fn report_skill_refresh(command_path: &std::path::Path, version: &str, styles: OutputStyles) {
+    if let Err(error) = refresh_skills(command_path, version) {
+        eprintln!(
+            "{}",
+            styles.paint(
+                &format!("Skill refresh warning: {error}"),
+                OutputTone::Warning
+            )
+        );
+    }
+}
+
+fn refresh_skills(command_path: &std::path::Path, version: &str) -> Result<(), String> {
+    let output = std::process::Command::new(command_path)
+        .args(["skill", "print"])
+        .output()
+        .map_err(|error| format!("could not run updated rozi: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "updated rozi skill print exited with {}",
+            output.status
+        ));
+    }
+    let skill = String::from_utf8(output.stdout)
+        .map_err(|error| format!("updated rozi emitted invalid UTF-8: {error}"))?;
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    let state_dir = crate::platform::paths::state_dir(&env);
+    let mut roots = Vec::new();
+    if let Ok(paths) = crate::skill::default_paths(true) {
+        roots.push(paths.scope_root);
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && !roots.contains(&cwd)
+    {
+        roots.push(cwd);
+    }
+    let report = crate::skill::refresh_managed(&state_dir, &skill, version, &roots)?;
+    for path in report.refreshed {
+        println!("Updated Rozi skill: {}", path.display());
+    }
+    for path in report.modified {
+        eprintln!(
+            "Skill refresh warning: {} was modified locally; left unchanged (use `rozi skill install --force` in that scope)",
+            path.display()
+        );
+    }
+    for path in report.untracked {
+        eprintln!(
+            "Skill refresh warning: {} predates skill tracking; left unchanged (use `rozi skill install --force` in that scope)",
+            path.display()
+        );
+    }
+    for (path, error) in report.failed {
+        eprintln!(
+            "Skill refresh warning: could not update {}: {error}",
+            path.display()
+        );
     }
     Ok(())
 }

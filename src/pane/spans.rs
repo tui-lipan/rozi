@@ -239,6 +239,7 @@ fn span_image(
         pixel_height: image.height,
         visible,
         png_base64,
+        id: None,
     })
 }
 

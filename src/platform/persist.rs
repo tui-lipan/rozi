@@ -34,6 +34,32 @@ pub fn replace_file(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     }
 }
 
+/// Create `path` for writing, readable and writable by its owner alone.
+///
+/// Refuses an existing path unless `overwrite`, and even then replaces only a regular file: a
+/// symlink or directory at `path` is refused, so a forced create cannot write through a link.
+/// On Unix the file is created mode `0600`. On Windows it inherits its directory's access control,
+/// as every file does.
+pub fn create_private_file(path: &Path, overwrite: bool) -> io::Result<fs::File> {
+    if overwrite && let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.file_type().is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "exists and is not a regular file",
+            ));
+        }
+        fs::remove_file(path)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
 fn follow_leaf_symlinks(path: &Path) -> io::Result<PathBuf> {
     let mut current = path.to_path_buf();
     for _ in 0..MAX_SYMLINK_FOLLOW {

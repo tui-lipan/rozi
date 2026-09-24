@@ -130,6 +130,19 @@ fn encode_png(
     scale: u8,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
     use base64::Engine as _;
+
+    let png = png_bytes(frame, palette, scale)
+        .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
+    let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
+    Ok(CaptureContent::Png { png_base64 })
+}
+
+/// `frame` as PNG bytes, drawn in `palette` the way `capture-pane --render png` draws it.
+pub(crate) fn png_bytes(
+    frame: &tui_lipan::CapturedFrame,
+    palette: TerminalColorPalette,
+    scale: u8,
+) -> tui_lipan::Result<Vec<u8>> {
     use tui_lipan::{PngOptions, PngTextRenderer};
 
     let (default_fg, default_bg) = png_default_colors(&palette);
@@ -141,11 +154,7 @@ fn encode_png(
         ansi_palette: palette.ansi,
         ..PngOptions::default()
     };
-    let png = frame
-        .to_png(&options)
-        .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
-    let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
-    Ok(CaptureContent::Png { png_base64 })
+    frame.to_png(&options)
 }
 
 use std::cell::RefCell;

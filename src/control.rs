@@ -1515,6 +1515,10 @@ pub struct SpanImage {
     /// transparent, so the PNG holds only what the capture shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub png_base64: Option<String>,
+    /// In a recording, the content id of the `image` event holding these pixels. Never set in a
+    /// capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 /// The whole client's frame, as `capture-ui` reports it.

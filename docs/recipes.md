@@ -378,11 +378,12 @@ record.py agent.gif 60 --fps 5 -- --session dev capture-pane --target 3 --render
 Everything after `--` is a capture command; the script adds `--output`. It needs Python 3.8 and
 ffmpeg.
 
-With a release build and a 120x36 UI running `btop -u 100`, `capture-ui` records at about 30
-frames a second, 20 at `--scale 2`, and `capture-pane` of the same pane through `--session` at
-about 40. `capture-ui` waits for the UI's next paint, so it is bounded by the UI's frame pacing as
-well as encoding. Images on screen are scaled into every frame: with two large ones showing, the
-whole UI records at about 20.
+Measured on one laptop with a release build and a 120x36 UI running `btop -u 100`, `capture-ui`
+records at 30-50 frames a second and 20-40 at `--scale 2`, the higher figures with the CPU in its
+performance profile. `capture-pane` of the same pane through `--session` measured 18-40.
+`capture-ui` waits for the UI's next paint, so it is bounded by the UI's frame pacing as well as
+encoding. Images on screen are scaled into every frame: with two large ones showing, the whole UI
+recorded at about 20 in the balanced profile.
 
 Frames are samples, not every paint: a change that comes and goes between two captures is not
 recorded. Use `--fps` to keep a long recording small.

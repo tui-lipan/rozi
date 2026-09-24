@@ -362,6 +362,9 @@ pub struct State {
     /// queued input. Matches [`crate::state::Attachment::pending_replay_inputs`] for the shared
     /// namespace, which it always flushes behind so a restored pane runs its own command first.
     pub pending_control_input: HashMap<(bool, PaneId, u64), Vec<u8>>,
+    /// Pane waits holding a control reply until a pane's screen shows some text or settles (see
+    /// [`crate::ops::capture_wait`]).
+    pub(crate) capture_waits: crate::ops::capture_wait::UiCaptureWaits,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::confirm::CONFIRM_WINDOW`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -574,6 +577,7 @@ impl State {
             next_agent_report_request_id: 1,
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
+            capture_waits: Default::default(),
             pending_destructive: None,
             confirm_epoch: 0,
             next_parked_seq: 0,

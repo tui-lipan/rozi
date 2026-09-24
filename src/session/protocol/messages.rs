@@ -270,6 +270,20 @@ pub enum ClientMessage {
     Pong {
         seq: u64,
     },
+    /// Pane input that also asks for [`ServerMessage::InputMarked`] with the same `token`.
+    ///
+    /// The server writes the bytes and queues the answer in one step, before it looks at the pane's
+    /// output again. Everything the pane forwarded before the answer was produced before this input
+    /// reached it, and everything after may be the input's own response - which is how a UI tells a
+    /// program's answer from what was already on screen. A separate mark frame could not say this:
+    /// the server may drain the answer to the input between reading the two.
+    MarkedInput {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        bytes: Vec<u8>,
+        token: u64,
+    },
     Rename {
         name: String,
     },
@@ -587,6 +601,10 @@ pub enum ServerMessage {
     },
     Ping {
         seq: u64,
+    },
+    /// Answer to [`ClientMessage::MarkedInput`].
+    InputMarked {
+        token: u64,
     },
     /// Reply to [`ClientMessage::ListDirectory`]. `error` is set instead of `entries` when the
     /// server could not read the directory; the client renders it in the tree row.

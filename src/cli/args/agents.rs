@@ -239,7 +239,10 @@ fn parse_prompt(
             }
             "--timeout" => {
                 let value = next_value(&mut iter, "--timeout requires a duration")?;
-                if timeout_ms.replace(parse_timeout(&value)?).is_some() {
+                if timeout_ms
+                    .replace(super::parse_duration_ms(&value, "--timeout")?)
+                    .is_some()
+                {
                     return Err("agents prompt --timeout specified more than once".into());
                 }
             }
@@ -312,7 +315,10 @@ fn parse_wait(
             }
             "--timeout" => {
                 let value = next_value(&mut iter, "--timeout requires a duration")?;
-                if timeout_ms.replace(parse_timeout(&value)?).is_some() {
+                if timeout_ms
+                    .replace(super::parse_duration_ms(&value, "--timeout")?)
+                    .is_some()
+                {
                     return Err("agents wait --timeout specified more than once".into());
                 }
             }
@@ -423,23 +429,6 @@ fn parse_condition(value: &str) -> std::result::Result<AgentWaitCondition, Strin
         "gone" => Ok(AgentWaitCondition::Gone),
         _ => Err(format!("unknown agent wait condition `{value}`")),
     }
-}
-
-fn parse_timeout(value: &str) -> std::result::Result<u64, String> {
-    let (number, multiplier) = if let Some(value) = value.strip_suffix("ms") {
-        (value, 1)
-    } else if let Some(value) = value.strip_suffix('s') {
-        (value, 1_000)
-    } else if let Some(value) = value.strip_suffix('m') {
-        (value, 60_000)
-    } else {
-        (value, 1_000)
-    };
-    number
-        .parse::<u64>()
-        .ok()
-        .and_then(|number| number.checked_mul(multiplier))
-        .ok_or_else(|| "--timeout requires a duration such as 30s, 500ms, or 2m".to_string())
 }
 
 fn next_value(

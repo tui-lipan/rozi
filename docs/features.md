@@ -65,6 +65,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Float, place, fullscreen, re-tile, move, swap, resize, or close panes by id.
 - Send keys or text, open panes, and switch workspaces.
 - Capture a pane as plain text, ANSI-colored text, or a PNG image, or capture the whole UI as drawn.
+- Send input and wait for the pane to answer, or capture once a pane shows some text or stops
+  changing, instead of sleeping between steps.
 - Drive a detached session with no client attached: list, capture, type, and open panes from a
   script or an SSH login that never starts a terminal.
 - Run hooks when pane, focus, workspace, session, or profile events occur.

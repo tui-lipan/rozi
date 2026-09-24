@@ -779,6 +779,24 @@ impl SessionClient {
             request,
         });
     }
+    /// Write pane input and have the server answer `token` in the same step, marking where the
+    /// pane's output stops being older than this input (see [`ClientMessage::MarkedInput`]).
+    pub fn send_marked_input(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        bytes: Vec<u8>,
+        token: u64,
+    ) {
+        self.send_control(ClientMessage::MarkedInput {
+            pane_id,
+            local,
+            generation,
+            bytes,
+            token,
+        });
+    }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {
         self.send_control(ClientMessage::Pong { seq });

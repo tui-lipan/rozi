@@ -127,7 +127,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
 /// `message-too-large` error here. Left alone, writing it would fail and drop the connection,
 /// and the caller would see a transport error instead of the reason. Measuring the serialized
 /// message rather than one field counts the envelope, the title, and whatever a reply gains later.
-fn session_control_reply(
+pub(super) fn session_control_reply(
     capabilities: Capabilities,
     effective_protocol: u32,
     response: ControlResponse,
@@ -288,6 +288,21 @@ impl SessionServer {
                 )]
             });
         }
+        if request.command.pane_wait().is_some() {
+            let response = if let Some(provenance) = &request.extension {
+                Some(ControlResponse::error(unverifiable_extension_provenance(
+                    provenance,
+                )))
+            } else {
+                self.register_capture_wait(client_id, request, capabilities.clone(), effective)
+            };
+            return response.map_or_else(Vec::new, |response| {
+                vec![(
+                    Target::Sender,
+                    session_control_reply(capabilities, effective, response),
+                )]
+            });
+        }
         let mut broadcasts = Vec::new();
         let response = self.run_session_control(request, &mut broadcasts);
         let mut messages = vec![(
@@ -407,14 +422,16 @@ impl SessionServer {
                 scrollback,
                 render,
                 scale,
+                wait: _,
             } => self.session_capture_pane(target, scrollback, render, scale),
-            ControlCommand::SendText { target, text } => {
+            ControlCommand::SendText { target, text, .. } => {
                 self.session_send_bytes(target, text.into_bytes())
             }
             ControlCommand::SendKeys {
                 target,
                 keys,
                 literal,
+                ..
             } => self.session_send_keys(target, &keys, literal),
             ControlCommand::NewPane {
                 command,
@@ -1038,7 +1055,7 @@ impl SessionServer {
     /// and anything else is an error naming the ids to choose from. Guessing would be worse than
     /// failing: typing into the wrong pane of a detached session is invisible until someone
     /// attaches and finds it.
-    fn session_target_pane(
+    pub(super) fn session_target_pane(
         &self,
         target: Option<PaneId>,
     ) -> std::result::Result<PaneId, ControlResponse> {
@@ -1112,33 +1129,45 @@ impl SessionServer {
             Ok(id) => id,
             Err(response) => return response,
         };
+        match self.session_write_input(id, bytes) {
+            Ok(()) => ControlResponse::empty(),
+            Err(response) => response,
+        }
+    }
+
+    /// Write `bytes` to pane `id`'s program, as a headless caller.
+    pub(super) fn session_write_input(
+        &mut self,
+        id: PaneId,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<(), ControlResponse> {
         // The input lock is the session saying nobody but its controller types right now — a
         // presenter's guard against the audience. A headless caller is not the controller and has
         // no screen to notice it, so it is refused rather than quietly allowed through.
         if self.input_locked {
-            return ControlResponse::error_with(
+            return Err(ControlResponse::error_with(
                 ControlErrorCode::InputLocked,
                 format!(
                     "session `{}` has input locked; unlock it from the attached client",
                     self.session_name
                 ),
-            );
+            ));
         }
         let Some(pane) = self.panes.get(&id) else {
-            return ControlResponse::error_with(
+            return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,
                 format!("pane {id} not found"),
-            );
+            ));
         };
         if pane.exited.is_some() || pane.pty.is_none() {
-            return ControlResponse::error_with(
+            return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotRunning,
                 format!("pane {id} PTY is not running"),
-            );
+            ));
         }
         let generation = pane.generation;
         self.handle_pane_input(None, id, generation, &bytes);
-        ControlResponse::empty()
+        Ok(())
     }
 
     fn session_send_keys(
@@ -1151,11 +1180,27 @@ impl SessionServer {
             Ok(id) => id,
             Err(response) => return response,
         };
+        match self
+            .session_key_bytes(id, keys, literal)
+            .and_then(|bytes| self.session_write_input(id, bytes))
+        {
+            Ok(()) => ControlResponse::empty(),
+            Err(response) => response,
+        }
+    }
+
+    /// Encode `keys` for pane `id`, all of them or none.
+    pub(super) fn session_key_bytes(
+        &self,
+        id: PaneId,
+        keys: &[String],
+        literal: bool,
+    ) -> std::result::Result<Vec<u8>, ControlResponse> {
         let Some(pane) = self.panes.get(&id) else {
-            return ControlResponse::error_with(
+            return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,
                 format!("pane {id} not found"),
-            );
+            ));
         };
         // The server's own parser holds the child's key modes, so `C-c` and the arrow keys encode
         // against what the program actually enabled rather than a default.
@@ -1172,16 +1217,16 @@ impl SessionServer {
                     let Some(encoded) =
                         crate::pane::pty_events::terminal_key_event_bytes(event, modes)
                     else {
-                        return ControlResponse::error(
+                        return Err(ControlResponse::error(
                             "key is not representable for session forwarding yet",
-                        );
+                        ));
                     };
                     bytes.extend(encoded);
                 }
-                Err(message) => return ControlResponse::error(message),
+                Err(message) => return Err(ControlResponse::error(message)),
             }
         }
-        self.session_send_bytes(Some(id), bytes)
+        Ok(bytes)
     }
 
     fn session_set_status(
@@ -2536,6 +2581,7 @@ mod tests {
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -2562,6 +2608,9 @@ mod tests {
             ControlCommand::SendText {
                 target: Some(3),
                 text: "rm -rf /\n".to_string(),
+                wait: None,
+                capture: None,
+                scale: None,
             },
         );
         assert!(!refused.ok);
@@ -2774,6 +2823,9 @@ mod tests {
                 command: ControlCommand::SendText {
                     target: None,
                     text: "cargo test\n".to_string(),
+                    wait: None,
+                    capture: None,
+                    scale: None,
                 },
                 source_pane: Some(3),
                 extension: None,
@@ -2801,6 +2853,9 @@ mod tests {
             ControlCommand::SendText {
                 target: Some(3),
                 text: "ok".to_string(),
+                wait: None,
+                capture: None,
+                scale: None,
             },
         );
         // Pane 3 has no PTY in this fixture, so this reaches the liveness check rather than the
@@ -2861,6 +2916,7 @@ mod tests {
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             },
         );
         assert!(captured.ok, "{:?}", captured.error);
@@ -2879,6 +2935,9 @@ mod tests {
             ControlCommand::SendText {
                 target: Some(1),
                 text: "rm -rf /\n".to_string(),
+                wait: None,
+                capture: None,
+                scale: None,
             },
         ] {
             let messages = server.handle_session_control(

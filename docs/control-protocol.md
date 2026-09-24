@@ -55,7 +55,8 @@ Limits:
 - Replies from rozi have no size cap. `capture-pane --scrollback full` can exceed 1 MiB.
 - The request line must arrive within three seconds.
 - A one-shot command, a stream authorization, or a stream-open acknowledgement may wait up to ten
-  seconds for the UI.
+  seconds for the UI. A request with a [pane wait](#pane-waits) may wait for its `timeout_ms` plus
+  ten seconds.
 
 ## Request envelope
 
@@ -96,6 +97,9 @@ Branch on `code`; the message may gain context or change wording. The error code
 `invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
 `agent-replaced`, `stale-reference`, `timeout`, and `request-failed`.
 
+An error normally has no `data`. A failed [pane wait](#pane-waits) is the exception: `timeout` and
+`pane-not-running` carry the pane's capture in `data` when the pane still exists.
+
 `request-failed` is the fallback for a failure with no narrower category. Older servers may omit
 `code`, so a client that supports version skew must also handle an error without it.
 
@@ -112,6 +116,7 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, or for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }` |
 | `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text` or `png_base64` fields as `capture-pane` |
+| `send-text`, `send-keys` with `capture` | The same capture as `capture-pane`, taken once the wait resolved. Absent without `capture`. |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
 
@@ -184,6 +189,7 @@ client and replays the pane from the server's screen instead.
 {"cmd":"capture-pane","scrollback":"full"}
 {"cmd":"capture-pane","scrollback":"last-output"}
 {"cmd":"capture-pane","target":3,"render":"png"}
+{"cmd":"capture-pane","target":3,"wait":{"text":"$ ","timeout_ms":5000}}
 {"cmd":"capture-ui","render":"png"}
 {"cmd":"capture-ui","render":"png","scale":2}
 ```
@@ -202,6 +208,8 @@ foreground program, reported status, and detected agent when available.
   grid only, and fail with `invalid-argument` when `scrollback` is set.
 - `scale` enlarges a PNG, from 1 to 3; it defaults to 1. It fails with `invalid-argument` when out
   of range or with any other `render`.
+- `wait` holds the reply until the visible screen shows some text or settles; see
+  [Pane waits](#pane-waits).
 
 `capture-ui` captures the whole UI as drawn and takes `render` and `scale` the same way. It answers
 from the next frame the UI paints, which the request forces. Requests that arrive before that paint
@@ -237,12 +245,47 @@ share it, and each distinct `render` among them is encoded once. Only a UI answe
 {"cmd":"send-text","target":3,"text":"cargo test\n"}
 {"cmd":"send-keys","target":3,"keys":["C-c","Enter"]}
 {"cmd":"send-keys","target":3,"keys":["C-c"],"literal":true}
+{"cmd":"send-keys","target":3,"keys":["cargo test","Enter"],
+ "wait":{"text":"test result:","timeout_ms":600000},"capture":"text"}
 ```
 
 `send-text.target` and `send-keys.target` are optional; rozi falls back to `source_pane`, then the
 focused pane. `keys` uses the names in
 [Control CLI](control.md#sending-keys-and-capturing-output). With `literal: true`, every entry is
 sent as literal text.
+
+`wait` holds the reply until the pane answers the input; see [Pane waits](#pane-waits). `capture`
+(`"text"`, `"ansi"`, or `"png"`) returns the screen once the wait resolves, and needs `wait`;
+`scale` works as for `capture-pane`. Both fail with `invalid-argument` otherwise.
+
+### Pane waits
+
+`capture-pane`, `send-text`, and `send-keys` accept a `wait` object. Without one, the reply is
+immediate.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `text` | string | Answer once this literal text appears within one visible row. Not empty, and no line breaks. |
+| `settle_ms` | integer | Answer once the visible screen has not changed for this many milliseconds. With `text`, counted from when the text appears. |
+| `timeout_ms` | integer | Required. Fail with `timeout` if the wait has not resolved this many milliseconds after the request arrived, from 1 to 3600000 (one hour). |
+
+`wait` needs `text`, `settle_ms`, or both, and `settle_ms` must be less than `timeout_ms`; anything
+else fails with `invalid-argument` before anything is sent or waited for.
+
+- `capture-pane` matches the screen as it is, so text already showing answers at once.
+- `send-text` and `send-keys` write their input first and match only output that arrives after it.
+  Text on screen when the input was written does not count, even once it has scrolled. `settle_ms`
+  counts from once the input has been confirmed and the screen right after it taken as the
+  baseline, which on a UI attached to a remote session can be measurably later than the write.
+- A changed screen means changed characters, colors, or styles. Cursor movement, title changes, and
+  redraws of identical content are not changes.
+- `timeout` and `pane-not-running` (the program exited, or the pane closed) carry the capture in
+  `data` when the pane still exists. It uses the request's `render` and `scale`, or `capture` for
+  a send, or text when a send asked for no capture.
+
+A binary advertises support with the `capture-wait` capability in
+[`rozi api describe`](control.md#check-the-installed-api). An older binary ignores `wait` and
+answers at once.
 
 ### Pane creation
 
@@ -325,12 +368,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":14,"min_protocol_version":14,
+{"type":"session-control","session":"dev","protocol_version":15,"min_protocol_version":15,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":14,
+{"type":"session-control-result","effective_protocol":15,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
@@ -342,6 +385,8 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 - Both frames may carry a `capabilities` object; a client may omit it.
 - A wrong session name or an incompatible version is answered with a session-protocol `error` frame
   carrying `session-mismatch` or `protocol-mismatch`, not with a control response.
+- A request with a pane wait holds the connection open until the wait resolves or times out. A
+  client should read with a timeout longer than `timeout_ms`.
 - A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
   large pane or a long `"full"` scrollback, is answered with `message-too-large` instead. The UI
   endpoint has no such limit.

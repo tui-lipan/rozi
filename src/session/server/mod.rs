@@ -24,6 +24,7 @@ use crate::state::PaneId;
 
 mod agent_summary;
 mod browse;
+mod capture_waits;
 mod connection;
 mod headless;
 pub use headless::session_control_unsupported;
@@ -150,6 +151,7 @@ pub struct SessionServer {
     allow_takeover: bool,
     clients: Vec<ClientConn>,
     agent_waits: HashMap<ClientId, waits::PendingAgentWait>,
+    capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
@@ -1355,6 +1357,7 @@ impl SessionServer {
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
             agent_waits: HashMap::new(),
+            capture_waits: HashMap::new(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
@@ -1464,6 +1467,7 @@ impl SessionServer {
         self.drain_worktree_results();
         self.poll_pane_runtime();
         self.expire_agent_waits();
+        self.resolve_capture_waits();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);
         if let Err(err) = self.drain_snapshot_results() {

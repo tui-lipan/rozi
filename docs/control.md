@@ -162,11 +162,11 @@ attached.
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
-| `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
-| `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
+| `send-text [--target <PANE_ID>] [WAIT] [--capture text\|ansi\|png] <TEXT>` | Send literal UTF-8 text. | yes |
+| `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
 | `capture-ui [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
@@ -178,7 +178,8 @@ attached.
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 
-`layout set` and the `pane` commands also accept `--format text|json`.
+`layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
+`[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
 
 In the `agents` rows, `TARGET` is `--target ID` (a pane id) or `--ref JSON` (an exact agent
 reference from `agents list`). `agents wait` and `agents prompt` run inside the session server, so
@@ -198,13 +199,14 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 5,
-  "session_protocol": 14,
+  "schema": 6,
+  "session_protocol": 15,
   "capabilities": [
     "agent-waits",
     "capture-render",
     "capture-scale",
     "capture-ui",
+    "capture-wait",
     "layout-control",
     "pane-control",
     "published-activity",
@@ -230,7 +232,7 @@ document is also written to stdout.
 | Exit status | Meaning |
 | --- | --- |
 | `0` | The command succeeded. |
-| `1` | The command was invalid or refused, the reply had `ok: false`, or a capture could not be written. |
+| `1` | The command was invalid or refused, the reply had `ok: false`, a [wait](#wait-for-output) timed out, or a capture could not be written. |
 | `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
 
 `pick` has its own statuses; see [Pickers](#pickers).
@@ -515,8 +517,9 @@ endpoint cannot `subscribe`, so a script driving a detached session reads `revis
 
 `send-keys` recognizes tmux-style names including `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
 `BSpace`, arrows, `Home`, `End`, `PgUp`, `PgDn`, and `F1` through `F12`. Unknown tokens are sent as
-literal text. `--literal` makes every token literal. `--` ends option parsing. Options, including
-`--target`, must come before the first key.
+literal text. `--literal` makes every token literal. `--` ends option parsing. `--target` must
+come before the first key; the [wait](#wait-for-output) and `--capture` options may come anywhere
+before `--`.
 
 ```sh
 rozi send-keys C-c
@@ -567,6 +570,51 @@ with default terminal colors. Text uses installed fonts, including CJK, color em
 symbols when a font on that machine has them. With `--session`, the session server renders the
 image with the fonts installed where it runs. A session reply must fit in 8 MiB, so a larger
 capture fails with `message-too-large`; the UI endpoint has no such limit.
+
+### Wait for output
+
+A send can wait for the program to answer, and a capture can wait for the screen to show something,
+so a script never has to guess how long to sleep:
+
+```sh
+rozi send-keys --target 3 'cargo test' Enter --wait-for 'test result:' --timeout 10m --capture text
+rozi capture-pane --target 3 --wait-for '$ ' --timeout 5s
+rozi capture-pane --target 3 --settle 500ms --timeout 30s --render png --output pane.png
+```
+
+| Option | Waits until |
+| --- | --- |
+| `--wait-for TEXT` | `TEXT` appears within one row of the visible screen. It is matched literally, including spaces at the end of a row. |
+| `--settle DURATION` | The visible screen has not changed for `DURATION`. |
+| `--timeout DURATION` | Required with either option, counted from when the request arrives. At most one hour. |
+
+Durations are written `500ms`, `30s`, or `2m`; a bare number is seconds. With both `--wait-for`
+and `--settle`, rozi waits for the text first, then for the screen to stay unchanged.
+
+The two commands wait differently:
+
+- `capture-pane` waits on the screen as it is. Text that is already showing answers at once, and
+  the settle period starts when the request arrives.
+- `send-text` and `send-keys` wait for the answer to their own input. Only output that arrives
+  after the input counts, so a prompt or a previous result already on screen does not satisfy
+  `--wait-for`, even after it scrolls up. The settle period starts once the session has confirmed
+  the input and rozi has taken the screen as it stood right after it, not when the request arrives.
+  Over a remote attachment that can be measurably later than the write itself.
+  `--capture text|ansi|png` returns the screen once the wait resolves, with `--scale`, `--output`,
+  and `--format` as for `capture-pane`. Without `--capture`, the reply only says the wait resolved.
+
+"Changed" means the characters, colors, or styles on screen changed. A program that redraws the same
+screen, moves only the cursor, or changes only its title counts as settled. A screen scrolled back
+into history still waits on the live screen.
+
+A wait that has not resolved by its timeout fails with `timeout`, even if the text shows up or the
+settle period ends a moment later. A pane that exits or closes first fails with
+`pane-not-running`; output it printed just before exiting still counts. Unless the pane is gone,
+the reply carries the capture as the screen stood at the end, which the CLI prints (or writes to
+`--output`) before exiting `1`.
+
+Waits work against a UI, a session, and a remote session. A remote wait keeps its SSH connection
+open until it resolves.
 
 ### Capturing the whole UI
 

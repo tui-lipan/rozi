@@ -81,6 +81,29 @@ borders, overlays, and every visible pane. See
 [Sending keys and capturing output](control.md#sending-keys-and-capturing-output) and
 [Capturing the whole UI](control.md#capturing-the-whole-ui).
 
+## Wait for a command's output
+
+Instead of sending a command, sleeping, and hoping it has answered, let the send wait for the
+answer and return the screen:
+
+```sh
+ROZI_CMD=${ROZI_BIN:-rozi}
+"$ROZI_CMD" send-keys --target 3 'cargo test' Enter \
+  --wait-for 'test result:' --timeout 10m --capture text
+```
+
+`--wait-for TEXT` answers once `TEXT` appears on the pane's screen, and `--settle 500ms` once the
+screen has stopped changing for that long; give either or both, always with `--timeout`. A send
+waits only for output that arrives after its input, so a prompt already on screen does not count.
+`capture-pane` takes the same options and waits on the screen as it is:
+
+```sh
+"$ROZI_CMD" capture-pane --target 3 --settle 500ms --timeout 30s
+```
+
+If the time runs out, the command prints what the screen showed and exits `1`. See
+[Wait for output](control.md#wait-for-output).
+
 ## Ask the user to pick something
 
 ```sh
@@ -132,7 +155,8 @@ attached to it. A cron job or an SSH login can inspect and drive a detached sess
 
 ```sh
 rozi --session dev list-panes
-rozi --session dev send-keys --target 3 'cargo test' Enter
+rozi --session dev send-keys --target 3 'cargo test' Enter \
+  --wait-for 'test result:' --timeout 10m
 rozi --session dev capture-pane --target 3 --scrollback full --format text
 ```
 

@@ -175,7 +175,27 @@ export default defineConfig({
     ],
   ],
 
-  markdown: { theme: { light: "night-owl", dark: "night-owl" } },
+  markdown: {
+    theme: { light: "night-owl", dark: "night-owl" },
+    // A long command synopsis in a table cell has to wrap, but only between
+    // words: a break after the hyphen of `[--format` reads as two flags. Each
+    // word becomes an unbreakable span; the spaces between them stay plain
+    // text, so copying the chip still gives the original string. A word too
+    // long for a narrow column, such as a path, keeps its break points.
+    config(md) {
+      md.renderer.rules.code_inline = (tokens, idx, _options, _env, self) => {
+        const token = tokens[idx];
+        const body = token.content
+          .split(" ")
+          .map((word) => {
+            const html = md.utils.escapeHtml(word);
+            return word.length > 0 && word.length <= 24 ? `<span class="cw">${html}</span>` : html;
+          })
+          .join(" ");
+        return `<code${self.renderAttrs(token)}>${body}</code>`;
+      };
+    },
+  },
 
   // `/` is served from `index.md`, so its <h1> would title the tab "rozi
   // documentation | rozi" even though the landing page renders a hero rather

@@ -1023,10 +1023,17 @@ body {
 
 /* Except in a table, where the cell is narrow enough that an unbreakable chip
    pushes the column wide and puts the whole table behind a horizontal scroll.
-   A split chip in a cell costs less than that. */
+   There a chip wraps between words only (see `.cw`, from config.ts), and each
+   line gets its own complete box instead of a box sliced at the edge. */
 .vp-doc :is(td, th) > code,
 .vp-doc :is(td, th) :not(pre) > code {
     white-space: normal;
+    line-height: 1.9;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+.vp-doc code .cw {
+    white-space: nowrap;
 }
 
 /* A link whose text is inline code - [`tui-lipan`](…) - is still a link.

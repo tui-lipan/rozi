@@ -772,9 +772,14 @@ pub(super) fn format_control_text(
             }
         }
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
-        control::ControlCommand::CapturePane { .. } | control::ControlCommand::CaptureUi { .. } => {
-            format_capture_text(data)
+        control::ControlCommand::CapturePane { .. }
+        | control::ControlCommand::CaptureUi { .. }
+        | control::ControlCommand::SendText {
+            capture: Some(_), ..
         }
+        | control::ControlCommand::SendKeys {
+            capture: Some(_), ..
+        } => format_capture_text(data),
         control::ControlCommand::NewPane { .. } => {
             let id = data.and_then(|value| value_u64(value, "id"));
             let ready = data
@@ -1005,6 +1010,7 @@ mod tests {
                     scrollback: None,
                     render: control::CaptureRender::Text,
                     scale: None,
+                    wait: None,
                 },
                 &capture,
                 OutputStyles::plain()

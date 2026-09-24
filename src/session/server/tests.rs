@@ -121,7 +121,7 @@ fn server_without_clients_keeps_the_existing_wait_and_resets_backoff() {
 }
 
 /// Register a client backed by a socketpair and return its id plus the client-side stream.
-fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
+pub(super) fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (client_stream, server_stream) = UnixStream::pair().unwrap();
     server_stream.set_nonblocking(true).unwrap();
     let id = server.next_client_id;
@@ -1579,7 +1579,7 @@ fn only_the_controller_can_reload_agent_definitions() {
     );
 }
 
-fn decode_outbox_controls(client: &ClientConn) -> Vec<ServerMessage> {
+pub(super) fn decode_outbox_controls(client: &ClientConn) -> Vec<ServerMessage> {
     client
         .outbox
         .iter()

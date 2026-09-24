@@ -630,6 +630,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::SessionControlDeclined { epoch } => session::control_declined(ctx, epoch),
         Msg::SessionPing { epoch, seq } => session::ping(ctx, epoch, seq),
+        Msg::SessionInputMarked { epoch: _, token } => {
+            crate::ops::capture_wait::input_marked(ctx, token)
+        }
+        Msg::CaptureWaitTick => crate::ops::capture_wait::tick(ctx),
         Msg::SessionRuntimeMetrics { epoch, metrics: _ } => {
             runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
         }

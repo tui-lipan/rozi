@@ -25,9 +25,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
 /// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
 /// names - gains a value, which is what version 2 did with the layout commands and
-/// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`, and
-/// version 5 with the captures' `scale`.
-pub const API_SCHEMA_VERSION: u32 = 5;
+/// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
+/// version 5 with the captures' `scale`, and version 6 with the pane waits: `wait` on
+/// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`.
+pub const API_SCHEMA_VERSION: u32 = 6;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -47,6 +48,9 @@ pub const CAPTURE_UI_CAPABILITY: &str = "capture-ui";
 /// `capture-pane` and `capture-ui` honor `scale` for a PNG. An older binary ignores the field and
 /// answers at scale 1.
 pub const CAPTURE_SCALE_CAPABILITY: &str = "capture-scale";
+/// `capture-pane`, `send-text`, and `send-keys` honor `wait`, holding the reply until the pane's
+/// screen shows some text or settles. An older binary ignores the field and answers at once.
+pub const CAPTURE_WAIT_CAPABILITY: &str = "capture-wait";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -71,6 +75,7 @@ impl ApiDescription {
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
                 CAPTURE_UI_CAPABILITY,
+                CAPTURE_WAIT_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
@@ -153,6 +158,115 @@ pub fn capture_scale(
             ControlErrorCode::InvalidArgument,
             format!("scale must be 1 to {MAX_CAPTURE_SCALE}, got {scale}"),
         )),
+    }
+}
+
+/// Longest `timeout_ms` a pane wait accepts: one hour.
+///
+/// A wait holds a connection and a registered waiter for its whole life, and a caller that means
+/// "forever" wants `agents wait` or a loop, not a capture nobody collects.
+pub const MAX_PANE_WAIT_MS: u64 = 60 * 60 * 1000;
+
+/// Hold a `capture-pane`, `send-text`, or `send-keys` reply until the pane's visible screen shows
+/// `text`, stops changing for `settle_ms`, or both, in that order.
+///
+/// Both conditions read the screen as it is drawn - its grid of cells - rather than the bytes the
+/// program wrote. A redraw that paints the same cells again, a cursor that only moves, and a title
+/// change are not changes, which is what "the screen settled" has to mean for a program that
+/// repaints on a timer.
+///
+/// `text` is a literal substring of one visible row, matched against the untrimmed row. For
+/// `capture-pane` it matches whatever is on screen, including text that was already there. For
+/// `send-text` and `send-keys` it matches only rows the input's answer produced: text on screen
+/// when the input was written does not count, even after it scrolls.
+///
+/// A wait that outlives `timeout_ms` fails with `timeout`; a pane whose program exits, or that
+/// closes, fails with `pane-not-running`. Both carry the pane's capture in `data` when the pane is
+/// still there to capture.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneWait {
+    /// Literal text to wait for on one visible row. Must be non-empty, with no line break.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// How long the visible screen must stay unchanged, in milliseconds. With `text`, the clock
+    /// starts once the text has appeared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_ms: Option<u64>,
+    /// Deadline for the whole wait, in milliseconds, at most [`MAX_PANE_WAIT_MS`].
+    pub timeout_ms: u64,
+}
+
+impl PaneWait {
+    /// Refuse a wait that cannot mean anything: no condition, an empty or multi-line `text`, a
+    /// timeout of zero or past the maximum, or a settle period that cannot fit inside it.
+    pub fn validate(&self) -> std::result::Result<(), ControlResponse> {
+        let refuse = |message: String| {
+            Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                message,
+            ))
+        };
+        if self.text.is_none() && self.settle_ms.is_none() {
+            return refuse("a wait needs text to wait for, a settle period, or both".to_string());
+        }
+        if let Some(text) = &self.text {
+            if text.is_empty() {
+                return refuse("wait text must not be empty".to_string());
+            }
+            if text.contains(['\n', '\r']) {
+                return refuse("wait text matches within one row; drop the line break".to_string());
+            }
+        }
+        if self.timeout_ms == 0 || self.timeout_ms > MAX_PANE_WAIT_MS {
+            return refuse(format!(
+                "wait timeout must be 1ms to {}m, got {}ms",
+                MAX_PANE_WAIT_MS / 60_000,
+                self.timeout_ms
+            ));
+        }
+        if let Some(settle) = self.settle_ms
+            && (settle == 0 || settle >= self.timeout_ms)
+        {
+            return refuse(format!(
+                "settle must be more than 0ms and less than the {}ms timeout, got {settle}ms",
+                self.timeout_ms
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ControlCommand {
+    /// The pane wait this command holds its reply for, if it holds it at all.
+    pub fn pane_wait(&self) -> Option<&PaneWait> {
+        match self {
+            Self::CapturePane { wait, .. }
+            | Self::SendText { wait, .. }
+            | Self::SendKeys { wait, .. } => wait.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+/// The capture a `send-text` or `send-keys` reply should carry, checked: `None` when none was
+/// asked for, refused when one was asked for without a wait to take it after.
+pub fn send_capture(
+    wait: Option<&PaneWait>,
+    capture: Option<CaptureRender>,
+    scale: Option<u8>,
+) -> std::result::Result<Option<(CaptureRender, u8)>, ControlResponse> {
+    match capture {
+        None if scale.is_some() => Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "scale applies to a capture; ask for one",
+        )),
+        None => Ok(None),
+        Some(_) if wait.is_none() => Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "capturing a send's answer needs a wait for it",
+        )),
+        Some(render) => Ok(Some((render, capture_scale(render, scale)?))),
     }
 }
 
@@ -261,11 +375,22 @@ pub enum ControlCommand {
     Focus {
         target: PaneId,
     },
+    /// Send literal text to a pane. `wait` holds the reply until the pane answers; see
+    /// [`PaneWait`].
     SendText {
         target: Option<PaneId>,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<PaneWait>,
+        /// Return the pane's screen in this render once `wait` resolves. Needs `wait`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<CaptureRender>,
+        /// Enlarges a `png` capture, from 1 (the default) to 3.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<u8>,
     },
-    /// Send named keys and/or literal text chunks to a pane (tmux-style key names).
+    /// Send named keys and/or literal text chunks to a pane (tmux-style key names). `wait`,
+    /// `capture`, and `scale` mean what they do for `send-text`.
     SendKeys {
         #[serde(default)]
         target: Option<PaneId>,
@@ -273,6 +398,12 @@ pub enum ControlCommand {
         /// When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).
         #[serde(default)]
         literal: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<PaneWait>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<CaptureRender>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<u8>,
     },
     NewPane {
         /// Shell command line interpreted by the configured command runner.
@@ -307,7 +438,8 @@ pub enum ControlCommand {
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
     /// `render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the
-    /// visible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.
+    /// visible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the
+    /// capture until the visible screen shows some text or stops changing; see [`PaneWait`].
     CapturePane {
         #[serde(default)]
         target: Option<PaneId>,
@@ -317,6 +449,8 @@ pub enum ControlCommand {
         render: CaptureRender,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scale: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<PaneWait>,
     },
     /// Capture the whole client as it is drawn: the bar, borders, overlays, and every visible
     /// pane. Answered from the next frame the UI paints, so it needs a UI; a session server
@@ -1871,6 +2005,19 @@ impl<R: io::Read> Iterator for ControlLines<R> {
     }
 }
 
+/// How long a UI control connection waits for the app to answer.
+///
+/// An ordinary request is answered on the app's next update, so ten seconds is a wedged UI. A pane
+/// wait is answered when its condition resolves or its own deadline passes, and the UI enforces
+/// that deadline itself, so the connection outlasts it by the same margin rather than cutting
+/// every wait off at ten seconds.
+fn control_reply_timeout(command: &ControlCommand) -> Duration {
+    const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+    command.pane_wait().map_or(REPLY_TIMEOUT, |wait| {
+        Duration::from_millis(wait.timeout_ms).saturating_add(REPLY_TIMEOUT)
+    })
+}
+
 fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
@@ -1956,16 +2103,15 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
         );
         return;
     }
+    let reply_timeout = control_reply_timeout(&request.command);
     let (tx, rx) = mpsc::channel();
     link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));
-    let response = rx
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap_or_else(|_| {
-            ControlResponse::error_with(
-                ControlErrorCode::RequestTimeout,
-                "control request timed out",
-            )
-        });
+    let response = rx.recv_timeout(reply_timeout).unwrap_or_else(|_| {
+        ControlResponse::error_with(
+            ControlErrorCode::RequestTimeout,
+            "control request timed out",
+        )
+    });
     write_control_response(&mut stream, &response);
 }
 
@@ -2238,6 +2384,129 @@ mod tests {
     }
 
     #[test]
+    fn a_request_without_a_wait_keeps_its_old_wire_shape() {
+        let unchanged = [
+            (
+                ControlCommand::CapturePane {
+                    target: Some(3),
+                    scrollback: None,
+                    render: CaptureRender::Text,
+                    scale: None,
+                    wait: None,
+                },
+                r#"{"cmd":"capture-pane","target":3,"scrollback":null,"render":"text"}"#,
+            ),
+            (
+                ControlCommand::SendText {
+                    target: Some(3),
+                    text: "ls\r".to_string(),
+                    wait: None,
+                    capture: None,
+                    scale: None,
+                },
+                r#"{"cmd":"send-text","target":3,"text":"ls\r"}"#,
+            ),
+            (
+                ControlCommand::SendKeys {
+                    target: None,
+                    keys: vec!["Enter".to_string()],
+                    literal: false,
+                    wait: None,
+                    capture: None,
+                    scale: None,
+                },
+                r#"{"cmd":"send-keys","target":null,"keys":["Enter"],"literal":false}"#,
+            ),
+        ];
+        for (command, wire) in unchanged {
+            assert_eq!(serde_json::to_string(&command).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_str::<ControlCommand>(wire).unwrap(),
+                command
+            );
+            assert!(command.pane_wait().is_none());
+        }
+
+        let waiting: ControlCommand = serde_json::from_str(
+            r#"{"cmd":"send-keys","keys":["Enter"],"wait":{"text":"$ ","timeout_ms":5000},"capture":"ansi"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            waiting.pane_wait(),
+            Some(&PaneWait {
+                text: Some("$ ".to_string()),
+                settle_ms: None,
+                timeout_ms: 5_000,
+            })
+        );
+        assert!(
+            serde_json::from_str::<ControlCommand>(r#"{"cmd":"capture-pane","wait":{"text":"x"}}"#)
+                .is_err(),
+            "a wait always carries its deadline"
+        );
+    }
+
+    #[test]
+    fn a_pane_wait_refuses_what_cannot_resolve() {
+        let wait = |text: Option<&str>, settle_ms, timeout_ms| PaneWait {
+            text: text.map(str::to_string),
+            settle_ms,
+            timeout_ms,
+        };
+        assert!(wait(Some("ok"), None, 1).validate().is_ok());
+        assert!(wait(None, Some(10), MAX_PANE_WAIT_MS).validate().is_ok());
+        for refused in [
+            wait(None, None, 1_000),
+            wait(Some(""), None, 1_000),
+            wait(Some("a\r"), None, 1_000),
+            wait(Some("ok"), None, 0),
+            wait(Some("ok"), None, MAX_PANE_WAIT_MS + 1),
+            wait(None, Some(0), 1_000),
+            wait(None, Some(1_000), 1_000),
+        ] {
+            let response = refused.validate().expect_err("refused");
+            assert_eq!(response.code, Some(ControlErrorCode::InvalidArgument));
+        }
+
+        let some_wait = wait(Some("ok"), None, 1_000);
+        assert_eq!(send_capture(None, None, None), Ok(None));
+        assert_eq!(
+            send_capture(Some(&some_wait), Some(CaptureRender::Png), Some(2)),
+            Ok(Some((CaptureRender::Png, 2)))
+        );
+        for (wait, capture, scale) in [
+            (None, Some(CaptureRender::Text), None),
+            (Some(&some_wait), None, Some(2)),
+            (Some(&some_wait), Some(CaptureRender::Text), Some(2)),
+        ] {
+            assert!(send_capture(wait, capture, scale).is_err());
+        }
+    }
+
+    #[test]
+    fn a_ui_wait_is_given_its_own_deadline_to_answer_in() {
+        let capture = |wait| ControlCommand::CapturePane {
+            target: None,
+            scrollback: None,
+            render: CaptureRender::Text,
+            scale: None,
+            wait,
+        };
+        assert_eq!(
+            control_reply_timeout(&capture(None)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            control_reply_timeout(&capture(Some(PaneWait {
+                text: Some("ok".to_string()),
+                settle_ms: None,
+                timeout_ms: 60_000,
+            }))),
+            Duration::from_secs(70)
+        );
+    }
+
+    #[test]
     fn capture_ui_replies_carry_the_frame_size_beside_the_capture() {
         let capture = UiCapture {
             width: 120,
@@ -2274,6 +2543,7 @@ mod tests {
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             },
             source_pane: None,
             extension: None,
@@ -2290,6 +2560,7 @@ mod tests {
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -2302,6 +2573,7 @@ mod tests {
                 scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)),
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -2314,6 +2586,7 @@ mod tests {
                 scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)),
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -2330,6 +2603,9 @@ mod tests {
                 target: None,
                 keys: vec!["C-c".into(), "Enter".into()],
                 literal: false,
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
     }

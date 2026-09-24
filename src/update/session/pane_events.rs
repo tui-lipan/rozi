@@ -168,6 +168,7 @@ pub(crate) fn output(
         return Update::none();
     };
     relay_output_clipboard(ctx, effects.clipboard_events);
+    crate::ops::capture_wait::pane_output(ctx, pane_id, local);
     if effects.bell_fired {
         emit_output_bell(ctx, pane_id, focused, effects.bell_alert_raised);
     }
@@ -339,6 +340,7 @@ pub(crate) fn exited(
     }
     pane.terminal.status = ManagedTerminalStatus::Exited(code);
     let already_closing = pane.closing;
+    crate::ops::capture_wait::pane_exited(ctx, pane_id, local);
     let should_close = local || !should_hold_on_exit(hold_on_exit, already_closing);
     crate::events::emit(
         &ctx.state,

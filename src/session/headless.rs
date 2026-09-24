@@ -112,7 +112,10 @@ fn reply_timeout(command: &crate::control::ControlCommand) -> Option<Duration> {
             timeout_ms,
             ..
         } => *timeout_ms,
-        _ => return Some(REQUEST_TIMEOUT),
+        command => match command.pane_wait() {
+            Some(wait) => Some(wait.timeout_ms),
+            None => return Some(REQUEST_TIMEOUT),
+        },
     };
     // `None` here, and on overflow, means "no read timeout": an unbounded wait, as asked for.
     deadline_ms.and_then(|ms| Duration::from_millis(ms).checked_add(WAIT_REPLY_SLACK))
@@ -210,6 +213,34 @@ mod tests {
             reply_timeout(&ControlCommand::ListPanes),
             Some(REQUEST_TIMEOUT)
         );
+
+        let pane_wait = Some(crate::control::PaneWait {
+            text: Some("done".to_string()),
+            settle_ms: None,
+            timeout_ms: 60_000,
+        });
+        for command in [
+            ControlCommand::CapturePane {
+                target: None,
+                scrollback: None,
+                render: crate::control::CaptureRender::Text,
+                scale: None,
+                wait: pane_wait.clone(),
+            },
+            ControlCommand::SendKeys {
+                target: None,
+                keys: vec!["Enter".to_string()],
+                literal: false,
+                wait: pane_wait.clone(),
+                capture: None,
+                scale: None,
+            },
+        ] {
+            assert_eq!(
+                reply_timeout(&command),
+                Some(Duration::from_secs(60) + WAIT_REPLY_SLACK)
+            );
+        }
     }
 
     #[test]

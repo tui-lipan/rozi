@@ -136,7 +136,10 @@ impl SessionServer {
                         self.set_close_after_flush(id);
                     }
                 }
-                if is_query && !self.agent_waits.contains_key(&id) {
+                if is_query
+                    && !self.agent_waits.contains_key(&id)
+                    && !self.capture_waits.contains_key(&id)
+                {
                     self.set_close_after_flush(id);
                 }
                 if detach {
@@ -654,6 +657,9 @@ impl SessionServer {
                 }
                 self.input_locked = locked;
                 vec![(Target::Broadcast, self.clients_changed())]
+            }
+            ClientMessage::MarkInput { token } => {
+                vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
             ClientMessage::Pong { seq: _ } => {
                 if let Some(client) = self.client_mut(client_id) {

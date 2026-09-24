@@ -9,7 +9,9 @@
 use std::time::{Duration, Instant};
 
 use rozi::config::ExtensionProvenance;
-use rozi::control::{CaptureRender, ControlCommand, ControlRequest, ControlResponse};
+use rozi::control::{
+    CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneWait,
+};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::headless::run_session_control;
 use rozi::session::protocol::ServerMessage;
@@ -64,6 +66,7 @@ fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> 
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                wait: None,
             },
         );
         let text = data["text"].as_str().unwrap_or_default().to_string();
@@ -121,6 +124,9 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
         ControlCommand::SendText {
             target: Some(pane),
             text: "printf 'headless-marker\\n'\n".to_string(),
+            wait: None,
+            capture: None,
+            scale: None,
         },
     );
     let text = capture_until(&session, pane, |text| text.contains("headless-marker"));
@@ -136,6 +142,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
             )),
             render: CaptureRender::Text,
             scale: None,
+            wait: None,
         },
     );
     assert!(
@@ -245,6 +252,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
                 scrollback: None,
                 render,
                 scale: None,
+                wait: None,
             },
         )
     };
@@ -273,6 +281,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
             )),
             render: CaptureRender::Png,
             scale: None,
+            wait: None,
         },
     );
     assert!(!refused.ok);
@@ -675,6 +684,9 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             command: ControlCommand::SendText {
                 target: None,
                 text: "this must not be typed anywhere\n".to_string(),
+                wait: None,
+                capture: None,
+                scale: None,
             },
             source_pane: Some(first),
             extension: None,
@@ -698,6 +710,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             )),
             render: CaptureRender::Text,
             scale: None,
+            wait: None,
         },
     )["text"]
         .as_str()
@@ -720,6 +733,9 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         ControlCommand::SendText {
             target: None,
             text: "x".to_string(),
+            wait: None,
+            capture: None,
+            scale: None,
         },
     );
     assert!(!empty.ok);
@@ -750,6 +766,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             scrollback: None,
             render: CaptureRender::Text,
             scale: None,
+            wait: None,
         },
     );
 
@@ -777,6 +794,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             scrollback: None,
             render: CaptureRender::Text,
             scale: None,
+            wait: None,
         },
     );
     assert!(!ambiguous.ok);
@@ -786,4 +804,141 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         error.contains(&first.to_string()) && error.contains(&second.to_string()),
         "the error must list the ids to choose from: {error}"
     );
+}
+
+fn pane_wait(text: Option<&str>, settle_ms: Option<u64>, timeout_ms: u64) -> Option<PaneWait> {
+    Some(PaneWait {
+        text: text.map(str::to_string),
+        settle_ms,
+        timeout_ms,
+    })
+}
+
+fn send_keys_waiting(pane: u32, keys: &[&str], wait: Option<PaneWait>) -> ControlCommand {
+    ControlCommand::SendKeys {
+        target: Some(pane),
+        keys: keys.iter().map(|key| key.to_string()).collect(),
+        literal: false,
+        wait,
+        capture: Some(CaptureRender::Text),
+        scale: None,
+    }
+}
+
+fn captured_text(response: &ControlResponse) -> String {
+    response
+        .data
+        .as_ref()
+        .and_then(|data| data["text"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The pattern the waits replace is send, sleep, capture - which reads the screen before a slow
+/// program has answered. A send that waits answers with the program's output instead, in one
+/// request, and only with output that came after its input.
+#[test]
+fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let spawned = expect_ok(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+        },
+    );
+    let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
+    let timeout_ms = u64::try_from(io_timeout().as_millis()).unwrap();
+
+    // The markers only exist once the shell has evaluated them: the echoed command line reads
+    // `$((40+2))`, never `42`.
+    expect_ok(
+        &session,
+        ControlCommand::SendText {
+            target: Some(pane),
+            text: "sleep 1; echo naive-$((40+2))\n".to_string(),
+            wait: None,
+            capture: None,
+            scale: None,
+        },
+    );
+    let naive = capture_until(&session, pane, |text| text.contains("naive-$((40+2))"));
+    assert!(
+        !naive.contains("naive-42"),
+        "a capture right after sending cannot have the delayed output yet:\n{naive}"
+    );
+
+    let waited = control(
+        &session,
+        send_keys_waiting(
+            pane,
+            &["sleep 0.5; echo waited-$((40+2))", "Enter"],
+            pane_wait(Some("waited-42"), None, timeout_ms),
+        ),
+    );
+    assert!(waited.ok, "{waited:?}");
+    assert!(captured_text(&waited).contains("waited-42"), "{waited:?}");
+
+    // What was already on screen does not satisfy a send's wait, so this one runs out its clock
+    // and says so, carrying the screen it gave up on.
+    let stale = control(
+        &session,
+        send_keys_waiting(
+            pane,
+            &["true", "Enter"],
+            pane_wait(Some("waited-42"), None, 700),
+        ),
+    );
+    assert_eq!(stale.code, Some(ControlErrorCode::Timeout), "{stale:?}");
+    assert!(captured_text(&stale).contains("waited-42"), "{stale:?}");
+
+    // A capture's wait takes the screen as it is, so the same text answers it at once.
+    let started = Instant::now();
+    let present = control(
+        &session,
+        ControlCommand::CapturePane {
+            target: Some(pane),
+            scrollback: None,
+            render: CaptureRender::Text,
+            scale: None,
+            wait: pane_wait(Some("waited-42"), None, timeout_ms),
+        },
+    );
+    assert!(present.ok, "{present:?}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+
+    let settled = control(
+        &session,
+        ControlCommand::CapturePane {
+            target: Some(pane),
+            scrollback: None,
+            render: CaptureRender::Text,
+            scale: None,
+            wait: pane_wait(None, Some(300), timeout_ms),
+        },
+    );
+    assert!(settled.ok, "{settled:?}");
+
+    // A program that exits ends the wait rather than leaving it to its deadline.
+    let started = Instant::now();
+    let exited = control(
+        &session,
+        send_keys_waiting(
+            pane,
+            &["exit", "Enter"],
+            pane_wait(Some("never-printed"), None, timeout_ms),
+        ),
+    );
+    assert_eq!(
+        exited.code,
+        Some(ControlErrorCode::PaneNotRunning),
+        "{exited:?}"
+    );
+    assert!(started.elapsed() < io_timeout());
 }

@@ -3,6 +3,7 @@
 //! [`TerminalPane`] here is the screen a client draws; [`state::pane`](crate::state::pane) holds the
 //! per-pane app state and `view/pane.rs` renders it.
 
+pub(crate) mod capture_wait;
 pub mod launch;
 pub mod lifecycle;
 pub mod pty_events;
@@ -28,13 +29,7 @@ pub(crate) fn capture_screen(
     render: CaptureRender,
     scale: Option<u8>,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
-    let scale = crate::control::capture_scale(render, scale)?;
-    if render != CaptureRender::Text && scrollback.is_some() {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::InvalidArgument,
-            "ansi and png captures cover the visible screen only, not scrollback",
-        ));
-    }
+    let scale = check_capture(scrollback.as_ref(), render, scale)?;
     match render {
         CaptureRender::Text => {}
         CaptureRender::Ansi => {
@@ -60,6 +55,23 @@ pub(crate) fn capture_screen(
         }
     };
     Ok(CaptureContent::Text { text })
+}
+
+/// Refuse a capture [`capture_screen`] could not take, before anything waits to take it. `Ok` is the
+/// checked PNG scale.
+pub(crate) fn check_capture(
+    scrollback: Option<&CaptureScrollback>,
+    render: CaptureRender,
+    scale: Option<u8>,
+) -> std::result::Result<u8, ControlResponse> {
+    let scale = crate::control::capture_scale(render, scale)?;
+    if render != CaptureRender::Text && scrollback.is_some() {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "ansi and png captures cover the visible screen only, not scrollback",
+        ));
+    }
+    Ok(scale)
 }
 
 fn capture_png(

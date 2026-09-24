@@ -620,6 +620,14 @@ pub enum Msg {
         epoch: u64,
         seq: u64,
     },
+    /// The server's answer to a mark sent behind a control send's input (see
+    /// [`crate::ops::capture_wait`]).
+    SessionInputMarked {
+        epoch: u64,
+        token: u64,
+    },
+    /// Look again at every pending pane wait.
+    CaptureWaitTick,
     SessionRuntimeMetrics {
         epoch: u64,
         metrics: crate::runtime_metrics::ServerRuntimeMetrics,

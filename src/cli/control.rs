@@ -439,7 +439,15 @@ enum RawCapture {
 fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
     let render = match command.request.command {
         control::ControlCommand::CapturePane { render, .. }
-        | control::ControlCommand::CaptureUi { render, .. } => render,
+        | control::ControlCommand::CaptureUi { render, .. }
+        | control::ControlCommand::SendText {
+            capture: Some(render),
+            ..
+        }
+        | control::ControlCommand::SendKeys {
+            capture: Some(render),
+            ..
+        } => render,
         _ => return None,
     };
     if let Some(path) = &command.output {
@@ -516,9 +524,17 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             ask_remote_endpoint(&target, &session, command.request.clone())?
         }
     };
+    // A wait that failed still answers with what the pane showed at the end, which is the first
+    // thing anyone debugging it wants; it is delivered where a capture would go, then the failure.
+    let failed_wait_capture = command.request.command.pane_wait().is_some()
+        && value.get("ok").and_then(|ok| ok.as_bool()) == Some(false)
+        && value.get("data").is_some_and(|data| !data.is_null());
     if let Some(destination) = raw_capture {
-        exit_on_failure(&value);
+        if !failed_wait_capture {
+            exit_on_failure(&value);
+        }
         write_raw_capture(destination, &value);
+        exit_on_failure(&value);
         return Ok(());
     }
     let line = serde_json::to_string(&value).unwrap_or_default();
@@ -529,6 +545,11 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     };
     if !human_output {
         println!("{line}");
+    } else if failed_wait_capture {
+        print!(
+            "{}",
+            crate::cli::output::format_capture_text(value.get("data"))
+        );
     }
     exit_on_failure(&value);
     if human_output {
@@ -566,6 +587,7 @@ mod tests {
                 scrollback: None,
                 render,
                 scale: None,
+                wait: None,
             }),
             output_format,
             output: output.map(PathBuf::from),

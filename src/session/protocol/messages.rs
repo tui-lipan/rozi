@@ -270,6 +270,16 @@ pub enum ClientMessage {
     Pong {
         seq: u64,
     },
+    /// Ask for [`ServerMessage::InputMarked`] with the same `token`.
+    ///
+    /// The server handles a connection's frames in order and writes pane input as it reads it, so
+    /// the answer means every input frame sent before this one has reached its pane. It travels the
+    /// same queue as pane output, so a client holding it has also received all output that was
+    /// forwarded before then - which is how a UI tells a program's answer from what was already
+    /// on screen.
+    MarkInput {
+        token: u64,
+    },
     Rename {
         name: String,
     },
@@ -587,6 +597,10 @@ pub enum ServerMessage {
     },
     Ping {
         seq: u64,
+    },
+    /// Answer to [`ClientMessage::MarkInput`].
+    InputMarked {
+        token: u64,
     },
     /// Reply to [`ClientMessage::ListDirectory`]. `error` is set instead of `entries` when the
     /// server could not read the directory; the client renders it in the tree row.

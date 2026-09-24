@@ -550,7 +550,18 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "send-text" => {
                 let mut target = None;
                 let mut text = None;
+                let mut wait = PaneWaitArgs::default();
+                let mut reply = SendReplyArgs::default();
                 while let Some(next) = iter.next() {
+                    if text.is_none() && next == "--" {
+                        text = iter.next();
+                        continue;
+                    }
+                    if wait.take(&next, &mut iter, "send-text")?
+                        || reply.take(&next, &mut iter, "send-text")?
+                    {
+                        continue;
+                    }
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
                         _ if text.is_none() => text = Some(next),
@@ -560,12 +571,20 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 let text = text.ok_or_else(|| "send-text requires literal text".to_string())?;
-                let command = control::ControlCommand::SendText { target, text };
+                let wait = wait.finish()?;
+                reply.check(wait.as_ref())?;
+                let command = control::ControlCommand::SendText {
+                    target,
+                    text,
+                    wait,
+                    capture: reply.capture,
+                    scale: reply.scale,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
-                    output_format: None,
-                    output: None,
+                    output_format: reply.output_format,
+                    output: reply.output,
                 }));
             }
             "send-keys" => {
@@ -573,6 +592,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut target = None;
                 let mut keys = Vec::new();
                 let mut passthrough = false;
+                let mut wait = PaneWaitArgs::default();
+                let mut reply = SendReplyArgs::default();
                 while let Some(arg) = iter.next() {
                     if !passthrough {
                         if arg == "--" {
@@ -587,6 +608,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             target = Some(parse_target(&mut iter)?);
                             continue;
                         }
+                        if wait.take(&arg, &mut iter, "send-keys")?
+                            || reply.take(&arg, &mut iter, "send-keys")?
+                        {
+                            continue;
+                        }
                         if arg.starts_with('-') && keys.is_empty() && arg != "-" {
                             return Err(format!("unexpected send-keys flag `{arg}`"));
                         }
@@ -596,16 +622,21 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if keys.is_empty() {
                     return Err("send-keys requires at least one key or text argument".to_string());
                 }
+                let wait = wait.finish()?;
+                reply.check(wait.as_ref())?;
                 let command = control::ControlCommand::SendKeys {
                     target,
                     keys,
                     literal,
+                    wait,
+                    capture: reply.capture,
+                    scale: reply.scale,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
-                    output_format: None,
-                    output: None,
+                    output_format: reply.output_format,
+                    output: reply.output,
                 }));
             }
             "notify" => {
@@ -878,7 +909,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut render = control::CaptureRender::Text;
                 let mut output = None;
                 let mut scale = None;
+                let mut wait = PaneWaitArgs::default();
                 while let Some(next) = iter.next() {
+                    if wait.take(&next, &mut iter, "capture-pane")? {
+                        continue;
+                    }
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
                         "--scale" => scale = Some(parse_capture_scale(&mut iter)?),
@@ -927,11 +962,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     );
                 }
                 require_png_for_scale(render, scale)?;
+                let wait = wait.finish()?;
                 let command = control::ControlCommand::CapturePane {
                     target,
                     scrollback,
                     render,
                     scale,
+                    wait,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -1089,6 +1126,163 @@ fn require_png_for_scale(render: control::CaptureRender, scale: Option<u8>) -> R
         return Err("--scale applies to --render png".to_string());
     }
     Ok(())
+}
+
+/// A duration such as `500ms`, `30s`, or `2m`, in milliseconds. A bare number is seconds.
+pub(super) fn parse_duration_ms(value: &str, flag: &str) -> Result<u64, String> {
+    let (number, multiplier) = if let Some(value) = value.strip_suffix("ms") {
+        (value, 1)
+    } else if let Some(value) = value.strip_suffix('s') {
+        (value, 1_000)
+    } else if let Some(value) = value.strip_suffix('m') {
+        (value, 60_000)
+    } else {
+        (value, 1_000)
+    };
+    number
+        .parse::<u64>()
+        .ok()
+        .and_then(|number| number.checked_mul(multiplier))
+        .ok_or_else(|| format!("{flag} requires a duration such as 30s, 500ms, or 2m"))
+}
+
+/// `--wait-for`, `--settle`, and `--timeout`, which `capture-pane`, `send-text`, and `send-keys`
+/// read the same way.
+#[derive(Default)]
+struct PaneWaitArgs {
+    text: Option<String>,
+    settle_ms: Option<u64>,
+    timeout_ms: Option<u64>,
+}
+
+impl PaneWaitArgs {
+    /// Read `flag` and its value if it is one of the wait flags; `Ok(false)` leaves it alone.
+    fn take(
+        &mut self,
+        flag: &str,
+        iter: &mut impl Iterator<Item = String>,
+        command: &str,
+    ) -> Result<bool, String> {
+        let repeated = |flag: &str| format!("{command} {flag} specified more than once");
+        match flag {
+            // The text is taken as given, even when it starts with a dash: `--- PASS` is a
+            // perfectly good thing to wait for.
+            "--wait-for" => {
+                let text = iter
+                    .next()
+                    .ok_or_else(|| "--wait-for requires the text to wait for".to_string())?;
+                if self.text.replace(text).is_some() {
+                    return Err(repeated(flag));
+                }
+            }
+            "--settle" => {
+                let value = require_value(iter, "--settle requires a duration such as 300ms")?;
+                if self
+                    .settle_ms
+                    .replace(parse_duration_ms(&value, flag)?)
+                    .is_some()
+                {
+                    return Err(repeated(flag));
+                }
+            }
+            "--timeout" => {
+                let value = require_value(iter, "--timeout requires a duration such as 30s")?;
+                if self
+                    .timeout_ms
+                    .replace(parse_duration_ms(&value, flag)?)
+                    .is_some()
+                {
+                    return Err(repeated(flag));
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    fn finish(self) -> Result<Option<control::PaneWait>, String> {
+        let waits = self.text.is_some() || self.settle_ms.is_some();
+        let timeout_ms = match (waits, self.timeout_ms) {
+            (false, None) => return Ok(None),
+            (false, Some(_)) => return Err("--timeout needs --wait-for or --settle".to_string()),
+            (true, None) => {
+                return Err("--wait-for and --settle need a --timeout".to_string());
+            }
+            (true, Some(timeout_ms)) => timeout_ms,
+        };
+        let wait = control::PaneWait {
+            text: self.text,
+            settle_ms: self.settle_ms,
+            timeout_ms,
+        };
+        wait.validate()
+            .map_err(|response| response.error.unwrap_or_default())?;
+        Ok(Some(wait))
+    }
+}
+
+/// `--capture`, `--scale`, `--output`, and `--format` on a send: how its reply carries the pane's
+/// screen once a wait resolves.
+#[derive(Default)]
+struct SendReplyArgs {
+    capture: Option<control::CaptureRender>,
+    scale: Option<u8>,
+    output: Option<PathBuf>,
+    output_format: Option<ListFormat>,
+}
+
+impl SendReplyArgs {
+    fn take(
+        &mut self,
+        flag: &str,
+        iter: &mut impl Iterator<Item = String>,
+        command: &str,
+    ) -> Result<bool, String> {
+        let repeated = |flag: &str| format!("{command} {flag} specified more than once");
+        match flag {
+            "--capture" => {
+                let value = require_value(iter, "--capture requires text, ansi, or png")?;
+                let render = control::CaptureRender::parse_cli(&value)
+                    .map_err(|_| format!("--capture must be text, ansi, or png, got `{value}`"))?;
+                if self.capture.replace(render).is_some() {
+                    return Err(repeated(flag));
+                }
+            }
+            "--scale" => self.scale = Some(parse_capture_scale(iter)?),
+            "--output" => {
+                let value = require_value(iter, "--output requires a file path")?;
+                self.output = Some(PathBuf::from(value));
+            }
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                if self
+                    .output_format
+                    .replace(parse_list_format(&value, command)?)
+                    .is_some()
+                {
+                    return Err(repeated(flag));
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    fn check(&self, wait: Option<&control::PaneWait>) -> Result<(), String> {
+        match self.capture {
+            None if self.scale.is_some() || self.output.is_some() => {
+                Err("--scale and --output apply to --capture".to_string())
+            }
+            Some(_) if wait.is_none() => {
+                Err("--capture needs --wait-for or --settle to capture after".to_string())
+            }
+            Some(_) if self.output.is_some() && self.output_format.is_some() => {
+                Err("--output writes the capture itself; drop --format".to_string())
+            }
+            Some(render) => require_png_for_scale(render, self.scale),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
@@ -1643,6 +1837,7 @@ mod tests {
                 scrollback: None,
                 render: control::CaptureRender::Png,
                 scale: None,
+                wait: None,
             }
         );
         assert_eq!(capture.output, Some(PathBuf::from("pane.png")));
@@ -1690,6 +1885,7 @@ mod tests {
                 scrollback: None,
                 render: control::CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
     }
@@ -1821,6 +2017,112 @@ mod tests {
     }
 
     #[test]
+    fn pane_waits_parse_on_captures_and_sends() {
+        let args = |argv: &[&str]| {
+            parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+        };
+        let wait = |text: Option<&str>, settle_ms, timeout_ms| {
+            Some(control::PaneWait {
+                text: text.map(str::to_string),
+                settle_ms,
+                timeout_ms,
+            })
+        };
+
+        let Ok(ParsedCli::Control(capture)) = args(&[
+            "capture-pane",
+            "--wait-for",
+            "--- PASS",
+            "--settle",
+            "300ms",
+            "--timeout",
+            "2m",
+        ]) else {
+            panic!("capture-pane waits should parse");
+        };
+        assert!(matches!(
+            capture.request.command,
+            control::ControlCommand::CapturePane { wait: w, .. }
+                if w == wait(Some("--- PASS"), Some(300), 120_000)
+        ));
+
+        // The wait flags may follow the keys, as they read in a script; after `--` they are keys.
+        let Ok(ParsedCli::Control(keys)) = args(&[
+            "send-keys",
+            "--target",
+            "3",
+            "cargo test",
+            "Enter",
+            "--wait-for",
+            "test result",
+            "--timeout",
+            "30",
+            "--capture",
+            "text",
+        ]) else {
+            panic!("send-keys waits should parse");
+        };
+        assert_eq!(
+            keys.request.command,
+            control::ControlCommand::SendKeys {
+                target: Some(3),
+                keys: vec!["cargo test".to_string(), "Enter".to_string()],
+                literal: false,
+                wait: wait(Some("test result"), None, 30_000),
+                capture: Some(control::CaptureRender::Text),
+                scale: None,
+            }
+        );
+        let Ok(ParsedCli::Control(literal)) = args(&["send-keys", "echo", "--", "--timeout", "5s"])
+        else {
+            panic!("keys after -- are keys");
+        };
+        assert!(matches!(
+            literal.request.command,
+            control::ControlCommand::SendKeys { ref keys, wait: None, .. }
+                if keys == &["echo", "--timeout", "5s"]
+        ));
+
+        let Ok(ParsedCli::Control(text)) = args(&[
+            "send-text",
+            "--settle",
+            "1s",
+            "--timeout",
+            "10s",
+            "--",
+            "--dash",
+        ]) else {
+            panic!("send-text waits should parse");
+        };
+        assert!(matches!(
+            text.request.command,
+            control::ControlCommand::SendText { ref text, wait: ref w, .. }
+                if text == "--dash" && *w == wait(None, Some(1_000), 10_000)
+        ));
+
+        for (argv, expected) in [
+            (&["capture-pane", "--wait-for", "x"][..], "need a --timeout"),
+            (
+                &["capture-pane", "--timeout", "5s"],
+                "needs --wait-for or --settle",
+            ),
+            (
+                &["capture-pane", "--wait-for", "x", "--timeout", "61m"],
+                "timeout must be",
+            ),
+            (
+                &["capture-pane", "--settle", "5s", "--timeout", "5s"],
+                "less than",
+            ),
+            (&["send-text", "hi", "--capture", "text"], "--capture needs"),
+            (&["send-keys", "Enter", "--timeout", "soon"], "duration"),
+        ] {
+            let error = args(argv).expect_err("refused");
+            assert!(error.contains(expected), "{argv:?}: {error}");
+        }
+    }
+
+    #[test]
     fn capture_scale_parses_for_png_captures_only() {
         let args = |argv: &[&str]| {
             parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
@@ -1929,6 +2231,7 @@ mod tests {
                 scrollback: None,
                 render: control::CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -1945,6 +2248,7 @@ mod tests {
                 scrollback: None,
                 render: control::CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -1965,6 +2269,7 @@ mod tests {
                 )),
                 render: control::CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -1982,6 +2287,7 @@ mod tests {
                 )),
                 render: control::CaptureRender::Text,
                 scale: None,
+                wait: None,
             }
         );
 
@@ -1996,6 +2302,9 @@ mod tests {
                 target: None,
                 keys: vec!["C-c".into(), "Enter".into()],
                 literal: false,
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
 
@@ -2015,6 +2324,9 @@ mod tests {
             control::ControlCommand::SendText {
                 target: Some(3),
                 text: "ls".into(),
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
 
@@ -2033,6 +2345,9 @@ mod tests {
                 target: Some(3),
                 keys: vec!["Enter".into()],
                 literal: false,
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
 
@@ -2050,6 +2365,9 @@ mod tests {
                 target: None,
                 keys: vec!["Enter".into(), "--target".into()],
                 literal: false,
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
         // A script that spawns into the workspace someone is working in re-tiles their layout on
@@ -2096,6 +2414,9 @@ mod tests {
             control::ControlCommand::SendText {
                 target: Some(3),
                 text: "hi".into(),
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
         assert!(
@@ -2118,6 +2439,9 @@ mod tests {
                 target: None,
                 keys: vec!["-n".into(), "hello".into()],
                 literal: false,
+                wait: None,
+                capture: None,
+                scale: None,
             }
         );
 

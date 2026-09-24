@@ -779,6 +779,10 @@ impl SessionClient {
             request,
         });
     }
+    /// Ask the server to answer `token` once the input sent before it has reached its pane.
+    pub fn mark_input(&self, token: u64) {
+        self.send_control(ClientMessage::MarkInput { token });
+    }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {
         self.send_control(ClientMessage::Pong { seq });

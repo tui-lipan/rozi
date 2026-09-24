@@ -222,11 +222,11 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(
-                "send-text [--target <PANE_ID>] <TEXT>",
+                "send-text [--target <PANE_ID>] [WAIT] <TEXT>",
                 "Send literal text to a pane",
             ),
             row(
-                "send-keys [--target <PANE_ID>] [-l|--literal] [--] <KEY|TEXT>...",
+                "send-keys [--target <ID>] [-l|--literal] [WAIT] [--] <KEY|TEXT>...",
                 "Send tmux-style key names, text, or both",
             ),
             row(
@@ -234,9 +234,15 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Spawn a pane, optionally in another workspace",
             ),
             row(
-                "capture-pane [OPTIONS]",
+                "capture-pane [OPTIONS] [WAIT]",
                 "Capture a pane as text, ANSI, or PNG",
             ),
+            row(
+                "WAIT: [--wait-for <TEXT>] [--settle <DUR>] --timeout <DUR>",
+                "Answer when TEXT appears, the screen stops",
+            ),
+            row("", "changing for DUR, or both. A send matches"),
+            row("", "new output only; --capture <RENDER> adds it"),
             row("capture-ui [OPTIONS]", "Capture the whole UI as drawn"),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(

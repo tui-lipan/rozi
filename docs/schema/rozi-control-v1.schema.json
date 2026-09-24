@@ -947,10 +947,32 @@
           "type": "object"
         },
         {
+          "description": "Send literal text to a pane. `wait` holds the reply until the pane answers; see\n[`PaneWait`].",
           "properties": {
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return the pane's screen in this render once `wait` resolves. Needs `wait`."
+            },
             "cmd": {
               "const": "send-text",
               "type": "string"
+            },
+            "scale": {
+              "description": "Enlarges a `png` capture, from 1 (the default) to 3.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "target": {
               "format": "uint32",
@@ -962,6 +984,16 @@
             },
             "text": {
               "type": "string"
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -971,8 +1003,18 @@
           "type": "object"
         },
         {
-          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names).",
+          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names). `wait`,\n`capture`, and `scale` mean what they do for `send-text`.",
           "properties": {
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "cmd": {
               "const": "send-keys",
               "type": "string"
@@ -988,6 +1030,15 @@
               "description": "When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).",
               "type": "boolean"
             },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "target": {
               "default": null,
               "format": "uint32",
@@ -995,6 +1046,16 @@
               "type": [
                 "integer",
                 "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -1081,7 +1142,7 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the\ncapture until the visible screen shows some text or stops changing; see [`PaneWait`].",
           "properties": {
             "cmd": {
               "const": "capture-pane",
@@ -1118,6 +1179,16 @@
               "type": [
                 "integer",
                 "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -1961,10 +2032,32 @@
           "type": "object"
         },
         {
+          "description": "Send literal text to a pane. `wait` holds the reply until the pane answers; see\n[`PaneWait`].",
           "properties": {
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return the pane's screen in this render once `wait` resolves. Needs `wait`."
+            },
             "cmd": {
               "const": "send-text",
               "type": "string"
+            },
+            "scale": {
+              "description": "Enlarges a `png` capture, from 1 (the default) to 3.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "target": {
               "format": "uint32",
@@ -1976,6 +2069,16 @@
             },
             "text": {
               "type": "string"
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -1985,8 +2088,18 @@
           "type": "object"
         },
         {
-          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names).",
+          "description": "Send named keys and/or literal text chunks to a pane (tmux-style key names). `wait`,\n`capture`, and `scale` mean what they do for `send-text`.",
           "properties": {
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "cmd": {
               "const": "send-keys",
               "type": "string"
@@ -2002,6 +2115,15 @@
               "description": "When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).",
               "type": "boolean"
             },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "target": {
               "default": null,
               "format": "uint32",
@@ -2009,6 +2131,16 @@
               "type": [
                 "integer",
                 "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -2095,7 +2227,7 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the\ncapture until the visible screen shows some text or stops changing; see [`PaneWait`].",
           "properties": {
             "cmd": {
               "const": "capture-pane",
@@ -2132,6 +2264,16 @@
               "type": [
                 "integer",
                 "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
               ]
             }
           },
@@ -3248,6 +3390,37 @@
       ],
       "type": "object"
     },
+    "PaneWait": {
+      "description": "Hold a `capture-pane`, `send-text`, or `send-keys` reply until the pane's visible screen shows\n`text`, stops changing for `settle_ms`, or both, in that order.\n\nBoth conditions read the screen as it is drawn - its grid of cells - rather than the bytes the\nprogram wrote. A redraw that paints the same cells again, a cursor that only moves, and a title\nchange are not changes, which is what \"the screen settled\" has to mean for a program that\nrepaints on a timer.\n\n`text` is a literal substring of one visible row, matched against the untrimmed row. For\n`capture-pane` it matches whatever is on screen, including text that was already there. For\n`send-text` and `send-keys` it matches only rows the input's answer produced: text on screen\nwhen the input was written does not count, even after it scrolls.\n\nA wait that outlives `timeout_ms` fails with `timeout`; a pane whose program exits, or that\ncloses, fails with `pane-not-running`. Both carry the pane's capture in `data` when the pane is\nstill there to capture.",
+      "properties": {
+        "settle_ms": {
+          "description": "How long the visible screen must stay unchanged, in milliseconds. With `text`, the clock\nstarts once the text has appeared.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "Literal text to wait for on one visible row. Must be non-empty, with no line break.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_ms": {
+          "description": "Deadline for the whole wait, in milliseconds, at most [`MAX_PANE_WAIT_MS`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "timeout_ms"
+      ],
+      "type": "object"
+    },
     "PickAction": {
       "description": "One extra key the caller offers alongside select and cancel.\n\nActions are what turn a picker from a menu into a working surface: delete the branch under the\ncursor and push a fresh list, or open a prompt and create one. They are declared up front so the\nfooter can advertise them the way every built-in picker advertises its own chords.",
       "properties": {
@@ -3751,5 +3924,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 5
+  "x-rozi-schema-version": 6
 }

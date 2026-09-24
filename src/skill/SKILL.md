@@ -100,6 +100,21 @@ rozi --session dev status --clear --target <PANE_ID>
 tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
 `--literal` when a key-like argument such as `C-c` must be typed literally.
 
+Never sleep and then capture to read a command's answer. Make the send wait for it instead:
+
+```bash
+rozi send-keys --target <PANE_ID> 'cargo test' Enter --wait-for 'test result:' --timeout 10m --capture text
+rozi send-keys --target <PANE_ID> 'ls' Enter --settle 500ms --timeout 30s --capture text
+rozi capture-pane --target <PANE_ID> --wait-for 'Ready' --timeout 1m
+```
+
+`--wait-for` waits for literal text on one row, `--settle` for the screen to stop changing, and
+`--timeout` is always required. A send only counts output that arrives after its input, so an old
+prompt on screen does not end the wait; prefer `--wait-for` with a string the command itself will
+print, and use `--settle` when there is none. `capture-pane --wait-for` accepts text already on
+screen. On `timeout` or `pane-not-running` the reply still carries the screen, so read it before
+retrying.
+
 Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capture-pane`,
 `capture-ui`, `metrics`, and `agents list`/`get` support it. Capture options include
 `--scrollback 200`, `--scrollback full`, and `--last-output`.

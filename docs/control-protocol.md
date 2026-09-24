@@ -1,15 +1,20 @@
 # Control protocol
 
-This page documents Rozi's raw control transports. Prefer the portable commands in
-[Control CLI](control.md) when a process can invoke `rozi`. The CLI handles endpoint discovery,
-Windows named-pipe derivation, extension provenance, timeouts, and stream bridging.
+This page is the wire reference for clients that cannot run the `rozi` CLI: how to connect to a
+control endpoint, frame requests, and read responses and streams. Most scripts should call `rozi`
+instead, as described in [Control CLI](control.md); the CLI handles endpoint discovery, Windows
+named-pipe derivation, extension provenance, timeouts, and stream bridging for you.
 
-There are two transports carrying the same request and response documents:
+rozi serves the same request and response documents on two transports:
 
-- A running UI serves newline-delimited JSON on a per-process control endpoint. Everything below
-  describes this one unless it says otherwise.
-- A named session server serves the same requests, wrapped in one length-prefixed session-protocol
-  frame, on its session endpoint. See [Session transport](#session-transport).
+- A running UI serves newline-delimited JSON on its own control endpoint. Everything on this page
+  describes this transport unless it says otherwise.
+- A named session server serves the same requests on its session endpoint, each wrapped in one
+  length-prefixed session-protocol frame. See [Session transport](#session-transport).
+
+The complete request vocabulary, including the agent requests (`agents-list`, `agent-get`,
+`agent-read`, `agent-wait`, `agent-prompt`, `agent-report`, and `agent-release`) that this page
+does not spell out, is described by the [JSON Schema](control.md#json-schema).
 
 ## Transport
 
@@ -18,49 +23,50 @@ Each running UI creates one private control endpoint.
 | Platform | Transport | Discovery path |
 | --- | --- | --- |
 | Linux | Unix-domain socket | `$XDG_RUNTIME_DIR/rozi/control-<pid>.sock`, else `/run/user/<uid>/rozi`, else the private fallback runtime directory |
-| macOS | Unix-domain socket | Rozi's private runtime directory |
+| macOS | Unix-domain socket | rozi's private runtime directory |
 | Windows | Current-user named pipe | `%LOCALAPPDATA%\rozi\run\control-<pid>.sock` discovery entry |
 
-On Windows, the discovery entry is not the pipe. Rozi derives the pipe name from the entry name and
-the current user SID, then performs an authenticated handshake. The entry contents are not an
-authority. The pipe rejects remote clients and uses a current-user DACL.
+`ROZI_SOCKET` always names the discovery path the CLI accepts: a socket path on Unix, a
+discovery-entry path on Windows.
 
-Unix endpoints use owner-only permissions. Runtime directory and endpoint validation reject unsafe
-ownership, modes, and symlinks.
+On Windows, the discovery entry is not the pipe, and its contents are not an authority. rozi derives
+the pipe name from the entry name and the current user's SID, then performs an authenticated
+handshake. The pipe rejects remote clients and uses a current-user DACL.
 
-`ROZI_SOCKET` always names the discovery path accepted by the CLI. It is a socket path on Unix and
-a discovery-entry path on Windows.
+On Unix, endpoints have owner-only permissions, and rozi rejects runtime directories and endpoints
+with unsafe ownership, modes, or symlinks.
 
 ## Framing
 
-The protocol is UTF-8 newline-delimited JSON. Incoming request and stream-update lines, including
-the trailing newline, are at most 1 MiB. A larger incoming line is a protocol error and Rozi closes
-the connection. Replies Rozi writes, including `capture-pane --scrollback full`, are not capped at
-1 MiB.
-
-For a one-shot command:
+The protocol is UTF-8 newline-delimited JSON. For a one-shot command:
 
 1. Connect to one endpoint.
 2. Write one request object followed by `\n`.
 3. Read one response object followed by `\n`.
 4. The server closes the connection.
 
-Rozi reads only the first request line. `subscribe`, `pick`, and `publish` keep the connection open
-after the initial response.
+rozi reads only the first request line. `subscribe`, `pick`, and `publish` keep the connection open
+after the initial response; see the stream sections below.
 
-The initial request line must arrive within three seconds. A one-shot command, stream authorization,
-or stream-open acknowledgement may wait up to ten seconds for the UI.
+Limits:
+
+- Each incoming line — a request or a stream update — is at most 1 MiB, including the trailing
+  newline. A larger line is a protocol error, and rozi closes the connection.
+- Replies from rozi have no size cap. `capture-pane --scrollback full` can exceed 1 MiB.
+- The request line must arrive within three seconds.
+- A one-shot command, a stream authorization, or a stream-open acknowledgement may wait up to ten
+  seconds for the UI.
 
 ## Request envelope
 
-Every request has `cmd`. These optional envelope fields apply to commands:
+Every request has `cmd`. Any request may also carry these fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `source_pane` | integer or null | Calling pane. Used as the default target where supported. Ignored by a session endpoint, which is a different pane namespace — see [Session transport](#session-transport). |
-| `extension` | object | Extension ownership with `id` and opaque `generation`. The CLI adds it from the extension environment. |
+| `source_pane` | integer or null | Calling pane, used as the default target where a command supports it. A session endpoint ignores it; see [Session transport](#session-transport). |
+| `extension` | object | Extension ownership, with `id` and an opaque `generation`. The CLI adds it from the extension environment. |
 
-Do not synthesize extension provenance. A retired generation is rejected.
+Do not synthesize extension provenance. A request with a retired generation is rejected.
 
 ## Responses
 
@@ -82,16 +88,20 @@ An error has `ok: false`, a stable machine-readable `code`, and a human-readable
 {"ok":false,"code":"pane-not-found","error":"pane 3 not found"}
 ```
 
-Scripts should branch on `code`; the message may gain context or change wording. Error codes are:
+Branch on `code`; the message may gain context or change wording. The error codes are:
+
 `invalid-request`, `request-timeout`, `message-too-large`, `extension-inactive`, `unknown-event`,
 `pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
 `session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
 `invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
 `agent-replaced`, `stale-reference`, `timeout`, and `request-failed`.
-`request-failed` is the fallback for failures without a narrower category. Older servers may omit
-`code`, so clients that support version skew must still handle that shape.
 
-The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelope.
+`request-failed` is the fallback for a failure with no narrower category. Older servers may omit
+`code`, so a client that supports version skew must also handle an error without it.
+
+### Response data
+
+The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envelope.
 
 | Command | `data` |
 | --- | --- |
@@ -105,32 +115,60 @@ The shape inside `data` depends on `cmd`. CLI JSON output preserves this envelop
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
 
-A `list-panes` object has `session`, `id`, `reference`, `agent_ref`, `title`, `workspace`,
-`command`, `argv`, `foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`,
-`status`, `reported_status`, `status_reason`, `agent`, and `agent_state`. `reference` identifies one
-server instance, pane id, and PTY generation. `agent_ref` adds the semantic incarnation and is null
-when the pane has no detected agent. Optional values are JSON null. Scratch panes use workspace `0`
-and do not expose a reference. `foreground_programs` contains the normalized basename-only
-process-group evidence used by split-aware navigation; it may contain more than one entry for
-wrappers and pipelines.
+A `list-panes` pane object has these fields; optional values are JSON null:
 
-The metrics object has `sampled_at_unix_ms`, `client_inbound`, `client_outbound`, `piped_remote`,
-`orphan_output`, and `server`. Queue and byte-buffer objects report current, high-water, and
-capacity bytes. Cached server data also reports `age_ms` and `stale`.
+`session`, `id`, `reference`, `agent_ref`, `title`, `workspace`, `command`, `argv`,
+`foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`, `status`,
+`reported_status`, `status_reason`, `agent`, and `agent_state`.
 
-Server metrics include `attach_seed`. Its `queued_bytes`, `peak_queued_bytes`, and
-`send_window_bytes` measure baseline replay in socket outboxes. `live_catch_up_bytes`,
-`peak_live_catch_up_bytes`, and `live_catch_up_limit_bytes` measure changes waiting behind replay.
-The object also reports active clients, panes remaining, lifetime replay bytes, completed and
-disconnected attach counts, last and maximum duration, and the last disconnect reason.
+- `reference` identifies one server instance, pane id, and pane process generation.
+- `agent_ref` adds the agent's incarnation, and is null when the pane has no detected agent.
+- Scratch panes use workspace `0` and have no `reference`.
+- `foreground_programs` lists the basenames of the pane's foreground processes. Wrappers and
+  pipelines can produce more than one entry.
 
-Server metrics also include `client_resync`, for clients that fell too far behind a pane's output.
-Rozi drops that output for the client and replays the pane from the server's screen instead.
-`active_clients` counts clients replaying now. `started` and `completed` count resyncs. `exports`
-counts pane screens exported for them. `requeued_panes` counts panes a client fell behind again
-before their replay finished, during an attach or a resync. `shed_bytes` is the pane output dropped
-rather than delivered. `last_export_us` and `max_export_us` time one pane export for any replay,
-which the server loop, and so every client, waits on.
+### Metrics
+
+The `metrics` object has `sampled_at_unix_ms`, `client_inbound`, `client_outbound`, `piped_remote`,
+`orphan_output`, and `server`.
+
+Byte buffers report `current_bytes`, `high_water_bytes`, and `capacity_bytes`. Queues add
+`queued_items`. `orphan_output` adds `keys` and `capacity_keys`.
+
+`server` is the most recent cached server sample, with `age_ms` and `stale` beside these fields:
+
+| Field | Contents |
+| --- | --- |
+| `sampled_at_unix_ms` | When the server took the sample. |
+| `pty_ingress` | Queue of pane output read by the server and not yet processed. |
+| `client_outboxes` | Byte buffer of output waiting to be sent to clients, plus `clients`, the number of attached clients. |
+| `attach_seed` | Replay sent to clients while they attach. |
+| `client_resync` | Replay for clients that fell too far behind a pane's output. |
+| `resurrection` | Snapshots written for [resurrection](sessions.md#resurrection). |
+
+`attach_seed` fields:
+
+- `queued_bytes`, `peak_queued_bytes`, and `send_window_bytes` measure baseline replay waiting in
+  socket outboxes.
+- `live_catch_up_bytes`, `peak_live_catch_up_bytes`, and `live_catch_up_limit_bytes` measure
+  changes waiting behind the replay.
+- `active_clients`, `panes_remaining`, `replay_bytes_total`, `completed`, `disconnected`,
+  `last_duration_us`, `max_duration_us`, and `last_disconnect_reason` report progress and history.
+
+`client_resync` covers a client that fell too far behind a pane: rozi drops that output for the
+client and replays the pane from the server's screen instead.
+
+- `active_clients` counts clients replaying now. `started` and `completed` count resyncs.
+- `exports` counts pane screens exported for them.
+- `requeued_panes` counts panes a client fell behind again before their replay finished, during an
+  attach or a resync.
+- `shed_bytes` is pane output dropped rather than delivered.
+- `last_export_us` and `max_export_us` time one pane export for any replay. The server, and so
+  every client, waits on each export.
+
+`resurrection` reports `attempts`, `successes`, `failures`, `last_duration_us`, `max_duration_us`,
+`last_blocking_us`, `max_blocking_us`, `last_exported_panes`, `last_reused_panes`, and
+`last_exported_bytes`.
 
 ## One-shot requests
 
@@ -150,22 +188,24 @@ which the server loop, and so every client, waits on.
 {"cmd":"capture-ui","render":"png","scale":2}
 ```
 
-`capture-pane.target` defaults to `source_pane`, then the focused pane. `scrollback` is a
-nonnegative line count, `"full"`, or `"last-output"`. `render` is `"text"` (the default),
-`"ansi"`, or `"png"`; `ansi` and `png` capture the visible grid only, and fail with
-`invalid-argument` when `scrollback` is set. `scale`, 1 to 3 and 1 when absent, enlarges a PNG;
-it fails with `invalid-argument` for any other render or out of range. `capture-ui` takes `scale`
-the same way.
+`list-panes` reports how each pane was launched in either `command` or `argv`, plus its current
+foreground program, reported status, and detected agent when available.
 
-`capture-ui` answers from the next frame the UI paints, which the request forces. Requests that
-arrive before that paint share it, and each distinct `render` among them is encoded once. `render`
-works as it does for `capture-pane`. Only a UI answers it.
-
-`list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
-program data, reported status, and detected agent data when available.
-
-`layout-get.workspace` is optional and one-based. A number outside `1`-`9` fails with
+`layout-get.workspace` is optional and one-based. A number outside `1`–`9` fails with
 `invalid-argument`.
+
+`capture-pane` fields:
+
+- `target` defaults to `source_pane`, then the focused pane.
+- `scrollback` is a nonnegative line count, `"full"`, or `"last-output"`.
+- `render` is `"text"` (the default), `"ansi"`, or `"png"`. `ansi` and `png` capture the visible
+  grid only, and fail with `invalid-argument` when `scrollback` is set.
+- `scale` enlarges a PNG, from 1 to 3; it defaults to 1. It fails with `invalid-argument` when out
+  of range or with any other `render`.
+
+`capture-ui` captures the whole UI as drawn and takes `render` and `scale` the same way. It answers
+from the next frame the UI paints, which the request forces. Requests that arrive before that paint
+share it, and each distinct `render` among them is encoded once. Only a UI answers `capture-ui`.
 
 ### Layout changes
 
@@ -182,11 +222,13 @@ program data, reported status, and detected agent data when available.
 {"cmd":"pane-close","target":7,"if_revision":21}
 ```
 
-`layout-set.workspace` and the `target` of every `pane-*` request are required, and none falls back
-to `source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, `rect_fraction`,
-`split_ratio`, and `width_ratio`; `rect` and `rect_fraction` exclude each other. `layout-set` needs
-`layout`, `master_ratio`, or both. Ratios run from `0.2` to `0.8`. A stale `if_revision` fails with
-`conflict`.
+- `layout-set.workspace` and the `target` of every `pane-*` request are required. None of them falls
+  back to `source_pane`.
+- `layout-set` needs `layout`, `master_ratio`, or both.
+- `pane-set` needs at least one of `floating`, `fullscreen`, `rect`, `rect_fraction`,
+  `split_ratio`, and `width_ratio`. `rect` and `rect_fraction` exclude each other.
+- Ratios run from `0.2` to `0.8`.
+- A stale `if_revision` fails with `conflict`.
 
 ### Focus and input
 
@@ -197,12 +239,14 @@ to `source_pane`. `pane-set` needs at least one of `floating`, `fullscreen`, `re
 {"cmd":"send-keys","target":3,"keys":["C-c"],"literal":true}
 ```
 
-`send-text.target` and `send-keys.target` are optional. Rozi falls back to `source_pane`, then the
-focused pane. `keys` uses the names documented in [Control CLI](control.md#sending-keys-and-capturing-output).
+`send-text.target` and `send-keys.target` are optional; rozi falls back to `source_pane`, then the
+focused pane. `keys` uses the names in
+[Control CLI](control.md#sending-keys-and-capturing-output). With `literal: true`, every entry is
+sent as literal text.
 
 ### Pane creation
 
-Use at most one of `command` or `argv`. Omit both for an interactive shell:
+Set at most one of `command` or `argv`. Omit both for an interactive shell.
 
 ```json
 {"cmd":"new-pane","command":"cargo test","cwd":"/repo","title":"tests","keep_open":true}
@@ -219,8 +263,8 @@ Use at most one of `command` or `argv`. Omit both for an interactive shell:
 | `focus` | bool | `false` | Focuses the new pane and its workspace. |
 | `workspace` | integer or null | rule or current workspace | One-based workspace, `1..=9`. |
 
-The response waits up to five seconds for the PTY ready signal and includes `id`, `accepted`, and
-`pty_ready`.
+The response waits up to five seconds for the pane's terminal to be ready, then returns `id`,
+`accepted`, and `pty_ready`.
 
 ### Actions, workspaces, status, and notifications
 
@@ -234,9 +278,11 @@ The response waits up to five seconds for the PTY ready signal and includes `id`
 {"cmd":"notify","message":"tests failed","title":"Build","level":"error"}
 ```
 
-Workspace indices are `1..=9`. `set-status.target` falls back to `source_pane`, then the focused
-pane. Status and reason text is display-sanitized, trimmed, and limited to 64 and 256 characters.
-An empty status clears the report. `notify.level` is `"info"` or `"error"`.
+- Workspace indices are `1..=9`.
+- `set-status.target` falls back to `source_pane`, then the focused pane. Status and reason text is
+  sanitized for display, trimmed, and limited to 64 and 256 characters. An empty or null status
+  clears the report.
+- `notify.level` is `"info"` or `"error"`.
 
 ### Popup
 
@@ -244,9 +290,9 @@ An empty status clears the report. `notify.level` is `"info"` or `"error"`.
 {"cmd":"popup","command":"fzf","cwd":"/repo","width":0.7,"height":0.6,"title":"files","keep_open":false}
 ```
 
-`command` is interpreted by `command_shell`. Width and height are viewport fractions clamped to
-`0.2..=0.95` and default to `0.6`. `cwd` defaults to the focused pane cwd. `keep_open` defaults to
-`true`. Only one popup may exist at a time.
+`command` is interpreted by `command_shell`. `width` and `height` are fractions of the viewport,
+clamped to `0.2..=0.95`, and default to `0.6`. `cwd` defaults to the focused pane's cwd.
+`keep_open` defaults to `true`. Only one popup can be open at a time.
 
 ### Pane logging
 
@@ -260,16 +306,18 @@ Omit `enabled` to toggle. Omit `target` to use `source_pane`, then the focused p
 
 ## Session transport
 
-A named session server answers control requests on its own endpoint, with no UI in the picture.
-This is what makes a detached session scriptable.
+A named session server answers control requests on its own endpoint, so a detached session can be
+scripted with no UI running. The CLI uses this transport for `rozi --session <NAME> <COMMAND>`,
+and handles its framing, Windows pipe derivation, and session-name validation.
 
-The endpoint is the session's, not a UI's: `$XDG_RUNTIME_DIR/rozi/session-<NAME>.sock` on Linux,
-Rozi's private runtime directory on macOS, and a current-user named pipe behind an equivalent
-discovery entry on Windows. The same ownership, mode, symlink, and DACL rules apply.
+The endpoint belongs to the session: `$XDG_RUNTIME_DIR/rozi/session-<NAME>.sock` on Linux, rozi's
+private runtime directory on macOS, and a current-user named pipe behind an equivalent discovery
+entry on Windows. The same ownership, mode, symlink, and DACL rules apply as for a UI endpoint.
 
-Unlike the UI endpoint, this one is framed, not line-delimited: it is the
-[session protocol](sessions.md), so each message is a 4-byte big-endian length, a 1-byte frame
-kind, and a JSON body. One exchange is:
+### Frames
+
+This endpoint speaks the [session protocol](sessions.md), not newline-delimited JSON. Each message
+is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchange is:
 
 1. Connect to the session endpoint.
 2. Write one `session-control` frame.
@@ -277,51 +325,52 @@ kind, and a JSON body. One exchange is:
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":12,"min_protocol_version":12,
+{"type":"session-control","session":"dev","protocol_version":14,"min_protocol_version":14,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":12,
+{"type":"session-control-result","effective_protocol":14,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
-`response` is the same envelope the UI endpoint returns. A wrong session name or an incompatible
-build is answered with a session-protocol `error` frame carrying `session-mismatch` or
-`protocol-mismatch` instead, because neither is a rejected command.
+- `request` is the same document the UI endpoint accepts, and `response` is the same envelope it
+  returns.
+- `protocol_version` and `min_protocol_version` are the newest and oldest session protocol
+  versions the client speaks. A server accepts only its own version, which `rozi api describe`
+  reports as `session_protocol`. `effective_protocol` is the version the server used.
+- Both frames may carry a `capabilities` object; a client may omit it.
+- A wrong session name or an incompatible version is answered with a session-protocol `error` frame
+  carrying `session-mismatch` or `protocol-mismatch`, not with a control response.
+- A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
+  large pane or a long `"full"` scrollback, is answered with `message-too-large` instead. The UI
+  endpoint has no such limit.
 
-A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
-large pane or a long `--scrollback full` export, is answered with `message-too-large` instead. The
-UI endpoint has no such limit.
+The connection never becomes a client. It gets no client id, is not counted in the session roster
+or client count (including `metrics`), never holds layout control, and receives no replay. It also
+gains no authority an attached client would not have.
 
-The connection never becomes a client. It gets no client id, does not appear in the session roster
-or client count (including `metrics`, which counts attached clients rather than open sockets),
-never holds layout control, and receives no replay. A script cannot make an idle session look
-occupied — and equally gains nothing an attached client would not have.
+### Supported requests
 
-Supported requests are `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
+A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
-`send-keys`, `new-pane`, `set-status`, and `pane-logging`. Every other `cmd` is answered with
-`ok: false` and a reason naming what it needed a UI for; none is silently accepted.
+`send-keys`, `new-pane`, `set-status`, and `pane-logging`. It refuses every other `cmd` with
+`ok: false` and a reason naming what the request needs a UI for.
 
-Differences from the same request against a UI:
+These requests behave differently than against a UI:
 
 | Request | Against a session server |
 | --- | --- |
-| Any `target` | `source_pane` is ignored, and there is no focused-pane fallback. A pane id carries no session identity, so an inherited one would address a stranger in the named session. A session with one pane resolves to it; otherwise the error lists the pane ids. |
-| `list-panes` | Every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or `0` when the session has no layout document. |
-| `layout-get` | Read from the server's layout document. `client` and every `view_rect` are absent, since no screen exists. `unplaced_panes` lists panes the document does not place. Before anything places a pane, `revision` and `canvas` are null and `workspaces` is empty. |
-| `pane-close` | Removes the pane from the layout document, then ends its process, then commits the new revision; a refused request ends nothing. A pane the document does not place is still closed, without a revision. Refused with `not-controller` while any client holds layout control. |
-| `layout-set`, `pane-set`, `pane-move`, `pane-swap` | Applied to the server's layout document and committed as a new revision by client `0`, which every attached client applies. Refused with `not-controller` while any client holds layout control, and with `unavailable` for a session that has panes but no layout document. `committed` is always `true`. |
-| `metrics` | `server` only, sampled at request time, so `age_ms` is `0` and `stale` is `false`. Client counters are absent. |
-| `new-pane` | `focus` must be `false`. Refused with `not-controller` while any client holds layout control. The server re-reads `[[rules]]` and the configured shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision authored by client `0`. `pty_ready` reports whether the PTY spawned. |
+| Any `target` | `source_pane` is ignored, and there is no focused-pane fallback, because a pane id does not say which session it belongs to. A session with one pane resolves to it; otherwise the error lists the pane ids. |
+| `list-panes` | Lists every pane in the session, including exited ones, whose `status` is `exited (<CODE>)`. `workspace` comes from the shared layout, or is `0` when the session has no layout document. |
+| `layout-get` | Reads the server's layout document. `client` and every `view_rect` are absent, since there is no screen. `unplaced_panes` lists panes the document does not place. Before anything places a pane, `revision` and `canvas` are null and `workspaces` is empty. |
+| `pane-close` | Removes the pane from the layout document, ends its process, then commits the new revision; a refused request ends nothing. A pane the document does not place is still closed, without a revision. Refused with `not-controller` while any client holds layout control. |
+| `layout-set`, `pane-set`, `pane-move`, `pane-swap` | Applied to the server's layout document and committed as a new revision by client `0`, which every attached client applies. `committed` is always `true`. Refused with `not-controller` while any client holds layout control, and with `unavailable` for a session that has panes but no layout document. |
+| `metrics` | Returns only `sampled_at_unix_ms` and `server`, sampled at request time, so `age_ms` is `0` and `stale` is `false`. |
+| `new-pane` | `focus` must be `false`. Refused with `not-controller` while any client holds layout control. The server reads `[[rules]]` and the shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision as client `0`. `pty_ready` reports whether the pane's process started. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
-| Any request with `extension` provenance | Refused. The generation is a fencing token minted per UI process; a server cannot check it and does not act on an extension's behalf without checking. |
-
-The CLI speaks this transport for `rozi --session <NAME> <COMMAND>`. As with the UI endpoint,
-prefer invoking `rozi` over opening the endpoint yourself: the framing, the Windows pipe
-derivation, and the session-name validation are all handled there.
+| Any request with `extension` provenance | Refused. The generation is minted per UI process, so a server cannot check it. |
 
 ## Subscription stream
 
@@ -331,18 +380,21 @@ Open with:
 {"cmd":"subscribe","events":["pane-exited","pane-status-changed"]}
 ```
 
-An empty or absent `events` array subscribes to all events. Unknown event IDs reject the request.
-After `{"ok":true}`, the server writes event objects until either side disconnects:
+An empty or absent `events` array subscribes to all events. An unknown event ID rejects the
+request. After `{"ok":true}`, the server writes one event object per line until either side
+disconnects:
 
 ```json
 {"event":"pane-exited","data":{"pane":"3","code":"1","focused":"false"}}
 ```
 
-All event fields are strings nested under `data`. See [Hooks](hooks.md#events-and-fields) for the
-event list and fields. A subscriber queue holds 128 events. A slow subscriber is disconnected
-instead of blocking the UI.
+Every event field is a string under `data`. See [Hooks](hooks.md#events-and-fields) for the event
+list and fields.
 
-Portable bridge:
+A subscriber's queue holds 128 events. rozi disconnects a subscriber that falls behind rather than
+blocking the UI.
+
+CLI bridge:
 
 ```sh
 rozi subscribe pane-exited pane-status-changed
@@ -350,54 +402,37 @@ rozi subscribe pane-exited pane-status-changed
 
 ## Picker stream
 
-Open with:
+A picker stream opens a modal picker, receives rows from the client, and reports the user's
+choice back.
+
+### Open a picker
 
 ```json
 {"cmd":"pick","title":"Branches","placeholder":"Filter","empty":"No branches","width":72,"actions":[{"id":"new","key":"ctrl-n","label":"new","prompt":"Branch name"}]}
 ```
 
-If another picker or modal overlay is open, Rozi returns an error and closes the connection.
-Otherwise it sends `{"ok":true}`. `title` defaults to `"Pick"`, `placeholder` defaults to
-`"Search…"`, and `width` defaults to 60 columns and is clamped to `30..=120`. `empty` is optional
-producer copy for a row list that is empty while the filter is empty. A nonempty filter with no
-matching rows always shows `No matches`; omitted `empty` leaves the list's ordinary empty
-appearance. Actions with an empty ID or invalid key chord are omitted.
+If another picker or modal overlay is open, rozi returns an error and closes the connection.
+Otherwise it replies `{"ok":true}`. A second `pick` while one is open is refused, including while
+the open picker shows a prompt.
 
-`prompt` and any future form are substates of this picker, not a second overlay. A second `pick`
-while one is open is still refused.
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `title` | `"Pick"` | Picker title. |
+| `placeholder` | `"Search…"` | Query hint. |
+| `empty` | none | Text shown when the row list and the filter are both empty. Without it, the empty list looks as it normally does. A filter that matches nothing always shows `No matches`. |
+| `width` | 60 | Width in columns, clamped to `30..=120`. |
+| `actions` | none | Extra key bindings; see [Actions](#actions). |
+| `tabs` | none | Pages under one title; see [Tabs](#tabs). |
+| `tab` | first tab | Tab to open on. |
 
-`tabs` turns the picker into pages under one title, shown as a tab strip above the query. Each tab
-has its own rows, filter text, and highlight, so switching away and back keeps what was typed.
-`tab` names the tab to open on; an omitted or unknown `tab` opens the first. Tabs with an empty or
-repeated `id` are omitted, and Rozi keeps at most 32. Actions, `placeholder`, `empty`, and `width`
-apply to every tab.
+### Send rows
 
-```json
-{"cmd":"pick","title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"tab":"branches"}
-```
-
-| Field | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `id` | string | required | Names the tab in row snapshots and replies. Row IDs only need to be unique within a tab. |
-| `label` | string | `id` | Tab strip text. |
-
-`Tab`/`Shift+Tab` and `Right`/`Left` cycle tabs, and a click on a tab selects it, unless an action
-claims that key.
-
-The client may then write row snapshots. Each line replaces the full row set. Rozi keeps at most
-512 rows from each snapshot. In a tabbed picker, a snapshot names its tab and replaces only that
-tab's rows; one without `tab` or with an undeclared `tab` is ignored, as is a snapshot with `tab`
-sent to an untabbed picker. Rows may arrive for a hidden tab at any time.
-
-```json
-{"tab":"worktrees","rows":[{"id":"/src/rozi-review","label":"rozi-review","description":"~/src/rozi-review"}]}
-```
+After `{"ok":true}`, the client may write row snapshots. Each line replaces the full row set, and
+rozi keeps at most 512 rows from each snapshot.
 
 ```json
 {"rows":[{"id":"main","label":"main","description":"current","group":"Local","active":true},{"id":"old","label":"old","disabled":"protected"}]}
 ```
-
-Row fields:
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -409,7 +444,9 @@ Row fields:
 | `active` | bool | `false` | Marks the current item. |
 | `priority` | integer | `0` | Adds sorting weight. |
 
-Selection writes one terminal object:
+### Read the result
+
+Selection writes one final object:
 
 ```json
 {"selected":"main"}
@@ -421,47 +458,38 @@ Cancellation writes:
 {"cancelled":true}
 ```
 
-An action writes an object and keeps the picker open unless that action declared `close: true`:
+An action writes an object and keeps the picker open, unless the action declared `close: true`:
 
 ```json
 {"action":"delete","selected":"old"}
 {"action":"new","input":"feat/api","selected":"main"}
 ```
 
-A tabbed picker adds the active tab to selections and actions, and reports each tab switch without
-closing, so a producer can fill a tab only when it is first shown:
+Lines that keep the picker open — actions and tab switches — are queued for the client. If the
+client stops reading and 64 are waiting, later ones are dropped. The final line — a selection, a
+cancellation, or a closing action — is never dropped and always arrives last.
 
-```json
-{"tab":"worktrees"}
-{"action":"delete","selected":"old","tab":"branches"}
-{"selected":"main","tab":"branches"}
-```
-
-Lines that keep the picker open, actions and tab switches, are queued for the client. If it stops
-reading and 64 are waiting, later ones are dropped. The terminal line — selection, cancellation, or
-a closing action — is never dropped and always arrives last.
-
-Action fields:
+### Actions
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `id` | string | required | Returned as `action`. |
 | `key` | string | required | One valid key chord. |
 | `label` | string | required | Footer label. |
-| `prompt` | string or object | none | Opens a stacked text prompt over the picker and returns `input`. A string is the title. An object may also set `placeholder`, a seed `value`, and `masked`. |
-| `close` | bool | `false` | Closes after the action. |
+| `prompt` | string or object | none | Opens a text prompt over the picker and returns `input`. A string is the title. |
+| `close` | bool | `false` | Closes the picker after the action. |
 | `confirm` | bool | `false` | Requires a second press on the same row. |
 
-Prompt object fields:
+rozi omits an action with an empty `id` or an invalid key chord.
+
+A `prompt` object has these fields; the string form is shorthand for `{ "title": "…" }`:
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `title` | string | required | Prompt title. |
 | `placeholder` | string | none | Empty-field hint. |
 | `value` | string | none | Initial contents. |
-| `masked` | bool | `false` | Hide typed characters on screen. The submitted `input` is still plaintext on the stream. |
-
-The string form is the shortcut for `{ "title": "…" }`:
+| `masked` | bool | `false` | Hides typed characters on screen. The submitted `input` is still plain text on the stream. |
 
 ```json
 {"prompt":"Command"}
@@ -469,8 +497,47 @@ The string form is the shortcut for `{ "title": "…" }`:
 {"prompt":{"title":"Token","masked":true}}
 ```
 
-The CLI bridge uses a simpler plain-line mode or a JSON mode. In JSON mode, the first stdin line
-contains picker metadata and optional initial `rows`, which fill the tab the picker opens on; later
+### Tabs
+
+`tabs` shows several pages under one title, with a tab strip above the query. Each tab keeps its own
+rows, filter text, and highlight, so switching away and back keeps what was typed. `actions`,
+`placeholder`, `empty`, and `width` apply to every tab.
+
+```json
+{"cmd":"pick","title":"Git","tabs":[{"id":"branches","label":"Branches"},{"id":"worktrees","label":"Worktrees"}],"tab":"branches"}
+```
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | string | required | Names the tab in row snapshots and replies. Row IDs only need to be unique within a tab. |
+| `label` | string | `id` | Tab strip text. |
+
+- An omitted or unknown `tab` opens the first tab.
+- Tabs with an empty or repeated `id` are omitted, and rozi keeps at most 32.
+- `Tab`/`Shift+Tab` and `Right`/`Left` cycle tabs, and clicking a tab selects it, unless an action
+  uses that key.
+
+In a tabbed picker, each row snapshot names its tab and replaces only that tab's rows. Rows may
+arrive for a hidden tab at any time. rozi ignores a snapshot without `tab` or with an undeclared
+`tab`, and a snapshot with `tab` sent to a picker without tabs.
+
+```json
+{"tab":"worktrees","rows":[{"id":"/src/rozi-review","label":"rozi-review","description":"~/src/rozi-review"}]}
+```
+
+A tabbed picker adds the active tab to selections and actions, and reports each tab switch without
+closing, so the client can fill a tab when it is first shown:
+
+```json
+{"tab":"worktrees"}
+{"action":"delete","selected":"old","tab":"branches"}
+{"selected":"main","tab":"branches"}
+```
+
+### CLI bridge
+
+`rozi pick` has a plain one-label-per-line mode and a JSON mode. In JSON mode, the first stdin line
+holds the picker fields and optional initial `rows`, which fill the tab the picker opens on; later
 lines are row snapshots:
 
 ```sh
@@ -479,6 +546,9 @@ printf '%s\n' '{"title":"Branches","rows":[{"id":"main","label":"main"}]}' |
 ```
 
 ## Published activity stream
+
+A published activity stream lets a program report its own activities as rows in the sidebar's
+Activity list, and hear when the user activates one.
 
 Open with:
 
@@ -492,41 +562,42 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 {"rows":[{"id":"job-1","title":"Run tests","status":"working","reason":"crate core","active":true}]}
 ```
 
-Row fields:
-
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `id` | string | required | Stable publisher-owned identity. |
+| `id` | string | required | Stable identity chosen by the publisher. |
 | `title` | string | required | Activity title. May be empty. |
 | `status` | string | required | Status value. |
 | `reason` | string or null | null | Supporting detail. |
-| `active` | bool | `false` | Row currently visible inside the publisher. At most one should be active. |
-| `work_started_at` | integer or null | server-owned | Values sent by publishers are replaced. |
+| `active` | bool | `false` | The row currently visible inside the publisher. At most one should be active. |
+| `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 
-An empty list withdraws the rows. EOF or any stream failure also withdraws them.
-IDs, titles, and statuses are display-sanitized and limited to 64 characters; reasons are limited to
-256. Rows with an empty ID or status are dropped. Rozi keeps `active: true` only on the first active
-row in a snapshot.
+- An empty `rows` list withdraws the rows. End of input or any stream failure also withdraws them.
+- IDs, titles, and statuses are sanitized for display and limited to 64 characters; reasons are
+  limited to 256.
+- Rows with an empty ID or status are dropped.
+- Only the first row with `active: true` in a snapshot stays active.
 
-When a user activates a row, Rozi focuses its pane and writes:
+When the user activates a row, rozi focuses its pane and writes:
 
 ```json
 {"activate":"job-1"}
 ```
 
-The publisher must keep reading activations. Rozi drops a stream whose activation backlog reaches
-its bound and withdraws its rows.
+The publisher must keep reading activations. If its backlog of unread activations fills up, rozi
+closes the stream and withdraws its rows.
 
-`source_pane` selects row ownership. If it is absent, Rozi resolves the focused live pane when the
-stream opens. This permits a supervised service to publish, but the rows still belong to that
-resolved pane.
+### Row ownership
 
-Nonempty published rows make the program's own activity list authoritative for that pane. If Rozi
-has already identified an agent, it aggregates the rows into that agent's displayed state using
-blocked first, then any status other than `idle` or `done`, then quiescent rows. A publisher in an
-otherwise unrecognized pane still gets Activity rows but does not invent a detected agent identity.
+`source_pane` decides which pane owns the rows. If it is absent, rozi uses the focused live pane at
+the moment the stream opens; this lets a supervised service publish, but its rows still belong to
+that pane.
 
-Portable bridge:
+While a pane has published rows, they are the authoritative activity list for that pane. If rozi has
+detected an agent in the pane, it derives the agent's displayed state from the rows: blocked first,
+then any status other than `idle` or `done`, then the remaining rows. A publisher in a pane with no
+detected agent still gets Activity rows, but rozi does not treat it as an agent.
+
+CLI bridge:
 
 ```sh
 rozi publish
@@ -534,7 +605,7 @@ rozi publish
 
 ## Stream ownership
 
-The CLI attaches extension `id` and `generation` when both are present in its environment.
-Extension-owned picker, publisher, and subscription streams close when the generation retires due
-to disable, removal, or a process-facing extension change. Metadata-only changes keep the
-generation.
+The CLI attaches the extension `id` and `generation` when both are present in its environment.
+Picker, publisher, and subscription streams owned by an extension close when its generation
+retires: when the extension is disabled, removed, or has a change that affects its processes.
+Changes to metadata only keep the generation.

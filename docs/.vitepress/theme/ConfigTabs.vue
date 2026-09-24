@@ -60,7 +60,7 @@ f = { popup = "fzf", label = "Find" }`,
   },
   {
     id: "workbar",
-    note: "Add built-in readouts, static text, or commands that Rozi polls on an interval.",
+    note: "Add built-in readouts, static text, or commands that rozi polls on an interval.",
     doc: "/configuration#workbar",
     code: `[workbar]
 left = ["title", "workspaces"]

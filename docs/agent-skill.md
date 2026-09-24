@@ -1,68 +1,70 @@
 # Agent skill
 
-Rozi includes an [Agent Skill](../src/skill/SKILL.md) that tells coding agents how to inspect and
-control Rozi panes with the CLI.
+`rozi` ships an [Agent Skill](../src/skill/SKILL.md): a `SKILL.md` file that teaches coding agents
+such as Claude Code how to inspect and control `rozi` panes and sessions with the `rozi` CLI. This
+page covers what the skill lets an agent do and how to install, refresh, and remove it.
 
-## Install for one project
+## What the agent can do
 
-Run this from the project root:
+With the skill installed, an agent that you ask to use `rozi` can:
+
+- list panes, read the layout, and capture pane output;
+- split panes and run commands in them;
+- watch and read coding agents running in other panes through `rozi agents`;
+- control a detached named session with `--session`.
+
+The skill tells the agent to act only when you explicitly ask it to use `rozi`, to read live pane
+IDs instead of guessing them, and to change only the panes and sessions you name or it created. It
+controls the current UI only from inside one of that UI's panes. For the commands themselves, see
+[Control CLI](control.md) and [Scripting](scripting.md).
+
+## Install the skill
+
+Install it for one project, from the project root:
 
 ```sh
 rozi skill install
 ```
 
-Rozi writes:
+This writes `.agents/skills/rozi/SKILL.md`. Use a project install when the instructions should
+travel with one repository.
 
-```text
-.agents/skills/rozi/SKILL.md
-```
-
-Start or restart the coding-agent session from that project so it can discover the file.
-
-## Install for your user
+Or install it for your user, so agents see it in every project:
 
 ```sh
 rozi skill install --global
 ```
 
-Rozi writes:
+This writes `~/.agents/skills/rozi/SKILL.md`, or `%USERPROFILE%\.agents\skills\rozi\SKILL.md` on
+Windows.
 
-```text
-~/.agents/skills/rozi/SKILL.md
-```
-
-On Windows the path is `%USERPROFILE%\.agents\skills\rozi\SKILL.md`.
-
-Use a project install when the instructions should travel with one repository. Use a global install
-when agents should have the instructions in every project.
+Start or restart the coding-agent session afterwards so it discovers the skill.
 
 ## Check, refresh, or remove
 
-Check the project installation:
+Check the project or user installation:
 
 ```sh
 rozi skill status
-```
-
-Check the user installation:
-
-```sh
 rozi skill status --global
 ```
 
-For managed Rozi installations, `rozi update` and `rozi update --rollback` refresh global and previously registered project
-skills when their contents still match what Rozi installed. It leaves locally edited skills alone
-and prints a warning. A project skill installed before this tracking was introduced cannot be
-identified safely unless you run the update from that project; then Rozi warns about it. Run
-`rozi skill install --force` there (or add `--global` for the user copy) to replace and register it.
+`rozi skill install` is safe to rerun. It refreshes an unchanged copy that `rozi` installed, and
+refuses to replace a modified or untracked copy unless you add `--force`. `rozi` records each
+installation's path, content hash, and `rozi` version in its state directory.
 
-`rozi skill install` is safe to rerun: it refreshes an unchanged registered copy and refuses to
-replace a modified or untracked copy without `--force`. Rozi stores installation paths, the
-installed content hash, and the Rozi version in its state directory. If a skill refresh fails,
-the binary update still succeeds and prints a warning. Restart coding-agent sessions to load the
+When `rozi` manages its own installation, `rozi update` and `rozi update --rollback` also refresh
+the global skill and every registered project skill whose content still matches what `rozi`
+installed. They leave locally edited copies alone and print a warning. If a skill refresh fails, the
+binary update still succeeds and prints a warning. Restart coding-agent sessions to load the
 refreshed instructions.
 
-Remove only the managed project or user installation:
+A project skill installed before `rozi` tracked installations is not registered, so an update run
+from elsewhere cannot find it. Run the update from that project and `rozi` warns about it; then run
+`rozi skill install --force` there to replace and register it. Add `--global` to do the same for the
+user copy.
+
+Remove only the installation that `rozi` manages:
 
 ```sh
 rozi skill uninstall
@@ -75,24 +77,19 @@ rozi skill uninstall --global
 rozi skill print
 ```
 
-This writes the embedded `SKILL.md` to stdout. `rozi --skill` is an equivalent compatibility form
-and must be used without other arguments.
+This writes the embedded `SKILL.md` to stdout. `rozi --skill` does the same and must be used
+without other arguments.
 
 ## Claude compatibility entry
 
-`.agents/skills/rozi` is the canonical installation. If `claude` or `claude-code` is available on
-`PATH`, installation also tries to create `.claude/skills/rozi`:
+`.agents/skills/rozi` is the canonical installation. If `claude` or `claude-code` is on `PATH`,
+installation also tries to create `.claude/skills/rozi`, so Claude Code finds the skill:
 
 | Platform | Compatibility entry |
 | --- | --- |
 | Linux and macOS | Directory symlink |
 | Windows | Directory junction, or a managed `SKILL.md` copy when a junction cannot be created |
 
-A project symlink is relative where possible. Failure to create the compatibility entry does not
-remove the canonical installation.
-
-Uninstall removes a compatibility entry only when Rozi manages it. It does not delete an unrelated
-directory already present at `.claude/skills/rozi`.
-
-For the commands described by the skill, see [Control CLI](control.md) and
-[Scripting](scripting.md).
+A project symlink is relative where possible. If the compatibility entry cannot be created, the canonical installation stays in place.
+Uninstalling removes the compatibility entry only when `rozi` manages it; an unrelated directory
+already at `.claude/skills/rozi` is left alone.

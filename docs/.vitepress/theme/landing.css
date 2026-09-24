@@ -865,27 +865,34 @@ html.rozi-intro-pending .lp {
    Shiki, which never sees them - they live in Vue components, not markdown.
    These are night-owl's colours, the theme `config.ts` gives the doc pages, so
    a sample here and a fenced block there read as the same language. */
-.lp code .tk-comment {
+.lp code .tk-comment,
+.rz-gallery code .tk-comment {
     color: #637777;
     font-style: italic;
 }
-.lp code .tk-table {
+.lp code .tk-table,
+.rz-gallery code .tk-table {
     color: #c792ea;
     font-weight: 600;
 }
-.lp code .tk-key {
+.lp code .tk-key,
+.rz-gallery code .tk-key {
     color: #82aaff;
 }
-.lp code .tk-str {
+.lp code .tk-str,
+.rz-gallery code .tk-str {
     color: #ecc48d;
 }
-.lp code .tk-num {
+.lp code .tk-num,
+.rz-gallery code .tk-num {
     color: #f78c6c;
 }
-.lp code .tk-bool {
+.lp code .tk-bool,
+.rz-gallery code .tk-bool {
     color: #ff5874;
 }
-.lp code .tk-punct {
+.lp code .tk-punct,
+.rz-gallery code .tk-punct {
     color: #7e8aa3;
 }
 

@@ -1,35 +1,42 @@
 # Hooks
 
-Hooks run client-side commands when a Rozi UI observes an event.
+Hooks run a shell command when a rozi UI observes an event, such as a pane exiting or a session
+attaching. Use them for small, fire-and-forget reactions; use a
+[service](configuration.md#services) with `rozi subscribe` when automation needs state or retries.
+
+## Add a hook
+
+Add a `[[hooks]]` entry to your config for each command:
 
 ```toml
 [[hooks]]
 event = "pane-exited"
-run = "notify-send 'pane exited'"
+run = "notify-send \"pane $ROZI_PANE exited with code $ROZI_CODE\""
 
 [[hooks]]
 event = "session-attached"
 run = "~/.config/rozi/on-attach.sh"
 ```
 
-Each entry needs `event` and `run`. Multiple entries may use the same event. Rozi launches matching
-commands in config order through [`command_shell`](configuration.md#top-level-keys). Commands run
-asynchronously and may overlap. At most 32 hook and detached `exec` jobs run at once; further
-launches are skipped until a slot frees.
+Each entry needs `event`, one of the [event IDs](#events-and-fields) below, and `run`, a nonempty
+command string. rozi runs `run` through [`command_shell`](configuration.md#top-level-keys) with the
+event's fields in the [environment](#environment).
 
-Unknown event IDs and empty commands produce warnings and are skipped. Config reload applies hook
-changes.
+- Several entries may use the same event. rozi launches them in config order.
+- Hook commands run asynchronously and may overlap.
+- At most 32 hook and detached `exec` jobs run at once. Further launches are skipped until a slot
+  frees.
+- An unknown event ID or an empty command produces a config warning, and that entry is skipped.
+- Reloading the config applies hook changes.
 
 ## Events and fields
-
-Every hook receives `ROZI_EVENT`. Event fields become uppercase `ROZI_*` variables.
 
 | Event | When it fires | Fields |
 | --- | --- | --- |
 | `pane-spawned` | A workspace pane is created. | `pane`, `workspace`, `command`, `cwd` |
-| `pane-exited` | A pane process exit reaches the client. | `pane`, `code`, `focused` |
-| `pane-status-changed` | Server-owned reported status changes or clears. Initial attach seeding does not fire. | `pane`, `status`, `reason`, `previous_status`, `previous_reason`, `focused` |
-| `bell` | A pane emits BEL. | `pane`, `focused` |
+| `pane-exited` | A pane's process exit reaches the client. | `pane`, `code`, `focused` |
+| `pane-status-changed` | A pane's reported status changes or clears. Seeding status on attach does not fire it. | `pane`, `status`, `reason`, `previous_status`, `previous_reason`, `focused` |
+| `bell` | A pane rings the terminal bell. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
 | `layout-changed` | The attached session's layout reaches a new accepted revision. | `revision`, `author` |
@@ -38,41 +45,39 @@ Every hook receives `ROZI_EVENT`. Event fields become uppercase `ROZI_*` variabl
 | `session-renamed` | The attached session is renamed. | `session`, `previous` |
 | `session-created` | A named session is created from an empty target. | `session` |
 | `controller-changed` | Layout control changes or is released. | `controller`, `self_controller`, `reason` |
-| `client-joined` | A client joins the attached session roster. | `client_id`, `client_name`, `count` |
-| `client-left` | A client leaves the attached session roster. | `client_id`, `client_name`, `count` |
+| `client-joined` | A client joins the attached session's roster. | `client_id`, `client_name`, `count` |
+| `client-left` | A client leaves the attached session's roster. | `client_id`, `client_name`, `count` |
 | `profile-loaded` | A profile seeds a newly created session. | `profile`, `path`, `session` |
-| `profile-applied` | A profile replaces panes in an existing session. | `profile`, `path`, `session` |
+| `profile-applied` | A profile replaces the panes in an existing session. | `profile`, `path`, `session` |
 | `profile-saved` | A profile is saved or overwritten. | `profile`, `path` |
-| `config-reloaded` | A live config reload applies a usable document. Field-level warnings still fire it; a rejected document does not. | `path` |
+| `config-reloaded` | A live config reload applies a usable document. It fires even with field-level warnings, but not for a rejected document. | `path` |
 
-Field details:
+Every field is a string:
 
 - `workspace` is one-based.
-- `layout-changed.author` is `self`, `client`, or `server`.
-- `command` and `cwd` are empty when inherited.
+- `command` and `cwd` are empty when the pane inherited them.
 - `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`.
-- `controller` and optional status values are empty when absent.
+- `controller` and the status fields are empty when there is no value.
+- `layout-changed.author` is `self`, `client`, or `server`.
 - `controller-changed.reason` is `released`, `expired`, or `granted`.
 
-The same event names and fields are used by [`rozi subscribe`](control.md#subscriptions). Subscription
-objects keep these fields under `data`.
+[`rozi subscribe`](control.md#subscriptions) uses the same event names and fields, nested under
+`data` in each event object.
 
 ## Environment
 
-Hook commands inherit the client environment and receive:
+Hook commands inherit the client's environment and also receive:
 
 | Variable | Value |
 | --- | --- |
 | `ROZI_EVENT` | Event ID. Always present. |
-| `ROZI_BIN` | Path to the running Rozi executable when available. |
-| `ROZI_SOCKET` | Current UI endpoint when control is available. |
-| `ROZI_REMOTE_HOST` | Resolved remote host while this client is remote-attached. |
-| `ROZI_<FIELD>` | One variable for each event field. |
+| `ROZI_<FIELD>` | One variable per event field, with the field name in uppercase: `pane` becomes `ROZI_PANE`. |
+| `ROZI_BIN` | Path to the running `rozi` executable, when available. |
+| `ROZI_SOCKET` | The UI's control endpoint, when control is available. |
+| `ROZI_REMOTE_HOST` | The resolved remote host, while this client is attached to a remote session. |
 
-Hooks always run on the client machine. Test `ROZI_SOCKET` before calling back because a UI may run
-without a control endpoint.
-
-Use the injected executable and endpoint:
+To call back into rozi from a hook, use `ROZI_BIN` and `ROZI_SOCKET`. Check both first, because a
+UI can run without a control endpoint:
 
 ```toml
 [[hooks]]
@@ -86,23 +91,26 @@ fi
 
 ## Lifecycle
 
-Rozi discards hook stdin, stdout, stderr, and exit status. Redirect output in the command if it
-matters. Rozi does not wait, retry, or supervise hook processes. A burst of events can skip matching
-hooks once 32 jobs are already running. Use a
-[`[[services]]`](configuration.md#services) entry with `rozi subscribe` when automation needs
-state, retries, or long-lived event handling.
+Hooks run on the client machine, even when the session lives on a remote host.
 
-Hooks belong to UI clients, not session servers. Each attached client loads its own hooks. Most
-shared-session events can therefore launch equivalent hooks on several clients.
-`pane-status-changed` is the exception: every client publishes it to local subscribers, but only the
-layout controller runs matching hooks.
+rozi discards a hook's stdin, stdout, stderr, and exit status; redirect output in the command if
+you need it. rozi does not wait for, retry, or supervise hook processes, and a burst of events can
+skip hooks once 32 jobs are already running. For state, retries, or long-lived event handling, run
+`rozi subscribe` from a [`[[services]]`](configuration.md#services) entry instead.
 
-No hooks run while all clients are detached. A client crash cannot run a final
+### Shared sessions
+
+Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks, so
+most events in a [shared session](shared-sessions.md) run matching hooks on every client.
+`pane-status-changed` is the exception: every client delivers it to its own subscribers, but only
+the client holding layout control runs its hooks.
+
+No hooks run while every client is detached, and a client that crashes cannot run a final
 `session-detached` hook.
 
-## Migrating from `[hooks]`
+## Migrate from `[hooks]`
 
-The old flat table is not supported and makes the config fail to load:
+The old flat `[hooks]` table is no longer supported, and a config that uses it fails to load:
 
 ```toml
 # Old
@@ -110,7 +118,7 @@ The old flat table is not supported and makes the config fail to load:
 pane-exited = "notify-send 'pane exited'"
 ```
 
-Convert each value to an array entry:
+Convert each value to a `[[hooks]]` entry:
 
 ```toml
 [[hooks]]

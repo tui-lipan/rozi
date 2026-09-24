@@ -1,22 +1,32 @@
 # Control CLI
 
-The `rozi` CLI can inspect and control a running UI without mounting another interface, and can
-inspect and drive a named session that has no UI at all. Use it for shell scripts, hooks, services,
-and extensions. See [Scripting](scripting.md) for a short start and
-[Control protocol](control-protocol.md) for raw transport and NDJSON.
+This is the reference for the `rozi` commands that inspect and drive a running rozi: listing panes,
+typing into them, reading their output, rearranging the layout, and showing pickers and toasts. It
+is for anyone writing shell scripts, hooks, services, or extensions. For a gentler start, read
+[Scripting](scripting.md); to write a client that speaks the wire format directly, see
+[Control protocol](control-protocol.md).
+
+```sh
+rozi list-panes                                   # the panes in the rozi you are running
+rozi split --title Tests --argv cargo test        # open a pane running a program
+rozi --session dev capture-pane --target 3        # read a pane in a session nobody is viewing
+```
 
 ## Two endpoints
 
-A control command talks to one of two things:
+A control command talks to one of two places, called its _endpoint_:
+
+- **A running UI** — the rozi window you are looking at. It can do everything, including moving
+  focus and drawing pickers and toasts.
+- **A named session server** — the background process that keeps a session's panes alive (see
+  [Sessions and clients](core-concepts.md#sessions-and-clients)). Select it with
+  `--session <NAME>`. It needs no window at all, so a detached session can be listed, captured,
+  typed into, and given new panes from a cron job or an SSH login.
 
 | Endpoint | Selected by | Serves |
 | --- | --- | --- |
 | A running UI | `--socket`, `ROZI_SOCKET`, or discovery | Every command. |
 | A named session server | `--session <NAME>` | The commands a server can answer without a screen. |
-
-`--session` needs nothing to be running but the session itself. A detached `dev` can be listed,
-captured, typed into, and grown a pane from a shell script or an SSH login that never starts a
-terminal UI.
 
 ```sh
 rozi --session dev list-panes
@@ -25,18 +35,47 @@ rozi --session dev send-keys --target 3 'cargo test' Enter
 rozi --session dev split --workspace 9 --argv cargo watch -x test
 ```
 
-The two endpoints return the same `{ok, code, data, error}` document and the same tables, so a
-script reads one format either way. `code` appears on failures and is stable for automation.
+Both endpoints return the same `{ok, code, data, error}` document and the same tables, so a script
+reads one format either way. `code` appears on failures and is stable for automation.
 
-A session endpoint serves what a server can decide on its own. It does not gain a script any
-authority an attached client would not have: opening a pane still needs the layout-control lease to
-be free, typing still respects the session's input lock, and a request carrying extension
-provenance is refused because a server cannot check whether that extension is still active (see
-[Extensions and `--session`](#extensions-and-session)).
+A session endpoint gives a script no authority an attached client would not have. Opening a pane
+still needs layout control to be free (only one client at a time holds it; see
+[Shared sessions](shared-sessions.md)), typing still respects the session's input lock, and a
+request made on behalf of an extension is refused (see
+[Extensions and detached sessions](#extensions-and-detached-sessions)).
 
-`--session` and `--socket` name different endpoints and cannot be combined. A bare session name is
-a launch target, not a control target: `rozi dev` starts a UI, so `rozi dev list-panes` is refused
-and points at `--session dev` instead.
+The commands marked `no` in the [command table](#commands) need a UI. Against a session they fail
+with a message saying why: focus, the active workspace, toasts, pickers, actions, and `capture-ui`
+belong to a UI, and a session server has no screen.
+
+`--session` and `--socket` name different endpoints and cannot be combined. A bare session name
+is a launch target, not a control target: `rozi dev` starts a UI, so `rozi dev list-panes` is
+refused and suggests `--session dev` instead.
+
+### Sessions on another machine
+
+Add `--remote <HOST>` to reach a named session on another machine:
+
+```bash
+rozi --remote workbox --session dev list-panes
+rozi --remote workbox --session dev agents prompt --target 3 --wait idle "run the tests"
+```
+
+Every command a local session answers, a remote one answers the same way, with the same output and
+the same exit status. The request is forwarded over SSH and the answer is rendered locally, so a
+remote command in a terminal prints the same table a local one does.
+
+It uses the same SSH connection as [remote attach](remote.md): saved hosts, connection
+multiplexing, the discovered remote binary, and the same askpass rules. There is no daemon, network
+port, or account. `--remote` without `--session` is refused, because a control command addresses a
+session server and the far host's UI is not one.
+
+`agents wait` and `agents prompt --wait` run on the remote session server and keep their own
+deadline; the SSH hop does not cut them short.
+
+The remote host needs a rozi that supports forwarding. An older one is reported as a version
+mismatch rather than a broken command. Run `rozi api describe` there and look for `remote-control`
+in its capabilities.
 
 ## Endpoint discovery
 
@@ -47,29 +86,114 @@ Without `--session`, control commands choose a UI endpoint in this order:
 3. The only live control endpoint in the runtime directory
 
 Discovery fails if the runtime directory contains no live endpoints or more than one. Pass
-`--socket` when several UIs are running.
+`--socket` when several UIs are running. Put `--socket PATH` before the command.
 
 | Platform | Endpoint named by `ROZI_SOCKET` |
 | --- | --- |
 | Linux | Unix-domain socket under `$XDG_RUNTIME_DIR/rozi`, `/run/user/<uid>/rozi`, or a private per-user temporary directory |
-| macOS | Unix-domain socket in Rozi's private runtime directory |
+| macOS | Unix-domain socket in rozi's private runtime directory |
 | Windows | Discovery entry under `%LOCALAPPDATA%\rozi\run` for a current-user named pipe |
 
-On Windows, pass the discovery-entry path to the CLI. Do not read the entry and do not construct a
-pipe name.
+On Windows, pass the discovery-entry path to the CLI. Do not read the entry or construct a pipe
+name yourself.
 
-Every local pane receives `ROZI=1`, `ROZI_PANE`, and, when control is available, `ROZI_SOCKET` and
-`ROZI_BIN`. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and neither
-does a pane opened by `rozi --session <NAME> split`: there is no UI for those to name. Such a pane
-still reaches its own session with `rozi --session <NAME>`.
+Every local pane receives `ROZI=1` and `ROZI_PANE`, plus `ROZI_SOCKET` and `ROZI_BIN` when control
+is available. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
+neither does a pane opened by `rozi --session <NAME> split`, because there is no UI for them to
+name. Such a pane still reaches its own session with `rozi --session <NAME>`.
+
+## Target selection
+
+Commands that accept `--target` use it first.
+
+Against a **UI endpoint**, the CLI otherwise sends the calling pane's `ROZI_PANE`, and rozi falls
+back to the focused pane.
+
+Against a **session endpoint**, `ROZI_PANE` is ignored. A pane id does not say which session it
+belongs to, so a script in pane 3 of `work` running `rozi --session dev send-text …` would
+otherwise type into pane 3 of `dev`. A session endpoint uses `--target`, or the only pane of a
+one-pane session, and otherwise fails with the ids to choose from:
+
+```text
+session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
+```
+
+`agents report` and `agents release` always require `--target` with `--session`, even for a
+one-pane session.
+
+A pane addressing its own session names itself:
+
+```sh
+rozi --session dev status working --target "$ROZI_PANE"
+```
+
+Target a pane explicitly when a script drives a pane it created:
+
+```sh
+ROZI_CMD=${ROZI_BIN:-rozi}
+pane=$("$ROZI_CMD" split --workspace 9 --argv bash | jq -r '.data.id')
+"$ROZI_CMD" send-text --target "$pane" 'printf "ready\n"'
+"$ROZI_CMD" send-keys --target "$pane" Enter
+```
+
+Input sent while a pane's process is starting is queued. Input to an exited or failed process is
+rejected.
 
 ## Commands
 
-Put `--socket PATH` before the command when selecting an endpoint explicitly.
+The `--session` column says whether the command also works against a session server with no UI
+attached.
 
-Run `rozi api describe` to inspect the control API version, schema version, session protocol
-version, and capabilities implemented by the installed binary. It prints JSON and does not connect
-to a UI or session:
+| Command | Purpose | `--session` |
+| --- | --- | --- |
+| `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
+| `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
+| `layout set --workspace 1-9 [<LAYOUT>] [--master-ratio R] [--if-revision N]` | Set a workspace's tiling layout, its master share, or both. | yes |
+| `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--split-ratio R \| --width-ratio R] [--if-revision N]` | Float, tile, place, size, or fullscreen a pane. | yes |
+| `pane move --target ID --workspace 1-9 [--if-revision N]` | Move a pane to another workspace. | yes |
+| `pane swap --target ID --with ID [--if-revision N]` | Exchange two tiled panes. | yes |
+| `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
+| `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
+| `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
+| `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
+| `agents wait TARGET --until STATE [--timeout DURATION] [--format text\|json]` | Wait atomically for semantic state. | only |
+| `agents prompt TARGET [--wait STATE] [--timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | only |
+| `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
+| `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
+| `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
+| `focus <PANE_ID>` | Focus a pane. | no |
+| `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
+| `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
+| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
+| `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
+| `capture-ui [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
+| `switch-workspace <1-9>` | Switch the active workspace. | no |
+| `move-to-workspace <1-9>` | Move the focused pane. | no |
+| `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
+| `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
+| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
+| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
+| `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
+| `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
+| `api describe` | Print the API versions and capabilities of the installed binary. | — |
+
+`layout set` and the `pane` commands also accept `--format text|json`.
+
+In the `agents` rows, `TARGET` is `--target ID` (a pane id) or `--ref JSON` (an exact agent
+reference from `agents list`). `agents wait` and `agents prompt` run inside the session server, so
+they need `--session` and are refused against a UI. See
+[Inspect and wait for agents](agents.md#inspect-and-wait-for-agents) for states, references, and
+integration reports.
+
+Control commands reject the launch-only options `--config`, `--read-only`, `--profile`, `--pick`,
+and `--cwd`. `--session <NAME>` is the one target they accept, optionally qualified by
+`--remote <HOST>`.
+
+### Check the installed API
+
+`rozi api describe` prints the control API version, [schema](#json-schema) version, session
+protocol version, and capabilities of the installed binary. It does not connect to a UI or session:
 
 ```json
 {
@@ -90,205 +214,113 @@ to a UI or session:
 }
 ```
 
-`schema` names the version of [the JSON Schema](#json-schema) below. It is its own number: the
-session protocol bumps when two rozi binaries change how they frame messages to each other, which
-does not affect the JSON anything else reads.
+`schema` is the version of the JSON schema and changes independently of `session_protocol`, which
+only concerns how two rozi binaries talk to each other.
 
-`--session` column: whether the command also works against a session server with no UI attached.
+## Output and exit status
 
-| Command | Purpose | `--session` |
-| --- | --- | --- |
-| `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
-| `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
-| `layout set --workspace 1-9 [<LAYOUT>] [--master-ratio R] [--if-revision N]` | Set a workspace's tiling layout, its master share, or both. | yes |
-| `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--split-ratio R \| --width-ratio R] [--if-revision N]` | Float, tile, place, size, or fullscreen a pane. | yes |
-| `pane move --target ID --workspace 1-9 [--if-revision N]` | Move a pane to another workspace. | yes |
-| `pane swap --target ID --with ID [--if-revision N]` | Exchange two tiled panes. | yes |
-| `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
-| `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
-| `agents get --target ID` | Read one semantic agent record. | yes |
-| `agents read --target ID [--scrollback N\|full]` | Capture an agent's terminal. | yes |
-| `agents wait --target ID --until STATE [--timeout DURATION]` | Wait atomically for semantic state. | yes |
-| `agents prompt --target ID [--wait STATE] TEXT` | Validate, submit, and optionally wait atomically. | yes |
-| `agents report --agent ID --integration TOKEN --state STATE --seq N` | Publish incarnation- and sequence-fenced native agent state. | yes |
-| `agents release --integration TOKEN --seq N` | Release integration authority. | yes |
-| `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
-| `focus <PANE_ID>` | Focus a pane. | no |
-| `send-text [--target <PANE_ID>] <TEXT>` | Send literal UTF-8 text. | yes |
-| `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
-| `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. | yes |
-| `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
-| `capture-ui [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
-| `switch-workspace <1-9>` | Switch the active workspace. | no |
-| `move-to-workspace <1-9>` | Move the focused pane. | no |
-| `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
-| `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
-| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
-| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
-| `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
-| `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
+`list-panes`, `layout get`, `metrics`, `capture-pane`, and `capture-ui` print human-readable output
+to a terminal and stable JSON when redirected. Use `--format text` or `--format json` to choose
+explicitly.
 
-Control commands reject launch-only options: `--config`, `--read-only`, `--profile`, and `--pick`.
+Other successful one-shot commands print a short acknowledgement on a terminal and the JSON
+response when redirected. A failure prints its error to stderr; with JSON output, the failure
+document is also written to stdout.
 
-`--session <NAME>` is the target they accept, and `--remote <HOST>` says which machine that session
-is on:
+| Exit status | Meaning |
+| --- | --- |
+| `0` | The command succeeded. |
+| `1` | The command was invalid or refused, the reply had `ok: false`, or a capture could not be written. |
+| `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
 
-```bash
-rozi --remote workbox --session dev list-panes
-rozi --remote workbox --session dev agents prompt --target 3 --wait idle "run the tests"
-```
+`pick` has its own statuses; see [Pickers](#pickers).
 
-Every command a local session answers, a remote one answers the same way, with the same output and
-the same exit code. The request is forwarded, not the command line, and the answer is rendered
-locally — so a remote command in a terminal prints the same table a local one does.
-
-This reuses the SSH transport `--remote` attach already uses: saved hosts, connection multiplexing,
-the discovered remote binary, and the same askpass rules. There is no daemon, no network port, and
-no account. `--remote` without `--session` is refused, because a control command addresses a session
-server and the far host's UI is not one.
-
-Waits are not cut short by the hop. `agents wait` and `agents prompt --wait` are served by the
-remote session server and run to their own deadline.
-
-The far host needs a rozi that understands forwarding; an older one is reported as version skew
-rather than as a broken command. Check with `rozi api describe` there, which lists
-`remote-control` among its capabilities.
-
-A `no` command refused against a session says what it needed a UI for. Focus, the active workspace,
-toasts, pickers, actions, and `capture-ui` are client-local by design: a session server has no screen to move
-focus on and no overlay to draw.
-
-## Output
-
-`list-panes`, `layout get`, `metrics`, `capture-pane`, and `capture-ui` print human-readable output to a terminal and stable JSON
-when redirected. Use `--format text` or `--format json` to choose explicitly.
-
-Other successful one-shot commands print a short acknowledgement on a terminal. Redirected output
-keeps the JSON response. Errors go to stderr in human mode.
-
-`list-panes` describes only the endpoint that answered. From a UI it includes the current
-attachment and client-local scratch panes, not every named session; from `--session` it includes
+`list-panes` describes only the endpoint that answered. From a UI, it includes the current
+attachment and client-local scratch panes, not every named session. From `--session`, it includes
 every pane in that session, including panes whose process has exited, which report
 `exited (<CODE>)` instead of `ready`. Use `rozi sessions list` to discover session servers.
 
-## JSON Schema
+Human-readable help and reports use rozi's palette when written to a terminal; redirected output
+stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable styling. `CLICOLOR_FORCE` enables it
+for a consumer that renders ANSI color from a pipe. JSON, `publish` and `subscribe` streams, and
+version output are never styled. The one-shot detach summary uses the same palette when rozi
+restores the terminal.
+
+## JSON schema
 
 Every shape on this page is described by
 [`docs/schema/rozi-control-v1.schema.json`](https://github.com/tui-lipan/rozi/blob/master/docs/schema/rozi-control-v1.schema.json):
 requests, the response envelope, error codes, each command's `data` payload, published activity
 rows, agent records and references, and the event envelope.
 
-The file is generated from the Rust types that serialize the wire format, and CI fails if
-regenerating it produces a diff — so it cannot describe an API Rozi no longer has. Regenerate it
-with:
+The schema is generated from the source, so it always matches the binary it ships with.
+Contributors regenerate it with:
 
 ```bash
 cargo run --features schema-gen --bin rozi-api-schema
 ```
 
-Two conventions worth knowing when you validate against it:
+Two conventions matter when you validate against it:
 
-- **Objects accept unknown properties.** Responses gain fields; a client validating against an
-  older copy of the schema keeps working. Do not reject a document for carrying something you do
-  not recognize.
+- **Objects accept unknown properties.** Responses gain fields over time, and a client validating
+  against an older copy keeps working. Do not reject a document for carrying a field you do not
+  recognize.
 - **Enumerations are closed.** Error codes, agent states, wait conditions, and event names are
-  fixed vocabularies, which is what makes validating against them useful. A new value there is an
-  API change and moves the schema version. The file name follows the control API version, so
-  `rozi-control-v1.schema.json` keeps its name while `x-rozi-schema-version` counts its revisions.
+  fixed vocabularies. A new value is an API change and moves the schema version. The file name
+  follows the control API version, so `rozi-control-v1.schema.json` keeps its name while
+  `x-rozi-schema-version` counts its revisions.
 
 `ControlResponse.data` is untyped in the envelope, because one envelope carries every command's
 answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `PaneCapture`,
 `AgentWaitResult`, and the rest — so pick the one for the command you sent.
 
-## Target selection
+## Open a pane
 
-Commands that accept `--target` use it first.
+`split` opens a pane. It leaves focus unchanged unless `--focus` is present.
 
-Against a **UI endpoint**, the CLI otherwise sends `ROZI_PANE` as `source_pane`, and Rozi falls
-back to the focused pane.
-
-Against a **session endpoint**, `ROZI_PANE` is not sent and not honoured. A pane id says nothing
-about which session it belongs to, and `--session` names a different one than the caller is
-sitting in: a script inside pane 3 of `work` running `rozi --session dev send-text …` would
-otherwise type into `dev`'s pane 3, a pane it never looked at. So a session endpoint takes
-`--target` or resolves a session with exactly one pane, and otherwise fails with the ids to choose
-from:
-
-```text
-session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
-```
-
-`agents report` and `agents release` always require `--target` with `--session`, including for a
-one-pane session. Integration hooks must opt into the named session's pane namespace explicitly.
-
-A pane addressing its own session names itself explicitly:
-
-```sh
-rozi --session dev status working --target "$ROZI_PANE"
-```
-
-Target a pane explicitly when a script drives a pane it created:
-
-```sh
-ROZI_CMD=${ROZI_BIN:-rozi}
-pane=$("$ROZI_CMD" split --workspace 9 --argv bash | jq -r '.data.id')
-"$ROZI_CMD" send-text --target "$pane" 'printf "ready\n"'
-"$ROZI_CMD" send-keys --target "$pane" Enter
-```
-
-Input sent while a PTY starts is queued. Input to an exited or failed PTY is rejected.
-
-## Spawning panes
-
-`split` leaves focus unchanged unless `--focus` is present.
-
-Options:
-
-- `--cwd DIR`
-- `--title TEXT`
-- `--workspace 1-9`
-- `--focus`
-- `--keep-open`
-- `--argv PROGRAM [ARG...]`
-
-Against `--session`, `split` commits the layout revision itself, so a client attaching later finds
-the pane already placed. `[[rules]]` apply exactly as they do to a pane a person opens: a rule may
-float it, make it fullscreen, and choose its workspace, and an explicit `--workspace` still wins
-over the rule. Without either, the pane lands in workspace 1. The workspace's tiling arrangement is
-left alone: the new pane is tiled beside the others when a client draws it, and a deliberate split
-ratio survives.
-
-Three refusals are specific to a session endpoint:
-
-- **A client holds layout control.** Opening a shared pane means committing a layout revision over
-  whatever that client is arranging, which is the controller's call — the session protocol already
-  refuses the same thing from a non-controller client. Detach it, or ask it to open the pane.
-  Reading and typing never needed the lease and keep working.
-- **`--focus`** — there is no focus to move.
-- **The session has panes but no layout document**, which happens only if nothing ever attached to
-  place them. Committing one would claim the other panes do not exist, so the spawn is refused
-  instead.
-
-A headless pane's environment is `ROZI` and `ROZI_PANE` only. `ROZI_SOCKET` and `ROZI_BIN` name a
-UI process and there is not one, and the desktop variables a client forwards (`DISPLAY`,
-`WAYLAND_DISPLAY`, and whatever `[environment] forward` adds) are deliberately not taken from the
-one-shot CLI process either: that process is gone seconds later, and the pane is not.
-
-`[[rules]]` and the configured shell are read from the server's config when the spawn happens, not
-when the server started, so an edited rule applies to the next headless `split` without restarting
-a session that has been running for days.
+| Option | Effect |
+| --- | --- |
+| `--cwd DIR` | Start the pane in `DIR`. |
+| `--title TEXT` | Set the pane title. |
+| `--workspace 1-9` | Open the pane in that workspace. |
+| `--focus` | Focus the new pane. |
+| `--keep-open` | Keep the pane after its process exits. |
+| `--argv PROGRAM [ARG...]` | Run a program directly, without a shell. |
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
-program directly and consumes the remaining arguments, so all pane options must come first.
+program directly and consumes all remaining arguments, so every pane option must come before it.
 
 ```sh
 rozi split --cwd "/repo with spaces" --title Tests --keep-open 'cargo test'
 rozi split --workspace 9 --focus --argv cargo test -- --nocapture
 ```
 
-The response waits up to five seconds for PTY readiness. `pty_ready: false` means the pane still
-exists but has not reported ready yet.
+The reply waits up to five seconds for the pane's process to be ready. `pty_ready: false` means the
+pane exists but has not reported ready yet.
+
+### Open a pane in a detached session
+
+With `--session`, the server places the pane itself, so a client attaching later finds it already
+in the layout. `[[rules]]` apply exactly as they do to a pane a person opens: a rule may float the
+pane, make it fullscreen, and choose its workspace, and an explicit `--workspace` still wins over
+the rule. Without either, the pane lands in workspace 1. The workspace's tiling arrangement is left
+alone: the new pane is tiled beside the others when a client draws it, and a split ratio you set
+survives.
+
+`[[rules]]` and the configured shell are read from the server's config at the moment of the
+`split`, so an edited rule applies to the next one without restarting the session.
+
+A session endpoint refuses `split` when:
+
+- **Another client holds layout control.** Detach it, or open the pane from that client. Reading
+  and typing do not need layout control and keep working.
+- **`--focus` is given.** There is no focus to move.
+- **The session has panes but no layout.** This happens only if no client ever attached to place
+  them.
+
+A pane opened this way receives only `ROZI` and `ROZI_PANE`. It does not get `ROZI_SOCKET` or
+`ROZI_BIN`, since there is no UI, and it does not inherit desktop variables such as `DISPLAY`,
+`WAYLAND_DISPLAY`, or anything `[environment] forward` adds from the short-lived CLI process.
 
 ## Layout
 
@@ -300,15 +332,17 @@ rozi layout get --format json
 rozi --session dev layout get --workspace 2 --format json
 ```
 
-The report answers two separate questions, and keeps them apart:
+The report keeps two questions apart:
 
-- **How the session is arranged.** `workspaces` describes the session's shared layout document.
-  The session server owns it and every client follows it, so both endpoints give the same answer.
+- **How the session is arranged.** `workspaces` describes the session's shared layout. The session
+  server owns it and every client follows it, so both endpoints give the same answer.
 - **What one UI shows.** `client` and each pane's `view_rect` describe a single UI's screen: its
   focus, the workspace it shows, and where it draws each pane. They appear only when a UI answered.
 
-A follower reports the layout document it last received, exactly as the server holds it. A
-controlling UI reports the document it commits.
+Each accepted change to the shared layout gets a new, increasing _revision_ number. Scripts use it
+to detect changes made by someone else (see [Changing the layout](#changing-the-layout)). A client
+that follows another client's layout reports the layout it last received; the controlling client
+reports the one it commits.
 
 ```json
 {
@@ -347,38 +381,37 @@ controlling UI reports the document it commits.
 
 | Field | Meaning |
 | --- | --- |
-| `revision` | The layout revision described. Null until something places a pane. A controlling UI sends any change it is still holding back before it answers, and reports the revision that change will have. |
-| `canvas` | The canonical canvas `rect` is measured against: the pane area of the client that last controlled the layout. |
-| `workspaces` | Every workspace in the layout document, including empty ones, so a script can see a workspace's layout before using it. `index` is one-based. A UI always reports all nine. A document the server started for a headless `split` holds only the workspaces it placed panes in; the others take each client's configured default layout. |
+| `revision` | The layout revision described. Null until something places a pane. A controlling UI first sends any change it is still holding back, and reports the revision that change will have. |
+| `canvas` | The shared canvas that `rect` is measured against: the pane area of the client that last controlled the layout. |
+| `workspaces` | Every workspace in the layout, including empty ones, so a script can see a workspace's layout before using it. `index` is one-based. A UI always reports all nine. A layout the server started for a headless `split` holds only the workspaces it placed panes in; the others take each client's configured default layout. |
 | `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
 | `master_ratio` | Master workspaces only: the master pane's share of the width. |
 | `order` | The pane's position in the tiling order that every layout except Dwindle arranges panes in. Null for a floating pane. |
-| `rect` | Where the pane sits on the canonical canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
+| `rect` | Where the pane sits on the shared canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
 | `rect_fraction` | The pane's position as fractions of the canvas, rounded to six decimal places. Floating panes are stored this way, so their fractions are exact. |
 | `split_ratio` | Dwindle workspaces only: the pane's share of the split that directly holds it. Absent for a floating pane or a lone tile. |
 | `width_ratio` | Scrollable workspaces only: the pane's column width as a fraction of the viewport. |
 | `view_rect` | Where this UI draws the pane, in cells of its own terminal, gaps and chrome included. Only for panes in the workspace the UI shows. |
 | `unplaced_panes` | Session endpoint only: panes the server runs that no layout places yet. |
-| `client.controller` | Whether this UI holds the layout-control lease. A UI without a shared session controls its own layout. |
+| `client.controller` | Whether this UI holds layout control. A UI without a shared session controls its own layout. |
 | `client.committed` | False until the server has confirmed `revision`. A controlling UI sends a change without waiting for the confirmation. |
 
 Tiled panes are listed in tiling order, then floating panes. Some geometry needs care:
 
 - **Scrollable:** the strip of columns can be wider than the canvas, so a `rect` can extend past
-  the right edge, and `rect_fraction` can exceed `1.0`. A UI scrolls the strip to follow focus.
-  The shared `rect` always starts the strip at its first column, while `view_rect` shows where this
-  UI has scrolled it.
+  the right edge and `rect_fraction` can exceed `1.0`. The shared `rect` always starts the strip at
+  its first column; `view_rect` shows where this UI has scrolled it to follow focus.
 - **Monocle:** every tiled pane has the same `rect`. The focused one is drawn on top.
 - **Fullscreen:** `rect` is where the pane returns to afterwards. `view_rect` covers the screen
   while it is fullscreen.
-- **Followers:** a follower centres the controller's canvas in its own window, so its
-  `view_rect` values can start at a negative position or run past its edges.
+- **Followers:** a client that follows another centres the controller's canvas in its own window,
+  so its `view_rect` values can start at a negative position or run past its edges.
 
 ### Changing the layout
 
-`layout set` chooses a workspace's tiling layout. `pane set` floats, tiles, moves, or fullscreens
-one pane. `pane move`, `pane swap`, and `pane close` move a pane between workspaces, exchange two
-panes, and close one.
+`layout set` chooses a workspace's tiling layout. `pane set` floats, tiles, places, sizes, or
+fullscreens one pane. `pane move`, `pane swap`, and `pane close` move a pane to another workspace,
+exchange two panes, and close one.
 
 ```sh
 rozi layout set --workspace 2 master
@@ -387,11 +420,11 @@ rozi pane set --target 7 --fullscreen true
 rozi --session dev pane set --target 3 --floating false --if-revision 18
 ```
 
-Every write names what it changes: `layout set` needs `--workspace`, and every `pane` command
-needs `--target`. Neither falls back to focus or `ROZI_PANE`, and neither moves focus.
+Every write names what it changes: `layout set` needs `--workspace`, and every `pane` command needs
+`--target`. Neither falls back to focus or `ROZI_PANE`, and neither moves focus.
 
-A write sets a state rather than toggling it. Options you leave out keep their current value.
-Repeating a write, or asking for a state that already holds, succeeds with `changed: false`, and
+A write sets a state rather than toggling it, and options you leave out keep their current value.
+Repeating a write, or asking for a state that already holds, succeeds with `changed: false` and
 creates no new revision. A refused write changes nothing.
 
 `pane set` accepts:
@@ -406,30 +439,29 @@ creates no new revision. A refused write changes nothing.
 | `--split-ratio R` | Dwindle only: set the pane's share of the split that directly holds it. |
 | `--width-ratio R` | Scrollable only: set the pane's column width as a fraction of the viewport. |
 
-`layout set --master-ratio R` sets the master pane's share of a Master workspace. You can combine
-it with the layout name (`layout set --workspace 2 master --master-ratio 0.6`) or pass it alone for
-a workspace that is already Master.
+`layout set --master-ratio R` sets the master pane's share of a Master workspace. Combine it with
+the layout name (`layout set --workspace 2 master --master-ratio 0.6`) or pass it alone for a
+workspace that is already Master.
 
-Rozi's layouts do not share one sizing model, so each ratio works only with the layout that uses
-it. Using a ratio with another layout, on a floating pane, or on a lone Dwindle tile fails with
-`unsupported`. Ratios run from `0.2` to `0.8`, the same limits that apply when you drag a divider.
-A value outside that range fails with `invalid-argument`. Ratios cannot be combined with
-`--floating` or a rect in one request; float or re-tile the pane first. Sizes change at once
-instead of animating, so the program inside redraws only once.
+Each ratio works only with the layout that uses it. Using a ratio with another layout, on a
+floating pane, or on a lone Dwindle tile fails with `unsupported`. Ratios run from `0.2` to `0.8`,
+the same limits as dragging a divider; a value outside that range fails with `invalid-argument`.
+A ratio cannot be combined with `--floating` or a rect in one request; float or re-tile the pane
+first. Sizes change at once instead of animating.
 
-A rect places a floating pane, so it needs a pane that floats already or `--floating true`.
-Rects are clamped the same way a dragged float is: part of the pane may leave the canvas, but a
-margin always stays on screen to grab. The float lands on whole cells.
+A rect places a floating pane, so it needs a pane that already floats or `--floating true`. Rects
+are clamped the same way a dragged float is: part of the pane may leave the canvas, but a margin
+always stays on screen to grab. The float lands on whole cells.
 
 `pane move --workspace N` puts the pane at the end of workspace `N`: last in its tiling order when
 tiled, at the same rect when floating. A fullscreen pane stays fullscreen and restores any
-fullscreen pane already in `N`. The view does not follow the pane. If the pane had focus,
-focus moves to another pane in the workspace it left, as it would if the pane had closed. Moving a
-pane to the workspace it is in is `changed: false`.
+fullscreen pane already in `N`. The view does not follow the pane. If the pane had focus, focus
+moves to another pane in the workspace it left, as if the pane had closed. Moving a pane to the
+workspace it is already in is `changed: false`.
 
-`pane swap --with ID` exchanges the places of two tiled panes in one workspace: each takes the
-other's tile and position in the tiling order. Anything else, including a floating pane or panes in
-different workspaces, fails with `invalid-argument`.
+`pane swap --with ID` exchanges two tiled panes in one workspace: each takes the other's tile and
+position in the tiling order. Anything else, including a floating pane or panes in different
+workspaces, fails with `invalid-argument`.
 
 `pane close` ends the pane's process and removes it from the layout. The request is the
 confirmation, so `[confirm]` is not consulted. It replies with the closed `id`, the new `revision`,
@@ -437,7 +469,7 @@ confirmation, so `[confirm]` is not consulted. It replies with the closed `id`, 
 does not place; `workspace` is then absent and no revision is written. Closing a pane that does not
 exist fails with `pane-not-found`.
 
-The reply to every other write has the same shape from both endpoints:
+Every other write replies with the same shape from both endpoints:
 
 ```json
 { "changed": true, "revision": 19, "committed": false, "workspace": { "index": 1, "…": "…" } }
@@ -445,29 +477,29 @@ The reply to every other write has the same shape from both endpoints:
 
 `workspace` is the affected workspace in the shape `layout get` reports it. `revision` is the
 revision the layout has with the change applied. A session endpoint commits the change itself, so
-`committed` is always `true` there. A UI sends its commit and answers before the server confirms
-it; if the server rejects the commit, the UI takes the server's layout back.
+`committed` is always `true` there. A UI answers before the server confirms its change; if the
+server rejects it, the UI takes the server's layout back.
 
 `--if-revision N` refuses the write with `conflict` unless the layout is still at revision `N`. Read
 the revision with `layout get`, decide, then write with `--if-revision`, so that a change someone
 made in the meantime is not overwritten. Each successful write's reply gives the revision to pass
 to the next one.
 
-A write needs layout authority, the same as a person rearranging panes:
+A write needs the same layout authority as a person rearranging panes:
 
 - A UI must hold layout control. A follower fails with `not-controller`, and a read-only UI with
   `read-only`.
-- A session endpoint refuses with `not-controller` while any client holds layout control. It
-  fails with `unavailable` for a session that has panes but no layout document, which is also when
-  `split` is refused.
+- A session endpoint fails with `not-controller` while any client holds layout control, and with
+  `unavailable` for a session that has panes but no layout (the same case in which `split` is
+  refused).
 - A scratch pane is client-local and has no shared layout, so `pane set` refuses it with
   `unsupported`.
 - A pane the layout does not place fails with `pane-not-found`.
 
 ### Watching the layout
 
-A UI's `subscribe` stream raises `layout-changed` whenever the server accepts a layout revision
-and this UI has it:
+A UI's `subscribe` stream raises `layout-changed` whenever the server accepts a layout revision and
+this UI has received it:
 
 ```json
 {"event":"layout-changed","data":{"revision":"19","author":"self"}}
@@ -475,15 +507,16 @@ and this UI has it:
 
 `author` is `self` for this UI's own change, `client` for another client's, and `server` for a
 change made through a session endpoint. The event fires only for accepted revisions: not for a
-commit the server rejects, not for animation frames, and not for a change the server has not yet
-confirmed. A session endpoint cannot
-`subscribe`, so a script driving a detached session reads `revision` from `layout get` instead.
+change the server rejects, not for animation frames, and not before the server confirms. A session
+endpoint cannot `subscribe`, so a script driving a detached session reads `revision` from
+`layout get` instead.
 
 ## Sending keys and capturing output
 
 `send-keys` recognizes tmux-style names including `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
 `BSpace`, arrows, `Home`, `End`, `PgUp`, `PgDn`, and `F1` through `F12`. Unknown tokens are sent as
-literal text. `--literal` makes every token literal. `--` ends option parsing.
+literal text. `--literal` makes every token literal. `--` ends option parsing. Options, including
+`--target`, must come before the first key.
 
 ```sh
 rozi send-keys C-c
@@ -492,10 +525,10 @@ rozi send-keys --literal C-c
 rozi send-keys -- -n hello
 ```
 
-`capture-pane` returns the visible grid by default. `--scrollback N` returns trailing retained
-lines, `--scrollback full` returns all retained lines, and `--last-output` returns the most recent
-shell-integration command output. A full-scrollback reply can exceed 1 MiB; the CLI reads Rozi's
-responses without the incoming request size cap.
+`capture-pane` returns the visible grid by default. `--scrollback N` returns the last `N` retained
+lines, `--scrollback full` returns all retained lines, and `--last-output` returns the output of
+the most recent command, using [shell integration](terminal.md). A full-scrollback reply can exceed
+1 MiB; the CLI accepts replies of that size.
 
 `--render` picks the form of the capture:
 
@@ -511,12 +544,12 @@ responses without the incoming request size cap.
 Images a program displayed with the Kitty graphics protocol, such as `kitty icat` output, are
 included. A PNG draws their pixels, scaled into the cells they occupy. Text has no pixels, so
 `ansi` shows each such cell as a `▀` half block in the image's colors, and `text` shows the `▀`
-characters alone, which mark where an image is.
+characters alone, marking where an image is.
 
 `--output FILE` writes the capture itself to `FILE` and prints nothing, for any `--render`. It
-cannot be combined with `--format`. Without `--output`, a PNG goes to stdout as raw bytes, and
-Rozi refuses to write it to a terminal. `--format json` still returns the JSON envelope, with the
-image base64-encoded.
+cannot be combined with `--format`. Without `--output`, a PNG goes to stdout as raw bytes, and rozi
+refuses to write it to a terminal. `--format json` still returns the JSON envelope, with the image
+base64-encoded.
 
 ```sh
 rozi capture-pane --target 3 --render png --output pane.png
@@ -524,26 +557,25 @@ rozi capture-pane --target 3 --render png > pane.png
 rozi capture-pane --target 3 --render ansi --format text | less -R
 ```
 
-`--scale 2` or `--scale 3` draws a PNG two or three times larger, with sharper text and images,
-for screenshots people will look at: a 120x36 UI is 960x576 pixels at scale 1 and 1920x1152 at
-scale 2. Scale 1, the default, suits agents: vision models shrink large images before reading them,
-so a larger capture mostly costs transfer. `--scale` applies to `--render png` only.
+`--scale 2` or `--scale 3` draws a PNG two or three times larger, with sharper text and images, for
+screenshots people will look at: a 120x36 UI is 960x576 pixels at scale 1 and 1920x1152 at scale 2.
+The default, scale 1, suits agents, because vision models shrink large images anyway. `--scale`
+works with `--render png` only.
 
-A PNG uses the theme colors a UI gave the pane. A session whose panes have never been shown by a
-UI renders with default terminal colors. Text uses installed fonts, including CJK,
-color emoji, and Nerd Font symbols when a font on that machine has them. With `--session`, the
-image is rendered by the session server, with the fonts installed where it runs. A session reply
-must fit one 8 MiB protocol frame, so a capture larger than that fails with `message-too-large`;
-the UI endpoint has no such limit.
+A PNG uses the theme colors a UI gave the pane; a session whose panes no UI has ever shown renders
+with default terminal colors. Text uses installed fonts, including CJK, color emoji, and Nerd Font
+symbols when a font on that machine has them. With `--session`, the session server renders the
+image with the fonts installed where it runs. A session reply must fit in 8 MiB, so a larger
+capture fails with `message-too-large`; the UI endpoint has no such limit.
 
 ### Capturing the whole UI
 
 ![A rozi window captured with capture-ui: Neovim editing a Rust file, a shell showing the rozi logo with icat, and a shell that ran cargo run](assets/capture-ui.png)
 
-The image above is `rozi capture-ui --render png --scale 2`. `capture-ui` captures what the UI
-is showing: the bar, pane borders and titles, overlays and toasts, and every visible pane, at the
-size of the terminal Rozi runs in. It takes the same `--render`, `--scale`, `--output`, and
-`--format` options as `capture-pane`, with the same PNG rules.
+The image above is `rozi capture-ui --render png --scale 2`. `capture-ui` captures what the UI is
+showing: the bar, pane borders and titles, overlays and toasts, and every visible pane, at the size
+of the terminal rozi runs in. It takes the same `--render`, `--scale`, `--output`, and `--format`
+options as `capture-pane`, with the same PNG rules.
 
 ```sh
 rozi capture-ui --render png --output ui.png
@@ -551,15 +583,14 @@ rozi capture-ui --render ansi --format text | less -R
 rozi capture-ui --format json | jq -r .data.text
 ```
 
-The capture is the next frame the UI draws. Rozi draws it at once for the request, so an idle UI
-answers too, and simultaneous requests share that frame. The UI resolves the theme while drawing,
-so the colors match the screen; the theme's own background and text colors fill the cells a
-program left at its terminal defaults. Images a program displayed in a pane are included as they
-are for `capture-pane`, and whatever is drawn over one, such as an overlay or a floating pane,
+The capture is the next frame the UI draws. rozi draws it immediately for the request, so an idle
+UI answers too, and simultaneous requests share that frame. Colors match the screen: the theme's
+background and text colors fill cells a program left at its terminal defaults. Images in panes are
+included as for `capture-pane`, and anything drawn over one, such as an overlay or a floating pane,
 covers it in the capture as it does on screen. A dimmed backdrop behind a modal does not dim the
 image parts that remain visible.
 
-`capture-ui` needs a UI. `--session` is refused, since a session server draws nothing; capture its
+`capture-ui` needs a UI; `--session` is refused because a session server draws nothing. Capture its
 panes one at a time with `capture-pane` instead. The reply reports the frame's `width` and `height`
 in cells alongside the capture.
 
@@ -567,19 +598,19 @@ in cells alongside the capture.
 
 `run-action` accepts:
 
-- built-in action IDs such as `toggle-float`
+- built-in action IDs, such as `toggle-float`
 - IDs from `[[commands]]`, such as `branches`
 - extension command IDs, such as `git-tools.branches`
 
 Destructive actions honor `[confirm]`.
 
-`status` accepts short free-form values. `working`, `blocked`, `done`, and `idle` have built-in
-presentation. Values are limited to 64 characters and reasons to 256 after display-text
-sanitization. `--target` may be written on either side of the value, and is the only way to name a
-pane from a script that is not running inside one. The update is queued to the session server, so a
-successful reply does not guarantee that every client has rendered it.
+`status` reports a short free-form value for a pane. `working`, `blocked`, `done`, and `idle` have
+built-in presentation. Values are limited to 64 characters and reasons to 256, after display-text
+sanitization. `--target` may come before or after the value, and is the only way to name a pane
+from a script that is not running inside one. The update is queued to the session server, so a
+successful reply does not guarantee that every client has drawn it yet.
 
-Use `notify` for failures and successful results that are otherwise off screen:
+Use `notify` for failures, and for successful results that would otherwise go unseen:
 
 ```sh
 rozi notify "tests failed" --title Build --level error
@@ -587,41 +618,41 @@ rozi notify "tests failed" --title Build --level error
 
 ## Subscriptions
 
-`subscribe` prints one object per line until the endpoint closes:
+`subscribe` prints one JSON object per line until the endpoint closes:
 
 ```sh
 rozi subscribe pane-exited pane-status-changed |
   jq -r 'select(.event == "pane-status-changed") | [.data.pane, .data.status] | @tsv'
 ```
 
-Every event has `event` and `data`. Event fields are under `data`. See
-[Hooks](hooks.md#events-and-fields) for the event field table.
+Every event has `event` and `data`; event fields are under `data`. See
+[Hooks](hooks.md#events-and-fields) for the event names and fields.
 
 ## Pickers
 
-Plain mode reads one label per input line and prints the selected label:
+In plain mode, `pick` reads one label per input line and prints the selected label:
 
 ```sh
 branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) || exit 0
 git switch -- "$branch"
 ```
 
-Selection exits `0`, cancellation exits `1`, and transport failure exits `2`.
+Selection exits `0`, cancellation exits `1`, and a lost connection exits `2`.
 
 Use `--json` for stable row IDs, descriptions, groups, disabled or active rows, custom actions,
-prompts, empty-collection copy, tabs, and live replacement. The first input line is picker metadata
-and may contain initial rows. Later input lines replace the complete row set.
+prompts, empty-list text, tabs, and live updates. The first input line is picker metadata and may
+contain initial rows. Each later line replaces the complete row set.
 
 ```json
 {"title":"Branches","rows":[{"id":"main","label":"main","active":true},{"id":"old","label":"old","disabled":"protected"}]}
 ```
 
 JSON mode prints selection, cancellation, and action objects. An action without `close: true` keeps
-the picker open so the producer can send refreshed rows. `empty` is producer copy for an empty row
-list while the filter is empty; a filter miss always says `No matches`. `prompt` may be a title
-string or an object with `title`, `placeholder`, `value`, and `masked`.
+the picker open so the producer can send refreshed rows. `empty` is the text shown for an empty row
+list while the filter is empty; a filter that matches nothing always says `No matches`. `prompt`
+may be a title string or an object with `title`, `placeholder`, `value`, and `masked`.
 
-Declare `tabs` to show several related lists under one picker. Each tab keeps its own rows, filter,
+Declare `tabs` to show several related lists in one picker. Each tab keeps its own rows, filter,
 and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch between them. Row snapshots name their
 tab, and JSON mode prints `{"tab":"…"}` on each switch so the producer can load a tab when it is
 first shown:
@@ -636,7 +667,7 @@ See [Picker protocol](control-protocol.md#picker-stream).
 
 ## Published activity
 
-`publish` keeps a bidirectional stream open. Write complete row snapshots to stdin:
+`publish` keeps a two-way stream open. Write complete row snapshots to stdin:
 
 ```json
 {"rows":[{"id":"job-1","title":"Run tests","status":"working","active":true}]}
@@ -649,18 +680,17 @@ Read activation requests from stdout:
 ```
 
 An empty row list or a closed stream withdraws the rows. Use stable IDs. A process with
-`ROZI_PANE` publishes for that pane. A supervised service has no pane ID, so Rozi uses the focused
-live pane when the stream opens. Extension-owned streams close when their runtime generation
-retires.
+`ROZI_PANE` publishes for that pane. A supervised service has no pane, so rozi uses the focused
+live pane when the stream opens. A stream opened by an extension closes when rozi reloads its
+configuration or disables the extension.
 
 Published rows appear even when the pane has no detected agent. When a known agent publishes rows,
-Rozi derives that agent's displayed state from the rows instead of trying to assign one visible
-screen to several activities.
+rozi derives that agent's displayed state from the rows instead of from its screen.
 
 See [Published activity protocol](control-protocol.md#published-activity-stream) and
 [Sidebar](sidebar.md).
 
-## Driving a detached session
+## Drive a detached session
 
 `--session <NAME>` reaches the session server directly. Nothing has to be attached, and nothing
 becomes attached: the request is answered and the connection closes, so the session's client count
@@ -681,18 +711,17 @@ rozi --session dev capture-pane --target "$pane" --scrollback full --format text
 The session must already exist. Start one with `rozi sessions new dev`, or leave a detached
 `rozi dev` running.
 
-There is no general event stream against a session endpoint. `subscribe` reports UI events, which a
-server does not raise. Agent state is the exception: `agents wait` registers a semantic predicate
-inside the server without polling or requiring an attached UI.
+There is no general event stream from a session endpoint: `subscribe` reports UI events, which a
+server does not raise. Agent state is the exception: `agents wait` waits inside the server, without
+polling and without an attached UI.
 
-## Extensions and `--session`
+## Extensions and detached sessions
 
-The CLI stamps every request with the calling extension's id and generation when it finds
-`ROZI_EXTENSION` in the environment. That generation is a fencing token a running rozi mints on
-each config reload, so a disabled or reloaded extension's leftover processes stop being obeyed.
+When `ROZI_EXTENSION` is set, the CLI marks every request as coming from that extension, stamped
+with a token the running UI renews on each config reload. The UI checks that token, so leftover
+processes from a disabled or reloaded extension stop being obeyed.
 
-A session server cannot check it — the token is minted per UI process and the server never sees it
-— so it refuses such requests rather than honouring a fence nobody checked:
+A session server cannot make that check, so it refuses such requests:
 
 ```text
 a session server cannot check whether extension `git-tools` is still active, and will not act on
@@ -700,14 +729,13 @@ its behalf; reach a running rozi instead, or clear ROZI_EXTENSION when the calle
 extension
 ```
 
-An extension that wants to drive a session should go through a running rozi, which does check. A
-person typing in a pane that an extension happened to open inherits `ROZI_EXTENSION` from it and
-hits the same refusal; `env -u ROZI_EXTENSION rozi --session …` says the request is theirs, not the
-extension's.
+An extension that wants to drive a session should go through a running UI. A person typing in a
+pane that an extension opened inherits `ROZI_EXTENSION` and hits the same refusal; run
+`env -u ROZI_EXTENSION rozi --session …` to make the request as yourself.
 
 ## Session lifecycle
 
-These commands use session endpoints rather than a UI control endpoint:
+These commands manage sessions rather than control a UI:
 
 ```sh
 rozi dev
@@ -720,21 +748,15 @@ rozi sessions list
 rozi sessions kill dev
 ```
 
-Git checkouts have their own `rozi worktrees` namespace. See
-[Worktrees from the command line](sessions.md#worktrees-from-the-command-line).
-
-Remote forms are limited to session lifecycle:
+`sessions list` and `sessions kill` also take `--remote`:
 
 ```sh
 rozi sessions list --remote workbox
 rozi sessions kill dev --remote workbox
 ```
 
-`--session` control commands are local only. To drive a session on another machine, run the same
-command over `ssh`, where it is local again:
-
-```sh
-ssh workbox rozi --session dev capture-pane --target 3
-```
+To control a session on another machine, see [Sessions on another machine](#sessions-on-another-machine).
+Git checkouts have their own `rozi worktrees` namespace; see
+[Use worktrees from the command line](worktrees.md#use-worktrees-from-the-command-line).
 
 See [Sessions](sessions.md) and [Remote sessions](remote.md).

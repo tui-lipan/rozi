@@ -1,8 +1,13 @@
 # Automation recipes
 
-These recipes use Rozi's public CLI, hooks, services, pickers, and published activity.
+These recipes are complete scripts that automate rozi through its CLI, pickers, hooks, services,
+and published activity. Copy one, adapt it, and see [Control CLI](control.md) for every command and
+flag they use.
 
-Scripts launched by Rozi should use `ROZI_BIN` and `ROZI_SOCKET`:
+## Call rozi from a script
+
+A script that rozi launches — from a pane, a key binding, a hook, or a service — should call the
+same `rozi` binary and UI that launched it. rozi provides both in `ROZI_BIN` and `ROZI_SOCKET`:
 
 ```sh
 ROZI=${ROZI_BIN:-rozi}
@@ -13,9 +18,12 @@ else
 fi
 ```
 
-The examples below use `"$@"` after this setup.
+After this setup, `"$@" <COMMAND>` runs a rozi command. Each shell recipe below repeats the block
+so it can be copied on its own.
 
 ## Pick and switch a Git branch
+
+Choose a branch from a picker and switch to it:
 
 ```sh
 #!/bin/sh
@@ -34,10 +42,13 @@ git switch "$branch"
 "$@" notify "switched to $branch"
 ```
 
-Plain picker input is one row per line. Output is the selected row. See
-[Control CLI](control.md#pickers) for grouped, disabled, and actionable JSON rows.
+`rozi pick` reads one row per input line and prints the selected row. It exits `1` when the user
+cancels, which `|| exit 0` turns into a quiet exit. See [Pickers](control.md#pickers) for JSON rows
+with groups, disabled entries, and actions.
 
 ## Open a worktree in a pane
+
+Choose a Git worktree and open a shell in it:
 
 ```sh
 #!/bin/sh
@@ -59,45 +70,47 @@ worktree=$(
 "$@" split --cwd "$worktree" --focus
 ```
 
-Quoting `"$worktree"` is required because picker output is untrusted text and paths may contain
-spaces.
+Keep `"$worktree"` quoted: picker output is untrusted text, and paths may contain spaces.
 
 ## Use Yazi as a file router
 
-Create `~/.config/rozi/scripts/yazi-router`:
+Pick a file in [Yazi](https://yazi-rs.github.io/) inside a popup and open it in your editor in a new
+pane.
 
-```sh
-#!/bin/sh
-set -eu
+1. Create `~/.config/rozi/scripts/yazi-router`:
 
-ROZI=${ROZI_BIN:-rozi}
-choice=$(mktemp "${TMPDIR:-/tmp}/rozi-yazi.XXXXXX")
-trap 'rm -f "$choice"' EXIT HUP INT TERM
+   ```sh
+   #!/bin/sh
+   set -eu
 
-yazi --chooser-file="$choice"
-IFS= read -r selected < "$choice" || exit 0
-[ -n "$selected" ] || exit 0
+   ROZI=${ROZI_BIN:-rozi}
+   choice=$(mktemp "${TMPDIR:-/tmp}/rozi-yazi.XXXXXX")
+   trap 'rm -f "$choice"' EXIT HUP INT TERM
 
-if [ -n "${ROZI_SOCKET:-}" ]; then
-    "$ROZI" --socket "$ROZI_SOCKET" split --focus --argv "${EDITOR:-vi}" "$selected"
-else
-    "$ROZI" split --focus --argv "${EDITOR:-vi}" "$selected"
-fi
-```
+   yazi --chooser-file="$choice"
+   IFS= read -r selected < "$choice" || exit 0
+   [ -n "$selected" ] || exit 0
 
-Make it executable, then bind the helper:
+   if [ -n "${ROZI_SOCKET:-}" ]; then
+       "$ROZI" --socket "$ROZI_SOCKET" split --focus --argv "${EDITOR:-vi}" "$selected"
+   else
+       "$ROZI" split --focus --argv "${EDITOR:-vi}" "$selected"
+   fi
+   ```
 
-```toml
-[keys]
-"ctrl-a shift-e" = { popup = "~/.config/rozi/scripts/yazi-router", keep_open = false }
-```
+2. Make it executable with `chmod +x ~/.config/rozi/scripts/yazi-router`.
+3. Bind it to `Ctrl+A`, then `Shift+E`:
 
-The helper creates a private temporary chooser file, removes it on exit, and passes the selected
-path as a direct argument. It does not share a predictable file or insert the path into shell
-source.
+   ```toml
+   [keys]
+   "ctrl-a shift-e" = { popup = "~/.config/rozi/scripts/yazi-router", keep_open = false }
+   ```
 
-For file-tree activation, Rozi supplies the selected path in `ROZI_FILE`. Read that variable instead
-of inserting the path into a command:
+The script writes Yazi's choice to a private temporary file, removes it on exit, and passes the
+path to the editor as a separate argument, never as part of a shell command.
+
+The sidebar's file tree follows the same rule: an `on_click` action receives the selected path in
+`ROZI_FILE`. Read the variable instead of inserting the path into a command:
 
 ```toml
 [sidebar]
@@ -108,7 +121,8 @@ tabs = [
 
 ## Watch events
 
-This Python service ignores bells from the focused pane and debounces notifications:
+Notify when a background pane rings the bell, at most once every five seconds. Save this as
+`~/.config/rozi/scripts/bell-watch.py` and make it executable:
 
 ```python
 #!/usr/bin/env python3
@@ -140,13 +154,13 @@ with subprocess.Popen(
             now = time.monotonic()
             if now - last_notification >= 5:
                 subprocess.run(
-                    ["notify-send", "Rozi", "A background pane rang"],
+                    ["notify-send", "rozi", "A background pane rang"],
                     check=False,
                 )
                 last_notification = now
 ```
 
-Configure it as a supervised service:
+Run it as a supervised service:
 
 ```toml
 [[services]]
@@ -155,26 +169,28 @@ run = "~/.config/rozi/scripts/bell-watch.py"
 restart = "on-failure"
 ```
 
-Unlike a hook, a subscriber can keep state and coalesce related events. Event fields are under
-`event.data`. See [Hooks](hooks.md#events-and-fields) for the event list.
+Unlike a [hook](hooks.md), a subscriber keeps state between events: here it remembers the focused
+pane and when it last notified. Each event's fields are under `data`; see
+[Hooks](hooks.md#events-and-fields) for the event list.
 
 ## Run a job in a detached session and collect its output
 
-No UI is involved. This works from cron, from CI, or over `ssh`, as long as a session named `dev`
-is running on the machine the script runs on.
+Run a command in a session nobody is attached to, wait for it to finish, and print its output. This
+needs no UI, so it works from cron, CI, or an SSH login, as long as the session (here `dev`) is
+running on the same machine.
 
 ```sh
 #!/bin/sh
 set -eu
 session=dev
 
-# Fail early and clearly rather than in the middle of the job.
+# Fail early if the session is not running.
 rozi --session "$session" list-panes >/dev/null
 
 pane=$(rozi --session "$session" split --workspace 9 --title nightly 'cargo test' |
     jq -r '.data.id')
 
-# The pane's process exiting is the job finishing; `list-panes` reports it as `exited (<CODE>)`.
+# The job is done when the pane's process exits; list-panes then reports `exited (<CODE>)`.
 while status=$(rozi --session "$session" list-panes --format json |
     jq -r --argjson p "$pane" '.data[] | select(.id == $p) | .status'); do
     case "$status" in
@@ -191,23 +207,20 @@ case "$status" in
 esac
 ```
 
-The pane stays in workspace 9 with its scrollback intact, so the failure is still there to look at
-when someone attaches. Use `--workspace` for exactly that reason: a pane spawned into the workspace
-someone is working in re-tiles their layout.
+The script exits `0` only if the job did.
 
-`split` is refused while a client holds layout control of the session, so a job like this belongs
-on a session nobody is sitting in — which is the case it is for. The `list-panes` check at the top
-is what turns "someone is attached" into one clear failure instead of a surprise halfway through.
-
-To do the same on another machine, run the same script over `ssh` — `--session` is local only, and
-`ssh workbox rozi --session dev …` makes it local again.
+- The pane stays in workspace 9 with its scrollback, so a failure is still there to inspect when
+  someone attaches. A dedicated workspace also keeps the new pane from re-tiling a workspace
+  someone is using.
+- `split` fails with `not-controller` while an attached client holds layout control, so run jobs
+  like this in a session nobody is working in.
+- To run the job on another machine, add `--remote <HOST>` before each `--session`, for example
+  `rozi --remote workbox --session dev list-panes`. See [Control CLI](control.md#commands).
 
 ## Report a script's progress into a session
 
-A long job can report its own status onto the pane it runs in, which is what the sidebar's Activity
-list and the pane border read. A session endpoint always wants the pane named, because a pane id
-means nothing without the session it belongs to — a job inside the session it is reporting on
-passes its own `ROZI_PANE`:
+Show a long job's progress as the status of the pane it runs in, where the sidebar's Activity list
+and the pane border display it:
 
 ```sh
 ROZI=${ROZI_BIN:-rozi}
@@ -216,12 +229,14 @@ pane=${ROZI_PANE:?run this inside a rozi pane, or pass a pane id}
 trap '"$ROZI" --session dev status --clear --target "$pane"' EXIT
 ```
 
-Only pass `$ROZI_PANE` to the session that pane is actually in. It is a bare number: `--session`
-somewhere else would be naming a different pane that happens to share the id.
+A session endpoint always needs `--target`, because a pane id does not say which session it
+belongs to. Pass `$ROZI_PANE` only to the session that pane is in: against any other session, the
+same number names a different pane.
 
 ## Publish a build row
 
-`rozi publish` reads complete JSON row snapshots. This publisher reports whether Cargo is running:
+Show a sidebar Activity row that says whether Cargo is running. `rozi publish` reads complete JSON
+row snapshots on stdin:
 
 ```sh
 #!/bin/sh
@@ -249,19 +264,21 @@ publish_rows() {
 publish_rows | "$@" publish
 ```
 
-The row belongs to the source pane. A publisher launched in a pane uses `ROZI_PANE`; a supervised
-service resolves the focused live pane when its stream opens. A service that needs stable ownership
-can start a separate publisher subprocess with `ROZI_PANE` set to a pane ID from `list-panes`.
+The row belongs to a pane:
 
-Nonempty published rows are authoritative for the activity state of an already recognized agent in
-that pane, so screen-derived state is not used until the publisher sends an empty snapshot or
-disconnects. Publishing from an unrecognized program creates an Activity row but does not invent an
-agent identity.
+- A publisher running in a pane uses that pane, from `ROZI_PANE`.
+- A supervised service has no pane, so rozi uses the focused live pane when the stream opens. To
+  pin the row to a specific pane, start the publisher with `ROZI_PANE` set to a pane ID from
+  `list-panes`.
+
+While a pane has published rows, they decide the displayed state of any agent rozi has detected in
+that pane, instead of what is on screen, until the publisher sends an empty snapshot or
+disconnects. A publisher in a pane with no detected agent still gets its Activity row.
 
 ## Make published rows clickable
 
-The publish stream writes activation objects to stdout. This example checks out an activated pull
-request in a new pane:
+List open pull requests as Activity rows, and check one out in a new pane when the user activates
+its row. `rozi publish` writes an activation object to stdout for each click:
 
 ```sh
 #!/bin/sh
@@ -302,14 +319,14 @@ produce_rows |
     done
 ```
 
-Keep reading stdout for the lifetime of a publisher. An unread activation backlog causes Rozi to
-close the stream and withdraw its rows.
+Keep reading stdout for as long as the publisher runs. If unread activations pile up, rozi closes
+the stream and withdraws its rows.
 
 ## Record a pane or the whole UI as a GIF
 
-`capture-pane` and `capture-ui` are fast enough to record from. This script captures PNG frames in
-a loop, stamps each with the time it was taken, and has ffmpeg assemble them. The result plays in
-real time however fast the captures ran:
+Record a pane, or everything rozi draws, as a GIF or video. The script captures PNG frames in a
+loop, stamps each with the time it was taken, and has ffmpeg assemble them, so the result plays in
+real time however fast the captures ran. Save it as `record.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -333,7 +350,8 @@ args = parser.parse_args(argv[:split])
 capture = argv[split + 1:]
 
 rozi = [os.environ.get("ROZI_BIN", "rozi")]
-if socket_path := os.environ.get("ROZI_SOCKET"):
+# --socket and --session cannot be combined.
+if (socket_path := os.environ.get("ROZI_SOCKET")) and "--session" not in capture:
     rozi += ["--socket", socket_path]
 
 workdir = tempfile.mkdtemp(prefix="rozi-record-")
@@ -369,16 +387,23 @@ finally:
     shutil.rmtree(workdir, ignore_errors=True)
 ```
 
+Pass the output file, the duration in seconds, and, after `--`, a capture command; the script adds
+`--output` itself:
+
 ```sh
 record.py demo.gif 5 -- capture-pane --target 3 --render png
 record.py ui.mp4 10 --fps 30 -- capture-ui --render png --scale 2
 record.py agent.gif 60 --fps 5 -- --session dev capture-pane --target 3 --render png
 ```
 
-Everything after `--` is a capture command; the script adds `--output`. It needs Python 3.8 and
-ffmpeg.
+It needs Python 3.8 or newer and ffmpeg 5.1 or newer, for `-fps_mode`.
 
-Measured on a laptop on AC power, with a release build and a 120x36 UI running `btop -u 100`:
+Frames are samples, not every paint: a change that appears and disappears between two captures is
+not recorded. Use `--fps` to keep a long recording small.
+
+Each capture is a separate `rozi` process. Starting it and the round trip take about 10 ms, most of
+each frame; encoding the PNG adds 1–3 ms. Measured on a laptop on AC power, with a release build
+and a 120×36 UI running `btop -u 100`:
 
 | Capture | Frames a second |
 | --- | --- |
@@ -388,16 +413,13 @@ Measured on a laptop on AC power, with a release build and a 120x36 UI running `
 | `--session capture-pane` of the same pane | 100 |
 | `capture-ui` with two large images also showing | 40 (30 at `--scale 2`) |
 
-Each capture is a separate `rozi` process, and starting it plus the round trip takes about 10 ms,
-most of every frame; encoding the PNG adds 1-3 ms. A CPU in a power-saving profile records at
-roughly half these rates.
-
-Frames are samples, not every paint: a change that comes and goes between two captures is not
-recorded. Use `--fps` to keep a long recording small.
+A CPU in a power-saving profile records at roughly half these rates.
 
 ## Package a script as an extension
 
-An extension gives scripts stable command IDs, lifecycle management, and a distributable manifest:
+Turn a script into an [extension](extensions.md) to give it a stable command ID, lifecycle
+management, and a manifest you can share. This one packages the branch picker from
+[Pick and switch a Git branch](#pick-and-switch-a-git-branch):
 
 ```text
 git-tools/
@@ -419,11 +441,12 @@ label = "Pick Git branch"
 exec = ["{extension_dir}/scripts/branch-picker"]
 ```
 
-The command is available as `git-tools.pick-branch`:
+The command's ID is `git-tools.pick-branch`. Bind it to `Ctrl+A`, then `b`, like any other
+action:
 
 ```toml
 [keys]
-"ctrl-a b" = { run = "git-tools.pick-branch" }
+"git-tools.pick-branch" = "ctrl-a b"
 ```
 
 See [Extensions](extensions.md) for installation, trust, manifests, services, and testing.

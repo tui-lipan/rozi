@@ -1,7 +1,6 @@
 # Feature map
 
-rozi combines terminal panes with the layout controls of a tiling window manager. This page points
-to the guide for each kind of work.
+This page lists what rozi can do, grouped by the kind of work, and points to the guide for each.
 
 ## Arrange terminal work
 
@@ -33,13 +32,14 @@ See [Terminal features](terminal.md).
 - Create Git worktrees and open each in its own session, from the sidebar's Worktrees tab, a picker,
   or `rozi worktrees`.
 
-See [Sessions](sessions.md), [Remote sessions](remote.md), and [Profiles](profiles.md).
+See [Sessions](sessions.md), [Remote sessions](remote.md), [Profiles](profiles.md), and
+[Worktrees](worktrees.md).
 
 ## Find and monitor work
 
 - Open commands from a searchable palette and inspect active bindings in the help overlay.
 - Use the sidebar to browse panes, sessions, files, Git changes, and coding-agent activity.
-- Mark coding-agent panes as working, blocked, or finished.
+- See at a glance whether each coding agent is working, blocked on your input, or finished.
 - Jump to panes that need input and show alerts in pane borders or workspace tabs.
 - See which agents want attention on a connected remote host, without attaching to a session there.
 - List every agent on every connected machine in one view, and go to any of them with one key.
@@ -61,11 +61,10 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 ## Automate rozi
 
 - Inspect panes and run actions from scripts.
-- Read each workspace's layout and every pane's position, and float, place, fullscreen, re-tile,
-  move, swap, resize, or close panes by id, from a UI or a detached session, and subscribe to
-  layout revisions.
-- Send keys or text, open panes, capture terminal content as text, ANSI-colored text, or a PNG
-  image, capture the whole UI as it is drawn, and switch workspaces.
+- Read each workspace's layout and every pane's position, and subscribe to layout changes.
+- Float, place, fullscreen, re-tile, move, swap, resize, or close panes by id.
+- Send keys or text, open panes, and switch workspaces.
+- Capture a pane as plain text, ANSI-colored text, or a PNG image, or capture the whole UI as drawn.
 - Drive a detached session with no client attached: list, capture, type, and open panes from a
   script or an SSH login that never starts a terminal.
 - Run hooks when pane, focus, workspace, session, or profile events occur.

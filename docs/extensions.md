@@ -1,34 +1,80 @@
 # Extensions
 
-Rozi extensions are directories containing `extension.toml` and, when needed, out-of-process
-programs. They add commands, supervised services, agent definitions, sidebar tabs, and static
-navigation targets, and they take settings from the user's `config.toml`. Runtime interaction uses
-the same
-[`rozi` control commands](control.md) available to scripts.
+An extension adds features to `rozi` without changing `rozi` itself. It can contribute commands,
+long-running services, sidebar tabs, coding-agent definitions, and suggested keybindings, and it
+takes settings from your `config.toml`. The first half of this page is for installing and managing
+extensions; the second half is for writing them.
 
-## Inspect before installing
+An extension is a directory containing an `extension.toml` manifest and, usually, the programs that
+manifest launches. Those programs talk to `rozi` through the same
+[`rozi` control commands](control.md) that scripts use.
 
-Extension programs run with your user account's permissions. Rozi does not sandbox them. Installing
-an extension is equivalent to installing other software from that source.
+**Extensions are not sandboxed.** Their programs run with your user account's permissions.
+Installing an extension is equivalent to installing any other software from that source.
 
-Before installation:
+## Use extensions
 
-1. Obtain the source in a temporary or project directory.
+### Review an extension before installing
+
+Before installing an extension:
+
+1. Get the source into a temporary or project directory.
 2. Review `extension.toml` and every executable it references.
-3. Check direct dependencies and network access.
-4. Validate the unpacked directory.
+3. Check its direct dependencies and any network access.
+4. Validate the unpacked directory:
 
-```sh
-rozi extensions check ./rozi-git-tools
-```
+   ```sh
+   rozi extensions check ./rozi-git-tools
+   ```
 
-Validation checks the manifest, API, IDs, launch declarations, environment, and executable paths.
-It does not make untrusted code safe.
+Validation checks the manifest, API version, IDs, launch declarations, environment, and executable
+paths. It does not make untrusted code safe.
 
-Rozi does not discover project-local `.rozi/extensions` directories. Merely opening a checkout does
-not authorize its code.
+`rozi` never loads extensions from a project-local directory such as `.rozi/extensions`, so opening
+a checkout does not run its code.
 
-## Install
+### Discover public extensions
+
+Open the command palette and choose **Extensions…**, then switch to the **Discover** tab. It lists
+public GitHub repositories that carry the `rozi-extension` topic.
+
+Discover reads an index of those repositories, published at
+[`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index). The index
+records each repository's metadata at an exact default-branch commit. It is not a package registry:
+it hosts no packages, resolves no dependencies, and makes no claim that an entry is audited,
+reviewed, safe, or endorsed. Installing from Discover clones the repository at the indexed commit;
+from then on it is an ordinary Git installation that updates from its remote.
+
+To install from Discover:
+
+1. Press `Enter` on a row to open its installation report. The report names the repository and
+   commit, and shows compatibility, contribution counts, and the trust warning.
+2. Optionally press `Ctrl+L` to open the repository in your browser at that exact commit. This is
+   the source `rozi` installs, even if the default branch has moved since the index was built.
+3. Press `Enter` again to install that commit.
+
+`rozi` validates the complete extension before moving it into its private data directory. While it
+installs, a progress modal names the extension, repository, and commit. `Esc` hides the modal
+without cancelling; when installation finishes, `rozi` loads the extension and reports the result,
+even if the manager was closed. Reopening that entry's report shows the progress again. Only one
+installation runs at a time, whether it started from a report or from the install prompt.
+
+Extensions you already have stay listed, marked `installed`, and their report says so instead of
+offering to install them again.
+
+`rozi` fetches the index in the background when **Extensions…** opens, so the manager stays
+responsive while the request runs or when you are offline. It keeps the last fetched index in its
+cache directory and lists it immediately. A cached index up to ten minutes old is used as is; an
+older one is refreshed in the background, and a spinner above the hints shows the fetch. If a fetch
+fails, the listed entries stay and a row reports the failure. `Ctrl+R` on this tab always refetches.
+
+An index entry that `rozi` cannot validate is left out of **Discover**. Only an unreadable index or
+an unsupported index schema version makes discovery unavailable. For a repository that is not in the
+index, use the `Ctrl+I` install prompt or the CLI.
+
+To list your own extension, see [Publish to Discover](#publish-to-discover).
+
+### Install an extension
 
 Install a reviewed local directory, HTTPS Git remote, or SSH Git remote:
 
@@ -38,151 +84,119 @@ rozi extensions install https://github.com/user/rozi-git-tools.git
 rozi extensions install git@github.com:user/rozi-git-tools.git
 ```
 
-Rozi validates the extension before installing it. Local directories are copied. Git repositories
-are cloned into Rozi-owned storage. In both cases, Rozi uses the manifest ID as the installation
-name, rejects an existing destination or conflicting ID, and removes the ID from the disabled list.
-Run `rozi run-action reload-extensions` in each running client that should load the new extension.
+Then run `rozi run-action reload-extensions` in each running client that should load it.
 
-Git installations keep their original remote and installed commit in private installation
-metadata for explicit lifecycle commands such as `rozi extensions update <ID>`. Installation does
-not enable background updates. The completion report summarizes contributed navigation programs
-and the active, conflicting, or suppressed suggested keybindings.
+`rozi` validates the extension before installing it. It copies a local directory and clones a Git
+repository into its own storage. In both cases it:
 
-For extension development, link a checkout instead:
+- uses the manifest ID as the installation name;
+- refuses to overwrite an existing installation or a conflicting ID;
+- removes the ID from the disabled list.
+
+A Git installation remembers its remote and installed commit, which
+[`rozi extensions update`](#update-an-extension) uses later. Installing never enables background
+updates. When installation completes, the report summarizes the extension's
+[navigation targets](#navigation-targets) and whether each
+[suggested keybinding](#suggested-keybindings) is active, conflicting, or suppressed.
+
+The installation directory is private `rozi` data; you never need to create or edit it. `rozi` also
+never installs editor plugins or other external integrations on an extension's behalf.
+
+To develop an extension, link your checkout instead of copying it:
 
 ```sh
 rozi extensions install --link ./rozi-git-tools
 ```
 
-Rozi stores only a symlink for a linked extension. Changes in the checkout are visible after an
-extension reload. The checkout remains user-owned.
+`rozi` stores only a symlink to a linked extension, and the checkout stays yours. Changes in the
+checkout take effect after an extension reload.
 
-There is no package repository or dependency resolver, and Rozi does not install editor plugins or
-other external integrations on an extension's behalf. The installation directory is private Rozi
-data. Users do not need to create or edit it.
+### Manage installed extensions
 
-## Discover public extensions
+Open the command palette and choose **Extensions…**. The **Installed** tab groups your extensions by
+status; the **Discover** tab lists the public index. `Tab`, `Shift+Tab`, `←`, and `→` switch tabs
+while the search field keeps focus, and typing filters the active tab.
 
-The **Discover** tab of **Extensions…** reads a public index of GitHub repositories carrying the
-`rozi-extension` topic. The index records metadata from each repository's root `extension.toml` at
-an exact default-branch commit. It hosts no packages and makes no claim that an entry is audited,
-reviewed, safe, or endorsed.
+On the **Installed** tab:
 
-Extensions you already have stay listed, marked `installed`, and their report says so instead of
-offering to install them again. `Enter` on any other discovery row opens the installation report.
-It names the repository and commit, compatibility, contribution counts, and the trust warning.
-`Ctrl+L` opens the repository in your browser at that exact commit, which is the source Rozi would
-install, even if the default branch has moved since the index was built. A second `Enter` installs
-that exact indexed commit and validates the complete extension before moving it into Rozi's private
-data directory. Later `Ctrl+U` updates the managed checkout from its original Git remote as usual.
-While it installs, a progress modal with a spinner takes the report's place, naming the extension,
-repository, and commit. `Esc` hides it without cancelling: when the installation finishes, Rozi
-loads the extension and reports the result, even if the manager was closed. Reopening that entry's
-report shows the progress again. One installation runs at a time, from the report or the install
-prompt.
+| Key | Action |
+| --- | --- |
+| `Enter` | Enable or disable the selected extension |
+| `Ctrl+D` | Open the full report |
+| `Ctrl+I` | Open the install prompt |
+| `Ctrl+U` | Check for, or apply, an update to a Git-managed extension |
+| `Ctrl+R` | Rescan extension manifests |
+| `Ctrl+O` | Open `extension.toml` |
+| `Ctrl+K` | Remove the installation (press twice) |
 
-Rozi reads the index when **Extensions…** opens, so **Discover** is ready by the time you switch to
-it. It loads in the background, keeping the manager responsive while the request runs or offline.
-Rozi keeps the last index it fetched in its cache directory and lists it immediately. An index up to
-ten minutes old is used as is, and an older one is refreshed in the background. A spinner above the
-hints shows a fetch in progress. If the fetch fails, the listed entries stay and the row reports the
-failure. `Ctrl+R` on this tab always refetches the index. The manual `Ctrl+I` source prompt remains
-available for repositories not in the index. An index entry Rozi cannot validate is left out of
-**Discover**. Only an unreadable index or an unsupported schema version makes discovery unavailable.
+In the report, `Ctrl+Y` copies it, `Ctrl+O` opens `extension.toml`, `Ctrl+U` updates a Git-managed
+installation, and `Ctrl+L` opens the manifest's `homepage` when it declares one. The report is
+read-only and wraps long command, path, and diagnostic lines.
 
-To opt a public repository into discovery:
+Rows show where an extension came from: a linked checkout shows `linked`, and a Git installation
+with an update shows both versions, such as `0.2.1 → 0.2.2 · git`.
 
-1. Put `extension.toml` at the repository root.
-2. Include `id`, `title`, `description`, `version`, and `api` metadata.
-3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility.
-4. Add the `rozi-extension` GitHub topic.
+The install prompt accepts the same local paths and Git HTTPS or SSH URLs as
+`rozi extensions install <SOURCE>`, and shows the same progress modal. Use the CLI's `--link` option
+when the checkout must stay yours.
 
-The index keeps each entry short: `id`, `version`, and `min_rozi` up to 64 characters, `title` up
-to 80, `description` up to 280, and `homepage` up to 256. A repository over a limit is left out.
-
-The generated index and its schema are public at
-[`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index).
-
-## List and inspect installed extensions
-
-Open the command palette and choose **Extensions…**. The **Installed** tab groups installed
-extensions by status, and the **Discover** tab lists the public index. `Tab`, `Shift+Tab`, `←`, and
-`→` switch tabs while the search field keeps focus. A search filters the active tab.
-
-On an installed row, `Enter` enables or disables the extension and `Ctrl+D` opens its full report.
-`Ctrl+I` opens a source prompt, `Ctrl+U` checks or updates a selected Git-managed extension,
-`Ctrl+R` rescans extension manifests, `Ctrl+O` opens `extension.toml`, and `Ctrl+Y` copies the
-report. When the manifest declares a `homepage`, the report lists it and `Ctrl+L` opens it in your
-browser. Linked checkouts show `linked`; a Git install with an update shows both versions, such as
-`0.2.1 → 0.2.2 · git`.
-
-The install prompt accepts the same local paths and Git HTTPS/SSH URLs as
-`rozi extensions install <SOURCE>`, and shows the same progress modal while it installs. Use the
-CLI's `--link` option when the checkout must remain user-owned. The detail view is read-only and
-wraps long command, path, and diagnostic lines; it also exposes `Ctrl+U` for Git-managed
-installations.
-
-Use the CLI when a script or external tool needs the same information:
+Scripts and other tools can read the same information from the CLI:
 
 ```sh
 rozi extensions list
 rozi extensions list --verbose
 rozi extensions list --json
-```
-
-The report includes loaded, disabled, invalid, incompatible, and duplicate candidates. Verbose
-output adds paths, public command, service, agent, and sidebar tab IDs, navigation targets,
-resolved executables, and validation errors.
-
-`extensions check --json` and `extensions list --json` are available for tooling:
-
-```sh
 rozi extensions check ./git-tools --json
-rozi extensions list --json
 ```
 
-## Disable or remove
+The list includes loaded, disabled, invalid, incompatible, and duplicate extensions. `--verbose`
+adds installation paths; public command, service, agent, and sidebar tab IDs; navigation targets;
+resolved executables; and validation errors.
 
-Open **Extensions…** and press `Enter` on a loaded extension to disable it. Press `Enter` again to
-enable it. Rozi writes the stable ID to `config.toml`, reloads extension contributions, and keeps
-the overlay open.
+### Disable or remove an extension
 
-`Ctrl+K` removes the selected installation after a second press. A linked development checkout is
-unlinked; Rozi does not delete the checkout the link points to. The CLI accepts the stable
-manifest ID:
-
-```sh
-rozi extensions remove git-tools
-```
-
-Removal deletes local copies and Rozi-owned Git clones. For a linked extension, it deletes only the
-symlink. Run `rozi run-action reload-extensions` in running clients after removal.
-
-You can also disable an extension without removing it by editing the stable ID list:
+Press `Enter` on a loaded extension in **Extensions…** to disable it, and again to enable it. `rozi`
+writes the ID to `config.toml`, reloads extension contributions, and keeps the overlay open. You can
+also edit the list yourself:
 
 ```toml
 [extensions]
 disabled = ["git-tools"]
 ```
 
-When the config file is saved, Rozi removes the extension's commands, agents, sidebar tabs, and
-navigation targets, stops its services, and closes its owned picker, publisher, and subscription
-streams. A disabled extension's sidebar placement is remembered, so re-enabling it puts its tab
+When the config is saved, `rozi` removes the extension's commands, agents, sidebar tabs, and
+navigation targets, stops its services, and closes any pickers, activity rows, and event
+subscriptions it opened. Its sidebar tab placement is remembered, so re-enabling it puts the tab
 back where you had it.
 
-Bindings may refer to an unavailable extension:
+To remove an installation, press `Ctrl+K` twice in **Extensions…**, or use the CLI with the
+manifest ID:
+
+```sh
+rozi extensions remove git-tools
+```
+
+Removal deletes a copied extension or a `rozi`-owned Git clone. For a linked extension, it deletes
+only the symlink, never the checkout it points to. After a CLI removal, run
+`rozi run-action reload-extensions` in running clients.
+
+### Bind a key to an extension command
+
+An extension command's public ID is `<extension-id>.<command-id>`. Bind it in `[keys]` like any
+other action:
 
 ```toml
 [keys]
-"ctrl-a b" = { run = "git-tools.branches" }
+"git-tools.branches" = "ctrl-a b"
 ```
 
-The binding becomes active when that compatible extension is loaded and inactive when it is
-disabled or absent.
+A binding may name an extension that is not loaded. It becomes active when that extension loads and
+inactive while it is disabled or absent, and `rozi` warns that the binding is preserved but
+inactive. See [Keybindings](keybindings.md) for key notation.
 
-## Update
+### Update an extension
 
-Rozi does not update extensions automatically. Update one Git-managed installation explicitly:
+`rozi` never updates extensions automatically. Update one Git-managed installation explicitly:
 
 ```sh
 rozi extensions update git-tools
@@ -190,48 +204,82 @@ rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-The command clones the recorded remote into staging, validates it, and replaces the old checkout
-only when the new extension is valid. It refuses to replace a managed checkout with local changes.
-Copied local extensions and linked development checkouts do not expose update actions.
+The update clones the recorded remote into a staging area, validates it, and replaces the old
+checkout only if the new version is valid. It refuses to replace a checkout with local changes.
+Copied local extensions and linked checkouts cannot be updated this way.
 
-The Extensions picker checks Git remotes in the background whenever it opens or reloads. Each
-Git-managed row spins a muted marker beside its version while its check runs, and the **Installed**
-tab counts the updates found. A changed
-installation's row shows `installed → latest`, taking the latest version from the remote
-`extension.toml`, or a short commit when the remote moved without changing its version. The
-report's **Update** row shows the same result, or the error when a remote could not be checked.
+**Extensions…** checks Git remotes in the background whenever it opens or reloads. A muted spinner
+beside a row's version shows its check running, and the **Installed** tab counts the updates found.
+An outdated row shows `installed → latest`, using the version from the remote `extension.toml`, or a
+short commit hash when the remote changed without changing its version. The report's **Update** row
+shows the same result, or the error when a remote could not be checked.
 
-On a row with a known update, `Ctrl+U` runs the same update operation as the CLI. On any other
-Git-managed row it checks that remote again. An explicit CLI reload is required because Rozi does
-not watch extension directories; picker updates reload the current client after a successful
-replacement.
+On a row with a known update, `Ctrl+U` runs the same update as the CLI and reloads the current
+client when it succeeds. On any other Git-managed row, `Ctrl+U` checks the remote again. After a CLI
+update, reload explicitly, because `rozi` does not watch extension directories.
 
-## Create an extension
+## Write an extension
 
-Create and validate a scaffold:
+### Create your first extension
+
+Generate a scaffold, validate it, and link it:
 
 ```sh
 rozi extensions new my-extension
 cd my-extension
 rozi extensions check .
+rozi extensions install --link .
+rozi run-action reload-extensions
+rozi run-action my-extension.hello
 ```
 
-An extension normally has this structure:
+`rozi extensions new` requires Python 3 and creates:
 
 ```text
 my-extension/
 ├── extension.toml
 ├── bin/
-│   └── command
+│   └── hello.py
 └── README.md
 ```
 
-Keep generated state outside the installed extension directory unless it is immutable package
-data. Use normal user state, cache, or runtime directories for mutable files.
+The manifest declares the extension and one command:
 
-## Write the manifest
+```toml
+[extension]
+id = "my-extension"
+title = "my-extension"
+description = "A Rozi extension"
+version = "0.1.0"
+api = 1
 
-The manifest starts with metadata:
+[[commands]]
+id = "hello"
+label = "Hello from my-extension"
+exec = ["python3", "{extension_dir}/bin/hello.py"]
+```
+
+In outline, `bin/hello.py` calls back into `rozi` through the environment it receives:
+
+```python
+import os
+import subprocess
+
+rozi = os.environ.get("ROZI_BIN", "rozi")
+extension = os.environ["ROZI_EXTENSION"]
+subprocess.run([rozi, "notify", f"Hello from {extension}"], check=False)
+```
+
+The scaffold picks the Python launcher available on your machine (`python3`, `python`, or `py -3` on
+Windows); adjust `exec` if you share the extension with a platform whose launcher differs.
+
+Keep mutable files out of the extension directory. Write state, caches, and runtime files to the
+normal user state, cache, or runtime directories; only immutable package data belongs beside the
+manifest.
+
+### Extension metadata
+
+Every manifest starts with an `[extension]` table:
 
 ```toml
 [extension]
@@ -240,98 +288,51 @@ title = "My extension"
 description = "Project commands"
 version = "0.1.0"
 api = 1
-```
-
-`id` is required, must match `[a-z0-9_-]+`, and must not use a reserved ID. `api = 1` is required.
-`title`, `description`, and `version` are optional metadata.
-
-### Say where the extension runs
-
-Three more optional fields describe the extension to whoever is deciding whether to install it, and
-keep Rozi from half-loading one that cannot work:
-
-```toml
-[extension]
-id = "my-extension"
-api = 1
 min_rozi = "0.0.25"
 platforms = ["linux", "macos"]
 homepage = "https://github.com/you/rozi-my-extension"
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `min_rozi` | Oldest Rozi this extension works with. Unlike `api`, which either matches or does not, this means "anything from here up". |
-| `platforms` | Operating systems it runs on, named as Rust names them: `linux`, `macos`, `windows`, `freebsd`, `netbsd`. Omit for all of them. |
-| `homepage` | Where to read more. Rozi never fetches it; it is shown, not followed. |
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Stable identifier, matching `[a-z0-9_-]+`. |
+| `api` | yes | Extension API version. Must be `1`. |
+| `title` | no | Display name. |
+| `description` | no | One-line summary. |
+| `version` | no | Version shown in lists and update reports. |
+| `min_rozi` | no | Oldest `rozi` version the extension works with. |
+| `platforms` | no | Operating systems it runs on: `linux`, `macos`, `windows`, `freebsd`, `netbsd`. Omit for all. |
+| `homepage` | no | An `http` or `https` URL where users can read more. `rozi` displays it but never fetches it. |
 
-An extension that declares a `min_rozi` newer than the running Rozi, or a `platforms` list this
-machine is not in, loads as **incompatible** with the reason stated — the same outcome a mismatched
-`api` already produces. Nothing runs, and `rozi extensions check` says why.
+The IDs `app`, `command`, `rozi`, `user`, and `workspace` are reserved. Keep `id` stable: every
+command, service, tab, and agent the extension contributes is named after it, and users' bindings
+and settings refer to it.
 
-A platform name Rozi does not recognize, a `min_rozi` that is not a version, and a `homepage` that
-is not an `http(s)` URL are each reported as manifest mistakes — **invalid**, not incompatible. A
-typo should not quietly exclude an extension from every machine while suggesting it runs somewhere
-else.
+`api` must match exactly, while `min_rozi` means "this version or newer". If `min_rozi` is newer
+than the running `rozi`, or this machine is not in `platforms`, the extension loads as
+**incompatible**, with the reason stated. Nothing runs, and `rozi extensions check` says why.
 
-When more than one of these applies, the most specific reason wins:
+An unrecognized platform name, a `min_rozi` that is not a version, or a `homepage` that is not an
+`http(s)` URL makes the manifest **invalid**, not incompatible, so a typo is reported rather than
+silently excluding the extension. When several problems apply, `rozi` reports the most specific:
 
-1. **A mismatched `api`** — the manifest is written in a dialect Rozi cannot read, so nothing else
-   it says has been checked against the right rules.
-2. **Anything wrong with the manifest**, including the discovery fields above. A wrong manifest is a
-   fact about the extension.
-3. **`min_rozi` or `platforms` excluding this machine** — a fact about where you are running it,
-   which only matters once the manifest itself is sound.
+1. a mismatched `api`;
+2. any other manifest error, including those in the fields above;
+3. `min_rozi` or `platforms` excluding this machine.
 
-`rozi extensions check --verbose` prints these fields when they are declared, and
-`--format json` includes them, which is what an index reads.
+`rozi extensions list --verbose` prints `min_rozi`, `platforms`, and `homepage` when declared,
+`rozi extensions check` shows `homepage`, and the `--json` output of both includes all three.
 
-These fields are additive but not backward-compatible: a Rozi released before them rejects a
-manifest that uses one, reporting an unknown field rather than an incompatibility. For an extension
-declaring `min_rozi`, that is the right outcome by a less helpful route. If you want an extension to
-stay readable by older Rozi versions, leave all three out.
+Versions of `rozi` released before these three fields existed reject a manifest that uses them as
+an unknown field. To stay loadable by those versions, leave all three out.
 
-The schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json).
-
-### Navigation targets
-
-An extension can teach Rozi which foreground programs manage their own splits:
-
-```toml
-[[navigation_targets]]
-name = "vim"
-programs = ["vim", "nvim", "view", "vimdiff"]
-```
-
-`name` identifies the declaration within the extension and must match `[a-z0-9_-]+`. `programs`
-contains executable basenames, not paths. Names are trimmed and matched as normalized executable
-basenames (case-insensitively and without a Windows `.exe` suffix); duplicates within one
-declaration or across built-in and extension targets are harmless.
-
-Rozi validates these declarations when the extension loads and compiles enabled targets into its
-in-memory split-aware program set. The extension does not run code, receive key events, or
-participate in foreground-process lookup. Disabling or removing it drops its target declarations
-on the next extension reload.
-
-The standalone [vim-rozi-navigator](https://github.com/tui-lipan/vim-rozi-navigator) repository
-combines this declaration with its Vim and Neovim plugin. Register the Rozi side directly:
-
-```sh
-rozi extensions install https://github.com/tui-lipan/vim-rozi-navigator.git
-```
-
-An explicit user list wins completely:
-
-```toml
-[navigation]
-editors = []
-```
-
-When `editors` is present, Rozi uses exactly that normalized list and ignores built-in and
-extension-provided targets. When it is absent, enabled extension targets augment the built-in list.
-See [Split-aware navigation](keybindings.md#split-aware-navigation).
+The manifest schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json). One
+invalid command, service, agent, sidebar tab, navigation target, suggested keybinding, or setting
+makes the whole extension invalid; `rozi` loads an extension whole or not at all.
 
 ### Commands
+
+A command runs when the user invokes it from the command palette, a key binding, or the CLI:
 
 ```toml
 [[commands]]
@@ -340,30 +341,36 @@ label = "Choose item"
 exec = ["python", "{extension_dir}/bin/choose.py"]
 ```
 
-A command ID must match `[a-z0-9_-]+`. Rozi exposes it as
-`<extension-id>.<command-id>`, such as `my-extension.choose`.
-
-Each command declares exactly one action:
-
-| Field | Meaning |
-| --- | --- |
-| `exec = ["program", "arg"]` | Direct argv execution without a command shell. |
-| `shell = "command"` | Execution through `command_shell`. Use only when shell syntax is needed. |
-| `send = "text"` | Send text to the target pane. |
-
-Prefer `exec`. It preserves argument boundaries and avoids shell interpretation.
-
-Commands run with the focused pane's working directory. Relative executable paths beginning with
-`./` or `../` resolve from the extension directory when the manifest loads. Direct argv also
-supports `{extension_dir}` inside an argument. It does not expand `$VAR`, `${VAR}`, or `%VAR%`.
-
-Invoke a command from the palette, a key binding, or the CLI:
-
 ```sh
 rozi run-action my-extension.choose
 ```
 
+A command ID must match `[a-z0-9_-]+`. Its public ID is `<extension-id>.<command-id>`, such as
+`my-extension.choose`. Each command declares exactly one action:
+
+| Field | Meaning |
+| --- | --- |
+| `exec = ["program", "arg"]` | Run the program directly with these arguments, without a shell. |
+| `shell = "command"` | Run the command line through `command_shell`. Use only when you need shell syntax. |
+| `send = "text"` | Send text to the target pane. |
+
+Prefer `exec`: it preserves argument boundaries and avoids shell interpretation.
+
+- Commands run in the focused pane's working directory.
+- An executable path starting with `./` or `../` resolves from the extension directory when the
+  manifest loads.
+- `{extension_dir}` is replaced inside `exec` arguments. `$VAR`, `${VAR}`, and `%VAR%` are not
+  expanded.
+- An `exec` or `shell` command gets no input, and its output is discarded.
+- If a command exits with a non-zero status, `rozi` shows an error notification. A command that has
+  already reported its failure with `rozi notify` should exit `0` to avoid a second, vaguer
+  message.
+
+A command can also suggest a key; see [Suggested keybindings](#suggested-keybindings).
+
 ### Services
+
+A service is a long-running program that `rozi` starts and supervises:
 
 ```toml
 [[services]]
@@ -375,36 +382,31 @@ restart = "on-failure"
 POLL_SECONDS = "30"
 ```
 
-A service declares exactly one of `exec` or `shell`. Its name must match `[a-z0-9_-]+` and is
-exposed as `<extension-id>.<service-name>`.
+A service name must match `[a-z0-9_-]+`, and its public ID is `<extension-id>.<service-name>`. It
+declares exactly one of `exec` or `shell`.
 
 | Field | Type | Default |
 | --- | --- | --- |
 | `name` | string | required |
 | `exec` | string array | mutually exclusive with `shell` |
 | `shell` | string | mutually exclusive with `exec` |
-| `cwd` | path string | extension directory |
+| `cwd` | path string | extension directory; a relative path resolves from there |
 | `restart` | `on-failure`, `always`, or `never` | `on-failure` |
 | `env` | string map | empty |
 
-Services are client-side. They start while a UI with the extension is attached, receive the UI
-control environment, and stop when that client detaches or the extension retires. They do not run
-in a detached session server.
+Services run in the client, not the session server. A service starts while a UI with the extension
+is attached, receives that UI's [control environment](#runtime-environment), and stops when the
+client detaches or the extension is disabled or removed. A reload that changes a process-facing
+field or setting restarts the service; a reload that changes only `title`, `description`, or
+`version` leaves it running. Services do not run in a detached session.
 
-Use a service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
-[`rozi publish`](control.md#published-activity). Hooks are not part of an extension manifest.
-
-### Agent definitions
-
-An extension may include `[[agents]]` entries in the same format as
-[user agent definitions](agents.md). Rozi namespaces each local ID under the extension ID. An
-extension cannot replace a built-in agent. One invalid command, service, agent, sidebar tab,
-navigation target, or setting declaration makes the whole extension invalid.
+Let `rozi` supervise the process rather than daemonizing it or writing your own restart loop. Use a
+service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
+[`rozi publish`](control.md#published-activity). Extensions cannot declare [hooks](hooks.md).
 
 ### Settings
 
-An extension declares the settings it understands, with the value each takes when the user says
-nothing:
+Declare the settings an extension understands, each with its default value:
 
 ```toml
 [settings]
@@ -414,10 +416,11 @@ notify = true
 ignore = ["target", "node_modules"]
 ```
 
-A setting is a string, integer, boolean, or list of strings. Floats and nested tables are rejected,
-and a setting Rozi cannot carry makes the extension invalid.
+A setting is a string, integer, boolean, or list of strings. Any other type, including floats and
+nested tables, makes the extension invalid. `rozi extensions check` lists the declared settings and
+their defaults.
 
-Users override them per extension in `config.toml`:
+Users override settings per extension in `config.toml`:
 
 ```toml
 [extensions.tasks]
@@ -425,53 +428,27 @@ runner = "just"
 rows = 20
 ```
 
-An undeclared key or a value of the wrong type is reported and ignored; the extension keeps its own
-default, so a stale line survives an update that drops a setting. A `[extensions.<id>]` table naming
-nothing installed is reported too — being disabled is not enough to earn that warning, since the
-settings are waiting for the extension to come back.
-
-Every command and service receives the merged result as compact JSON in `ROZI_EXTENSION_CONFIG`:
+Every command, service, and sidebar tab process receives the merged result as compact JSON in
+`ROZI_EXTENSION_CONFIG`:
 
 ```json
 {"ignore":["target","node_modules"],"notify":true,"rows":20,"runner":"just"}
 ```
 
-Changing a setting is a process-facing change: the generation rotates and services restart with the
-new value. `rozi extensions check` lists the declared settings and their defaults.
+An undeclared key or a value of the wrong type in the user's config is reported and ignored, and the
+extension keeps its default; a leftover line therefore survives an update that drops a setting. A
+`[extensions.<id>]` table for an extension that is not installed is also reported, but a disabled
+extension's table is not. Changing a setting restarts the extension's services with the new value.
 
 ### Suggested keybindings
 
-An extension can suggest a key for one of the core actions Rozi explicitly exposes to extensions:
+An extension can suggest keys in two ways. Both are resolved once, when extensions load; key input
+still goes through `rozi`'s own command registry, and extension code never sees key events.
 
-```toml
-[[suggested_keybindings]]
-action = "smart-focus-left"
-key = "ctrl-h"
-```
+#### Suggest a chord for a command
 
-These suggestions are resolved once when extensions load. Input still goes through Rozi's normal
-synchronous command registry; the extension does not receive keys or run a callback.
-
-Resolution order is:
-
-1. explicit `[keys]` configuration, including an empty list that unbinds the action;
-2. built-in defaults;
-3. extension suggestions.
-
-Configuring the target action suppresses its suggestion even when the proposed key is otherwise
-free. A key already used by the user or core produces an inactive conflict. Identical suggestions
-for the same action and key deduplicate. If extensions suggest different actions on the same free
-key, neither wins; every competing suggestion is reported as a conflict. Different free keys for
-the same unbound action may coexist. Disabling, removing, or reloading an extension rebuilds this
-keymap and removes its contribution.
-
-Extension API 1 currently exposes only `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, and
-`smart-focus-right`. Any other action makes the manifest invalid. `rozi extensions list --verbose`
-and the Extensions picker retain the source extension and show each suggestion as active,
-suppressed, or conflicting.
-
-A contributed command has a separate shorthand for suggesting a chord. It is written as the key
-steps *inside* the reserved extension command space, which is the leader prefix followed by `x`:
+A command's `key` field suggests a chord inside the `<prefix> x` space, which `rozi` reserves for
+extensions:
 
 ```toml
 [[commands]]
@@ -481,27 +458,55 @@ exec = ["python", "{extension_dir}/bin/tasks.py", "run"]
 key = "r"
 ```
 
-That command answers to `<prefix> x r` — `Ctrl+A x r` with the default prefix. Rozi assigns nothing
-to `x` itself, so a suggestion can never collide with a built-in and a later Rozi release can never
-take one away.
+With the default prefix, that command answers to `Ctrl+A`, then `x`, then `r`. `rozi` binds nothing
+to `x` itself, so a suggestion never collides with a built-in and a later release cannot take it
+away.
 
-A command chord is also a weak claim. It loses to anything already bound, including any chord that
-merely starts with it, since typing those steps would fire the other command first. Losing is
-reported as a warning and costs nothing else — the command stays in the palette, and the user can
-bind it by hand:
+The suggestion loses to anything already bound, including any longer chord it is a prefix of. Losing
+produces a warning and nothing else: the command stays in the palette, and the user can bind it
+directly. An explicit `[keys]` entry for the command always wins and silences the suggestion:
 
 ```toml
 [keys]
 "tasks.run" = "ctrl-a t"
 ```
 
-An explicit `[keys]` entry for the command always wins, and silences the suggestion entirely.
+#### Suggest a key for a core action
+
+`[[suggested_keybindings]]` suggests a key for a core action that `rozi` exposes to extensions:
+
+```toml
+[[suggested_keybindings]]
+action = "smart-focus-left"
+key = "ctrl-h"
+```
+
+Extension API 1 exposes only `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, and
+`smart-focus-right`. Any other action makes the manifest invalid.
+
+`rozi` resolves bindings in this order:
+
+1. explicit `[keys]` configuration, including an empty list that unbinds the action;
+2. built-in defaults;
+3. extension suggestions.
+
+- Configuring the target action suppresses its suggestion, even when the suggested key is free.
+- A key already used by the user or by a default makes the suggestion an inactive conflict.
+- Identical suggestions for the same action and key are merged.
+- If extensions suggest different actions for the same free key, none of them wins, and each is
+  reported as a conflict.
+- Different free keys for the same unbound action can coexist.
+
+A conflicting suggestion stays inactive but does not invalidate the extension. Disabling, removing,
+or reloading an extension rebuilds the keymap without its suggestions. `rozi extensions list
+--verbose` and **Extensions…** show each suggestion's source extension and whether it is active,
+suppressed, or conflicting.
 
 ### Sidebar tabs
 
-An extension may contribute sidebar tabs with `[[sidebar_tabs]]`. These take the launcher and
-command forms [`[sidebar]` tab tables](configuration.md#sidebar) accept, minus the options that only
-apply to the built-in `files` and `git` trees.
+An extension can add [sidebar](sidebar.md) tabs with `[[sidebar_tabs]]`. A tab takes the launcher
+and command forms that [`[sidebar]` tab tables](configuration.md#sidebar) accept, except the options
+that apply only to the built-in `files` and `git` trees.
 
 ```toml
 [[sidebar_tabs]]
@@ -530,112 +535,189 @@ on_click = { send = "{line}" }
 | `command` | string | mutually exclusive with `entries` |
 | `interval` | integer seconds | `30`, minimum `5` |
 | `on_click` | action table | none |
-| `group_prefix` | string | none, command tabs only |
+| `group_prefix` | string | none; command tabs only |
 
-A tab's `command` and its action strings substitute `{extension_dir}`, and the processes behind them
-receive the same `ROZI_EXTENSION*` environment an extension command does. A command tab runs in the
-focused pane's working directory and re-lists when that changes; its `on_click` `run`/`popup`/`exec`
-receives the clicked row in `ROZI_ROW`.
+- `{extension_dir}` is replaced in `command` and in action strings, and the processes they start
+  receive the same [`ROZI_EXTENSION*` environment](#runtime-environment) as a command.
+- A command tab runs in the focused pane's working directory and re-lists when that directory
+  changes.
+- Every line a command tab prints is a clickable row unless it starts with `group_prefix`, which
+  makes it a section header. Print status and empty-state lines with the prefix.
+- `on_click` with `send` may use `{line}`. With `run`, `popup`, or `exec`, the clicked row arrives in
+  `ROZI_ROW` instead; quote it (`"$ROZI_ROW"`).
 
-The tab ID is `<extension-id>.<name>`, so an extension can only add a tab, never replace a built-in
-one. A `config.toml` tab claiming the same ID wins and the extension's tab is skipped. Out-of-range
-values are clamped silently rather than reported, unlike the same setting in `config.toml`.
+A tab's public ID is `<extension-id>.<name>`, so an extension can add tabs but never replace a
+built-in one. If a `config.toml` tab has the same ID, it wins and the extension's tab is skipped.
+Out-of-range values are clamped without a warning, unlike the same settings in `config.toml`.
 
-Extension tabs are placed in the first panel unless `[sidebar] panels` already names them. Drag them
-wherever you like: Rozi persists the arrangement the same way it does for built-in tabs.
+Extension tabs go in the first panel unless `[sidebar] panels` already places them. Users can drag
+them anywhere, and `rozi` remembers the arrangement as it does for built-in tabs. A placement for a
+tab whose extension is disabled, updating, or failing to load is kept silently and restored when the
+extension returns. It is dropped only after the extension is gone from disk, and only the next time
+the user rearranges the sidebar; `rozi` never rewrites the layout on load.
 
-A placement naming a tab whose extension is disabled, mid-update, or failing to load is kept, not
-warned about, and restored when the extension comes back. It is only dropped once the extension is
-gone from the extensions directory, and only the next time you rearrange the sidebar — Rozi never
-rewrites the layout on load.
+### Navigation targets
 
-## Stability
+An extension can tell `rozi` which foreground programs manage their own splits, so
+[split-aware navigation](keybindings.md#split-aware-navigation) forwards focus keys to them:
 
-Extension API 1 is frozen. Everything below is a contract Rozi will not break inside API 1:
+```toml
+[[navigation_targets]]
+name = "vim"
+programs = ["vim", "nvim", "view", "vimdiff"]
+```
 
-- the manifest keys documented on this page, and the schema at
-  [`schemas/extension.schema.json`](../schemas/extension.schema.json);
-- namespacing: every contributed id is `<extension-id>.<local-id>`, and an extension can only add,
-  never replace a built-in;
-- navigation targets are static load-time declarations; core owns foreground-process matching and
-  key forwarding, and an explicit `[navigation] editors` list replaces all declarations;
-- suggested keybindings target only the documented extension-bindable action allowlist, resolve
-  below user and core bindings, and never put extension code on the input path;
-- the `ROZI_EXTENSION*` environment variables and their meanings;
-- the `rozi` control commands documented in [Control](control.md), and their exit codes;
-- atomic validity: an extension is loaded whole or not at all;
-- the `<prefix> x` chord space reserved for extension key suggestions;
-- `--json` diagnostics, whose `schema_version` is `1`.
+`name` identifies the declaration within the extension and must match `[a-z0-9_-]+`. `programs`
+lists executable basenames, not paths. Names are trimmed and matched case-insensitively, without a
+Windows `.exe` suffix. Duplicates, within one declaration or across built-in and extension targets,
+are harmless.
 
-Rozi may still add manifest keys, control commands, and diagnostic fields inside API 1. Additions
-are the only compatible change; a manifest that does not use them keeps working. Anything that would
-invalidate a working manifest — a removed key, a narrowed value, a changed default, a renamed
-environment variable — requires `api = 2`, and an extension declaring `api = 1` keeps loading against
-the API 1 rules.
+These declarations are data. `rozi` validates them when the extension loads; the extension runs no
+code, receives no keys, and takes no part in detecting the foreground program. Disabling or removing
+the extension drops its targets on the next extension reload.
 
-Practically, for an extension author: read `ROZI_EXTENSION_CONFIG` through defaults, do not assume a
-suggested chord was granted, and do not depend on undocumented behavior you happened to observe. If
-something you need is not on this page or in [Control](control.md), it is not part of the contract.
+An explicit user list replaces every built-in and extension target:
 
-## Runtime environment
+```toml
+[navigation]
+editors = []
+```
+
+When `editors` is absent, enabled extension targets add to the built-in list.
+
+The [vim-rozi-navigator](https://github.com/tui-lipan/vim-rozi-navigator) repository pairs this
+declaration with its Vim and Neovim plugin. Install the `rozi` side directly:
+
+```sh
+rozi extensions install https://github.com/tui-lipan/vim-rozi-navigator.git
+```
+
+### Agent definitions
+
+An extension can include `[[agents]]` entries in the same format as
+[user agent definitions](agents.md), to teach `rozi` to recognize a coding-agent CLI and read its
+state. Each agent ID is namespaced as `<extension-id>.<id>`, so an extension can add an agent but
+cannot replace a built-in one.
+
+### Runtime environment
 
 Every extension command and service receives:
 
 | Variable | Value |
 | --- | --- |
-| `ROZI_EXTENSION` | Stable manifest ID. |
-| `ROZI_EXTENSION_DIR` | Absolute lexical installation directory. |
-| `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object. `{}` when none are declared. |
-| `ROZI_EXTENSION_GENERATION` | Opaque token for the currently loaded process contract. |
-| `ROZI_BIN` | Running Rozi executable when available. |
-| `ROZI_SOCKET` | Current UI endpoint when available. |
+| `ROZI_EXTENSION` | The extension's manifest ID. |
+| `ROZI_EXTENSION_DIR` | Absolute installation directory. |
+| `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object; `{}` when none are declared. |
+| `ROZI_EXTENSION_GENERATION` | Opaque token identifying the currently loaded extension. |
+| `ROZI_BIN` | The running `rozi` executable, when available. |
+| `ROZI_SOCKET` | The current UI's control endpoint, when available. |
 
-Services may not override the four `ROZI_EXTENSION*` variables.
+A service's `env` cannot override the four `ROZI_EXTENSION*` variables.
 
-Use `ROZI_BIN` instead of assuming `rozi` is on `PATH`, and pass `ROZI_SOCKET` back to it:
+Call `rozi` through `ROZI_BIN` rather than assuming it is on `PATH`, and pass `ROZI_SOCKET` back to
+it:
 
 ```sh
 "$ROZI_BIN" --socket "$ROZI_SOCKET" notify "extension task finished"
 ```
 
-The CLI attaches extension identity and generation to control traffic. A retired generation is
-rejected. The generation is lifecycle fencing, not authentication from other processes running as
-the same user.
+When `ROZI_EXTENSION` is set, the `rozi` CLI tags each request with the extension's identity and
+generation. After the extension is disabled or reloaded, requests from its old processes are
+rejected; a process whose request is rejected should exit rather than retry. The generation keeps
+stale processes from acting, but it is not authentication: other processes running as the same user
+are not blocked. Pickers, activity rows, and subscriptions an extension opens close when its
+generation is retired.
 
-See [Scripting](scripting.md) for portable command examples and
-[Control protocol](control-protocol.md#stream-ownership) for stream ownership.
+A session server cannot check the generation, so it refuses requests from extensions; see
+"Extensions and `--session`" in [Control](control.md). For stream ownership, see
+[Control protocol](control-protocol.md#stream-ownership), and for portable command examples, see
+[Scripting](scripting.md).
 
-## Test and debug
+### Test and debug
 
-Validate after each manifest edit:
+Validate after every manifest edit:
 
 ```sh
 rozi extensions check .
 ```
 
-Then use the isolated procedure in [Extension testing](extension-testing.md). Do not test by first
-copying unfinished code into the normal extension directory.
+Then test in the isolated environment described in [Extension testing](extension-testing.md).
+Do not test by copying unfinished code into your normal extension directory.
 
-For an installed extension:
+After changing a linked or installed extension:
 
 ```sh
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-If a command fails, run its resolved argv from the verbose validation output with an isolated test
-environment. Extension process stdout and stderr are not an interactive debugging channel. Have
-the process write deliberate diagnostics to a test-owned file or run it in a test pane.
+If a command fails, run its resolved argv from the verbose output yourself, in an isolated test
+environment. Because command output is not shown anywhere, have the process write deliberate
+diagnostics to a test-owned file, or run it in a test pane.
 
-## Examples
+### Publish to Discover
 
-The repository has six canonical examples:
+To list a public GitHub repository in **Discover**:
 
-- [Git tools](../examples/extensions/git-tools/) for grouped branch and worktree pickers
-- [PR dashboard](../examples/extensions/pr-dashboard/) for a supervised PR monitor
-- [Docker](../examples/extensions/docker/) for external process controls
-- [SSH tools](../examples/extensions/ssh-tools/) for SSH host discovery and pane launch
-- [Agent activity](../examples/extensions/agent-activity/) for mirroring pane status
-- [Activity dashboard](../examples/extensions/activity-dashboard/) for general published activity
+1. Put `extension.toml` at the repository root.
+2. Include `id`, `title`, `description`, `version`, and `api`.
+3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility.
+4. Add the `rozi-extension` topic to the repository.
+
+The index reads the root `extension.toml` from the default branch and records the exact commit. It
+keeps each entry short, and leaves out a repository whose metadata exceeds a limit:
+
+| Field | Maximum length |
+| --- | --- |
+| `id`, `version`, `min_rozi` | 64 characters |
+| `title` | 80 characters |
+| `description` | 280 characters |
+| `homepage` | 256 characters |
+
+The generated index and its schema are public at
+[`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index).
+
+### Stability
+
+Extension API 1 is frozen. Within API 1, `rozi` will not break:
+
+- the manifest keys documented on this page, and the schema at
+  [`schemas/extension.schema.json`](../schemas/extension.schema.json);
+- namespacing: every contributed ID is `<extension-id>.<local-id>`, and an extension can only add,
+  never replace, a built-in;
+- navigation targets as static load-time declarations: `rozi` owns foreground-program matching and
+  key forwarding, and an explicit `[navigation] editors` list replaces all declarations;
+- suggested keybindings: they target only the documented action allowlist, rank below user and
+  built-in bindings, and never put extension code on the input path;
+- the `ROZI_EXTENSION*` environment variables and their meanings;
+- the `rozi` control commands documented in [Control](control.md), and their exit codes;
+- atomic validity: an extension loads whole or not at all;
+- the `<prefix> x` chord space reserved for extension key suggestions;
+- `--json` diagnostics with `schema_version` `1`.
+
+`rozi` may add manifest keys, control commands, and diagnostic fields within API 1; a manifest that
+does not use them keeps working. Any change that would invalidate a working manifest — a removed
+key, a narrowed value, a changed default, a renamed environment variable — requires `api = 2`, and
+an extension declaring `api = 1` keeps loading under the API 1 rules.
+
+In practice:
+
+- read `ROZI_EXTENSION_CONFIG` with your declared defaults as fallbacks;
+- do not assume a suggested chord was granted;
+- do not depend on behavior that this page and [Control](control.md) do not document.
+
+### Examples
+
+The repository includes these example extensions:
+
+- [Git tools](../examples/extensions/git-tools/) — grouped branch and worktree pickers
+- [PR dashboard](../examples/extensions/pr-dashboard/) — a supervised pull request monitor
+- [Docker](../examples/extensions/docker/) — container controls
+- [SSH tools](../examples/extensions/ssh-tools/) — SSH host discovery and pane launch
+- [Agent activity](../examples/extensions/agent-activity/) — mirrored pane status
+- [Activity dashboard](../examples/extensions/activity-dashboard/) — general published activity
+- [Snippets](../examples/extensions/snippets/) — saved commands pasted into the focused pane
+- [Tasks](../examples/extensions/tasks/) — `just`, `make`, and `package.json` tasks, with a sidebar
+  tab
 
 See [Automation recipes](recipes.md) for smaller building blocks.

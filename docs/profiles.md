@@ -1,49 +1,46 @@
 # Profiles
 
-A profile is a reusable launch recipe. It starts fresh panes from saved commands, working
-directories, names, and layouts.
+A profile is a saved recipe for a workspace: pane commands, working directories, names, and layouts.
+Launching a profile starts fresh panes from that recipe. This page covers saving and launching
+profiles, the file format, and what capture can and cannot record.
 
-A live named session is different. Its server keeps the actual PTYs and processes running while
-clients detach. Resurrection is different again. It recreates a named session after its server has
-gone, restarts commands, and replays saved terminal history.
+## Save and launch a profile
 
-Use a profile to reproduce a workspace. Use a named session to keep work running. Use resurrection
-to recover the shape and history of a stopped named session. See [Sessions](sessions.md).
+1. Arrange your panes the way you want them.
+2. Press `Ctrl+A`, then `O`, or run **Capture session as profile** from the command palette.
+3. Enter a name. If a profile with that name exists, press `Enter` again to overwrite it.
 
-## Create and launch profiles
-
-Profiles are TOML files in:
+The live session is not changed. The profile is saved as a TOML file:
 
 ```text
 ~/.config/rozi/profiles/<name>.toml
 ```
 
-Capture the current session with the `O` command key or **Capture session as profile** in the
-command palette. Rozi prompts for a name and leaves the live session unchanged. Overwriting an
-existing file requires a second `Enter`.
+Profile names use letters, numbers, `_`, and `-`.
 
-Launch the canonical same-name session:
+To launch the profile as a session with the same name:
 
 ```bash
 rozi dev
 rozi --session dev
 ```
 
-These commands attach to session `dev` when it is running. Otherwise they start session `dev` from
-`profiles/dev.toml`. They report an error if neither exists.
+Both commands attach to session `dev` if it is running, and otherwise start it from
+`profiles/dev.toml`. They report an error if neither the session nor the profile exists.
 
-Launch the same recipe under another session name:
+To launch the same recipe under a different session name:
 
 ```bash
 rozi sessions new review --profile dev
 ```
 
-A profile and a session remain independent. Editing the profile does not change a running session.
-The session may remember which profile created it, but that value is origin information only.
+A profile and the sessions started from it are independent. Editing the profile does not change a
+running session. A session may record which profile created it, but only as information about its
+origin.
 
 ## Use the profile picker
 
-Open **Profiles** with the `o` command key.
+Press `Ctrl+A`, then `o` to open **Profiles**.
 
 | Key | Action |
 | --- | --- |
@@ -54,10 +51,11 @@ Open **Profiles** with the `o` command key.
 | `Ctrl+F` | Set or clear the selected profile as the default |
 | `Ctrl+D` twice | Delete the profile file |
 
-Replacing a session closes all of its panes and processes, then launches the recipe while retaining
-the session name and attached clients.
+If you are in a temporary session with running panes and opening the profile would end that
+session, `Enter` asks you to press it again. Set `[confirm] load_profile = false` to skip this.
 
-Profile names use letters, numbers, `_`, and `-`.
+Replacing closes all of the session's panes and their processes, then launches the recipe. The
+session keeps its name and attached clients.
 
 ## Choose a default profile
 
@@ -66,20 +64,20 @@ Profile names use letters, numbers, `_`, and `-`.
 default = "dev"
 ```
 
-The default seeds sessions created without another recipe. To make a bare `rozi` open its named
-canonical session, set:
+The default profile seeds any new session created without another recipe. To make a bare `rozi`
+open the default profile's same-name session, also set:
 
 ```toml
 [session]
 startup = "profile"
 ```
 
-A missing or invalid default falls back to a fresh pane for ordinary new-session creation. An
-explicit target that depends on a missing or invalid profile reports an error.
+If the default profile is missing or invalid, a new session starts with a single fresh pane. A
+command that names a missing or invalid profile reports an error instead.
 
 Git worktree sessions ignore `[profile] default`, because its pane directories usually point at
-another checkout. `[worktrees] profile` names the profile they use instead, with its repository
-paths rebased onto the new checkout. See [Worktrees](sessions.md#worktrees).
+another checkout. Set `[worktrees] profile` to choose the profile they use; its repository paths are
+rebased onto the new checkout. See [Worktrees](worktrees.md).
 
 ## Write a profile
 
@@ -120,9 +118,24 @@ name = "api"
 scrollable_width = 0.55
 ```
 
-A commented example is available at [`examples/profiles/dev.toml`](../examples/profiles/dev.toml).
+A commented example is in [`examples/profiles/dev.toml`](../examples/profiles/dev.toml).
 
-## Complete profile schema
+### Choose `command` or `argv`
+
+Each pane can set `command` or `argv`, not both. A profile that sets both on one pane is rejected.
+
+- `command` is typed into the pane's interactive shell at its first prompt. Aliases, functions, and
+  `PATH` changes from shell startup are available, and the pane returns to the shell when the
+  command exits.
+- `argv` launches the program directly, without a shell, and keeps argument boundaries intact:
+
+  ```toml
+  argv = ["ssh", "--", "host with spaces"]
+  ```
+
+  Set `keep_open = true` to get an interactive shell in the pane after the program exits.
+
+## Profile file reference
 
 ### Top-level fields
 
@@ -132,8 +145,8 @@ A commented example is available at [`examples/profiles/dev.toml`](../examples/p
 | `active_workspace` | integer | Zero-based workspace selected after launch. |
 | `workspaces` | array of tables | Saved workspace entries. |
 
-Rozi has nine workspaces, indexed `0` through `8`. An out-of-range active workspace falls back to
-workspace `0`. Out-of-range workspace entries are ignored.
+rozi has nine workspaces, indexed `0` through `8`. An out-of-range `active_workspace` falls back to
+workspace `0`, and out-of-range workspace entries are ignored.
 
 ### Workspace fields
 
@@ -144,11 +157,11 @@ workspace `0`. Out-of-range workspace entries are ignored.
 | `synchronized` | boolean | Whether terminal input is synchronized across eligible panes. Defaults to `false`. |
 | `layout` | string | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
 | `split_ratios` | array of numbers | Stored layout ratios. Usually written by capture. |
-| `focused_pane` | integer | Local pane `id` to focus. |
+| `focused_pane` | integer | Pane `id` to focus. |
 | `tree` | table | Optional Dwindle split tree. |
-| `panes` | array of tables | Pane launch entries. |
+| `panes` | array of tables | Pane entries. |
 
-If `tree` is absent or unusable, Rozi builds a Dwindle tree from tiled pane order. A tree is either:
+A `tree` is either a single leaf:
 
 ```toml
 [workspaces.tree]
@@ -156,7 +169,7 @@ kind = "leaf"
 pane = 0
 ```
 
-or a recursive split:
+or a split with two child trees, each of which may itself be a split:
 
 ```toml
 [workspaces.tree]
@@ -173,36 +186,25 @@ kind = "leaf"
 pane = 1
 ```
 
-`axis` is `horizontal` or `vertical`. Leaf `pane` values refer to pane `id` fields in the same
-workspace.
+`axis` is `horizontal` or `vertical`. A leaf's `pane` refers to a pane `id` in the same workspace. If
+`tree` is missing or unusable, rozi builds a Dwindle tree from the order of the tiled panes.
 
 ### Pane fields
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | integer | Profile-local pane identity used by `focused_pane` and `tree`. |
-| `pane_id` | integer | Optional server pane identity written by capture and snapshots. Hand-written profiles can omit it. |
-| `name` | string | Pane title restored by the profile. |
-| `title` | string | Older title field used when `name` is absent. New files should use `name`. |
-| `cwd` | path | Starting directory. `~` and `~/…` expand from the user's home. |
+| `id` | integer | Pane identity within the profile, used by `focused_pane` and `tree`. |
+| `pane_id` | integer | Optional server pane identity written by capture and snapshots. Omit it in hand-written profiles. |
+| `name` | string | Pane title. |
+| `title` | string | Older title field, used when `name` is absent. Use `name` in new files. |
+| `cwd` | path | Starting directory. `~` and `~/…` expand to your home directory. |
 | `command` | string | Command typed into the interactive shell at its first prompt. |
-| `argv` | array of strings | Program and arguments launched directly without a shell. |
-| `keep_open` | boolean | After a directly launched process exits, replace it with an interactive shell in the same pane. Shell-replayed `command` entries already return to their prompt. |
+| `argv` | array of strings | Program and arguments launched directly, without a shell. |
+| `keep_open` | boolean | After an `argv` program exits, replace it with an interactive shell in the same pane. |
 | `floating` | boolean | Start the pane floating. |
 | `fullscreen` | boolean | Start the pane fullscreen. |
 | `rect` | table | Floating rectangle with `x`, `y`, `w`, and `h` numbers. |
-| `scrollable_width` | number | Scrollable column width as a viewport fraction. Defaults to `0.45` and clamps from `0.20` to `0.80`. |
-
-`command` and `argv` are mutually exclusive. A profile containing both for one pane is rejected.
-
-`command` runs through the interactive shell, so aliases, functions, and shell startup `PATH`
-changes are available. The pane returns to that shell after the command exits.
-
-`argv` preserves argument boundaries and does not invoke a shell:
-
-```toml
-argv = ["ssh", "--", "host with spaces"]
-```
+| `scrollable_width` | number | Column width in the Scrollable layout, as a fraction of the viewport. Defaults to `0.45`; clamped to `0.20`–`0.80`. |
 
 ## What capture saves
 
@@ -210,35 +212,40 @@ Capture saves:
 
 - workspace names, layouts, synchronization, split trees, and ratios
 - pane names, floating and fullscreen state, floating rectangles, and Scrollable widths
-- each pane's usable local working directory
-- explicit launch intent or a command still running at capture time
+- each pane's working directory, when it is a usable local path
+- a pane's explicit launch command, or the command still running when you capture
 
-An idle shell saves no command. Rozi does not replay the last command merely because it remains in
-terminal history.
+A pane sitting at an idle shell prompt saves no command. rozi does not replay your last command just
+because it is still in the terminal history.
 
-For a running command, capture tries to keep the executable and its arguments. It uses a full
-executable path when the server cannot resolve the bare name on its own `PATH`.
+For a running command, capture keeps the executable and its arguments where it can. It writes the
+executable's full path when the bare name is not on the session server's `PATH`.
 
-Some process details are unavailable:
+Some details cannot be captured:
 
-- On macOS, capture can identify the executable but may omit its argument vector.
-- On Windows, capture relies on shell integration for the reported program name and cannot inspect
-  native process arguments.
-- Unmatched wrappers omit arguments when Rozi cannot safely associate them with the reported
-  program.
-- Arguments containing control characters are omitted rather than serialized into an unsafe shell
-  command.
-- Remote panes do not save remote paths as local `cwd` values and keep only portable command
-  information.
+- On macOS, capture can identify the executable but may leave out its arguments.
+- On Windows, capture uses shell integration for the program name and cannot read native process
+  arguments.
+- Arguments are left out when the program was started through a wrapper rozi cannot safely match to
+  the reported program.
+- Arguments containing control characters are left out rather than written into a shell command.
+- Remote panes do not save their remote paths as `cwd` and keep only portable command information.
 
-Capture stores command lines in plain text. Arguments may contain access tokens, passwords, private
+Capture stores command lines as plain text. Arguments may contain access tokens, passwords, private
 URLs, or other secrets. Review a profile before sharing or committing it.
 
 ## Session autosave
 
-`[session] autosave = true` writes the current layout in the same profile format when a local client
-leaves. It restores layout and launch intent, not live PTYs. A configured default profile takes
-precedence over this autosave when seeding a session.
+With `[session] autosave = true`, rozi writes the current layout in the profile format when a local
+client leaves. It restores layout and launch commands, not running processes. A configured default
+profile takes precedence over the autosave when seeding a session.
 
-For live process continuity, use a named session. For terminal history recovery after the server is
-gone, use [session resurrection](sessions.md#resurrection).
+## Profiles, sessions, and resurrection
+
+These three features overlap, so choose by what you want to keep:
+
+- A profile reproduces a workspace from scratch with fresh panes.
+- A [named session](sessions.md) keeps your panes and processes running on its server while no
+  client is attached.
+- [Resurrection](sessions.md#resurrection) recreates a named session after its server has stopped.
+  It restarts commands and replays saved terminal history.

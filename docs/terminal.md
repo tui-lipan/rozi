@@ -1,46 +1,51 @@
 # Terminal features
 
-Every pane is a PTY owned by a session server. Programs receive normal terminal input, output,
-resize, mouse, title, clipboard, and shell-metadata sequences. A client can detach while a named
-server keeps its PTYs running. See [Sessions](sessions.md).
+This page covers how panes behave as terminals: the shell they start, working directories, mouse and
+clipboard handling, copy mode and search, links, scrollback, images, and pane logging.
+
+Programs in a pane work as they would in any terminal, including mouse input, titles, clipboard
+access, and resizing. Each pane runs on the session server, so it keeps running in a named session
+after you detach. See [Core concepts](core-concepts.md#sessions-and-clients) and
+[Sessions](sessions.md).
 
 ## Choose the shell and starting directory
 
-The `[shell]` and `cwd` settings choose the interactive shell and fallback working directory. When
-they are unset, Rozi uses the platform's default shell and the directory where it was launched.
+The `[shell]` setting chooses the interactive shell, and `cwd` sets the fallback working directory.
+When they are unset, rozi uses the platform's default shell and the directory it was launched from.
 
 Remote panes use the remote server's shell and filesystem, not the client's `[shell]` value. See
 [Remote sessions](remote.md#understand-the-client-and-server-boundary).
 
 ## Working directories and shell metadata
 
-Rozi uses shell metadata for pane titles, new pane directory inheritance, prompt navigation, last
-command output, and foreground-program detection.
+Shell integration lets rozi know each pane's directory, prompts, and running command. rozi uses this
+for pane titles, opening new panes in the same directory, prompt navigation, copying the last
+command's output, and detecting the program in the foreground.
 
-With `[shell_integration] mode = "auto"`, Rozi configures bash, zsh, fish, and PowerShell for the
-pane process without editing shell startup files. It does not edit the Windows `AutoRun` registry
-key. `cmd.exe` can report its directory and prompt boundaries but cannot report a command before it
-runs.
+With `[shell_integration] mode = "auto"`, the default, rozi sets up bash, zsh, fish, and PowerShell
+for each pane without editing your shell startup files. It does not edit the Windows `AutoRun`
+registry key. `cmd.exe` can report its directory and prompt boundaries, but not the command it is
+about to run.
 
-Directory lookup follows this order:
+rozi finds a pane's working directory from the first of these that is available:
 
-1. A valid local OSC 7 or OSC 9;9 directory report.
-2. Native process inspection on Linux or macOS.
+1. A valid local directory report from the shell (OSC 7 or OSC 9;9).
+2. Process inspection, on Linux and macOS.
 3. The pane's launch directory.
-4. Configured `cwd`.
+4. The configured `cwd`.
 
-Windows has no native process-inspection fallback. Shell integration is therefore needed for live
-directory and foreground-program updates there.
+Windows has no process inspection, so live directory and foreground-program updates there need shell
+integration.
 
-A directory report for another host may be shown as metadata but is not used as a local spawn path.
-A new local pane never tries to start in a path that belongs to an SSH host.
+A directory reported for another host, such as inside an SSH session, can appear in titles, but
+rozi never starts a new local pane in it.
 
-See [Configuration](configuration.md#shell_integration) for modes and per-shell behavior.
+See [Configuration](configuration.md#shell-integration-settings) for modes and per-shell behavior.
 
 ## Use the mouse
 
-Without a pending prefix or the WM modifier, mouse events go to the program in the pane. This keeps
-mouse-aware editors and TUIs working normally.
+Mouse events go to the program in the pane unless you hold the modifier (`Alt` by default) or have
+pressed the prefix. Mouse-aware editors and other terminal apps keep working normally.
 
 | Gesture | Action |
 | --- | --- |
@@ -48,134 +53,152 @@ mouse-aware editors and TUIs working normally.
 | Middle click (Linux) | Paste the primary selection into the pane under the pointer |
 | Wheel over a pane | Scroll history |
 | `Ctrl` plus click a visible link | Open it |
-| WM modifier plus left-drag | Move a pane |
-| WM modifier plus right-drag | Resize a pane |
+| Modifier plus left-drag | Move a pane |
+| Modifier plus right-drag | Resize a pane |
 | Prefix, then left-drag | Move a pane |
 | Prefix, then right-drag | Resize a pane |
 | Drag a tiled split boundary | Resize the split |
 
-A drag started from a pending prefix hides the which-key strip for the gesture. The `PREFIX` badge
-stays until you release the button, which is also when the prefix ends.
+When you drag after pressing the prefix, the which-key strip hides during the drag. The `PREFIX`
+badge stays until you release the button, which also ends the prefix.
 
-Rozi limits forwarded pointer-motion events to the configured frame rate so a mouse-tracking
-program does not build an input backlog. Presses, releases, and wheel events are not coalesced.
+rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
+the program does not fall behind. Presses, releases, and wheel events are always sent.
 
 ## Select, copy, and paste
 
-Drag to select text. On Linux, releasing the mouse copies it to both the regular clipboard and the
-primary selection; on other platforms, it copies to the regular clipboard. The selection remains
-visible after copying, and its anchors stay attached to scrollback lines while you scroll. Pressing
-`Ctrl+C` also copies the active selection to the regular clipboard.
+Drag to select text. When you release the mouse, rozi copies the selection to the regular clipboard,
+and on Linux also to the primary selection. The selection stays visible after copying and stays on
+the same lines while you scroll. `Ctrl+C` also copies the active selection to the regular clipboard.
 
-Middle click pastes the primary selection on Linux. The paste goes to the pane under the pointer,
-not the focused one: clicking another pane focuses it first, and a click on a pane border or title
-bar pastes nothing. Right click remains available to the pane or Rozi rather than acting as a
-clipboard shortcut. If you set `right_click`, it follows the same rule, and `"copy-or-paste"` copies
-only a selection in the pane you click. These defaults can be changed under
-[`[clipboard]`](configuration.md#clipboard); changes apply when the config reloads. If the host does
-not support a primary selection, Rozi keeps regular clipboard copying enabled and disables
-PRIMARY-only gestures.
+On Linux, middle click pastes the primary selection into the pane under the pointer, not the
+focused pane. Clicking another pane focuses it first; a click on a pane border or titlebar pastes
+nothing.
 
-The `v` command key and direct `Ctrl+V` send text from the system clipboard with bracketed-paste
-markers. Direct `Ctrl+V` passes through when the clipboard contains a non-text format, allowing a
-pane program to handle it. Prefix, modifier, and palette paste commands remain text-only.
+Right click does nothing clipboard-related by default, so it stays available to the pane program and
+to rozi. If you set `right_click`, it follows the same pointer rule as middle click, and
+`"copy-or-paste"` copies only a selection in the pane you click.
 
-Programs can write to the system clipboard with OSC52 when
-`[clipboard].enable_osc52 = true`, the default. Disable it if pane programs should not control the
-clipboard. The change applies when the config reloads.
+You can change all of these under [`[clipboard]`](configuration.md#clipboard); changes apply when
+the config reloads. If the system has no primary selection, regular clipboard copying still works,
+and primary-only gestures are turned off.
 
-For a remote attachment, mouse selection and OSC52 target the local client's clipboard. A pane
-program that directly opens a clipboard API sees the remote host's clipboard.
+The `v` command key and `Ctrl+V` paste text from the system clipboard as a bracketed paste. When the
+clipboard holds something other than text, `Ctrl+V` pressed directly passes through so the pane
+program can handle it. The prefix, held-modifier, and command-palette paste commands paste text
+only.
+
+Programs can set the system clipboard through OSC 52 while `[clipboard].enable_osc52 = true`, the
+default. Turn it off if pane programs should not control your clipboard. The change applies when the
+config reloads.
+
+When attached to a remote session, mouse selection and OSC 52 use your local clipboard. A pane
+program that calls a clipboard API directly uses the remote host's clipboard.
 
 ## Copy, search, and hints
 
-Press the `[` command key to enter copy mode. It provides keyboard cursor movement, selection,
-prompt jumps, and last-output copying. Press `/` to search the focused pane from copy mode.
-The complete local key table is in [Keybindings](keybindings.md#copy-mode).
+### Copy mode
 
-Press the `/` command key outside copy mode to search retained history. `Tab` changes the scope
-among the focused pane, workspace, and all panes. The arrow and paging keys navigate results. Search
-retains at most 2000 matches for navigation and marks the count with `+` only when more exist.
-Workspace-wide results are grouped by pane; all-pane results also name the workspace. These groups
-use display-order pane numbers rather than internal pane ids.
+Press `Ctrl+A`, then `[` to enter copy mode. It lets you move a cursor with the keyboard, select
+text, jump between shell prompts, and copy the last command's output. Press `/` in copy mode to
+search the focused pane. See [Keybindings](keybindings.md#copy-mode) for every key.
 
-ASCII letters match without case. Other text remains case-sensitive. New pane output restarts an
-open search so result positions remain valid. Soft-wrapped terminal rows are rejoined before
-matching, so text split only by the pane width remains one searchable line and one result.
+### Search scrollback
 
-Press the `u` command key for hint mode. It recognizes visible URLs, paths with optional line
-numbers, Git commit ids, and configured `[[hints]]` patterns. A lowercase label copies the target.
-An uppercase final label character opens eligible targets. Soft-wrapped targets are rejoined before
-matching.
+Outside copy mode, the `/` command key searches the retained history.
 
-**Copy last command output** and copy-mode prompt jumps require shell-integration prompt markers.
-`rozi capture-pane --last-output` provides the same last-output capture for automation.
+- `Tab` switches the scope between the focused pane, the workspace, and all panes.
+- The arrow and paging keys move through results.
+- Workspace results are grouped by pane. All-pane results also name the workspace. Panes are
+  numbered in display order.
+- Search keeps up to 2000 matches. The count shows `+` when there are more.
+
+ASCII letters match regardless of case; other characters are case-sensitive. Lines that wrapped only
+because of the pane width are joined before matching, so they count as one line and one result.
+When the pane prints new output, an open search runs again so its results stay accurate.
+
+### Hint mode
+
+The `u` command key starts hint mode. It labels visible URLs, paths with optional line numbers, Git
+commit ids, and your `[[hints]]` patterns, including ones that wrap across lines. Type a lowercase
+label to copy the target, or end the label with an uppercase character to open it when it can be
+opened.
+
+### Copy the last command output
+
+**Copy last command output** and the prompt jumps in copy mode need shell integration; see
+[Working directories and shell metadata](#working-directories-and-shell-metadata). For scripts,
+`rozi capture-pane --last-output` captures the same output.
 
 ## Open links
 
-Hold `Ctrl` over a visible URL and click it to open with the system handler. Explicit OSC 8 links
-also work and take precedence over plain-text URL detection. Unsupported destinations produce an
-error instead of being passed to the operating system.
+Hold `Ctrl` and click a visible URL to open it with the system handler. Links that programs mark
+explicitly (OSC 8 hyperlinks) also work, and take precedence over URLs detected in plain text.
+rozi shows an error for an unsupported destination instead of passing it to the operating system.
 
 ## Scrollback
 
-Each terminal screen retains the configured `scrollback` number of lines, which defaults to 5000.
-Typing returns the view to live output.
+Each pane keeps the last `scrollback` lines of output, 5000 by default. Typing returns the view to
+live output.
 
-The server retains history for reattachment, and each attached client keeps its own screen. Memory
-use grows with pane width, populated history, and attached-client count. Use a smaller scrollback
-limit when memory matters more than deep history.
+The session server keeps history so you can reattach, and each attached client keeps its own copy.
+Memory use grows with pane width, the amount of history, and the number of attached clients. Lower
+`scrollback` if memory matters more than deep history.
 
-The limit is set when a terminal screen is created. Reloading config changes new screens, not
-existing ones. Restart a named server to rebuild its retained screens with a new limit.
+The limit is fixed when a pane's terminal screen is created. After a config reload, a new
+`scrollback` value applies to new screens, such as new panes; existing ones keep their old limit.
+Restart a named session to rebuild its screens with the new limit.
 
-**Edit scrollback** writes the focused pane's retained text to a private file under the state
-directory and opens it with `$EDITOR`, then `$VISUAL`, then `vi`. Rozi keeps the directory near 20
-files. Scrollback files may contain passwords, tokens, and private output.
+**Edit scrollback** saves the focused pane's history to a private file in the state directory and
+opens it in `$EDITOR`, then `$VISUAL`, then `vi`. rozi keeps about the 20 most recent files. These
+files may contain passwords, tokens, and other private output.
 
 ## Titles and urgency
 
-Programs set terminal titles with OSC 0 or OSC 2. A custom title set with the `N` command key
-takes precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
+Programs set the pane title with OSC 0 or OSC 2. A custom title set with the `N` command key takes
+precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
 
-With `[notifications] bell = true`, BEL from an unattended pane marks its workspace. A pane is
-attended only when its window and the pane itself are focused.
+With `[notifications] bell = true`, a bell from a pane you are not watching marks its workspace. You
+are watching a pane only when both the terminal window and the pane have focus.
 
 ## Images
 
-Pane programs can use the Kitty graphics protocol. Rozi displays images through a format supported
-by the host terminal, including Kitty, iTerm2, sixel, or text-cell fallback.
+Pane programs can show images with the Kitty graphics protocol. rozi displays them in whatever
+format the host terminal supports, including Kitty, iTerm2, sixel, or a text-cell fallback. Images
+scroll with the terminal and belong to the screen (main or alternate) they were drawn on.
 
-Images follow terminal scrolling and alternate-screen lifetime. These limits apply:
+Limits:
 
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
-  animate.
-- The session server and each attached client keep up to 32 MiB of image data per pane; old images
-  are evicted when needed. Retained images and placements are included when a client attaches.
-- Remote panes cannot use a server-side file path as an image handoff to the local client, so they
-  use inline image data.
-- Temporary-file and shared-memory handoff forms that can only be consumed once are refused in a
-  session that may have several clients.
+  animate it.
+- The session server and each attached client keep up to 32 MiB of image data per pane, evicting
+  old images when needed. A client that attaches receives the retained images.
+- Remote panes send image data inline, because the local client cannot read a file path on the
+  server.
+- In a session that may have several clients, rozi refuses image transfers through temporary files
+  or shared memory, which can be read only once.
 
 ## Pane logging
 
-Run **Pane logging** from the command palette, or bind `toggle-pane-logging`, to append raw PTY
-output from the focused pane to a log file. The titlebar shows a `log` badge while logging.
+To save a pane's raw output to a file, run **Pane logging** from the command palette or bind
+`toggle-pane-logging`. The titlebar shows a `log` badge while logging is on, and every attached
+client sees the same state.
 
-Logging belongs to the server, so all clients see its state. It stops after a write error or after
-reaching `[logging] max_bytes`.
+Logging stops after a write error or when the file reaches `[logging] max_bytes` (64 MiB by default;
+`0` means no limit). Logs are written to `[logging] dir`, which defaults to `logs` in the state
+directory.
 
-Logs keep escape sequences and carriage returns. Each logging run begins with a header containing
+Logs keep escape sequences and carriage returns. Each logging run starts with a header that records
 the session, pane, generation, size, and start time. Raw logs can contain credentials and private
-terminal output. Store and share them accordingly.
+output, so store and share them with care.
 
 ## Persistence boundaries
 
-- Named sessions retain live PTYs while their server runs.
-- Profiles restore layout and launch intent with fresh PTYs.
+- Named sessions keep their panes running while their server runs.
+- Profiles restore the layout and launch commands in fresh panes.
 - Resurrection restarts commands and replays saved terminal history, including retained Kitty
   images.
-- Scratch panes live on a private client-lifetime server and are not saved or shared.
-- Retained Kitty images are restored when attaching to a live session.
+- Scratch panes belong to one client and are never saved or shared.
+- Retained Kitty images are restored when you attach to a live session.
 
 See [Profiles](profiles.md) and [Shared sessions](shared-sessions.md) for those workflows.

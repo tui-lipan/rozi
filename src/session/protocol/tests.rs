@@ -922,6 +922,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
             render: crate::control::CaptureRender::Text,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
         source_pane: None,
         extension: None,

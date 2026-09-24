@@ -159,7 +159,13 @@ fn clear_then_image() -> (Vec<u8>, Vec<u8>) {
 fn png_capture(pane: &crate::pane::TerminalPane) -> String {
     let content = pane
         .with_screen_mut(|screen| {
-            crate::pane::capture_screen(screen, None, crate::control::CaptureRender::Png, None)
+            crate::pane::capture_screen(
+                screen,
+                None,
+                crate::control::CaptureRender::Png,
+                None,
+                false,
+            )
         })
         .expect("png capture");
     match content {

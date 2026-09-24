@@ -298,7 +298,13 @@ fn capture(
         )
     })?;
     let content = pane.terminal.with_screen_mut(|screen| {
-        crate::pane::capture_screen(screen, reply.scrollback.clone(), reply.render, reply.scale)
+        crate::pane::capture_screen(
+            screen,
+            reply.scrollback.clone(),
+            reply.render,
+            reply.scale,
+            reply.image_pixels,
+        )
     })?;
     Ok(PaneCapture {
         id: pane_id,

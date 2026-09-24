@@ -235,7 +235,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "capture-pane [OPTIONS] [WAIT]",
-                "Capture a pane as text, ANSI, or PNG",
+                "Capture a pane as text, ANSI, PNG, or spans",
             ),
             row(
                 "WAIT: [--wait-for <TEXT>] [--settle <DUR>] --timeout <DUR>",

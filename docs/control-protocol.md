@@ -114,8 +114,8 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 | `layout-set`, `pane-set`, `pane-move`, `pane-swap` | `{ "changed": bool, "revision": number or null, "committed": bool, "workspace": object }`; see [Changing the layout](control.md#changing-the-layout). |
 | `pane-close` | `{ "id": number, "revision": number or null, "committed": bool, "workspace": object or absent }` |
 | `metrics` | Client counters and the most recent cached server counters. |
-| `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, or for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }` |
-| `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text` or `png_base64` fields as `capture-pane` |
+| `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }`, or for `spans` `{ "id": number, "title": string or null, "render": "spans", "frame": object }`; see [Spans frames](#spans-frames) |
+| `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text`, `png_base64`, or `frame` fields as `capture-pane` |
 | `send-text`, `send-keys` with `capture` | The same capture as `capture-pane`, taken once the wait resolved. Absent without `capture`. |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | Other one-shot commands | Absent on success. |
@@ -192,6 +192,7 @@ client and replays the pane from the server's screen instead.
 {"cmd":"capture-pane","target":3,"wait":{"text":"$ ","timeout_ms":5000}}
 {"cmd":"capture-ui","render":"png"}
 {"cmd":"capture-ui","render":"png","scale":2}
+{"cmd":"capture-pane","target":3,"render":"spans","image_pixels":true}
 ```
 
 `list-panes` reports how each pane was launched in either `command` or `argv`, plus its current
@@ -204,16 +205,69 @@ foreground program, reported status, and detected agent when available.
 
 - `target` defaults to `source_pane`, then the focused pane.
 - `scrollback` is a nonnegative line count, `"full"`, or `"last-output"`.
-- `render` is `"text"` (the default), `"ansi"`, or `"png"`. `ansi` and `png` capture the visible
-  grid only, and fail with `invalid-argument` when `scrollback` is set.
+- `render` is `"text"` (the default), `"ansi"`, `"png"`, or `"spans"`. `ansi`, `png`, and `spans`
+  capture the visible grid only, and fail with `invalid-argument` when `scrollback` is set.
 - `scale` enlarges a PNG, from 1 to 3; it defaults to 1. It fails with `invalid-argument` when out
   of range or with any other `render`.
 - `wait` holds the reply until the visible screen shows some text or settles; see
   [Pane waits](#pane-waits).
+- `image_pixels`, when `true`, adds each image's pixels to a `spans` frame. It defaults to
+  `false` and fails with `invalid-argument` with any other `render`.
 
-`capture-ui` captures the whole UI as drawn and takes `render` and `scale` the same way. It answers
-from the next frame the UI paints, which the request forces. Requests that arrive before that paint
-share it, and each distinct `render` among them is encoded once. Only a UI answers `capture-ui`.
+`capture-ui` captures the whole UI as drawn and takes `render`, `scale`, and `image_pixels` the
+same way. It answers from the next frame the UI paints, which the request forces. Requests that
+arrive before that paint share it, and each distinct form among them is encoded once. Only a UI
+answers `capture-ui`.
+
+### Spans frames
+
+A `spans` capture's `frame` describes the visible grid. It has its own `format`, always
+`"rozi-spans"`, and an integer `version`, currently `1`, apart from the control API's versions.
+The version changes only when a field changes meaning or is removed; fields are added without a
+change, so a consumer must ignore fields it does not know. The frame is `SpanFrame` in the
+[JSON Schema](control.md#json-schema).
+
+| Field | Contents |
+| --- | --- |
+| `format`, `version` | `"rozi-spans"` and the frame format's version. |
+| `width`, `height` | The grid's size in cells. |
+| `palette` | `foreground`, `background`, and the 16 `ansi` colors, each `"#rrggbb"`: what a default color and each ANSI name look like in this capture, as a PNG of it draws them. |
+| `cursor` | `x`, `y`, `visible`, `shape` (`"block"`, `"hollow-block"`, `"underline"`, or `"bar"`), `blinking`, and `color` when the cursor has its own. Absent when the frame has no cursor. |
+| `rows` | One array per row, top to bottom, of runs. |
+| `images` | Images a program displayed, back to front. Absent when there are none. |
+
+Each run has `x`, `width`, and `text`, plus only the style fields that differ from the default:
+
+- `fg`, `bg`, and `underline_color` are a color. An absent `underline_color` means the underline
+  takes the text's color.
+- `bold`, `dim`, `italic`, `reverse`, and `strikethrough` appear as `true`.
+- `underline` is `"single"`, `"double"`, `"curly"`, `"dotted"`, or `"dashed"`.
+
+Runs tile each row from column 0 in order, without gaps or overlaps, except that blank cells in the
+default style at the end of a row are left out: a column past the last run is a space in default
+colors, and a blank row is `[]`. A wide character covers two columns of its run's `width`, so
+`width` can exceed the number of characters in `text`.
+
+A color stays symbolic rather than being resolved to RGB, in one of three forms:
+
+- an ANSI name: `"black"`, `"red"`, `"green"`, `"yellow"`, `"blue"`, `"magenta"`, `"cyan"`,
+  `"white"`, or one of those prefixed with `bright-`, such as `"bright-black"`. ANSI slots 0–15
+  are always named, so `SGR 31` and `SGR 38;5;1` are both `"red"` and can share a run;
+- a number from 16 to 255, a 256-color palette index. Indexes 16–255 are the standard xterm color
+  cube and gray ramp, and do not appear in `palette`;
+- `"#rrggbb"`.
+
+An image has `x`, `y`, `width`, and `height`, the cells it is laid out over, and `pixel_width` and
+`pixel_height`, the size of its pixels as captured. An image that runs past the grid is cropped to
+it first. The cells under a visible image hold `▀` half blocks in its top and bottom colors, so the
+runs there describe a coarse copy of the picture. `visible` is absent when the image shows in every
+cell of its area; otherwise it has one entry per row of the area, each an array of `[x, width]`
+column ranges still showing the image. `png_base64` holds the pixels as a PNG, with alpha, when the
+request set `image_pixels`. Pixels on a cell that does not show the image, because something covers
+it or it is off the grid, are fully transparent, so the PNG never reveals what the capture hides.
+Pixels are placed on cells as a `png` capture draws them: fitted inside the image's cells from the
+top-left corner, keeping their shape, in cells twice as tall as they are wide. A pixel that
+straddles a hidden cell is cleared.
 
 ### Layout changes
 
@@ -255,8 +309,9 @@ focused pane. `keys` uses the names in
 sent as literal text.
 
 `wait` holds the reply until the pane answers the input; see [Pane waits](#pane-waits). `capture`
-(`"text"`, `"ansi"`, or `"png"`) returns the screen once the wait resolves, and needs `wait`;
-`scale` works as for `capture-pane`. Both fail with `invalid-argument` otherwise.
+(`"text"`, `"ansi"`, `"png"`, or `"spans"`) returns the screen once the wait resolves, and needs
+`wait`; `scale` works as for `capture-pane`. Both fail with `invalid-argument` otherwise. A send's
+`spans` capture never carries image pixels.
 
 ### Pane waits
 
@@ -368,12 +423,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":15,"min_protocol_version":15,
+{"type":"session-control","session":"dev","protocol_version":16,"min_protocol_version":16,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":15,
+{"type":"session-control-result","effective_protocol":16,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
@@ -388,8 +443,8 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 - A request with a pane wait holds the connection open until the wait resolves or times out. A
   client should read with a timeout longer than `timeout_ms`.
 - A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
-  large pane or a long `"full"` scrollback, is answered with `message-too-large` instead. The UI
-  endpoint has no such limit.
+  large pane, a long `"full"` scrollback, or a `spans` frame carrying a large image's pixels, is
+  answered with `message-too-large` instead. The UI endpoint has no such limit.
 
 The connection never becomes a client. It gets no client id, is not counted in the session roster
 or client count (including `metrics`), never holds layout control, and receives no replay. It also

@@ -67,6 +67,7 @@ fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> 
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             },
         );
         let text = data["text"].as_str().unwrap_or_default().to_string();
@@ -143,6 +144,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
             render: CaptureRender::Text,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
     );
     assert!(
@@ -209,7 +211,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
 /// Styled captures come from the server's own screen, so a script sees colors and gets an image
 /// without any UI attached.
 #[test]
-fn a_detached_session_captures_its_screen_as_ansi_and_png() {
+fn a_detached_session_captures_its_screen_as_ansi_png_and_spans() {
     use base64::Engine as _;
 
     // The program is launched directly rather than typed into the default shell, which differs by
@@ -253,6 +255,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
                 render,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             },
         )
     };
@@ -272,6 +275,21 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
         .expect("png capture is base64");
     assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
 
+    let spans = capture(CaptureRender::Spans);
+    assert_eq!(spans["render"], serde_json::json!("spans"));
+    let frame = &spans["frame"];
+    assert_eq!(frame["format"], serde_json::json!("rozi-spans"));
+    assert_eq!(frame["version"], serde_json::json!(1));
+    let red = frame["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .flat_map(|row| row.as_array().expect("a row of runs"))
+        .find(|run| run["text"] == "styled-marker")
+        .expect("the marker is one run of its own");
+    assert_eq!(red["fg"], serde_json::json!("red"));
+    assert!(frame["cursor"]["visible"].is_boolean());
+
     let refused = control(
         &session,
         ControlCommand::CapturePane {
@@ -282,6 +300,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
             render: CaptureRender::Png,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
     );
     assert!(!refused.ok);
@@ -711,6 +730,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             render: CaptureRender::Text,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
     )["text"]
         .as_str()
@@ -767,6 +787,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             render: CaptureRender::Text,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
     );
 
@@ -795,6 +816,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             render: CaptureRender::Text,
             scale: None,
             wait: None,
+            image_pixels: false,
         },
     );
     assert!(!ambiguous.ok);
@@ -907,6 +929,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
             scrollback: None,
             render: CaptureRender::Text,
             scale: None,
+            image_pixels: false,
             wait: pane_wait(Some("waited-42"), None, timeout_ms),
         },
     );
@@ -920,6 +943,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
             scrollback: None,
             render: CaptureRender::Text,
             scale: None,
+            image_pixels: false,
             wait: pane_wait(None, Some(300), timeout_ms),
         },
     );

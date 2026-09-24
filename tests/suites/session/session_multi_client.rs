@@ -255,6 +255,11 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
             }
             _ => {}
         }
+        #[cfg(windows)]
+        eprintln!(
+            "interleaved frame: {frame:?}; committed={committed}; output={:?}",
+            String::from_utf8_lossy(&second_output)
+        );
         committed && contains_output_line(&second_output, second_marker)
     });
 }

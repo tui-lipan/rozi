@@ -194,6 +194,43 @@ export default defineConfig({
           .join(" ");
         return `<code${self.renderAttrs(token)}>${body}</code>`;
       };
+
+      // Protocol examples are newline-delimited JSON: one message per line is
+      // the format, so the source keeps them on one line. Long ones are shown
+      // indented here, while the copy button copies the original lines from a
+      // hidden copy (VitePress copies text content minus `.vp-copy-ignore`).
+      // A list of many short commands reads better as it is, and a line the
+      // author already spaced out for reading is left alone.
+      const fence = md.renderer.rules.fence!;
+      md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+        const token = tokens[idx];
+        const raw = token.content;
+        const lines = raw.split("\n").filter((line) => line.trim());
+        if (
+          token.info.trim() !== "json" ||
+          lines.length > 3 ||
+          !lines.some((line) => line.length > 80)
+        ) {
+          return fence(tokens, idx, options, env, self);
+        }
+        let messages: unknown[];
+        try {
+          messages = lines.map((line) => JSON.parse(line));
+        } catch {
+          return fence(tokens, idx, options, env, self);
+        }
+        if (messages.some((message, i) => JSON.stringify(message) !== lines[i])) {
+          return fence(tokens, idx, options, env, self);
+        }
+        token.content = messages.map((message) => JSON.stringify(message, null, 2)).join("\n\n") + "\n";
+        const html = fence(tokens, idx, options, env, self);
+        token.content = raw;
+        const label = lines.length > 1 ? "json · one message per line" : "json · sent as one line";
+        return html
+          .replace(/<span class="lang">json<\/span>/, `<span class="lang">${label}</span>`)
+          .replace(/<code>/, '<code class="vp-copy-ignore">')
+          .replace(/<\/pre>/, `<span class="ndjson-raw" hidden>${md.utils.escapeHtml(raw)}</span></pre>`);
+      };
     },
   },
 

@@ -311,13 +311,15 @@ Pane.props = ["rect", "boxStyle", "border", "label", "labelColor", "footer"];
 function Sidebar(props) {
     const { accent, T, cues, op, dx, attention } = props;
     const rose = accent[0];
+    /* Sized so the longest strip, "Activity Panes Sessions", fits the 230px
+       panel; at 15px with 7px padding its last tab was cut off. */
     const tab = (txt, active, key) => (
         <span
             key={key}
             style={px({
                 fontFamily: MONO,
-                fontSize: 15,
-                padding: "2px 7px",
+                fontSize: 14,
+                padding: "2px 4px",
                 color: active ? SCREEN : DIM,
                 background: active ? rose : "transparent",
             })}
@@ -340,8 +342,8 @@ function Sidebar(props) {
                 overflow: "hidden",
             })}
         >
-            <div style={px({ display: "flex", gap: 5, padding: "8px 9px" })}>
-                {tab("Agents", true, "a")}
+            <div style={px({ display: "flex", gap: 4, padding: "8px 9px" })}>
+                {tab("Activity", true, "a")}
                 {tab("Panes", false, "p")}
                 {tab("Sessions", false, "s")}
             </div>
@@ -418,7 +420,7 @@ function Sidebar(props) {
             <div
                 style={px({
                     display: "flex",
-                    gap: 5,
+                    gap: 4,
                     padding: "20px 9px 8px",
                     borderTop: `1px solid ${EDGE}`,
                     marginTop: 16,
@@ -426,6 +428,7 @@ function Sidebar(props) {
             >
                 {tab("Files", true, "f")}
                 {tab("Git", false, "g")}
+                {tab("Worktrees", false, "w")}
             </div>
             <div
                 style={px({

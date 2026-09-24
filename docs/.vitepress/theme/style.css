@@ -1023,17 +1023,19 @@ body {
 
 /* Except in a table, where the cell is narrow enough that an unbreakable chip
    pushes the column wide and puts the whole table behind a horizontal scroll.
-   There a chip wraps between words only (see `.cw`, from config.ts). It drops
-   the border for a tint, so a wrapped command reads as one highlighted run
-   across lines: a bordered box either splits open at the line end or, cloned,
-   looks like several separate commands. */
+   There a chip wraps between words only (see `.cw`, from config.ts), and
+   inside its own box: an inline box split across lines opens at the line
+   end, and a box per line reads as several commands. Continuation lines hang
+   under the first, the way a wrapped synopsis is set in a man page. */
 .vp-doc :is(td, th) > code,
 .vp-doc :is(td, th) :not(pre) > code {
+    display: inline-block;
+    max-width: 100%;
     white-space: normal;
-    line-height: 1.8;
-    padding: 2px 4px;
-    background: rgba(152, 43, 242, 0.12);
-    border-color: transparent;
+    line-height: 1.6;
+    padding: 2px 6px 2px calc(6px + 2ch);
+    text-indent: -2ch;
+    vertical-align: middle;
 }
 .vp-doc code .cw {
     white-space: nowrap;

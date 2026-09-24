@@ -11,10 +11,16 @@ use rozi::session::protocol::{
 use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
-use crate::common::{attach_client, contains, read_until, spawn_listener};
+use crate::common::{attach_client, read_until, spawn_listener};
 
 const PANE_ID: u32 = 71;
 const PANE_GENERATION: u64 = 1;
+
+fn contains_output_line(output: &[u8], marker: &[u8]) -> bool {
+    output
+        .split(|byte| *byte == b'\r' || *byte == b'\n')
+        .any(|line| line == marker)
+}
 
 #[test]
 fn concurrent_commits_reject_the_stale_base_revision_with_authoritative_layout() {
@@ -187,7 +193,9 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         if let Frame::PaneBytes { bytes, .. } = frame {
             first_output.extend_from_slice(bytes);
         }
-        contains(&first_output, first_marker)
+        // The terminal can echo the typed command before the shell is ready to execute it.
+        // Wait for the command's output line before sending the next command.
+        contains_output_line(&first_output, first_marker)
     });
 
     let layout = pane_layout();
@@ -214,7 +222,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
             }
             _ => {}
         }
-        committed && contains(&second_output, second_marker)
+        committed && contains_output_line(&second_output, second_marker)
     });
 }
 

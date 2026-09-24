@@ -26,9 +26,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
 /// names - gains a value, which is what version 2 did with the layout commands and
 /// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
-/// version 5 with the captures' `scale`, and version 6 with the pane waits: `wait` on
-/// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`.
-pub const API_SCHEMA_VERSION: u32 = 6;
+/// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
+/// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
+/// 7 with the `spans` render and its `image_pixels`.
+pub const API_SCHEMA_VERSION: u32 = 7;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -51,6 +52,9 @@ pub const CAPTURE_SCALE_CAPABILITY: &str = "capture-scale";
 /// `capture-pane`, `send-text`, and `send-keys` honor `wait`, holding the reply until the pane's
 /// screen shows some text or settles. An older binary ignores the field and answers at once.
 pub const CAPTURE_WAIT_CAPABILITY: &str = "capture-wait";
+/// `capture-pane` and `capture-ui` accept `render: "spans"`, and `image_pixels` with it. An older
+/// binary refuses the render as an invalid request.
+pub const CAPTURE_SPANS_CAPABILITY: &str = "capture-spans";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -74,6 +78,7 @@ impl ApiDescription {
                 AGENT_WAITS_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
+                CAPTURE_SPANS_CAPABILITY,
                 CAPTURE_UI_CAPABILITY,
                 CAPTURE_WAIT_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
@@ -123,6 +128,9 @@ pub enum CaptureRender {
     /// The visible grid as a PNG image, in the theme's colors, with the images a program displayed
     /// drawn over their cells.
     Png,
+    /// The visible grid as a [`SpanFrame`]: each row's styled runs, the cursor, and the images a
+    /// program displayed, as JSON.
+    Spans,
 }
 
 impl CaptureRender {
@@ -131,11 +139,26 @@ impl CaptureRender {
             "text" => Ok(Self::Text),
             "ansi" => Ok(Self::Ansi),
             "png" => Ok(Self::Png),
+            "spans" => Ok(Self::Spans),
             other => Err(format!(
-                "--render must be text, ansi, or png, got `{other}`"
+                "--render must be text, ansi, png, or spans, got `{other}`"
             )),
         }
     }
+}
+
+/// Whether a capture includes its images' pixels, checked: only a `spans` capture takes them.
+pub fn capture_image_pixels(
+    render: CaptureRender,
+    image_pixels: bool,
+) -> std::result::Result<bool, ControlResponse> {
+    if image_pixels && render != CaptureRender::Spans {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "image_pixels applies to spans captures only",
+        ));
+    }
+    Ok(image_pixels)
 }
 
 /// Largest PNG `scale` a capture accepts. Three times a large terminal is already an image past
@@ -437,9 +460,10 @@ pub enum ControlCommand {
     },
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
-    /// `render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the
-    /// visible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the
-    /// capture until the visible screen shows some text or stops changing; see [`PaneWait`].
+    /// `render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the
+    /// styled forms capture the visible grid only. `scale` enlarges a PNG, from 1 (the default) to
+    /// 3. `image_pixels` adds each image's pixels to a `spans` capture. `wait` holds the capture
+    /// until the visible screen shows some text or stops changing; see [`PaneWait`].
     CapturePane {
         #[serde(default)]
         target: Option<PaneId>,
@@ -451,6 +475,8 @@ pub enum ControlCommand {
         scale: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wait: Option<PaneWait>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        image_pixels: bool,
     },
     /// Capture the whole client as it is drawn: the bar, borders, overlays, and every visible
     /// pane. Answered from the next frame the UI paints, so it needs a UI; a session server
@@ -461,6 +487,9 @@ pub enum ControlCommand {
         /// Enlarges a PNG, from 1 (the default) to 3.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scale: Option<u8>,
+        /// Adds each image's pixels to a `spans` capture.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        image_pixels: bool,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
     SwitchWorkspace {
@@ -1302,6 +1331,189 @@ pub enum CaptureContent {
     /// A PNG image. The control protocol carries JSON, so the bytes travel base64-encoded; the
     /// CLI decodes them before writing.
     Png { png_base64: String },
+    /// Styled runs, the cursor, and images, as JSON.
+    Spans { frame: SpanFrame },
+}
+
+/// [`SpanFrame::format`]: what a consumer checks before reading the rest.
+pub const SPAN_FRAME_FORMAT: &str = "rozi-spans";
+/// [`SpanFrame::version`]. It moves only when a field changes meaning or goes away, not when one is
+/// added: a consumer ignores fields it does not know.
+pub const SPAN_FRAME_VERSION: u32 = 1;
+
+/// The visible grid as styled runs, from a `spans` capture.
+///
+/// Versioned on its own, apart from the control API, so the frame can change without the requests
+/// around it. Consumers must ignore fields they do not know.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpanFrame {
+    /// Always `"rozi-spans"`.
+    pub format: String,
+    /// The frame format's version, currently 1.
+    pub version: u32,
+    /// The grid's size in cells.
+    pub width: u16,
+    pub height: u16,
+    /// The colors a color name, and an absent color, stand for in this capture.
+    pub palette: SpanPalette,
+    /// Absent when the frame has no cursor: a UI capture whose focused widget places none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<SpanCursor>,
+    /// One entry per row, top to bottom, each the row's runs left to right. The runs tile the row
+    /// from column 0 without gaps or overlaps, except that blank cells in the default style at the
+    /// end of a row are left out: a column past the last run is a space in default colors, and a
+    /// blank row is `[]`.
+    pub rows: Vec<Vec<SpanRun>>,
+    /// Images a program displayed, back to front.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<SpanImage>,
+}
+
+/// Adjacent cells of one row that share a style. Only what differs from the default is present:
+/// a run with no `fg` is drawn in the default foreground, and one with no `bold` is not bold.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpanRun {
+    /// First column the run covers.
+    pub x: u16,
+    /// Columns the run covers. A wide glyph counts two, so `width` can exceed the number of
+    /// characters in `text`; map columns with `x` and `width`, not by counting characters.
+    pub width: u16,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<SpanColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<SpanColor>,
+    /// Absent when an underline takes the text's color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_color: Option<SpanColor>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dim: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<SpanUnderline>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strikethrough: bool,
+}
+
+/// A color as the program chose it: an ANSI name, a 256-color index from 16 to 255, or
+/// `"#rrggbb"`. Resolve a name through [`SpanFrame::palette`]; indexes 16-255 are the standard
+/// xterm cube and gray ramp.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SpanColor {
+    Indexed(u8),
+    Named(AnsiColorName),
+    Rgb(String),
+}
+
+/// The 16 ANSI colors, in slot order: slot 7 is `white`, slot 15 `bright-white`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AnsiColorName {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    BrightBlack,
+    BrightRed,
+    BrightGreen,
+    BrightYellow,
+    BrightBlue,
+    BrightMagenta,
+    BrightCyan,
+    BrightWhite,
+}
+
+/// What a capture's colors resolve to, each `"#rrggbb"`: the same colors a PNG of it is drawn in.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpanPalette {
+    /// What a run without `fg` is drawn in.
+    pub foreground: String,
+    /// What a run without `bg` is drawn on.
+    pub background: String,
+    /// The 16 ANSI colors, in [`AnsiColorName`] order.
+    pub ansi: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SpanUnderline {
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+/// Where the cursor is and how it is drawn.
+///
+/// A pane capture takes the shape and blink from what the program asked for, a blinking block
+/// until it asks; a UI capture from the focused widget. A blinking cursor is reported as lit.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpanCursor {
+    pub x: u16,
+    pub y: u16,
+    /// `false` when the program hid the cursor.
+    pub visible: bool,
+    pub shape: SpanCursorShape,
+    pub blinking: bool,
+    /// Absent when the cursor takes the color of the text under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<SpanColor>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SpanCursorShape {
+    Block,
+    HollowBlock,
+    Underline,
+    Bar,
+}
+
+/// An image a program displayed, such as through the Kitty graphics protocol.
+///
+/// The cells it shows in hold a stand-in, `▀` in the image's top and bottom colors, so the runs
+/// there describe a coarse copy of the picture rather than text.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpanImage {
+    /// The cells the image is laid out over. It is scaled to fit inside, keeping its shape, from
+    /// the top-left corner.
+    pub x: i16,
+    pub y: i16,
+    pub width: u16,
+    pub height: u16,
+    /// The size of the pixels the capture holds. An image that runs past the grid is cropped to
+    /// it first, so this can be less than what the program sent.
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    /// Absent when the image shows in every cell of its area. Otherwise one entry per row of the
+    /// area, each the `[x, width]` column ranges of that row still showing it; whatever is drawn
+    /// over an image, such as an overlay or another pane, hides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<Vec<Vec<(i16, u16)>>>,
+    /// Those pixels as a base64 PNG at `pixel_width` x `pixel_height`, with alpha, when the
+    /// capture asked for `image_pixels`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub png_base64: Option<String>,
 }
 
 /// The whole client's frame, as `capture-ui` reports it.
@@ -2369,6 +2581,7 @@ mod tests {
         let plain = serde_json::to_value(ControlCommand::CaptureUi {
             render: CaptureRender::Png,
             scale: None,
+            image_pixels: false,
         })
         .unwrap();
         assert_eq!(
@@ -2392,6 +2605,7 @@ mod tests {
                     scrollback: None,
                     render: CaptureRender::Text,
                     scale: None,
+                    image_pixels: false,
                     wait: None,
                 },
                 r#"{"cmd":"capture-pane","target":3,"scrollback":null,"render":"text"}"#,
@@ -2490,6 +2704,7 @@ mod tests {
             scrollback: None,
             render: CaptureRender::Text,
             scale: None,
+            image_pixels: false,
             wait,
         };
         assert_eq!(
@@ -2503,6 +2718,81 @@ mod tests {
                 timeout_ms: 60_000,
             }))),
             Duration::from_secs(70)
+        );
+    }
+
+    #[test]
+    fn a_spans_capture_names_its_render_and_asks_for_pixels_only_when_it_wants_them() {
+        let pixels = serde_json::to_value(ControlCommand::CapturePane {
+            target: None,
+            scrollback: None,
+            render: CaptureRender::Spans,
+            scale: None,
+            wait: None,
+            image_pixels: true,
+        })
+        .unwrap();
+        assert_eq!(
+            pixels,
+            serde_json::json!({
+                "cmd": "capture-pane", "target": null, "scrollback": null,
+                "render": "spans", "image_pixels": true
+            })
+        );
+        let request: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"capture-ui","render":"spans"}"#).unwrap();
+        assert!(matches!(
+            request.command,
+            ControlCommand::CaptureUi {
+                render: CaptureRender::Spans,
+                image_pixels: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            capture_image_pixels(CaptureRender::Png, true)
+                .unwrap_err()
+                .code,
+            Some(ControlErrorCode::InvalidArgument)
+        );
+
+        // A reply's frame reads back whole, and a color takes the form the program chose.
+        let content = CaptureContent::Spans {
+            frame: SpanFrame {
+                format: SPAN_FRAME_FORMAT.into(),
+                version: SPAN_FRAME_VERSION,
+                width: 3,
+                height: 1,
+                palette: SpanPalette {
+                    foreground: "#ffffff".into(),
+                    background: "#000000".into(),
+                    ansi: Vec::new(),
+                },
+                cursor: None,
+                rows: vec![vec![SpanRun {
+                    x: 0,
+                    width: 3,
+                    text: "abc".into(),
+                    fg: Some(SpanColor::Named(AnsiColorName::BrightBlack)),
+                    bg: Some(SpanColor::Indexed(236)),
+                    underline_color: Some(SpanColor::Rgb("#102030".into())),
+                    ..SpanRun::default()
+                }]],
+                images: Vec::new(),
+            },
+        };
+        let encoded = serde_json::to_value(&content).unwrap();
+        assert_eq!(encoded["render"], "spans");
+        assert_eq!(
+            encoded["frame"]["rows"][0][0],
+            serde_json::json!({
+                "x": 0, "width": 3, "text": "abc",
+                "fg": "bright-black", "bg": 236, "underline_color": "#102030"
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<CaptureContent>(encoded).unwrap(),
+            content
         );
     }
 
@@ -2530,7 +2820,8 @@ mod tests {
             request.command,
             ControlCommand::CaptureUi {
                 render: CaptureRender::Text,
-                scale: None
+                scale: None,
+                image_pixels: false,
             }
         );
     }
@@ -2544,6 +2835,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             },
             source_pane: None,
             extension: None,
@@ -2561,6 +2853,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 
@@ -2574,6 +2867,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 
@@ -2587,6 +2881,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 

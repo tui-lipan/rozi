@@ -401,6 +401,7 @@ impl SessionServer {
                             scrollback,
                             CaptureRender::Text,
                             None,
+                            false,
                         ),
                         Err(response) => response,
                     },
@@ -423,7 +424,8 @@ impl SessionServer {
                 render,
                 scale,
                 wait: _,
-            } => self.session_capture_pane(target, scrollback, render, scale),
+                image_pixels,
+            } => self.session_capture_pane(target, scrollback, render, scale, image_pixels),
             ControlCommand::SendText { target, text, .. } => {
                 self.session_send_bytes(target, text.into_bytes())
             }
@@ -1098,6 +1100,7 @@ impl SessionServer {
         scrollback: Option<CaptureScrollback>,
         render: CaptureRender,
         scale: Option<u8>,
+        image_pixels: bool,
     ) -> ControlResponse {
         let id = match self.session_target_pane(target) {
             Ok(id) => id,
@@ -1116,6 +1119,7 @@ impl SessionServer {
             scrollback,
             render,
             scale,
+            image_pixels,
         ) {
             Ok(content) => content,
             Err(response) => return response,
@@ -1700,6 +1704,57 @@ mod tests {
         );
         crate::session::protocol::write_frame(&mut Vec::new(), &message)
             .expect("the refusal fits a frame");
+    }
+
+    #[test]
+    fn a_spans_capture_with_the_pixels_of_a_large_image_is_refused_as_too_large() {
+        use base64::Engine as _;
+
+        // Noise does not compress, so its PNG is about as large as its pixels: 1300x1300 RGBA
+        // is 6.4 MiB, and more than 8 MiB once base64 carries it.
+        let (width, height) = (1300u32, 1300u32);
+        let mut seed = 0x2545_f491_u32;
+        let pixels: Vec<u8> = (0..width * height * 4)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as u8
+            })
+            .collect();
+        let mut server = SessionServer::new_named("spans");
+        let mut pane = super::super::tests::test_pane(1);
+        // Room for the whole image: a capture crops one to the grid.
+        pane.screen_mut().resize(70, 140);
+        pane.screen_mut()
+            .set_cell_size(tui_lipan::TerminalCellSize {
+                width: 10,
+                height: 20,
+            });
+        let command = format!(
+            "\x1b_Ga=T,f=32,s={width},v={height},t=d,i=1;{}\x1b\\",
+            base64::engine::general_purpose::STANDARD.encode(&pixels)
+        );
+        pane.screen_mut().process_bytes(command.as_bytes());
+        server.panes.insert(3, pane);
+        let capture = |image_pixels| ControlCommand::CapturePane {
+            target: Some(3),
+            scrollback: None,
+            render: CaptureRender::Spans,
+            scale: None,
+            wait: None,
+            image_pixels,
+        };
+
+        let (plain, _) = control(&mut server, capture(false));
+        assert!(plain.ok, "{:?}", plain.error);
+        let frame = &plain.data.expect("a capture")["frame"];
+        assert_eq!(frame["images"][0]["pixel_width"], width);
+        assert_eq!(frame["images"][0]["pixel_height"], height);
+        assert!(frame["images"][0].get("png_base64").is_none());
+
+        let (refused, _) = control(&mut server, capture(true));
+        assert_eq!(refused.code, Some(ControlErrorCode::MessageTooLarge));
     }
 
     /// Run a headless command against `server` and return its `{ok, data, error}` answer plus
@@ -2582,6 +2637,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -2917,6 +2973,7 @@ mod tests {
                 render: CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             },
         );
         assert!(captured.ok, "{:?}", captured.error);
@@ -3092,6 +3149,7 @@ mod tests {
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,
                 scale: None,
+                image_pixels: false,
             },
         ] {
             let reason = session_control_unsupported(&command)

@@ -64,7 +64,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Read each workspace's layout and every pane's position, and subscribe to layout changes.
 - Float, place, fullscreen, re-tile, move, swap, resize, or close panes by id.
 - Send keys or text, open panes, and switch workspaces.
-- Capture a pane as plain text, ANSI-colored text, or a PNG image, or capture the whole UI as drawn.
+- Capture a pane as plain text, ANSI-colored text, a PNG image, or JSON runs of styled text with
+  the cursor and images, or capture the whole UI as drawn.
 - Send input and wait for the pane to answer, or capture once a pane shows some text or stops
   changing, instead of sleeping between steps.
 - Drive a detached session with no client attached: list, capture, type, and open panes from a

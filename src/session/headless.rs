@@ -225,6 +225,7 @@ mod tests {
                 scrollback: None,
                 render: crate::control::CaptureRender::Text,
                 scale: None,
+                image_pixels: false,
                 wait: pane_wait.clone(),
             },
             ControlCommand::SendKeys {

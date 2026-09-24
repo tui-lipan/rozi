@@ -34,6 +34,7 @@ pub(crate) struct WaitReply {
     pub(crate) scrollback: Option<CaptureScrollback>,
     pub(crate) render: CaptureRender,
     pub(crate) scale: Option<u8>,
+    pub(crate) image_pixels: bool,
     /// Whether a resolved wait returns the capture. A failed one always does, when it can, since
     /// what the pane showed instead is the first thing anyone asks.
     pub(crate) on_success: bool,
@@ -53,9 +54,10 @@ impl WaitPlan {
                 scrollback,
                 render,
                 scale,
+                image_pixels,
                 wait: Some(wait),
             } => {
-                super::check_capture(scrollback.as_ref(), *render, *scale)?;
+                super::check_capture(scrollback.as_ref(), *render, *scale, *image_pixels)?;
                 Self {
                     wait: wait.clone(),
                     target: *target,
@@ -64,6 +66,7 @@ impl WaitPlan {
                         scrollback: scrollback.clone(),
                         render: *render,
                         scale: *scale,
+                        image_pixels: *image_pixels,
                         on_success: true,
                     },
                 }
@@ -94,6 +97,7 @@ impl WaitPlan {
                         scrollback: None,
                         render: checked.map_or(CaptureRender::Text, |(render, _)| render),
                         scale: checked.map(|(_, scale)| scale).filter(|&scale| scale != 1),
+                        image_pixels: false,
                         on_success: checked.is_some(),
                     },
                 }
@@ -541,5 +545,26 @@ mod tests {
         waiting.observe(&mut screen, now);
         assert_eq!(waiting.status(now), WaitStatus::Ready);
         assert_ne!(screen.scrollback_offset(), 0);
+    }
+
+    #[test]
+    fn a_waited_spans_capture_keeps_its_pixels_and_other_renders_refuse_them_up_front() {
+        let capture = |render, image_pixels| ControlCommand::CapturePane {
+            target: Some(3),
+            scrollback: None,
+            render,
+            scale: None,
+            wait: Some(wait(Some("ready"), None)),
+            image_pixels,
+        };
+        let plan = WaitPlan::for_command(&capture(CaptureRender::Spans, true))
+            .expect("a spans capture takes pixels")
+            .expect("the capture waits");
+        assert!(plan.reply.image_pixels);
+        assert_eq!(plan.reply.render, CaptureRender::Spans);
+
+        let refused = WaitPlan::for_command(&capture(CaptureRender::Png, true))
+            .expect_err("pixels belong to spans only");
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
     }
 }

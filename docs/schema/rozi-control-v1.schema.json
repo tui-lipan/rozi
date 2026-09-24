@@ -222,6 +222,28 @@
       ],
       "type": "object"
     },
+    "AnsiColorName": {
+      "description": "The 16 ANSI colors, in slot order: slot 7 is `white`, slot 15 `bright-white`.",
+      "enum": [
+        "black",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "white",
+        "bright-black",
+        "bright-red",
+        "bright-green",
+        "bright-yellow",
+        "bright-blue",
+        "bright-magenta",
+        "bright-cyan",
+        "bright-white"
+      ],
+      "type": "string"
+    },
     "ApiDescription": {
       "description": "Features this binary exposes to control clients and extension authors.",
       "properties": {
@@ -434,6 +456,11 @@
         {
           "const": "png",
           "description": "The visible grid as a PNG image, in the theme's colors, with the images a program displayed\ndrawn over their cells.",
+          "type": "string"
+        },
+        {
+          "const": "spans",
+          "description": "The visible grid as a [`SpanFrame`]: each row's styled runs, the cursor, and the images a\nprogram displayed, as JSON.",
           "type": "string"
         }
       ]
@@ -1142,11 +1169,14 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the\ncapture until the visible screen shows some text or stops changing; see [`PaneWait`].",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the\nstyled forms capture the visible grid only. `scale` enlarges a PNG, from 1 (the default) to\n3. `image_pixels` adds each image's pixels to a `spans` capture. `wait` holds the capture\nuntil the visible screen shows some text or stops changing; see [`PaneWait`].",
           "properties": {
             "cmd": {
               "const": "capture-pane",
               "type": "string"
+            },
+            "image_pixels": {
+              "type": "boolean"
             },
             "render": {
               "$ref": "#/$defs/CaptureRender",
@@ -1203,6 +1233,10 @@
             "cmd": {
               "const": "capture-ui",
               "type": "string"
+            },
+            "image_pixels": {
+              "description": "Adds each image's pixels to a `spans` capture.",
+              "type": "boolean"
             },
             "render": {
               "$ref": "#/$defs/CaptureRender",
@@ -2227,11 +2261,14 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3. `wait` holds the\ncapture until the visible screen shows some text or stops changing; see [`PaneWait`].",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the\nstyled forms capture the visible grid only. `scale` enlarges a PNG, from 1 (the default) to\n3. `image_pixels` adds each image's pixels to a `spans` capture. `wait` holds the capture\nuntil the visible screen shows some text or stops changing; see [`PaneWait`].",
           "properties": {
             "cmd": {
               "const": "capture-pane",
               "type": "string"
+            },
+            "image_pixels": {
+              "type": "boolean"
             },
             "render": {
               "$ref": "#/$defs/CaptureRender",
@@ -2288,6 +2325,10 @@
             "cmd": {
               "const": "capture-ui",
               "type": "string"
+            },
+            "image_pixels": {
+              "description": "Adds each image's pixels to a `spans` capture.",
+              "type": "boolean"
             },
             "render": {
               "$ref": "#/$defs/CaptureRender",
@@ -3070,6 +3111,23 @@
             "png_base64"
           ],
           "type": "object"
+        },
+        {
+          "description": "Styled runs, the cursor, and images, as JSON.",
+          "properties": {
+            "frame": {
+              "$ref": "#/$defs/SpanFrame"
+            },
+            "render": {
+              "const": "spans",
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "frame"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -3777,6 +3835,353 @@
       ],
       "type": "object"
     },
+    "SpanColor": {
+      "anyOf": [
+        {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "$ref": "#/$defs/AnsiColorName"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "A color, kept symbolic rather than resolved: an ANSI name, a 256-color index from 16 to 255, or\n`\"#rrggbb\"`. ANSI slots 0-15 are always names, however the program asked for them. Resolve a\nname through [`SpanFrame::palette`]; indexes 16-255 are the standard xterm cube and gray ramp."
+    },
+    "SpanCursor": {
+      "description": "Where the cursor is and how it is drawn.\n\nA pane capture takes the shape and blink from what the program asked for, a blinking block\nuntil it asks; a UI capture from the focused widget. A blinking cursor is reported as lit.",
+      "properties": {
+        "blinking": {
+          "type": "boolean"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanColor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when the cursor takes the color of the text under it."
+        },
+        "shape": {
+          "$ref": "#/$defs/SpanCursorShape"
+        },
+        "visible": {
+          "description": "`false` when the program hid the cursor.",
+          "type": "boolean"
+        },
+        "x": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "visible",
+        "shape",
+        "blinking"
+      ],
+      "type": "object"
+    },
+    "SpanCursorShape": {
+      "enum": [
+        "block",
+        "hollow-block",
+        "underline",
+        "bar"
+      ],
+      "type": "string"
+    },
+    "SpanFrame": {
+      "description": "The visible grid as styled runs, from a `spans` capture.\n\nVersioned on its own, apart from the control API, so the frame can change without the requests\naround it. Consumers must ignore fields they do not know.",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when the frame has no cursor: a UI capture whose focused widget places none."
+        },
+        "format": {
+          "description": "Always `\"rozi-spans\"`.",
+          "type": "string"
+        },
+        "height": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "images": {
+          "description": "Images a program displayed, back to front.",
+          "items": {
+            "$ref": "#/$defs/SpanImage"
+          },
+          "type": "array"
+        },
+        "palette": {
+          "$ref": "#/$defs/SpanPalette",
+          "description": "The colors a color name, and an absent color, stand for in this capture."
+        },
+        "rows": {
+          "description": "One entry per row, top to bottom, each the row's runs left to right. The runs tile the row\nfrom column 0 without gaps or overlaps, except that blank cells in the default style at the\nend of a row are left out: a column past the last run is a space in default colors, and a\nblank row is `[]`.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/SpanRun"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "The frame format's version, currently 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "description": "The grid's size in cells.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "width",
+        "height",
+        "palette",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "SpanImage": {
+      "description": "An image a program displayed, such as through the Kitty graphics protocol.\n\nThe cells it shows in hold a stand-in, `▀` in the image's top and bottom colors, so the runs\nthere describe a coarse copy of the picture rather than text.",
+      "properties": {
+        "height": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pixel_height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pixel_width": {
+          "description": "The size of the pixels the capture holds. An image that runs past the grid is cropped to\nit first, so this can be less than what the program sent.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "png_base64": {
+          "description": "Those pixels as a base64 PNG at `pixel_width` x `pixel_height`, with alpha, when the\ncapture asked for `image_pixels`. Pixels on a cell that does not show the image are\ntransparent, so the PNG holds only what the capture shows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visible": {
+          "description": "Absent when the image shows in every cell of its area. Otherwise one entry per row of the\narea, each the `[x, width]` column ranges of that row still showing it; whatever is drawn\nover an image, such as an overlay or another pane, hides it.",
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "format": "int16",
+                  "maximum": 32767,
+                  "minimum": -32768,
+                  "type": "integer"
+                },
+                {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "width": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "description": "The cells the image is laid out over. It is scaled to fit inside, keeping its shape, from\nthe top-left corner.",
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "y": {
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "pixel_width",
+        "pixel_height"
+      ],
+      "type": "object"
+    },
+    "SpanPalette": {
+      "description": "What a capture's colors resolve to, each `\"#rrggbb\"`: the same colors a PNG of it is drawn in.",
+      "properties": {
+        "ansi": {
+          "description": "The 16 ANSI colors, in [`AnsiColorName`] order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "background": {
+          "description": "What a run without `bg` is drawn on.",
+          "type": "string"
+        },
+        "foreground": {
+          "description": "What a run without `fg` is drawn in.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "foreground",
+        "background",
+        "ansi"
+      ],
+      "type": "object"
+    },
+    "SpanRun": {
+      "description": "Adjacent cells of one row that share a style. Only what differs from the default is present:\na run with no `fg` is drawn in the default foreground, and one with no `bold` is not bold.",
+      "properties": {
+        "bg": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "dim": {
+          "type": "boolean"
+        },
+        "fg": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "reverse": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "underline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanUnderline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "underline_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanColor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when an underline takes the text's color."
+        },
+        "width": {
+          "description": "Columns the run covers. A wide glyph counts two, so `width` can exceed the number of\ncharacters in `text`; map columns with `x` and `width`, not by counting characters.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "x": {
+          "description": "First column the run covers.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "width",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SpanUnderline": {
+      "enum": [
+        "single",
+        "double",
+        "curly",
+        "dotted",
+        "dashed"
+      ],
+      "type": "string"
+    },
     "UiCapture": {
       "description": "The whole client's frame, as `capture-ui` reports it.",
       "oneOf": [
@@ -3828,6 +4233,23 @@
           "required": [
             "render",
             "png_base64"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Styled runs, the cursor, and images, as JSON.",
+          "properties": {
+            "frame": {
+              "$ref": "#/$defs/SpanFrame"
+            },
+            "render": {
+              "const": "spans",
+              "type": "string"
+            }
+          },
+          "required": [
+            "render",
+            "frame"
           ],
           "type": "object"
         }
@@ -3924,5 +4346,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 6
+  "x-rozi-schema-version": 7
 }

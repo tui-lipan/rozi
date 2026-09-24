@@ -731,7 +731,23 @@ pub(super) fn format_metrics_text(
     )
 }
 
+/// A `spans` capture's frame as one line of JSON, copied as it arrived so that fields this binary
+/// does not know survive; `None` for any other render.
+pub(super) fn span_frame(data: &serde_json::Value) -> Option<String> {
+    if data.get("render").and_then(serde_json::Value::as_str) != Some("spans") {
+        return None;
+    }
+    let frame = data.get("frame")?;
+    Some(format!(
+        "{}\n",
+        serde_json::to_string(frame).unwrap_or_default()
+    ))
+}
+
 pub(super) fn format_capture_text(data: Option<&serde_json::Value>) -> String {
+    if let Some(frame) = data.and_then(span_frame) {
+        return frame;
+    }
     let text = data
         .and_then(|value| value_string(value, "text"))
         .unwrap_or("");
@@ -1011,6 +1027,7 @@ mod tests {
                     render: control::CaptureRender::Text,
                     scale: None,
                     wait: None,
+                    image_pixels: false,
                 },
                 &capture,
                 OutputStyles::plain()

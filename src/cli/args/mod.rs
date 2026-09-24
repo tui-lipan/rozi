@@ -910,6 +910,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut output = None;
                 let mut scale = None;
                 let mut wait = PaneWaitArgs::default();
+                let mut image_pixels = false;
                 while let Some(next) = iter.next() {
                     if wait.take(&next, &mut iter, "capture-pane")? {
                         continue;
@@ -917,9 +918,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
                         "--scale" => scale = Some(parse_capture_scale(&mut iter)?),
+                        "--image-pixels" => image_pixels = true,
                         "--render" => {
-                            let value =
-                                require_value(&mut iter, "--render requires text, ansi, or png")?;
+                            let value = require_value(
+                                &mut iter,
+                                "--render requires text, ansi, png, or spans",
+                            )?;
                             render = control::CaptureRender::parse_cli(&value)?;
                         }
                         "--output" => {
@@ -963,12 +967,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 require_png_for_scale(render, scale)?;
                 let wait = wait.finish()?;
+                require_spans_for_image_pixels(render, image_pixels)?;
                 let command = control::ControlCommand::CapturePane {
                     target,
                     scrollback,
                     render,
                     scale,
                     wait,
+                    image_pixels,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -982,12 +988,16 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut render = control::CaptureRender::Text;
                 let mut output = None;
                 let mut scale = None;
+                let mut image_pixels = false;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
                         "--scale" => scale = Some(parse_capture_scale(&mut iter)?),
+                        "--image-pixels" => image_pixels = true,
                         "--render" => {
-                            let value =
-                                require_value(&mut iter, "--render requires text, ansi, or png")?;
+                            let value = require_value(
+                                &mut iter,
+                                "--render requires text, ansi, png, or spans",
+                            )?;
                             render = control::CaptureRender::parse_cli(&value)?;
                         }
                         "--output" => {
@@ -1016,7 +1026,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     );
                 }
                 require_png_for_scale(render, scale)?;
-                let command = control::ControlCommand::CaptureUi { render, scale };
+                require_spans_for_image_pixels(render, image_pixels)?;
+                let command = control::ControlCommand::CaptureUi {
+                    render,
+                    scale,
+                    image_pixels,
+                };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
@@ -1241,9 +1256,10 @@ impl SendReplyArgs {
         let repeated = |flag: &str| format!("{command} {flag} specified more than once");
         match flag {
             "--capture" => {
-                let value = require_value(iter, "--capture requires text, ansi, or png")?;
-                let render = control::CaptureRender::parse_cli(&value)
-                    .map_err(|_| format!("--capture must be text, ansi, or png, got `{value}`"))?;
+                let value = require_value(iter, "--capture requires text, ansi, png, or spans")?;
+                let render = control::CaptureRender::parse_cli(&value).map_err(|_| {
+                    format!("--capture must be text, ansi, png, or spans, got `{value}`")
+                })?;
                 if self.capture.replace(render).is_some() {
                     return Err(repeated(flag));
                 }
@@ -1283,6 +1299,16 @@ impl SendReplyArgs {
             None => Ok(()),
         }
     }
+}
+
+fn require_spans_for_image_pixels(
+    render: control::CaptureRender,
+    image_pixels: bool,
+) -> Result<(), String> {
+    if image_pixels && render != control::CaptureRender::Spans {
+        return Err("--image-pixels applies to --render spans".to_string());
+    }
+    Ok(())
 }
 
 /// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
@@ -1838,6 +1864,7 @@ mod tests {
                 render: control::CaptureRender::Png,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
         assert_eq!(capture.output, Some(PathBuf::from("pane.png")));
@@ -1855,7 +1882,7 @@ mod tests {
         assert_eq!(ansi.output, None);
 
         let unknown = parse(&["--render", "svg"]).expect_err("unknown render");
-        assert!(unknown.contains("text, ansi, or png"), "{unknown}");
+        assert!(unknown.contains("text, ansi, png, or spans"), "{unknown}");
         let both = parse(&["--output", "pane.txt", "--format", "json"])
             .expect_err("--output writes the capture, not a report");
         assert!(both.contains("--format"), "{both}");
@@ -1886,6 +1913,7 @@ mod tests {
                 render: control::CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
     }
@@ -2152,6 +2180,60 @@ mod tests {
     }
 
     #[test]
+    fn spans_captures_parse_with_image_pixels_and_nothing_else_takes_them() {
+        let args = |argv: &[&str]| {
+            parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+        };
+        for command in ["capture-pane", "capture-ui"] {
+            for (argv, pixels) in [
+                (&[command, "--render", "spans"][..], false),
+                (&[command, "--image-pixels", "--render", "spans"][..], true),
+            ] {
+                let Ok(ParsedCli::Control(parsed)) = args(argv) else {
+                    panic!("{argv:?} should parse");
+                };
+                let (render, image_pixels) = match parsed.request.command {
+                    control::ControlCommand::CapturePane {
+                        render,
+                        image_pixels,
+                        ..
+                    }
+                    | control::ControlCommand::CaptureUi {
+                        render,
+                        image_pixels,
+                        ..
+                    } => (render, image_pixels),
+                    other => panic!("unexpected {other:?}"),
+                };
+                assert_eq!(
+                    (render, image_pixels),
+                    (control::CaptureRender::Spans, pixels)
+                );
+            }
+            for refused in [
+                &[command, "--image-pixels"][..],
+                &[command, "--render", "png", "--image-pixels"],
+                &[command, "--render", "spans", "--scale", "2"],
+            ] {
+                assert!(args(refused).is_err(), "{refused:?}");
+            }
+        }
+
+        let send = ["send-keys", "Enter", "--settle", "1s", "--timeout", "5s"];
+        let Ok(ParsedCli::Control(sent)) = args(&[&send[..], &["--capture", "spans"]].concat())
+        else {
+            panic!("a send captures spans");
+        };
+        assert!(matches!(
+            sent.request.command,
+            control::ControlCommand::SendKeys {
+                capture: Some(control::CaptureRender::Spans),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn capture_ui_takes_the_capture_pane_output_options() {
         let args = |argv: &[&str]| {
             parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
@@ -2165,7 +2247,8 @@ mod tests {
             parsed.request.command,
             control::ControlCommand::CaptureUi {
                 render: control::CaptureRender::Png,
-                scale: None
+                scale: None,
+                image_pixels: false,
             }
         );
         assert_eq!(parsed.output, Some(PathBuf::from("ui.png")));
@@ -2232,6 +2315,7 @@ mod tests {
                 render: control::CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 
@@ -2249,6 +2333,7 @@ mod tests {
                 render: control::CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 
@@ -2270,6 +2355,7 @@ mod tests {
                 render: control::CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 
@@ -2288,6 +2374,7 @@ mod tests {
                 render: control::CaptureRender::Text,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }
         );
 

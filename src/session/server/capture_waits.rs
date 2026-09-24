@@ -167,6 +167,7 @@ impl SessionServer {
             reply.scrollback.clone(),
             reply.render,
             reply.scale,
+            reply.image_pixels,
         )?;
         Ok(PaneCapture {
             id: pane_id,
@@ -195,6 +196,7 @@ mod tests {
                 scrollback: None,
                 render: CaptureRender::Text,
                 scale: None,
+                image_pixels: false,
                 wait: Some(PaneWait {
                     text: text.map(str::to_string),
                     settle_ms,

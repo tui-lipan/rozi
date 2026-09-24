@@ -162,12 +162,12 @@ attached.
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
 | `focus <PANE_ID>` | Focus a pane. | no |
-| `send-text [--target <PANE_ID>] [WAIT] [--capture text\|ansi\|png] <TEXT>` | Send literal UTF-8 text. | yes |
-| `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
+| `send-text [--target <PANE_ID>] [WAIT] [--capture text\|ansi\|png\|spans] <TEXT>` | Send literal UTF-8 text. | yes |
+| `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png\|spans] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
-| `capture-ui [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, PNG, or styled runs. | yes |
+| `capture-ui [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
@@ -199,12 +199,13 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 6,
-  "session_protocol": 15,
+  "schema": 7,
+  "session_protocol": 16,
   "capabilities": [
     "agent-waits",
     "capture-render",
     "capture-scale",
+    "capture-spans",
     "capture-ui",
     "capture-wait",
     "layout-control",
@@ -540,8 +541,9 @@ the most recent command, using [shell integration](terminal.md). A full-scrollba
 | `text` (default) | Plain text. |
 | `ansi` | The visible grid as text with SGR color and style sequences. Every row keeps the pane's width and ends with a reset; there is no cursor movement or screen clearing, so `cat` shows it in place. |
 | `png` | An image of the visible grid, in the pane's theme colors, with the cursor drawn and any images the program displayed. |
+| `spans` | The visible grid as JSON: each row's runs of text with their colors and attributes, the cursor, and any images. See [Read colors and styles as JSON](#read-colors-and-styles-as-json). |
 
-`ansi` and `png` cover the visible screen only. Combining them with `--scrollback` or
+`ansi`, `png`, and `spans` cover the visible screen only. Combining them with `--scrollback` or
 `--last-output` fails rather than dropping the styling.
 
 Images a program displayed with the Kitty graphics protocol, such as `kitty icat` output, are
@@ -549,10 +551,10 @@ included. A PNG draws their pixels, scaled into the cells they occupy. Text has 
 `ansi` shows each such cell as a `▀` half block in the image's colors, and `text` shows the `▀`
 characters alone, marking where an image is.
 
-`--output FILE` writes the capture itself to `FILE` and prints nothing, for any `--render`. It
-cannot be combined with `--format`. Without `--output`, a PNG goes to stdout as raw bytes, and rozi
-refuses to write it to a terminal. `--format json` still returns the JSON envelope, with the image
-base64-encoded.
+`--output FILE` writes the capture itself to `FILE` and prints nothing, for any `--render`; for
+`spans`, that is the frame's JSON. It cannot be combined with `--format`. Without `--output`, a PNG
+goes to stdout as raw bytes, and rozi refuses to write it to a terminal. `--format json` still
+returns the JSON envelope, with the image base64-encoded.
 
 ```sh
 rozi capture-pane --target 3 --render png --output pane.png
@@ -600,8 +602,9 @@ The two commands wait differently:
   `--wait-for`, even after it scrolls up. The settle period starts once the session has confirmed
   the input and rozi has taken the screen as it stood right after it, not when the request arrives.
   Over a remote attachment that can be measurably later than the write itself.
-  `--capture text|ansi|png` returns the screen once the wait resolves, with `--scale`, `--output`,
-  and `--format` as for `capture-pane`. Without `--capture`, the reply only says the wait resolved.
+  `--capture text|ansi|png|spans` returns the screen once the wait resolves, with `--scale`,
+  `--output`, and `--format` as for `capture-pane`. Without `--capture`, the reply only says the
+  wait resolved.
 
 "Changed" means the characters, colors, or styles on screen changed. A program that redraws the same
 screen, moves only the cursor, or changes only its title counts as settled. A screen scrolled back
@@ -616,14 +619,73 @@ the reply carries the capture as the screen stood at the end, which the CLI prin
 Waits work against a UI, a session, and a remote session. A remote wait keeps its SSH connection
 open until it resolves.
 
+### Read colors and styles as JSON
+
+`--render spans` returns the visible grid as a JSON frame, for a script or an agent that needs to
+know what is red, bold, or selected without looking at an image. Each row is a handful of runs
+rather than one entry per cell, so a frame stays small: a shell pane is about a kilobyte, and a
+120x36 UI with one shell about 11 KB.
+
+```sh
+rozi capture-pane --target 3 --render spans --format text | jq '.rows[0]'
+rozi capture-pane --target 3 --render spans --output pane.json
+rozi capture-ui --render spans --format text
+```
+
+`--format text`, or a terminal, prints the frame itself on one line; `--format json` wraps it in
+the reply as `data.frame`. A frame looks like this, shortened:
+
+```json
+{
+  "format": "rozi-spans",
+  "version": 1,
+  "width": 40,
+  "height": 3,
+  "palette": {"foreground": "#cdd6f4", "background": "#1e1e2e", "ansi": ["#45475a", "#f38ba8", "…"]},
+  "cursor": {"x": 2, "y": 1, "visible": true, "shape": "block", "blinking": true},
+  "rows": [
+    [{"x": 0, "width": 2, "text": "$ "}, {"x": 2, "width": 5, "text": "error", "fg": "red", "bold": true}],
+    [{"x": 0, "width": 2, "text": "$ "}],
+    []
+  ]
+}
+```
+
+- **Rows and runs.** `rows` has one entry per row, and each run covers `width` columns from
+  column `x`. A wide character counts two columns, so use `x` and `width` to find a column rather
+  than counting characters. Blank cells in default colors at the end of a row are left out, and a
+  blank row is `[]`.
+- **Only what differs.** A run lists only the colors and attributes that differ from the default:
+  `fg`, `bg`, `underline_color`, `bold`, `dim`, `italic`, `underline` (`single`, `double`,
+  `curly`, `dotted`, or `dashed`), `reverse`, and `strikethrough`.
+- **Colors.** A pane's colors stay symbolic rather than being resolved: an ANSI name such as `red`
+  or `bright-black`, a 256-color index, or `#rrggbb`. The 16 ANSI colors are always names, however
+  the program asked for them. `palette` says what the names, and the default
+  foreground and background, look like in this capture, with the same theme colors a PNG uses.
+  `capture-ui` colors are mostly `#rrggbb`, because the UI resolves them as it draws.
+- **Cursor.** Its position, whether it is shown, its shape (`block`, `hollow-block`,
+  `underline`, or `bar`), whether it blinks, and its color when the program set one. A pane's
+  cursor is a blinking block until its program asks for another.
+- **Images.** Each image a program displayed lists the cells it is laid out over and its size in
+  pixels. The cells under an image hold `▀` half blocks in its colors, so the runs there are a
+  coarse copy of the picture, not text. When something covers part of an image, `visible` lists,
+  row by row, the column ranges still showing it. `--image-pixels` adds each image's pixels as a
+  base64 PNG, with the covered parts transparent, so it shows no more than a `png` capture does.
+  A session reply with a large image can then exceed 8 MiB.
+
+The frame has its own `version`, which changes only when a field changes meaning or is removed.
+New fields can appear at any time, so ignore fields you do not know. `--scale` does not apply, and
+`--image-pixels` works with `--render spans` only. The
+[protocol reference](control-protocol.md#spans-frames) lists every field.
+
 ### Capturing the whole UI
 
 ![A rozi window captured with capture-ui: Neovim editing a Rust file, a shell showing the rozi logo with icat, and a shell that ran cargo run](assets/capture-ui.png)
 
 The image above is `rozi capture-ui --render png --scale 2`. `capture-ui` captures what the UI is
 showing: the bar, pane borders and titles, overlays and toasts, and every visible pane, at the size
-of the terminal rozi runs in. It takes the same `--render`, `--scale`, `--output`, and `--format`
-options as `capture-pane`, with the same PNG rules.
+of the terminal rozi runs in. It takes the same `--render`, `--scale`, `--image-pixels`,
+`--output`, and `--format` options as `capture-pane`, with the same rules.
 
 ```sh
 rozi capture-ui --render png --output ui.png

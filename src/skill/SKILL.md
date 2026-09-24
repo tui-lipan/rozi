@@ -127,6 +127,12 @@ output, are drawn in a PNG; in text and ANSI output they appear as `▀` half bl
 `--output` for a PNG; Rozi refuses to write one to a terminal. Keep the default scale for images
 you will look at yourself; add `--scale 2` only for a screenshot meant for a person.
 
+To check colors or attributes without an image, such as which line is red, bold, or selected, use
+`--render spans --format text`: one JSON line whose `rows` hold runs of text, each with `x`,
+`width`, and only the styles that differ from the default (`fg`, `bg`, `bold`, `underline`, and so
+on), plus the cursor's position and shape. Colors are ANSI names like `red`, 256-color indexes, or
+`#rrggbb`; `palette` says what the names look like.
+
 `capture-ui --render png --output ui.png` captures the whole UI as drawn instead: the bar,
 borders, overlays, and every visible pane. It needs a UI; `--session` refuses it.
 

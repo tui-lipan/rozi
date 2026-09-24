@@ -457,12 +457,16 @@ fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
         .then_some(RawCapture::Stdout)
 }
 
-/// The bytes a capture reply carries: its text, or its decoded PNG.
+/// The bytes a capture reply carries: its text, its decoded PNG, or its spans frame as one line of
+/// JSON.
 fn capture_bytes(response: &serde_json::Value) -> std::result::Result<Vec<u8>, String> {
     use base64::Engine as _;
 
     // Pane and UI replies wrap the same tagged content in different fields.
     let data = response.get("data").cloned().unwrap_or_default();
+    if let Some(frame) = super::output::span_frame(&data) {
+        return Ok(frame.into_bytes());
+    }
     let content: control::CaptureContent =
         serde_json::from_value(data).map_err(|err| format!("unexpected capture reply: {err}"))?;
     match content {
@@ -475,6 +479,8 @@ fn capture_bytes(response: &serde_json::Value) -> std::result::Result<Vec<u8>, S
         control::CaptureContent::Png { png_base64 } => base64::engine::general_purpose::STANDARD
             .decode(png_base64)
             .map_err(|err| format!("capture reply carried invalid base64: {err}")),
+        control::CaptureContent::Spans { frame } => serde_json::to_vec(&frame)
+            .map_err(|err| format!("cannot encode the spans frame: {err}")),
     }
 }
 
@@ -588,6 +594,7 @@ mod tests {
                 render,
                 scale: None,
                 wait: None,
+                image_pixels: false,
             }),
             output_format,
             output: output.map(PathBuf::from),
@@ -626,11 +633,13 @@ mod tests {
         ui.request.command = control::ControlCommand::CaptureUi {
             render: Png,
             scale: None,
+            image_pixels: false,
         };
         assert_eq!(raw_capture(&ui), Some(RawCapture::Stdout));
         ui.request.command = control::ControlCommand::CaptureUi {
             render: Text,
             scale: None,
+            image_pixels: false,
         };
         assert_eq!(raw_capture(&ui), None);
     }
@@ -669,6 +678,30 @@ mod tests {
                 serde_json::json!({"render": "png", "png_base64": "%%"})
             ))
             .is_err()
+        );
+
+        // The frame itself, as it arrived: a field this binary does not know survives.
+        let frame = serde_json::json!({
+            "format": "rozi-spans", "version": 1, "width": 2, "height": 1,
+            "palette": {"foreground": "#ffffff", "background": "#000000", "ansi": []},
+            "rows": [[{"x": 0, "width": 2, "text": "hi"}]],
+            "from_a_newer_rozi": true
+        });
+        let written = capture_bytes(&reply(
+            serde_json::json!({"render": "spans", "frame": frame}),
+        ))
+        .unwrap();
+        assert!(written.ends_with(b"}\n"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&written).unwrap(),
+            frame
+        );
+        assert_eq!(
+            super::super::output::format_capture_text(Some(
+                &reply(serde_json::json!({"render": "spans", "frame": frame}))["data"]
+            )),
+            String::from_utf8(written).unwrap(),
+            "--format text prints the same frame"
         );
     }
 

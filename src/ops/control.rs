@@ -101,9 +101,14 @@ pub(crate) fn handle_control_request(
         },
         ControlCommand::AgentRead { target, scrollback } => match resolve_agent(ctx, &target) {
             Ok(agent) => match validate_agent_input_reference(ctx, &agent.reference) {
-                Ok(()) => {
-                    capture_pane(ctx, Some(agent.pane), scrollback, CaptureRender::Text, None)
-                }
+                Ok(()) => capture_pane(
+                    ctx,
+                    Some(agent.pane),
+                    scrollback,
+                    CaptureRender::Text,
+                    None,
+                    false,
+                ),
                 Err(response) => response,
             },
             Err(response) => response,
@@ -154,16 +159,26 @@ pub(crate) fn handle_control_request(
             render,
             scale,
             wait: _,
+            image_pixels,
         } => capture_pane(
             ctx,
             target.or(envelope.request.source_pane),
             scrollback,
             render,
             scale,
+            image_pixels,
         ),
-        ControlCommand::CaptureUi { render, scale } => {
-            match crate::control::capture_scale(render, scale) {
-                Ok(scale) => capture_ui(ctx, (render, scale), envelope.reply),
+        ControlCommand::CaptureUi {
+            render,
+            scale,
+            image_pixels,
+        } => {
+            let form = crate::control::capture_scale(render, scale).and_then(|scale| {
+                crate::control::capture_image_pixels(render, image_pixels)
+                    .map(|image_pixels| (render, scale, image_pixels))
+            });
+            match form {
+                Ok(form) => capture_ui(ctx, form, envelope.reply),
                 Err(response) => {
                     let _ = envelope.reply.send(response);
                 }
@@ -1321,6 +1336,7 @@ fn capture_pane(
     scrollback: Option<CaptureScrollback>,
     render: CaptureRender,
     scale: Option<u8>,
+    image_pixels: bool,
 ) -> ControlResponse {
     let Some(id) = target.or(ctx.state.focused_pane()) else {
         return ControlResponse::error_with(
@@ -1334,10 +1350,9 @@ fn capture_pane(
             format!("pane {id} not found"),
         );
     };
-    let content = match pane
-        .terminal
-        .with_screen_mut(|screen| crate::pane::capture_screen(screen, scrollback, render, scale))
-    {
+    let content = match pane.terminal.with_screen_mut(|screen| {
+        crate::pane::capture_screen(screen, scrollback, render, scale, image_pixels)
+    }) {
         Ok(content) => content,
         Err(response) => return response,
     };
@@ -1345,8 +1360,9 @@ fn capture_pane(
     ControlResponse::ok(PaneCapture { id, title, content })
 }
 
-/// What a `capture-ui` request asks the frame to be encoded as: its render and checked PNG scale.
-type UiCaptureForm = (CaptureRender, u8);
+/// What a `capture-ui` request asks the frame to be encoded as: its render, checked PNG scale, and
+/// checked `image_pixels`.
+type UiCaptureForm = (CaptureRender, u8, bool);
 
 /// `capture-ui` requests that will be answered from the same painted frame.
 #[derive(Default)]
@@ -1428,10 +1444,10 @@ fn answer_ui_captures(
 
 fn encode_ui_capture(
     frame: &tui_lipan::CapturedFrame,
-    (render, scale): UiCaptureForm,
+    (render, scale, image_pixels): UiCaptureForm,
     palette: TerminalColorPalette,
 ) -> ControlResponse {
-    match crate::pane::capture_ui_frame(frame, render, scale, palette) {
+    match crate::pane::capture_ui_frame(frame, render, scale, image_pixels, palette) {
         Ok(content) => ControlResponse::ok(UiCapture {
             width: frame.width,
             height: frame.height,
@@ -1792,10 +1808,22 @@ mod tests {
         render: CaptureRender,
         scale: Option<u8>,
     ) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
+        capture_ui_request_with(render, scale, false)
+    }
+
+    fn capture_ui_request_with(
+        render: CaptureRender,
+        scale: Option<u8>,
+        image_pixels: bool,
+    ) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
         let (reply, response) = mpsc::channel();
         let message = crate::Msg::ControlRequest(ControlEnvelope {
             request: ControlRequest {
-                command: ControlCommand::CaptureUi { render, scale },
+                command: ControlCommand::CaptureUi {
+                    render,
+                    scale,
+                    image_pixels,
+                },
                 source_pane: None,
                 extension: None,
             },
@@ -1893,6 +1921,64 @@ mod tests {
                 let (w1, h1) = size(capture_ui_reply(&one_reply, CaptureRender::Png));
                 let (w2, h2) = size(capture_ui_reply(&two_reply, CaptureRender::Png));
                 assert_eq!((w2, h2), (w1 * 2, h1 * 2), "each scale gets its own encode");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_ui_answers_spans_of_the_painted_frame_and_refuses_pixels_elsewhere() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.render();
+                let drawn = backend.capture_frame();
+
+                let (request, reply) = capture_ui_request_with(CaptureRender::Png, None, true);
+                backend.update_level(request).unwrap();
+                let refused = reply.try_recv().expect("answered at once");
+                assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+                assert!(backend.state().pending_ui_capture.is_none());
+
+                let (spans, spans_reply) = capture_ui_request(CaptureRender::Spans);
+                let (pixels, pixels_reply) =
+                    capture_ui_request_with(CaptureRender::Spans, None, true);
+                backend.update_level(spans).unwrap();
+                backend.update_level(pixels).unwrap();
+                backend.pump().unwrap();
+
+                let capture = capture_ui_reply(&spans_reply, CaptureRender::Spans);
+                let crate::control::CaptureContent::Spans { frame } = capture.content else {
+                    panic!("expected spans, got {:?}", capture.content);
+                };
+                assert_eq!((frame.width, frame.height), (drawn.width, drawn.height));
+                let text: Vec<String> = frame
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let covered: u16 = row.iter().map(|run| run.width).sum();
+                        let text: String = row.iter().map(|run| run.text.as_str()).collect();
+                        text + &" ".repeat(usize::from(frame.width - covered))
+                    })
+                    .collect();
+                assert_eq!(
+                    text,
+                    drawn.to_fixed_grid_lines(),
+                    "the runs read as the painted frame"
+                );
+                assert!(
+                    frame.rows.iter().flatten().any(|run| run.fg.is_some()),
+                    "the UI's resolved colors are kept"
+                );
+                // No image is drawn, so asking for pixels answers with the same frame.
+                let with_pixels = capture_ui_reply(&pixels_reply, CaptureRender::Spans);
+                let crate::control::CaptureContent::Spans { frame: again } = with_pixels.content
+                else {
+                    panic!("expected spans");
+                };
+                assert_eq!(again, frame);
             })
             .unwrap()
             .join()
@@ -3521,6 +3607,7 @@ mod tests {
                         scrollback: None,
                         render: CaptureRender::Text,
                         scale: None,
+                        image_pixels: false,
                         wait: pane_wait(Some("done"), 20),
                     },
                 );
@@ -3552,6 +3639,7 @@ mod tests {
                         scrollback: None,
                         render: CaptureRender::Text,
                         scale: None,
+                        image_pixels: false,
                         wait: pane_wait(Some("done"), 5_000),
                     },
                 );

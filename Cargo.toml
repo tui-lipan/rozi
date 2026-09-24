@@ -37,7 +37,10 @@ exclude = [
 
 [dependencies]
 # 0.13.0: terminal screen capture to styled ANSI and PNG, with font fallback and theme palettes.
-tui-lipan = { version = "0.14.1", features = [
+# Pinned to the unreleased fix in tui-lipan/tui-lipan#276, which keeps a Kitty image that arrives
+# in the same relayed chunk as the `clear` before it. Replace with the release that carries it, and
+# empty `allow-git` in deny.toml, before this reaches master.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "a41a9a671ec624bb168ebcc6157ec166c2824c01", version = "0.15.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

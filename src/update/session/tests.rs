@@ -132,6 +132,121 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
         .expect("pane reset test completes");
 }
 
+/// What `clear; icat` writes: the clear, then a 40x40 RGBA image in 4096-byte Kitty chunks.
+fn clear_then_image() -> (Vec<u8>, Vec<u8>) {
+    use base64::Engine as _;
+
+    let payload =
+        base64::engine::general_purpose::STANDARD.encode([255u8, 128, 0, 200].repeat(40 * 40));
+    let chunks: Vec<_> = payload.as_bytes().chunks(4096).collect();
+    let mut image = Vec::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let more = u8::from(index + 1 < chunks.len());
+        if index == 0 {
+            image.extend_from_slice(
+                format!("\x1b_Ga=T,f=32,s=40,v=40,i=7,q=2,m={more};").as_bytes(),
+            );
+        } else {
+            image.extend_from_slice(format!("\x1b_Gm={more};").as_bytes());
+        }
+        image.extend_from_slice(chunk);
+        image.extend_from_slice(b"\x1b\\");
+    }
+    image.extend_from_slice(b"\r\nimage-done\r\n");
+    (b"\x1b[H\x1b[2J\x1b[3J".to_vec(), image)
+}
+
+fn png_capture(pane: &crate::pane::TerminalPane) -> String {
+    let content = pane
+        .with_screen_mut(|screen| {
+            crate::pane::capture_screen(screen, None, crate::control::CaptureRender::Png, None)
+        })
+        .expect("png capture");
+    match content {
+        crate::control::CaptureContent::Png { png_base64 } => png_base64,
+        other => panic!("expected a png, got {other:?}"),
+    }
+}
+
+/// The session server reads `clear` and the image a program writes after it from the PTY, usually
+/// in separate reads, and relays them to the UI as they queue: often as one message. The UI's copy
+/// of the pane must keep the image either way, or `capture-pane` through the UI and through the
+/// session disagree and the UI never draws it.
+#[test]
+fn an_image_relayed_in_one_message_with_the_clear_before_it_stays_on_screen() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            let generation = 3;
+            let (cols, rows, palette) = {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(target, generation);
+                (
+                    pane.terminal.cols,
+                    pane.terminal.rows,
+                    pane.terminal.last_palette,
+                )
+            };
+            // Enough earlier output to leave history for `clear` to erase.
+            let history = "$ earlier output\r\n".repeat(usize::from(rows) * 2);
+            let (clear, image) = clear_then_image();
+            let relayed = [history.as_bytes(), &[clear.as_slice(), &image].concat()];
+            for bytes in relayed {
+                backend
+                    .dispatch(Msg::SessionOutput {
+                        epoch,
+                        pane_id: target,
+                        local: false,
+                        generation,
+                        bytes: bytes.to_vec(),
+                    })
+                    .expect("dispatch pane output");
+            }
+
+            // The same bytes as the server read them.
+            let mut read_apart = crate::pane::TerminalPane::new(100);
+            read_apart.apply_server_resize(cols, rows);
+            if let Some(palette) = palette {
+                read_apart.set_palette(palette);
+            }
+            for bytes in [history.as_bytes(), &clear, &image] {
+                read_apart.process_server_output(bytes);
+            }
+            let placements = |pane: &crate::pane::TerminalPane| -> Vec<_> {
+                let snapshot = pane.snapshot();
+                snapshot
+                    .images
+                    .iter()
+                    .map(|image| (image.image_id, image.row, image.col, image.rows, image.cols))
+                    .collect()
+            };
+            assert_eq!(placements(&read_apart).len(), 1);
+
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), target).unwrap();
+            assert_eq!(
+                placements(&pane.terminal),
+                placements(&read_apart),
+                "the UI's screen lost the image placement"
+            );
+            assert!(
+                png_capture(&pane.terminal) == png_capture(&read_apart),
+                "the UI's capture differs from the screen that read the output apart"
+            );
+        })
+        .expect("spawn relayed image test")
+        .join()
+        .expect("relayed image test completes");
+}
+
 #[test]
 fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
     std::thread::Builder::new()

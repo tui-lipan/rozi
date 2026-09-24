@@ -41,4 +41,5 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Every dependency comes from the registry. Add a host here only alongside a documented
 # `[patch.crates-io]` or git dependency, and remove it when that patch goes away.
-allow-git = []
+# tui-lipan is pinned to an unreleased fix; see Cargo.toml.
+allow-git = ["https://github.com/tui-lipan/tui-lipan"]

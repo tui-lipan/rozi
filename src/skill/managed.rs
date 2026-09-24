@@ -103,6 +103,16 @@ pub fn install_managed(
     claude_available: bool,
     force: bool,
 ) -> Result<ManagedInstall, String> {
+    install_managed_with(paths, state_dir, claude_available, force, install_claude)
+}
+
+fn install_managed_with(
+    paths: &SkillPaths,
+    state_dir: &Path,
+    claude_available: bool,
+    force: bool,
+    install_compat: impl FnOnce(&SkillPaths) -> Result<ClaudeInstall, String>,
+) -> Result<ManagedInstall, String> {
     let mut registry = read_registry(state_dir)?;
     let record = registry
         .installs
@@ -159,20 +169,34 @@ pub fn install_managed(
             path: paths.claude_path.clone(),
         }
     } else if claude_available {
-        install_claude(paths).unwrap_or(ClaudeInstall::Failed {
+        install_compat(paths).unwrap_or(ClaudeInstall::Failed {
             path: paths.claude_path.clone(),
         })
     } else {
         ClaudeInstall::Skipped
     };
+    let previous_claude_hash = record.map(|record| {
+        record
+            .claude_content_hash
+            .clone()
+            .unwrap_or_else(|| record.content_hash.clone())
+    });
     let new_record = Record {
         root: paths.scope_root.clone(),
         content_hash: hash(SKILL_MD.as_bytes()),
         installed_from_rozi_version: env!("CARGO_PKG_VERSION").to_string(),
-        claude_content_hash: matches!(claude, ClaudeInstall::Copied { .. })
-            .then(|| hash(SKILL_MD.as_bytes())),
+        claude_content_hash: match &claude {
+            ClaudeInstall::Copied { .. } => Some(hash(SKILL_MD.as_bytes())),
+            ClaudeInstall::Failed { .. } | ClaudeInstall::Skipped => previous_claude_hash,
+            ClaudeInstall::Linked { .. } => None,
+        },
         pending_content_hash: None,
-        pending_claude_content_hash: None,
+        pending_claude_content_hash: match &claude {
+            ClaudeInstall::Failed { .. } | ClaudeInstall::Skipped => {
+                record.and_then(|record| record.pending_claude_content_hash.clone())
+            }
+            ClaudeInstall::Linked { .. } | ClaudeInstall::Copied { .. } => None,
+        },
     };
     registry
         .installs
@@ -455,6 +479,35 @@ mod tests {
         assert!(retried.modified.is_empty());
         assert!(retried.failed.is_empty());
         assert_eq!(fs::read_to_string(&copy).unwrap(), next);
+    }
+
+    #[test]
+    fn failed_claude_copy_during_explicit_install_keeps_previous_ownership() {
+        let scratch = Scratch::new();
+        let state = scratch.0.join("state");
+        let paths = SkillPaths::project(scratch.0.join("project"));
+        install_managed(&paths, &state, false, false).unwrap();
+        let old = "---\nname: rozi\n---\nold instructions\n";
+        fs::write(&paths.skill_file, old).unwrap();
+        fs::create_dir_all(&paths.claude_path).unwrap();
+        let copy = paths.claude_path.join("SKILL.md");
+        fs::write(&copy, old).unwrap();
+        let mut registry = read_registry(&state).unwrap();
+        registry.installs[0].content_hash = hash(old.as_bytes());
+        registry.installs[0].claude_content_hash = Some(hash(old.as_bytes()));
+        write_registry(&state, &registry).unwrap();
+
+        let first = install_managed_with(&paths, &state, true, false, |_| {
+            Err("injected compatibility write failure".to_string())
+        })
+        .unwrap();
+        assert!(matches!(first.claude, ClaudeInstall::Failed { .. }));
+        assert_eq!(fs::read_to_string(&paths.skill_file).unwrap(), SKILL_MD);
+        assert_eq!(fs::read_to_string(&copy).unwrap(), old);
+
+        let retry = install_managed(&paths, &state, true, false).unwrap();
+        assert!(matches!(retry.claude, ClaudeInstall::Copied { .. }));
+        assert_eq!(fs::read_to_string(&copy).unwrap(), SKILL_MD);
     }
 
     #[test]

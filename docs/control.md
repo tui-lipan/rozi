@@ -74,11 +74,12 @@ to a UI or session:
 ```json
 {
   "api": 1,
-  "schema": 4,
-  "session_protocol": 13,
+  "schema": 5,
+  "session_protocol": 14,
   "capabilities": [
     "agent-waits",
     "capture-render",
+    "capture-scale",
     "capture-ui",
     "layout-control",
     "pane-control",
@@ -117,8 +118,8 @@ does not affect the JSON anything else reads.
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Spawn a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
-| `capture-ui [--render text\|ansi\|png] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
+| `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, or PNG. | yes |
+| `capture-ui [--render text\|ansi\|png] [--scale 1-3] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
@@ -502,12 +503,15 @@ responses without the incoming request size cap.
 | --- | --- |
 | `text` (default) | Plain text. |
 | `ansi` | The visible grid as text with SGR color and style sequences. Every row keeps the pane's width and ends with a reset; there is no cursor movement or screen clearing, so `cat` shows it in place. |
-| `png` | An image of the visible grid's text cells, in the pane's theme colors, with the cursor drawn. |
+| `png` | An image of the visible grid, in the pane's theme colors, with the cursor drawn and any images the program displayed. |
 
 `ansi` and `png` cover the visible screen only. Combining them with `--scrollback` or
-`--last-output` fails rather than dropping the styling. Both capture the terminal's text cells:
-inline graphics a program drew, such as `kitty icat` images, are not included and leave the
-cells they covered blank.
+`--last-output` fails rather than dropping the styling.
+
+Images a program displayed with the Kitty graphics protocol, such as `kitty icat` output, are
+included. A PNG draws their pixels, scaled into the cells they occupy. Text has no pixels, so
+`ansi` shows each such cell as a `▀` half block in the image's colors, and `text` shows the `▀`
+characters alone, which mark where an image is.
 
 `--output FILE` writes the capture itself to `FILE` and prints nothing, for any `--render`. It
 cannot be combined with `--format`. Without `--output`, a PNG goes to stdout as raw bytes, and
@@ -520,6 +524,11 @@ rozi capture-pane --target 3 --render png > pane.png
 rozi capture-pane --target 3 --render ansi --format text | less -R
 ```
 
+`--scale 2` or `--scale 3` draws a PNG two or three times larger, with sharper text and images,
+for screenshots people will look at: a 120x36 UI is 960x576 pixels at scale 1 and 1920x1152 at
+scale 2. Scale 1, the default, suits agents: vision models shrink large images before reading them,
+so a larger capture mostly costs transfer. `--scale` applies to `--render png` only.
+
 A PNG uses the theme colors a UI gave the pane. A session whose panes have never been shown by a
 UI renders with default terminal colors. Text uses installed fonts, including CJK,
 color emoji, and Nerd Font symbols when a font on that machine has them. With `--session`, the
@@ -531,7 +540,8 @@ the UI endpoint has no such limit.
 
 `capture-ui` captures what the UI is showing: the bar, pane borders and titles, overlays and
 toasts, and every visible pane, at the size of the terminal Rozi runs in. It takes the same
-`--render`, `--output`, and `--format` options as `capture-pane`, with the same PNG rules.
+`--render`, `--scale`, `--output`, and `--format` options as `capture-pane`, with the same PNG
+rules.
 
 ```sh
 rozi capture-ui --render png --output ui.png
@@ -542,8 +552,10 @@ rozi capture-ui --format json | jq -r .data.text
 The capture is the next frame the UI draws. Rozi draws it at once for the request, so an idle UI
 answers too, and simultaneous requests share that frame. The UI resolves the theme while drawing,
 so the colors match the screen; the theme's own background and text colors fill the cells a
-program left at its terminal defaults. As with panes, inline images a program drew are not
-included.
+program left at its terminal defaults. Images a program displayed in a pane are included as they
+are for `capture-pane`, and whatever is drawn over one, such as an overlay or a floating pane,
+covers it in the capture as it does on screen. A dimmed backdrop behind a modal does not dim the
+image parts that remain visible.
 
 `capture-ui` needs a UI. `--session` is refused, since a session server draws nothing; capture its
 panes one at a time with `capture-pane` instead. The reply reports the frame's `width` and `height`

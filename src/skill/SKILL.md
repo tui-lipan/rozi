@@ -107,9 +107,10 @@ Use `--format json` for agent-readable output. `list-panes`, `layout get`, `capt
 When colors or layout matter, look at the screen instead of its text:
 `capture-pane --target <PANE_ID> --render png --output pane.png` saves an image of the visible
 screen in the pane's theme colors, and `--render ansi` keeps the colors as SGR-styled text. Both
-cover the visible screen only, not scrollback, and neither includes inline images a program drew:
-a blank area in the capture may be one. Always pass `--output` for a PNG; Rozi refuses to write
-one to a terminal.
+cover the visible screen only, not scrollback. Images a program displayed, such as `kitty icat`
+output, are drawn in a PNG; in text and ANSI output they appear as `▀` half blocks. Always pass
+`--output` for a PNG; Rozi refuses to write one to a terminal. Keep the default scale for images
+you will look at yourself; add `--scale 2` only for a screenshot meant for a person.
 
 `capture-ui --render png --output ui.png` captures the whole UI as drawn instead: the bar,
 borders, overlays, and every visible pane. It needs a UI; `--session` refuses it.

@@ -439,7 +439,7 @@ enum RawCapture {
 fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
     let render = match command.request.command {
         control::ControlCommand::CapturePane { render, .. }
-        | control::ControlCommand::CaptureUi { render } => render,
+        | control::ControlCommand::CaptureUi { render, .. } => render,
         _ => return None,
     };
     if let Some(path) = &command.output {
@@ -565,6 +565,7 @@ mod tests {
                 target: None,
                 scrollback: None,
                 render,
+                scale: None,
             }),
             output_format,
             output: output.map(PathBuf::from),
@@ -600,9 +601,15 @@ mod tests {
 
         // `capture-ui` follows the same rules.
         let mut ui = capture_cli(Png, None, None);
-        ui.request.command = control::ControlCommand::CaptureUi { render: Png };
+        ui.request.command = control::ControlCommand::CaptureUi {
+            render: Png,
+            scale: None,
+        };
         assert_eq!(raw_capture(&ui), Some(RawCapture::Stdout));
-        ui.request.command = control::ControlCommand::CaptureUi { render: Text };
+        ui.request.command = control::ControlCommand::CaptureUi {
+            render: Text,
+            scale: None,
+        };
         assert_eq!(raw_capture(&ui), None);
     }
 

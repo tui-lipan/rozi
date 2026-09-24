@@ -25,8 +25,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
 /// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
 /// names - gains a value, which is what version 2 did with the layout commands and
-/// `layout-changed`, version 3 with `capture-pane`'s `render`, and version 4 with `capture-ui`.
-pub const API_SCHEMA_VERSION: u32 = 4;
+/// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`, and
+/// version 5 with the captures' `scale`.
+pub const API_SCHEMA_VERSION: u32 = 5;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -43,6 +44,9 @@ pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
 pub const CAPTURE_RENDER_CAPABILITY: &str = "capture-render";
 /// `capture-ui` returns the whole client as it is drawn, chrome and every visible pane.
 pub const CAPTURE_UI_CAPABILITY: &str = "capture-ui";
+/// `capture-pane` and `capture-ui` honor `scale` for a PNG. An older binary ignores the field and
+/// answers at scale 1.
+pub const CAPTURE_SCALE_CAPABILITY: &str = "capture-scale";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -65,6 +69,7 @@ impl ApiDescription {
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
+                CAPTURE_SCALE_CAPABILITY,
                 CAPTURE_UI_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
@@ -110,8 +115,8 @@ pub enum CaptureRender {
     /// The visible grid as text with SGR color and style sequences: no cursor movement or screen
     /// clearing, every row at the full width.
     Ansi,
-    /// The visible grid's text cells as a PNG image, in the theme's colors. Inline terminal
-    /// graphics are not drawn.
+    /// The visible grid as a PNG image, in the theme's colors, with the images a program displayed
+    /// drawn over their cells.
     Png,
 }
 
@@ -125,6 +130,29 @@ impl CaptureRender {
                 "--render must be text, ansi, or png, got `{other}`"
             )),
         }
+    }
+}
+
+/// Largest PNG `scale` a capture accepts. Three times a large terminal is already an image past
+/// most displays, and a session reply must still fit one protocol frame.
+pub const MAX_CAPTURE_SCALE: u8 = 3;
+
+/// The PNG scale a capture request asks for, checked: `None` is 1, and only a PNG takes one.
+pub fn capture_scale(
+    render: CaptureRender,
+    scale: Option<u8>,
+) -> std::result::Result<u8, ControlResponse> {
+    match scale {
+        None => Ok(1),
+        Some(_) if render != CaptureRender::Png => Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "scale applies to png captures only",
+        )),
+        Some(scale @ 1..=MAX_CAPTURE_SCALE) => Ok(scale),
+        Some(scale) => Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            format!("scale must be 1 to {MAX_CAPTURE_SCALE}, got {scale}"),
+        )),
     }
 }
 
@@ -279,7 +307,7 @@ pub enum ControlCommand {
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
     /// `render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the
-    /// visible grid only.
+    /// visible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.
     CapturePane {
         #[serde(default)]
         target: Option<PaneId>,
@@ -287,6 +315,8 @@ pub enum ControlCommand {
         scrollback: Option<CaptureScrollback>,
         #[serde(default)]
         render: CaptureRender,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<u8>,
     },
     /// Capture the whole client as it is drawn: the bar, borders, overlays, and every visible
     /// pane. Answered from the next frame the UI paints, so it needs a UI; a session server
@@ -294,6 +324,9 @@ pub enum ControlCommand {
     CaptureUi {
         #[serde(default)]
         render: CaptureRender,
+        /// Enlarges a PNG, from 1 (the default) to 3.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<u8>,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
     SwitchWorkspace {
@@ -2168,6 +2201,43 @@ mod tests {
     }
 
     #[test]
+    fn capture_scale_is_one_by_default_and_only_a_png_takes_another() {
+        assert_eq!(capture_scale(CaptureRender::Text, None), Ok(1));
+        assert_eq!(capture_scale(CaptureRender::Png, None), Ok(1));
+        assert_eq!(capture_scale(CaptureRender::Png, Some(2)), Ok(2));
+        assert_eq!(
+            capture_scale(CaptureRender::Png, Some(MAX_CAPTURE_SCALE)),
+            Ok(3)
+        );
+        for (render, scale) in [
+            (CaptureRender::Png, Some(0)),
+            (CaptureRender::Png, Some(4)),
+            (CaptureRender::Ansi, Some(2)),
+            (CaptureRender::Text, Some(1)),
+        ] {
+            let refused = capture_scale(render, scale).expect_err("refused");
+            assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+        }
+
+        // Absent on the wire unless asked for, so older peers see the request they know.
+        let plain = serde_json::to_value(ControlCommand::CaptureUi {
+            render: CaptureRender::Png,
+            scale: None,
+        })
+        .unwrap();
+        assert_eq!(
+            plain,
+            serde_json::json!({"cmd": "capture-ui", "render": "png"})
+        );
+        let request: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"capture-pane","render":"png","scale":2}"#).unwrap();
+        assert!(matches!(
+            request.command,
+            ControlCommand::CapturePane { scale: Some(2), .. }
+        ));
+    }
+
+    #[test]
     fn capture_ui_replies_carry_the_frame_size_beside_the_capture() {
         let capture = UiCapture {
             width: 120,
@@ -2190,7 +2260,8 @@ mod tests {
         assert_eq!(
             request.command,
             ControlCommand::CaptureUi {
-                render: CaptureRender::Text
+                render: CaptureRender::Text,
+                scale: None
             }
         );
     }
@@ -2202,6 +2273,7 @@ mod tests {
                 target: Some(5),
                 scrollback: None,
                 render: CaptureRender::Text,
+                scale: None,
             },
             source_pane: None,
             extension: None,
@@ -2217,6 +2289,7 @@ mod tests {
                 target: None,
                 scrollback: None,
                 render: CaptureRender::Text,
+                scale: None,
             }
         );
 
@@ -2228,6 +2301,7 @@ mod tests {
                 target: None,
                 scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)),
                 render: CaptureRender::Text,
+                scale: None,
             }
         );
 
@@ -2239,6 +2313,7 @@ mod tests {
                 target: None,
                 scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)),
                 render: CaptureRender::Text,
+                scale: None,
             }
         );
 

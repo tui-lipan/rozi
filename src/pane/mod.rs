@@ -18,14 +18,17 @@ pub(crate) mod spawn_policy;
 ///
 /// Styled captures read the emulator's visible grid, so they refuse scrollback rather than drop its
 /// styling. A PNG takes its colors from the screen's palette, which is the theme the attached
-/// client gave it; a detached server keeps the last one it was sent.
+/// client gave it; a detached server keeps the last one it was sent. `scale` enlarges a PNG and is
+/// refused for any other render.
 ///
 /// `Err` is the response the caller sees.
 pub(crate) fn capture_screen(
     screen: &mut TerminalScreen,
     scrollback: Option<CaptureScrollback>,
     render: CaptureRender,
+    scale: Option<u8>,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
+    let scale = crate::control::capture_scale(render, scale)?;
     if render != CaptureRender::Text && scrollback.is_some() {
         return Err(ControlResponse::error_with(
             ControlErrorCode::InvalidArgument,
@@ -38,7 +41,7 @@ pub(crate) fn capture_screen(
             let text = screen.capture_frame().to_ansi_text();
             return Ok(CaptureContent::Ansi { text });
         }
-        CaptureRender::Png => return capture_png(screen),
+        CaptureRender::Png => return capture_png(screen, scale),
     }
     let text = match scrollback {
         None => screen.render_snapshot().text.to_string(),
@@ -59,17 +62,21 @@ pub(crate) fn capture_screen(
     Ok(CaptureContent::Text { text })
 }
 
-fn capture_png(screen: &TerminalScreen) -> std::result::Result<CaptureContent, ControlResponse> {
-    encode_png(&screen.capture_frame(), screen.palette())
+fn capture_png(
+    screen: &TerminalScreen,
+    scale: u8,
+) -> std::result::Result<CaptureContent, ControlResponse> {
+    encode_png(&screen.capture_frame(), screen.palette(), scale)
 }
 
 /// What `capture-ui` returns for the frame the client painted, in the same forms as a pane.
 ///
 /// The UI resolved most colors while drawing; `palette` supplies the rest, the cells left at the
-/// terminal's default colors.
+/// terminal's default colors. `scale` is a checked PNG scale; see [`crate::control::capture_scale`].
 pub(crate) fn capture_ui_frame(
     frame: &tui_lipan::CapturedFrame,
     render: CaptureRender,
+    scale: u8,
     palette: TerminalColorPalette,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
     match render {
@@ -79,19 +86,20 @@ pub(crate) fn capture_ui_frame(
         CaptureRender::Ansi => Ok(CaptureContent::Ansi {
             text: frame.to_ansi_text(),
         }),
-        CaptureRender::Png => encode_png(frame, palette),
+        CaptureRender::Png => encode_png(frame, palette, scale),
     }
 }
 
 fn encode_png(
     frame: &tui_lipan::CapturedFrame,
     palette: TerminalColorPalette,
+    scale: u8,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
     use base64::Engine as _;
     use tui_lipan::{PngOptions, PngTextRenderer};
 
     let options = PngOptions {
-        scale: 1,
+        scale: u16::from(scale),
         text_renderer: PngTextRenderer::Auto,
         default_fg: palette.foreground.unwrap_or(Color::White),
         default_bg: palette.background.unwrap_or(Color::Black),
@@ -1005,7 +1013,8 @@ mod tests {
     fn capture_screen_keeps_text_captures_as_they_were() {
         let mut screen = TerminalScreen::new(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
-        let content = capture_screen(&mut screen, None, CaptureRender::Text).expect("text capture");
+        let content =
+            capture_screen(&mut screen, None, CaptureRender::Text, None).expect("text capture");
         assert_eq!(
             content,
             CaptureContent::Text {
@@ -1018,7 +1027,8 @@ mod tests {
     fn capture_screen_renders_the_visible_grid_as_an_ansi_document() {
         let mut screen = TerminalScreen::new(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
-        let content = capture_screen(&mut screen, None, CaptureRender::Ansi).expect("ansi capture");
+        let content =
+            capture_screen(&mut screen, None, CaptureRender::Ansi, None).expect("ansi capture");
         let CaptureContent::Ansi { text } = content else {
             panic!("expected an ansi capture, got {content:?}");
         };
@@ -1032,10 +1042,28 @@ mod tests {
     }
 
     #[test]
+    fn a_png_scale_multiplies_its_size_and_other_renders_refuse_one() {
+        let mut screen = TerminalScreen::new(3, 10, 100);
+        screen.process_bytes(b"hi");
+        let doubled =
+            png_bytes(capture_screen(&mut screen, None, CaptureRender::Png, Some(2)).expect("png"));
+        assert_eq!(png_size(&doubled), (160, 96));
+
+        for (render, scale) in [
+            (CaptureRender::Ansi, Some(2)),
+            (CaptureRender::Png, Some(4)),
+        ] {
+            let refused = capture_screen(&mut screen, None, render, scale).expect_err("refused");
+            assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+        }
+    }
+
+    #[test]
     fn capture_screen_renders_a_png_in_the_screen_palette() {
         let mut screen = TerminalScreen::new(3, 10, 100);
         screen.process_bytes(b"hi");
-        let plain = png_bytes(capture_screen(&mut screen, None, CaptureRender::Png).expect("png"));
+        let plain =
+            png_bytes(capture_screen(&mut screen, None, CaptureRender::Png, None).expect("png"));
         assert!(plain.starts_with(b"\x89PNG\r\n\x1a\n"));
         // 8x16-pixel cells at scale 1.
         assert_eq!(png_size(&plain), (80, 48));
@@ -1045,8 +1073,43 @@ mod tests {
             Color::Rgb(4, 5, 6),
             [Color::Rgb(7, 8, 9); 16],
         ));
-        let themed = png_bytes(capture_screen(&mut screen, None, CaptureRender::Png).expect("png"));
+        let themed =
+            png_bytes(capture_screen(&mut screen, None, CaptureRender::Png, None).expect("png"));
         assert_ne!(plain, themed, "the theme palette colors the image");
+    }
+
+    #[test]
+    fn styled_captures_include_the_images_a_program_displayed() {
+        use base64::Engine as _;
+
+        // A solid red two-cell image, sent the way `kitty icat` sends one.
+        let mut screen = TerminalScreen::new(2, 6, 100);
+        screen.set_cell_size(TerminalCellSize {
+            width: 10,
+            height: 20,
+        });
+        let pixels = [255u8, 0, 0].repeat(20 * 20);
+        let command = format!(
+            "\x1b_Ga=T,f=24,s=20,v=20,t=d,i=1;{}\x1b\\",
+            base64::engine::general_purpose::STANDARD.encode(pixels)
+        );
+        screen.process_bytes(command.as_bytes());
+
+        let content =
+            capture_screen(&mut screen, None, CaptureRender::Ansi, None).expect("ansi capture");
+        let CaptureContent::Ansi { text } = content else {
+            panic!("expected an ansi capture, got {content:?}");
+        };
+        let first_row = text.lines().next().expect("a row");
+        assert_eq!(first_row.matches('\u{2580}').count(), 2, "{first_row:?}");
+        assert!(first_row.contains("38;2;255;0;0") && first_row.contains("48;2;255;0;0"));
+
+        let with_image =
+            png_bytes(capture_screen(&mut screen, None, CaptureRender::Png, None).expect("png"));
+        let mut blank = TerminalScreen::new(2, 6, 100);
+        let without =
+            png_bytes(capture_screen(&mut blank, None, CaptureRender::Png, None).expect("png"));
+        assert_ne!(with_image, without, "the image is drawn into the PNG");
     }
 
     #[test]
@@ -1058,7 +1121,7 @@ mod tests {
                 CaptureScrollback::Named(CaptureScrollbackNamed::Full),
                 CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput),
             ] {
-                let refused = capture_screen(&mut screen, Some(scrollback.clone()), render)
+                let refused = capture_screen(&mut screen, Some(scrollback.clone()), render, None)
                     .expect_err("styled capture with scrollback");
                 assert_eq!(
                     refused.code,

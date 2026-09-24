@@ -920,6 +920,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
                 crate::control::CaptureScrollbackNamed::Full,
             )),
             render: crate::control::CaptureRender::Text,
+            scale: None,
         },
         source_pane: None,
         extension: None,

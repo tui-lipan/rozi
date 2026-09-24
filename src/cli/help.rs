@@ -237,10 +237,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "capture-pane [OPTIONS]",
                 "Capture a pane as text, ANSI, or PNG",
             ),
-            row(
-                "capture-ui [--render text|ansi|png] [--output FILE]",
-                "Capture the whole UI as drawn",
-            ),
+            row("capture-ui [OPTIONS]", "Capture the whole UI as drawn"),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(
                 "move-to-workspace <1-9>",

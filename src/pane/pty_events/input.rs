@@ -172,7 +172,11 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     let acknowledged = crate::pane::pty_events::pointer_flow::is_press_report(&bytes)
         && crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
-    let hover = crate::ops::focus::hover_focus_pane(ctx, id);
+    let hover = crate::ops::focus::hover_focus_pane(
+        ctx,
+        id,
+        crate::pane::pty_events::pointer_flow::mouse_report_mods(&bytes),
+    );
     let hover = if acknowledged { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
         // Pointer motion arrives continuously; a renewed rejection draws nothing new, so fall back

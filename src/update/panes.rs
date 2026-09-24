@@ -26,8 +26,8 @@ pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     Update::full()
 }
 
-pub(super) fn hover_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
-    crate::ops::focus::hover_focus_pane(ctx, id)
+pub(super) fn hover_pane(ctx: &mut Context<AppRoot>, id: PaneId, mods: KeyMods) -> Update {
+    crate::ops::focus::hover_focus_pane(ctx, id, mods)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -18,6 +18,45 @@
 //!   motion was waiting, so the child still learns where the pointer was when the button moved.
 
 use std::time::{Duration, Instant};
+use tui_lipan::KeyMods;
+
+/// Read the modifier bits from a mouse report encoded by the terminal widget. SGR and SGR-pixels
+/// carry a decimal button code; X10 and UTF-8 carry that code as one byte offset by 32.
+pub(crate) fn mouse_report_mods(bytes: &[u8]) -> KeyMods {
+    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
+        let mut digits = rest.iter().take_while(|byte| byte.is_ascii_digit());
+        digits.try_fold(0_u16, |code, digit| {
+            code.checked_mul(10)?.checked_add(u16::from(digit - b'0'))
+        })
+    } else {
+        bytes
+            .strip_prefix(b"\x1b[M")
+            .and_then(|report| report.first())
+            .map(|code| u16::from(code.saturating_sub(32)))
+    }
+    .unwrap_or_default();
+
+    KeyMods {
+        shift: code & 4 != 0,
+        alt: code & 8 != 0,
+        ctrl: code & 16 != 0,
+        ..KeyMods::NONE
+    }
+}
+
+#[cfg(test)]
+mod modifier_tests {
+    use super::mouse_report_mods;
+    use tui_lipan::KeyMods;
+
+    #[test]
+    fn reads_modifiers_from_forwarded_mouse_encodings() {
+        assert_eq!(mouse_report_mods(b"\x1b[<39;1;1M"), KeyMods::SHIFT);
+        assert_eq!(mouse_report_mods(b"\x1b[<51;1;1M"), KeyMods::CTRL);
+        assert_eq!(mouse_report_mods(b"\x1b[M+!!"), KeyMods::ALT);
+        assert_eq!(mouse_report_mods(b"\x1b[<35;1;1M"), KeyMods::NONE);
+    }
+}
 
 /// Match `tui-lipan`'s frame interval calculation without exposing framework runner internals.
 pub(crate) fn interval_for_frame_rate(frame_rate: u16) -> Duration {

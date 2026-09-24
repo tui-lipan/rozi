@@ -416,7 +416,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::FollowPromptSelect(index) => prompts::follow_prompt_select(ctx, index),
         Msg::FollowPromptChoose(index) => prompts::follow_prompt_choose(ctx, index),
         Msg::FocusPane(id) => panes::focus_pane(ctx, id),
-        Msg::HoverPane(id) => panes::hover_pane(ctx, id),
+        Msg::HoverPane(id, mods) => panes::hover_pane(ctx, id, mods),
         Msg::BeginMove(id, rect, x, y, width, height, modified) => {
             panes::begin_move(ctx, id, rect, x, y, width, height, modified)
         }

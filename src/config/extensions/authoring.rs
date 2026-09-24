@@ -102,7 +102,7 @@ fn write_scaffold(id: &str, destination: &Path, python: &PythonLaunch) -> Result
          rozi = os.environ.get(\"ROZI_BIN\", \"rozi\")\n\
          extension = os.environ.get(\"ROZI_EXTENSION\")\n\
          if extension != {id:?}:\n\
-         \x20   print(\"launch this command through Rozi\", file=sys.stderr)\n\
+         \x20   print(\"launch this command through rozi\", file=sys.stderr)\n\
          \x20   raise SystemExit(2)\n\
          raise SystemExit(subprocess.run(\n\
          \x20   [rozi, \"notify\", f\"Hello from {{extension}}\"], check=False\n\
@@ -112,20 +112,22 @@ fn write_scaffold(id: &str, destination: &Path, python: &PythonLaunch) -> Result
 
     let readme = format!(
         "# {id}\n\n\
-         Generated Rozi extension scaffold.\n\n\
+         Generated rozi extension scaffold.\n\n\
          ## Develop\n\n\
          ```bash\n\
          rozi extensions check .\n\
-         # Copy this directory below Rozi's user extension directory, then:\n\
+         rozi extensions install --link .\n\
          rozi run-action reload-extensions\n\
          rozi extensions list --verbose\n\
          rozi run-action {id}.hello\n\
          ```\n\n\
-         The example uses structured `exec` and calls the running Rozi binary through\n\
+         `--link` keeps this checkout as the extension's source, so edits apply after\n\
+         `reload-extensions`.\n\n\
+         The example uses structured `exec` and calls the running rozi binary through\n\
          `ROZI_BIN`. It requires Python 3; this scaffold selected `{program}` for the current\n\
          machine. Adjust the manifest argv if the extension is shared with a platform whose\n\
          Python launcher differs.\n\n\
-         Installed extensions are trusted local executable code. Rozi validates the manifest but\n\
+         Installed extensions are trusted local executable code. rozi validates the manifest but\n\
          does not sandbox the program.\n",
         program = python.program,
     );

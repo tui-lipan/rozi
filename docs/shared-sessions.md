@@ -1,8 +1,11 @@
 # Shared sessions
 
-Several Rozi clients can attach to the same named session. They see the same panes and one shared
+Several rozi clients can attach to the same named session. They see the same panes and one shared
 workspace layout, while each client keeps its own focus, active workspace, scrollback position,
-overlays, theme, and sidebar.
+overlays, theme, and sidebar. This page covers joining a session, handing over layout control,
+limiting input, and removing collaborators.
+
+## Join a session
 
 Start another client with the same target:
 
@@ -12,37 +15,35 @@ rozi --remote workbox sessions attach dev
 rozi sessions attach dev --read-only
 ```
 
-## Join a session
-
-When another client is already using the session, Rozi asks whether to follow, ask for layout
-control, or cancel. If immediate takeover is enabled, the control option takes control directly.
+When another client is already using the session, rozi asks whether to follow, ask for layout
+control, or cancel. With immediate takeover enabled, choosing control takes it at once.
 
 The session picker shows when other clients are attached. The workbar shows `CTRL` while this client
 controls the layout and `FOLLOW` while it follows.
 
-Joining copies the current pane list and layout first, then streams each pane's retained terminal
-state. Replayable output produced before a pane snapshot is part of that snapshot. Output produced
-afterwards waits behind it, so a client never receives live bytes in the middle of a pane replay.
+A joining client receives the pane list and layout first, then each pane's terminal contents. Output
+produced while a pane is being sent arrives after it, so the pane never shows live output in the
+middle of its history.
 
-The server keeps at most 4 MiB of encoded replay queued for an attaching client. Snapshot size has
-no total replay limit. If live changes waiting behind a slow attach exceed 8 MiB, the server
-disconnects that client without delaying clients which are already live.
+### Limits while joining
 
-Replays up to 256 KiB stay in memory. A larger pane is exported through an unnamed file in Rozi's
-private cache directory and read back through 256 KiB frames; closing the replay removes the file.
-If that cache is unavailable, attach falls back to the in-memory export instead of failing.
+- The server queues at most 4 MiB of pane history for a joining client at a time. There is no limit
+  on the total history sent.
+- If more than 8 MiB of live output builds up behind a slow join, the server disconnects that
+  client. Clients that are already attached are not delayed.
+- Pane history up to 256 KiB is sent from memory. Larger history is written to an unnamed file in
+  rozi's private cache directory, sent in 256 KiB pieces, and deleted afterwards. If the cache is
+  unavailable, rozi sends it from memory instead.
 
-With the normal disk-backed cache, large pane replays live in file cache instead of anonymous heap
-memory. This bounds Rozi's process working set and lets the kernel reclaim replay pages under
-memory pressure. It does not proportionally reduce instantaneous system-accounted memory while the
-replay remains cached. A memory-backed `XDG_CACHE_HOME` accounts those pages according to that
-filesystem instead.
+Using the cache directory keeps rozi's own memory use bounded, and lets the operating system
+reclaim those pages under memory pressure. The system may still count them as memory while they
+are cached, and a memory-backed `XDG_CACHE_HOME` stores them in memory.
 
 ## Layout control
 
-One writable client controls layout changes at a time. The controller can split, close, move,
-resize, float, or fullscreen panes and can edit workspaces. Followers receive those layout changes
-without losing their local terminal screens or scrollback.
+One writable client controls the layout at a time. The controller can split, close, move, resize,
+float, or fullscreen panes, and edit workspaces. Followers receive those changes without losing
+their terminal screens or scrollback.
 
 Followers can still:
 
@@ -51,88 +52,87 @@ Followers can still:
 - use copy, search, hints, overlays, and the sidebar
 - request layout control
 
-Use the `g` command key to take or request control. With `[session].allow_takeover = true`, the
-default, control transfers immediately. When it is false, the controller receives a request and can
-grant it with the `e` command key or through **Collaborators**.
+Press `Ctrl+A`, then `g` to take or request control. With `[session] allow_takeover = true`, the
+default, control moves immediately. When it is `false`, the controller receives a request and can
+grant it with `Ctrl+A`, then `e`, or through [Collaborators](#collaborators).
 
-The current controller can change the running session's takeover policy with **Toggle immediate
-control takeover**. The config value sets the initial policy for new servers and does not rewrite a
-server that is already running.
+The controller can change the running session's policy with **Toggle immediate control takeover**.
+`allow_takeover` only sets the policy for newly started session servers; it does not change one
+that is already running.
 
-A client that moves the session into the background gives up control. If the controller disconnects,
-the oldest active writable follower becomes controller. Parked and read-only clients are skipped.
+A client that switches the session to the background gives up control. If the controller
+disconnects, the writable client that has been attached longest becomes controller. Background and
+read-only clients are skipped.
 
 ## Watching a drag
 
-While the controller drags a pane, attached clients lift the same pane out of the tiling and follow
-each drag update live. A client that attaches mid-gesture starts following with the next update. The
-tiles it vacates reflow on every screen, and the carried pane is drawn in the color of the `FOLLOW`
-badge so it reads as someone else's gesture rather than a pane moving on its own.
+While the controller drags a pane, other clients lift the same pane out of the tiling and follow
+the drag live. A client that attaches during the drag starts following at the next update. The
+tiles the pane leaves reflow on every screen, and the dragged pane is drawn in the `FOLLOW` badge
+color to show that someone else is moving it.
 
-A drag is not part of the shared layout. It is never saved into a profile, never restored with a
-session, and disappears if the controller disconnects mid-gesture — the pane falls back into the
-last committed layout.
+A drag in progress is not part of the shared layout. It is never saved into a profile or restored
+with a session. If the controller disconnects mid-drag, the pane returns to the last committed
+layout.
 
-Followers animate layout changes with their own settings: a new layout arrives as a destination and
-each client eases toward it locally. A pane being dragged is the exception and tracks the controller
-directly, since easing would leave it trailing the pointer.
+Each follower animates layout changes with its own animation settings. A dragged pane is the
+exception: it tracks the controller's pointer directly.
 
 ## Terminal size
 
-The controller's content area determines the shared PTY size. Followers display that canvas inside
-their own available area. A larger follower viewport has unused space, and a smaller one clips.
+The controller's content area sets the terminal size for every pane in the session. Followers show
+that area inside their own window: a larger window leaves unused space, and a smaller one cuts off
+the edges.
 
-Showing or hiding the controller's sidebar changes the shared content width and resizes PTYs.
-Changing a follower's sidebar is local and does not resize the session.
+Showing or hiding the controller's sidebar changes the shared width and resizes every pane. A
+follower's sidebar is local and does not resize anything.
 
-Transferring control makes the new controller's size authoritative. Full-screen programs may
-reflow when this happens.
+When control moves, the new controller's size applies. Full-screen programs may redraw for the new
+size.
 
-Dragging a pane does not resize any PTY. The tiles reflow on screen for the length of the gesture,
-but the programs inside them keep their grid until the pane lands, so a drag across a workspace
-costs one reflow per affected pane instead of one per frame.
+Dragging a pane does not resize the programs in it. The tiles reflow on screen during the drag, but
+each affected pane is resized once, when the pane lands.
 
 ## Input control
 
-By default, writable followers may type even though they cannot edit the layout. The controller can
-enable **Input lock** to restrict terminal input to the controller. The lock follows the layout
-control role when control transfers.
+By default, writable followers can type even though they cannot change the layout. The controller
+can turn on **Input lock** so that only the controller can type into panes. The lock moves with
+layout control.
 
-For a viewer who should never type or control layout, attach with:
+For a viewer who should never type or change the layout, attach read-only:
 
 ```bash
 rozi sessions attach dev --read-only
 ```
 
-A read-only client cannot send terminal input, request or receive layout control, commit layouts, or
-stop the server.
+A read-only client cannot send terminal input, request or receive layout control, change the layout,
+or stop the session.
 
-Pane synchronization is separate from collaboration. It copies one client's terminal input across
-eligible panes in the active workspace. See
-[Layouts and panes](layouts-and-panes.md#pane-synchronization).
+Pane synchronization is a separate feature: it copies one client's typing to several panes in the
+active workspace. See [Layouts and panes](layouts-and-panes.md#pane-synchronization).
 
 ## Collaborators
 
-Open **Collaborators** from the command palette when another client is attached. Type to
-filter the roster.
+Open **Collaborators** from the command palette (`Ctrl+A`, then `p`) when another client is
+attached. Type to filter the list.
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Give layout control to the selected writable active client |
+| `Enter` | Give layout control to the selected writable client |
 | `Ctrl+D` | Decline the selected control request |
 | `Ctrl+K` twice | Remove the selected client |
-| `Esc` | Close the roster |
+| `Esc` | Close the list |
 
-Only the writable controller can remove another client. Removal disconnects that client and tells it
-who removed it. It does not kill the session or its panes. The removed client does not reconnect to
-that session automatically.
+Only the controller can remove another client. Removal disconnects that client and tells it who
+removed it; the session and its panes keep running. The removed client does not reconnect to that
+session on its own.
 
-If the server does not support a collaboration action, Rozi leaves that action unavailable. Update
-the clients and server together when sharing across installations with different Rozi versions.
+Actions the session server does not support are unavailable. When sharing between installations
+with different rozi versions, update the clients and the server together.
 
 ## What is and is not shared
 
-The server owns and shares:
+The server shares:
 
 - pane processes, output, runtime status, and names
 - workspace membership, order, names, and layout kinds
@@ -144,20 +144,23 @@ sidebar, overlays, and notifications. Scratch panes and popups are not part of t
 
 ## Security and caveats
 
-Local session endpoints are private to the operating-system user. Remote sharing uses SSH and the
-remote user's private session endpoint. Rozi does not open a network session port.
+Local sessions are reachable only by the operating-system user who owns them. Remote sharing goes
+through SSH to the remote user's private sessions. rozi opens no network port for sessions.
 
-Anyone who can attach as a writable client can type into panes. Unless input lock is enabled, this
-includes followers. A writable follower can also stop the session even when another client controls
-the layout. Use a separate operating-system account or SSH access policy when collaborators should
-not have that authority.
+Anyone who can attach as a writable client can type into panes, including followers unless input
+lock is on. A writable follower can also stop the session, even when another client controls the
+layout and even with input lock on. When collaborators should not have that authority, give them a
+separate operating-system account or restrict their SSH access.
 
-Immediate takeover is convenient when all clients belong to one person. Disable it for cooperative
-sharing, since taking control changes the canonical terminal size and can reflow another person's
-full-screen program.
+Immediate takeover suits sessions where every client is yours. Turn it off when sharing with other
+people: taking control changes the terminal size and can make another person's full-screen program
+redraw.
 
-A client that stops responding is disconnected so it cannot keep layout control or block session
-traffic. A client that is responding but cannot keep up with a pane's output stays attached. Rozi
-skips the output it has fallen behind on and redraws that pane from the session's current screen
-once the client catches up. Other clients are not affected. Live named sessions continue while at least the server remains running. See
-[Sessions](sessions.md) for detach and resurrection, and [Remote sessions](remote.md) for SSH setup.
+A client that stops responding is disconnected so it cannot hold layout control or block the
+session. A client that responds but cannot keep up with a pane's output stays attached: rozi skips
+the output it fell behind on and redraws the pane from its current screen when the client catches
+up. Other clients are not affected.
+
+A named session keeps running as long as its server does, whether or not clients are attached. See
+[Sessions](sessions.md) for detaching and resurrection, and [Remote sessions](remote.md) for SSH
+setup.

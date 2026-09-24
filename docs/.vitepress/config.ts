@@ -7,7 +7,7 @@ import { repoLinksPlugin } from "./repoLinks";
 const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
 /** What the landing page calls itself, in a tab and when shared. */
-const LANDING_TITLE = "rozi - a tiling terminal multiplexer";
+const LANDING_TITLE = "rozi — a tiling terminal multiplexer";
 
 /**
  * Read from the manifest rather than written down here. The version used to be
@@ -105,7 +105,7 @@ const ROZI_FACTS = (() => {
 export default defineConfig({
   title: "rozi",
   description:
-    "A tiling terminal multiplexer with self-arranging panes, named sessions, and live config reload on Linux, macOS, and Windows.",
+    "A tiling terminal multiplexer: panes that arrange themselves, sessions that keep running, and remote machines over SSH. For Linux, macOS, and Windows.",
   cleanUrls: true,
   lastUpdated: true,
   appearance: "force-dark",
@@ -136,7 +136,7 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "Split your terminal into panes, arrange them automatically, and pick up where you left off.",
+          "Your terminals, tiled like a window manager. Panes arrange themselves, sessions keep running, and everything changes live.",
       },
     ],
     // Decide whether the landing intro plays before the browser paints, so the
@@ -218,6 +218,7 @@ export default defineConfig({
           { text: "Installation", link: "/installation" },
           { text: "Core concepts", link: "/core-concepts" },
           { text: "Platform support", link: "/platform-support" },
+          { text: "Troubleshooting", link: "/troubleshooting" },
           { text: "Feature map", link: "/features" },
         ],
       },
@@ -227,6 +228,7 @@ export default defineConfig({
         items: [
           { text: "Panes and layouts", link: "/layouts-and-panes" },
           { text: "Sessions", link: "/sessions" },
+          { text: "Worktrees", link: "/worktrees" },
           { text: "Keybindings", link: "/keybindings" },
           { text: "Terminal features", link: "/terminal" },
           { text: "Sidebar", link: "/sidebar" },
@@ -241,6 +243,7 @@ export default defineConfig({
         text: "Customize",
         collapsed: false,
         items: [
+          { text: "Customize rozi", link: "/customize" },
           { text: "Configuration reference", link: "/configuration" },
           { text: "Profiles", link: "/profiles" },
           { text: "Agent definitions", link: "/agents" },
@@ -277,15 +280,8 @@ export default defineConfig({
           },
           { text: "Extension testing", link: "/extension-testing" },
           { text: "Release process", link: "/release-process" },
-          { text: "Benchmark guide", link: "/benchmarks" },
+          { text: "Benchmarks and profiling", link: "/benchmarks" },
           { text: "Performance audit archive", link: "/performance/" },
-          { text: "Terminal history storage investigation", link: "/performance/audits/2026-09-10" },
-          { text: "Dense viewport and compact history", link: "/performance/audits/2026-09-13" },
-          { text: "Batched history compaction", link: "/performance/audits/2026-09-14" },
-          { text: "Render-oriented history reads", link: "/performance/audits/2026-09-14-render" },
-          { text: "Dense span-assembly profiling", link: "/performance/audits/2026-09-14-span" },
-          { text: "Attr-keyed terminal spans", link: "/performance/audits/2026-09-14-attr" },
-          { text: "Compact history ingest decision", link: "/performance/audits/2026-09-14-ingest" },
           { text: "Performance audit playbook", link: "/performance/audit-playbook" },
         ],
       },

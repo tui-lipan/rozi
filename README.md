@@ -5,7 +5,7 @@
 <h1 align="center">rozi</h1>
 
 <p align="center">
-  A modern terminal workspace for local, remote, and agent-driven development.
+  A tiling terminal multiplexer. Your terminals, tiled like a window manager.
 </p>
 
 <p align="center">
@@ -20,15 +20,14 @@
   <img src="assets/demo.gif" alt="A rozi session opening, splitting, resizing, and arranging terminal panes" width="860">
 </p>
 
-rozi is a terminal multiplexer that tiles terminals like a window manager, keeps named sessions
-alive after you detach, and connects to sessions on other machines over SSH. It tracks coding-agent
-activity without treating agents differently from shells, editors, monitors, or any other terminal
-program. Its CLI, hooks, and extensions automate the same session runtime used by the interactive
-client.
+rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other
+machines over SSH, and shows which coding agents need you. You can change any of it live, from
+inside rozi: themes, pane frames, layouts, and keys preview as you browse and save to one config
+file. Everything you can do interactively, you can also script from the CLI, hooks, and extensions.
 
 | Tiling workspace | Persistent sessions | Remote machines |
 | --- | --- | --- |
-| Dwindle, master, grid, scrolling, floating, and fullscreen layouts | Live processes and scrollback survive detach | Attach to saved hosts through SSH |
+| Seven tiling layouts, plus floating and fullscreen panes | Live processes and scrollback survive detach | Attach to saved hosts through SSH |
 | **Agent activity** | **Shared sessions** | **Automation and extensions** |
 | See which coding agents are working or need input | Follow another client or take layout control | Inspect, control, and extend rozi from the CLI |
 
@@ -60,12 +59,13 @@ replaced every night, and no install or update path selects them.
 
 ## First five minutes
 
-Run `rozi`. The session picker opens without creating or attaching to a session.
+Run `rozi`. The session picker opens; nothing starts until you choose.
 
-For a shell you can discard, press `Enter` or `Ctrl+T`. For work you want to return to, type a
-session name such as `dev` and press `Ctrl+N`.
+For work you want to return to, type a session name such as `dev` and press `Ctrl+N`. For a
+throwaway shell, press `Enter` while the list is empty, or `Ctrl+T` once it shows sessions.
 
-The default prefix is `Ctrl+A`. Press it, release it, then press the command key:
+Most commands start with the prefix, `Ctrl+A` by default. Press it, release it, then press the
+command key:
 
 | Keys | Action |
 | --- | --- |
@@ -83,15 +83,16 @@ rozi sessions attach dev
 
 ## Documentation
 
-- [Overview](docs/overview.md)
-- [Getting started](docs/getting-started.md)
-- [Feature map](docs/features.md)
-- [Core concepts](docs/core-concepts.md)
-- [Keybindings](docs/keybindings.md)
-- [Configuration](docs/configuration.md)
-- [Platform support](docs/platform-support.md)
+The full documentation is at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev). Good places to
+start:
 
-The [documentation index](docs/index.md) links to every guide.
+- [Getting started](docs/getting-started.md) — a guided first session
+- [Core concepts](docs/core-concepts.md) — sessions, panes, workspaces, and profiles
+- [Feature map](docs/features.md) — what rozi can do, grouped by task
+- [Keybindings](docs/keybindings.md) — the default keys
+- [Configuration](docs/configuration.md) — the `config.toml` reference
+
+The [documentation overview](docs/overview.md) lists every guide.
 
 ## Platforms
 

@@ -1,0 +1,82 @@
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+name = "code"
+layout = "dwindle"
+focused_pane = 0
+
+[workspaces.tree]
+kind = "split"
+axis = "horizontal"
+ratio = 0.55
+
+[workspaces.tree.first]
+kind = "split"
+axis = "vertical"
+ratio = 0.68
+
+[workspaces.tree.first.first]
+kind = "leaf"
+pane = 0
+
+[workspaces.tree.first.second]
+kind = "leaf"
+pane = 3
+
+[workspaces.tree.second]
+kind = "split"
+axis = "vertical"
+ratio = 0.44
+
+[workspaces.tree.second.first]
+kind = "leaf"
+pane = 1
+
+[workspaces.tree.second.second]
+kind = "leaf"
+pane = 2
+
+[[workspaces.panes]]
+id = 0
+name = "editor"
+cwd = "~/src/rozi"
+argv = ["nvim", "src/layout/mod.rs"]
+
+[[workspaces.panes]]
+id = 1
+name = "git"
+cwd = "~/src/rozi"
+argv = ["lazygit"]
+
+[[workspaces.panes]]
+id = 2
+name = "system"
+cwd = "~/src/rozi"
+argv = ["btop"]
+
+[[workspaces.panes]]
+id = 3
+name = "shell"
+cwd = "~/src/rozi"
+command = "git --no-pager log --oneline --color -14 --format='%C(yellow)%h%C(reset) %s'"
+
+[[workspaces]]
+index = 1
+name = "docs"
+layout = "columns"
+
+[[workspaces.panes]]
+id = 10
+name = "shell"
+cwd = "~/src/rozi"
+
+[[workspaces]]
+index = 2
+name = "notes"
+
+[[workspaces.panes]]
+id = 20
+name = "shell"
+cwd = "~/src/rozi"

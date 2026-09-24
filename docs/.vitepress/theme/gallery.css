@@ -1,0 +1,310 @@
+/* ── Screenshot galleries ─────────────────────────────────────────────
+   `CaptureGallery.vue`: a rozi window framed like the app it shows, with
+   tabs for variants or numbered steps for a flow. Every image in a gallery
+   is stacked in one stage and crossfaded, so switching a theme swaps the
+   picture in place instead of reflowing the page under the reader. */
+
+.vp-doc .rz-gallery {
+    margin: 28px 0 32px;
+}
+
+.rz-gallery-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.rz-gallery-tab {
+    padding: 5px 12px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--vp-c-text-2);
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 999px;
+    cursor: pointer;
+    transition:
+        color 0.15s,
+        border-color 0.15s,
+        background-color 0.15s;
+}
+.rz-gallery-tab:hover {
+    color: var(--vp-c-text-1);
+    border-color: var(--vp-c-border);
+}
+.rz-gallery-tab.active {
+    color: #fff;
+    background: var(--rozi-gradient);
+    border-color: transparent;
+}
+.rz-gallery-tab:focus-visible,
+.rz-gallery-step:focus-visible,
+.rz-gallery-zoom:focus-visible,
+.rz-gallery-stage:focus-visible {
+    outline: 2px solid var(--vp-c-brand-1);
+    outline-offset: 2px;
+}
+
+/* The window. A 1px gradient ring via a padded background, so the border
+   carries the brand hue without an image or a pseudo-element per corner. */
+.rz-gallery-window {
+    position: relative;
+    padding: 1px;
+    border-radius: 10px;
+    background: linear-gradient(
+        160deg,
+        color-mix(in srgb, #fd4a80 55%, transparent),
+        color-mix(in srgb, #982bf2 35%, transparent) 55%,
+        var(--vp-c-divider)
+    );
+    box-shadow:
+        0 24px 60px -24px color-mix(in srgb, #982bf2 45%, transparent),
+        0 10px 30px -18px color-mix(in srgb, #fd4a80 40%, transparent);
+}
+.rz-gallery-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 34px;
+    padding: 0 10px 0 14px;
+    background: #0b0d1c;
+    border-radius: 9px 9px 0 0;
+    border-bottom: 1px solid #1b1e36;
+}
+.rz-gallery-dots {
+    display: flex;
+    gap: 7px;
+}
+.rz-gallery-dots i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #2a2d48;
+}
+.rz-gallery-title {
+    flex: 1;
+    overflow: hidden;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-text-3);
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rz-gallery-zoom {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    color: var(--vp-c-text-3);
+    background: none;
+    border: none;
+    border-radius: 6px;
+    cursor: zoom-in;
+    transition:
+        color 0.15s,
+        background-color 0.15s;
+}
+.rz-gallery-zoom:hover {
+    color: var(--vp-c-text-1);
+    background: var(--vp-c-bg-soft);
+}
+.rz-gallery-zoom svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.rz-gallery-stage {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    background: #06070f;
+    border: none;
+    border-radius: 0 0 9px 9px;
+    cursor: zoom-in;
+}
+/* The first image sizes the stage; the rest stack on top of it. */
+.rz-gallery .rz-gallery-stage img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    object-fit: cover;
+    object-position: top left;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+.rz-gallery .rz-gallery-stage img:first-child {
+    position: relative;
+    height: auto;
+    aspect-ratio: auto 16 / 9;
+}
+.rz-gallery .rz-gallery-stage img.active {
+    opacity: 1;
+}
+
+/* Steps: a numbered track under the frame. The active step carries a
+   progress bar while autoplay runs, so the reader can see it will move. */
+.rz-gallery .rz-gallery-steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+}
+.rz-gallery .rz-gallery-steps li {
+    margin: 0;
+}
+.rz-gallery-step {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 100%;
+    padding: 9px 12px;
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--vp-c-text-2);
+    text-align: left;
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 8px;
+    cursor: pointer;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+.rz-gallery-step:hover {
+    color: var(--vp-c-text-1);
+    border-color: var(--vp-c-border);
+}
+.rz-gallery-step.active {
+    color: var(--vp-c-text-1);
+    border-color: color-mix(in srgb, var(--vp-c-brand-1) 60%, transparent);
+}
+.rz-gallery-step-num {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--vp-c-text-3);
+    border: 1px solid var(--vp-c-border);
+    border-radius: 50%;
+}
+.rz-gallery-step.done .rz-gallery-step-num {
+    color: var(--vp-c-text-2);
+    border-color: var(--vp-c-text-3);
+}
+.rz-gallery-step.active .rz-gallery-step-num {
+    color: #fff;
+    background: var(--rozi-gradient);
+    border-color: transparent;
+}
+.rz-gallery-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    width: 100%;
+    background: var(--rozi-gradient);
+    transform-origin: left;
+    animation: rz-gallery-progress linear forwards;
+}
+@keyframes rz-gallery-progress {
+    from {
+        transform: scaleX(0);
+    }
+    to {
+        transform: scaleX(1);
+    }
+}
+
+.rz-gallery-caption {
+    margin-top: 12px;
+}
+.rz-gallery .rz-gallery-caption p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--vp-c-text-2);
+}
+.rz-gallery .rz-gallery-caption pre {
+    margin: 10px 0 0;
+    padding: 12px 16px;
+    overflow-x: auto;
+    background: var(--vp-code-block-bg);
+    border: 1px solid var(--vp-c-divider);
+    border-radius: 8px;
+}
+.rz-gallery .rz-gallery-caption code {
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--vp-c-text-2);
+    background: none;
+    white-space: pre;
+}
+
+/* Full size. The dialog is the page's top layer, so the image can use the
+   whole viewport without fighting the sidebar or the nav for z-index. */
+.rz-gallery-dialog {
+    max-width: none;
+    max-height: none;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 3vmin;
+    background: transparent;
+    border: none;
+}
+.rz-gallery-dialog[open] {
+    display: grid;
+    place-items: center;
+}
+.rz-gallery-dialog::backdrop {
+    background: rgba(4, 5, 12, 0.88);
+    backdrop-filter: blur(4px);
+}
+.rz-gallery-dialog img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 8px;
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8);
+    cursor: zoom-out;
+}
+.rz-gallery-close {
+    position: fixed;
+    top: 16px;
+    right: 18px;
+    padding: 4px 10px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 12px;
+    color: var(--vp-c-text-2);
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--vp-c-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rz-gallery .rz-gallery-stage img {
+        transition: none;
+    }
+}

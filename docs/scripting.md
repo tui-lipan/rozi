@@ -1,66 +1,38 @@
 # Scripting
 
-Rozi's CLI is the portable automation interface. It handles Unix sockets and Windows named pipes,
-so scripts should not open `ROZI_SOCKET` themselves.
+rozi can be driven from a shell script: open panes, type into them, read what they print, ask the
+user to pick something, and report progress. This page walks through the most common tasks. The
+[Control CLI](control.md) reference lists every command and option.
 
-Inside a Rozi pane, hook, service, or extension process:
+## Before you start
 
-- `ROZI_BIN` is the matching running Rozi executable.
-- `ROZI_SOCKET` identifies the current UI endpoint.
-- `ROZI_PANE` identifies the calling pane when one exists.
+Every task on this page uses the `rozi` command. It finds the right rozi for you, on every
+platform, so a script never needs to open a socket or pipe itself.
 
-Use the injected binary when available:
+Inside a rozi pane — and in hooks, services, and extension processes — rozi sets a few environment
+variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `ROZI_BIN` | The path of the running `rozi` executable. |
+| `ROZI_SOCKET` | How to reach the rozi window this pane belongs to. The CLI reads it for you. |
+| `ROZI_PANE` | The id of the pane the script runs in, when there is one. |
+
+Prefer `ROZI_BIN` so the script uses the same version of rozi that is running:
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
 "$ROZI_CMD" list-panes --format json
 ```
 
-The CLI discovers the endpoint from `ROZI_SOCKET`. Outside Rozi, pass one explicitly with
-`--socket PATH`, or let the CLI use the only live endpoint in the runtime directory.
+Outside rozi, the CLI uses the only running rozi window. If several are running, choose one with
+`--socket PATH`. To drive a session without any window open, see
+[Drive a session with no window](#drive-a-session-with-no-window).
 
-A script does not need a UI at all. `--session <NAME>` sends the same commands straight to a named
-session server, so a detached session can be inspected and driven from a cron job, a hook on
-another machine's CI, or an SSH login that never starts a terminal:
+Commands print readable tables in a terminal and JSON when piped, so `jq` works on their output.
+Pass `--format json` to be explicit.
 
-```sh
-rozi --session dev list-panes --format json
-rozi --session dev send-keys --target 3 'cargo test' Enter
-```
-
-The commands that need a screen — `focus`, `run-action`, `notify`, `pick`, `subscribe`, workspace
-switching — say so instead of running. `ROZI_PANE` is not used as a default target there either: it
-is a bare pane id, and `--session` names a different pane namespace than the caller is sitting in.
-Pass `--target` (a pane in its own session passes `--target "$ROZI_PANE"`). See
-[Control CLI](control.md#two-endpoints).
-
-Human-readable CLI help and reports use Rozi's palette when written to a terminal.
-Redirected output stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable CLI styling;
-`CLICOLOR_FORCE` enables it for a consumer that renders ANSI color from a pipe. JSON,
-publish/subscribe streams, and version output never include styling. The one-shot detach summary
-uses the same palette when Rozi restores the terminal.
-
-## Copyable tasks
-
-### Run an action
-
-```sh
-ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" run-action toggle-sidebar
-```
-
-`run-action` accepts built-in action IDs, configured `[[commands]]` IDs, and extension command IDs.
-
-### Open a process without shell parsing
-
-```sh
-ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" split --workspace 9 --title Tests --focus --argv cargo test -- --nocapture
-```
-
-Place pane options before `--argv`. Everything after it is the executable and its arguments.
-
-### Send text to a pane
+## Send a command to a pane
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
@@ -69,43 +41,47 @@ pane=$("$ROZI_CMD" list-panes --format json | jq -r '.data[0].id')
 "$ROZI_CMD" send-keys --target "$pane" Enter
 ```
 
-Use `send-text` for literal text and `send-keys` for named keys such as `Enter`, `C-c`, and `F2`.
+`send-text` types literal text. `send-keys` sends named keys such as `Enter`, `C-c`, and `F2`, and
+can mix them with text: `send-keys --target "$pane" 'cargo test' Enter`.
 
-### Find where panes are
+## Open a pane that runs a program
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" layout get --format json |
-  jq -r '.data.workspaces[] | .index as $ws | .panes[] |
-    "\($ws) \(.id) \(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"'
+"$ROZI_CMD" split --workspace 9 --title Tests --focus --argv cargo test -- --nocapture
 ```
 
-`rect` is the pane's position on the session's shared canvas. It is the same from a UI and from
-`--session`. See [Layout](control.md#layout) for the full report.
+Put pane options such as `--title` and `--workspace` before `--argv`. Everything after `--argv` is
+the program and its arguments, passed as-is without a shell. To run a shell command line instead,
+pass it as one argument: `split 'cargo test | tee log'`.
 
-### Read a detached session's screen
+The reply includes the new pane's id, so a script can keep driving it:
 
 ```sh
-rozi --session dev capture-pane --target 3 --scrollback full --format text
+pane=$("$ROZI_CMD" split --argv bash | jq -r '.data.id')
 ```
 
-Nothing needs to be attached. The text comes from the session server's own terminal, which is the
-same screen a client would draw.
-
-To see colors and layout rather than text, capture an image of the visible screen:
+## Read a pane's output
 
 ```sh
-rozi --session dev capture-pane --target 3 --render png --output pane.png
+ROZI_CMD=${ROZI_BIN:-rozi}
+"$ROZI_CMD" capture-pane --target 3 --scrollback full --format text
 ```
 
-`--render ansi` keeps the colors as terminal escape sequences instead; see
-[`capture-pane`](control.md#sending-keys-and-capturing-output) for both.
+Without `--scrollback`, you get only what is visible. To keep colors and layout, capture an image
+or ANSI text of the visible screen:
 
-With a UI running, `rozi capture-ui --render png --output ui.png` captures the whole screen as it
-is drawn: the bar, borders, overlays, and every visible pane. See
+```sh
+"$ROZI_CMD" capture-pane --target 3 --render png --output pane.png
+"$ROZI_CMD" capture-pane --target 3 --render ansi --format text | less -R
+```
+
+`rozi capture-ui --render png --output ui.png` captures the whole window as drawn: the bar,
+borders, overlays, and every visible pane. See
+[Sending keys and capturing output](control.md#sending-keys-and-capturing-output) and
 [Capturing the whole UI](control.md#capturing-the-whole-ui).
 
-### Pick and switch a branch
+## Ask the user to pick something
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
@@ -114,19 +90,14 @@ branch=$(git branch --format='%(refname:short)' | "$ROZI_CMD" pick --title Branc
 git switch -- "$branch"
 ```
 
-Picker cancellation exits with status `1`. The script treats cancellation as a normal stop.
+`pick` shows each input line in a picker and prints the chosen one. If the user presses `Esc`, it
+exits with status `1`, which this script treats as a normal stop. For richer rows, see
+[Pickers](control.md#pickers).
 
-### Watch events
+## Report progress
 
-```sh
-ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" subscribe pane-exited pane-status-changed |
-  jq -r 'select(.event == "pane-exited") | "pane \(.data.pane) exited \(.data.code)"'
-```
-
-Event fields are under `data`.
-
-### Report work state
+Mark the pane as working, done, or blocked while a job runs. rozi shows the state on the pane and
+in the sidebar.
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
@@ -135,14 +106,54 @@ if cargo test; then
   "$ROZI_CMD" status done --reason "tests passed"
 else
   "$ROZI_CMD" status blocked --reason "tests failed"
+  "$ROZI_CMD" notify "tests failed" --title Tests --level error
 fi
 ```
 
-Clear the report with:
+`notify` shows a toast, which is useful when the pane is off screen. Clear the status with
+`"${ROZI_BIN:-rozi}" status --clear`.
+
+## React to events
 
 ```sh
-"${ROZI_BIN:-rozi}" status --clear
+ROZI_CMD=${ROZI_BIN:-rozi}
+"$ROZI_CMD" subscribe pane-exited pane-status-changed |
+  jq -r 'select(.event == "pane-exited") | "pane \(.data.pane) exited \(.data.code)"'
 ```
 
-Use [Automation recipes](recipes.md) for longer tasks, [Control CLI](control.md) for every command,
-and [Control protocol](control-protocol.md) when writing a client that cannot invoke the CLI.
+`subscribe` prints one JSON object per event until rozi exits. Event fields are under `data`; see
+[Hooks](hooks.md#events-and-fields) for every event. To run a command on an event without keeping a
+script alive, use a [hook](hooks.md) instead.
+
+## Drive a session with no window
+
+`--session <NAME>` sends a command straight to a named session, even when no rozi window is
+attached to it. A cron job or an SSH login can inspect and drive a detached session:
+
+```sh
+rozi --session dev list-panes
+rozi --session dev send-keys --target 3 'cargo test' Enter
+rozi --session dev capture-pane --target 3 --scrollback full --format text
+```
+
+With `--session`, always name the pane with `--target`; the script's own `ROZI_PANE` belongs to a
+different session. A pane addressing its own session passes `--target "$ROZI_PANE"`. Commands that
+need a screen — `focus`, `run-action`, `notify`, `pick`, `subscribe`, and switching workspaces —
+say so instead of running. Add `--remote <HOST>` to reach a session on another machine. See
+[Two endpoints](control.md#two-endpoints).
+
+## Other things you can script
+
+- Run any command-palette action: `rozi run-action toggle-sidebar`. Configured `[[commands]]` IDs
+  and extension command IDs work too.
+- Read where every pane sits, or rearrange them, with `rozi layout get` and `rozi pane set`; see
+  [Layout](control.md#layout).
+- Wait for a coding agent to finish, or prompt it safely; see
+  [Inspect and wait for agents](agents.md#inspect-and-wait-for-agents).
+
+## Next steps
+
+- [Automation recipes](recipes.md) — longer, complete scripts.
+- [Hooks](hooks.md) — run commands when something happens.
+- [Control CLI](control.md) — every command, option, and error.
+- [Control protocol](control-protocol.md) — for a client that cannot run the `rozi` command.

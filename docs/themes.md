@@ -1,7 +1,13 @@
 # Themes
 
-Open **Settings**, choose **Theme**, and select a theme. Rozi previews the highlighted theme.
-Selecting it writes `[theme].name` to `config.toml`.
+A theme sets the colors of rozi's interface and the ANSI palette that programs in panes use. This
+page covers choosing a built-in theme, following the host terminal's colors, and writing your own
+theme file.
+
+## Choose a built-in theme
+
+Open **Settings**, choose **Theme**, and select a theme. rozi previews the highlighted theme as you
+move through the list. Selecting one writes `[theme].name` to `config.toml`.
 
 You can also set it directly:
 
@@ -10,9 +16,16 @@ You can also set it directly:
 name = "tokyo-night"
 ```
 
-The active theme controls Rozi's interface and the ANSI palette used by pane terminals.
+<CaptureGallery title="~/src/rozi — dev">
+<img src="./assets/captures/workspace.webp" alt="A rozi workspace in the default rozi theme with Neovim, lazygit, btop, and a shell" data-label="rozi" data-code='[theme]\nname = "rozi"'>
+<img src="./assets/captures/theme-catppuccin-mocha.webp" alt="The same workspace in the Catppuccin Mocha theme" data-label="catppuccin-mocha" data-code='[theme]\nname = "catppuccin-mocha"'>
+<img src="./assets/captures/theme-tokyo-night.webp" alt="The same workspace in the Tokyo Night theme" data-label="tokyo-night" data-code='[theme]\nname = "tokyo-night"'>
+<img src="./assets/captures/theme-gruvbox-dark.webp" alt="The same workspace in the Gruvbox Dark theme" data-label="gruvbox-dark" data-code='[theme]\nname = "gruvbox-dark"'>
+<img src="./assets/captures/theme-nord.webp" alt="The same workspace in the Nord theme" data-label="nord" data-code='[theme]\nname = "nord"'>
+<img src="./assets/captures/theme-rose-pine-dawn.webp" alt="The same workspace in the light Rose Pine Dawn theme" data-label="rose-pine-dawn" data-code='[theme]\nname = "rose-pine-dawn"'>
+</CaptureGallery>
 
-## Choose a built-in theme
+Programs in panes that use the 16 ANSI colors, as most do, follow the theme too.
 
 | Id | Label |
 | --- | --- |
@@ -47,30 +60,33 @@ The active theme controls Rozi's interface and the ANSI palette used by pane ter
 | `oxocarbon` | Oxocarbon |
 | `zenburn` | Zenburn |
 
-Theme ids are case-insensitive. Underscores and spaces normalize to hyphens. Common compact aliases
-such as `onedark`, `tokyonight`, `gruvbox`, `catppuccin`, and `solarized` are accepted.
+Built-in theme ids are case-insensitive, and underscores and spaces count as hyphens. Common short
+forms such as `onedark`, `tokyonight`, `gruvbox`, `catppuccin`, and `solarized` also work.
 
-`ansi` is a valid config value but is not shown in the picker.
+`ansi` is a valid config value that uses the host terminal's ANSI colors. It is not shown in the
+picker.
+
+An unknown theme name falls back to `rozi` with a warning.
 
 ## Use the host terminal colors
 
-Set `name = "system"` to derive the theme from the host terminal's foreground, background, and ANSI
-colors. If the terminal cannot answer the color query, Rozi uses ANSI colors for that run and warns.
-It keeps `system` configured and tries again next launch.
+Set `name = "system"` to build the theme from the host terminal's foreground, background, and ANSI
+colors. If the terminal does not answer rozi's color query, rozi warns and uses `ansi` for that
+run. `system` stays configured, and rozi tries again at the next launch.
 
-Use **Panes › Background › Follows terminal** in Settings, or:
+To keep your chosen theme but use the host terminal's background behind panes, turn on
+**Panes › Background › Follows terminal** in Settings, or set:
 
 ```toml
 [pane]
 background_follows_terminal = true
 ```
 
-This keeps the chosen theme but replaces its backdrop with the host terminal's reported background.
-Rozi monitors the host colors while it runs. Changing the host terminal theme updates the
-foreground, background, and all 16 ANSI colors without restarting Rozi.
+rozi watches the host terminal's colors while it runs. When you change the host terminal's theme,
+the foreground, background, and all 16 ANSI colors update without restarting rozi.
 
-Use **Background follows canvas** in Settings. Off, the sidebar keeps the elevated panel fill; on,
-it uses that canvas backdrop:
+The sidebar normally uses the theme's raised element color. To give it the same backdrop as the
+panes instead, turn on **Bars › Sidebar › Background follows canvas** in Settings, or set:
 
 ```toml
 [sidebar]
@@ -79,44 +95,48 @@ background_follows_canvas = true
 
 ## Create a custom theme
 
-Place a TOML file in `~/.config/rozi/themes/`. The filename is the theme id:
+1. Create a TOML file in the `themes` directory inside your config directory:
+   `~/.config/rozi/themes/` (or `$XDG_CONFIG_HOME/rozi/themes/`) on Linux and macOS, and
+   `%APPDATA%\rozi\themes\` on Windows. The filename without `.toml` is the theme id.
+2. Pick a starting theme with `extends`, and override only what you want to change:
 
-```toml
-# ~/.config/rozi/themes/my-nord.toml
-extends = "nord"
+   ```toml
+   # ~/.config/rozi/themes/my-nord.toml
+   extends = "nord"
 
-[accent]
-fg = "#ff79c6"
+   [accent]
+   fg = "#ff79c6"
 
-[status]
-success = "#50fa7b"
-error = "#ff5555"
-```
+   [status]
+   success = "#50fa7b"
+   error = "#ff5555"
+   ```
 
-Then select `my-nord`. A custom file shadows a built-in theme or the reserved `system` name with the
-same id.
+3. Select `my-nord` in **Settings › Theme**, or set `name = "my-nord"` under `[theme]`.
 
-`extends` is optional. Without it, the file starts from `lipan`. It accepts every preset in the
-table except Rozi's app-specific `rozi` theme, plus `ansi` and `lipan`. It does not accept
-`system`. Matching ignores case, hyphens, underscores, and spaces.
+A custom file with the same id as a built-in theme, or named `system`, replaces it.
 
-Rozi watches the active custom file and reloads it after changes. Parse errors produce a warning and
-use `lipan` until the file is fixed. Built-in and system themes do not have a file to reload.
+`extends` is optional; without it, the theme starts from `lipan`. It accepts every built-in theme
+except `rozi`, plus `ansi`. It does not accept `system`. Matching ignores case, hyphens,
+underscores, and spaces.
+
+While a custom theme is active, rozi reloads it whenever the file changes. If the file has a parse
+error, rozi warns and uses `lipan` until you fix it.
 
 ## Theme file reference
 
-A custom theme is a partial overlay. Omitted fields keep their value from `extends`.
+A custom theme lists only the fields it changes. Every omitted field keeps its value from
+`extends`.
 
 ### Top-level fields
 
 The style tables are `primary`, `accent`, `selection`, `text_selection`, `focus`, `hover`, `border`,
-and `muted`.
+and `muted`. Each accepts the [style fields](#style-fields) below.
 
-`primary` is ordinary text. `accent` is focus, active state, and highlights. Headers, directory
-names, and section titles use Rozi's chrome color. Built-in themes, custom themes, and the system
-theme set that chrome color from `accent`, so those surfaces keep the accent color.
+`primary` is ordinary text. `accent` covers focus, active state, and highlights. Headers, directory
+names, and section titles also use the `accent` color.
 
-Other top-level fields are:
+The other top-level fields are:
 
 | Field | Shape |
 | --- | --- |
@@ -150,23 +170,24 @@ Every style table accepts:
 - `dim_amount` from `0.0` to `1.0`
 - `tint = { color = "…", alpha = 0.0 }`
 
-`fg`, `bg`, and `underline_color` accept solid colors and alpha paint. Palette fields such as
-`status.error` accept solid colors.
+`fg`, `bg`, and `underline_color` accept solid colors and colors with alpha. Palette fields such as
+`status.error` accept solid colors only.
 
 ### Color values
 
-Solid colors accept:
+Solid colors can be written as:
 
 - hex, such as `"#82aaff"`
 - ANSI names, such as `"cyan"` or `"darkgray"`
 - `indexed(0)` through `indexed(255)`
 - `rgb(r,g,b)` with channels from 0 to 255
 
-Style paint fields also accept `"#RRGGBBAA"` and `rgba(r,g,b,a)`. Alpha may be an integer from 0 to
-255 or a decimal from `0.0` to `1.0`.
+Style color fields also accept `"#RRGGBBAA"` and `rgba(r,g,b,a)`. Alpha is an integer from 0 to 255
+or a decimal from `0.0` to `1.0`.
 
-Set `surface.backdrop = "backdrop"` in one custom theme to use the host terminal background for
-that theme only:
+### Use the host background in one theme
+
+Set `surface.backdrop = "backdrop"` to use the host terminal's background in this theme only:
 
 ```toml
 extends = "nord"
@@ -175,30 +196,32 @@ extends = "nord"
 backdrop = "backdrop"
 ```
 
-If no host background is available, Rozi uses the theme's panel color.
+If the host background is not available, rozi uses the theme's panel color.
 
 ## Terminal colors
 
-Rozi applies the active theme's terminal palette to new and existing panes when a theme changes.
-The `ansi` and `system` choices use the host terminal palette more directly. Custom status, accent,
-and related palette colors also affect terminal ANSI colors and pane alerts.
+When you change themes, rozi applies the new theme's terminal palette to existing panes as well as
+new ones. `ansi` and `system` pass the host terminal's palette through more directly. In a custom
+theme, the status, accent, and related palette colors also change the pane's ANSI colors and pane
+alerts.
 
 ## Command output colors
 
-Inside a Rozi pane, `rozi --help`, the tables that commands such as `rozi list-panes` print, and
-the progress rows of `rozi update` and extension installs follow the theme of whichever client
-shows the pane. Headings, spinners, and the filled part of a download meter use the theme's accent.
-The first column of a table uses the accent at reduced intensity. Muted text and the success,
-warning, and error colors use the theme's own colors. Clients with different themes each see the
-same output in their own colors. Output already on screen changes when you switch themes.
+When you run rozi's own commands inside a rozi pane, their output follows the theme of the client
+that shows the pane. This covers `rozi --help`, the tables printed by commands such as
+`rozi list-panes`, and the progress rows of `rozi update` and extension installs.
 
-The accent in command output is the terminal palette's accent color, which Rozi derives slightly
-lighter than the interface accent.
+- Headings, spinners, and the filled part of a download meter use the accent. The terminal
+  palette's accent is slightly lighter than the interface accent.
+- The first column of a table uses a dimmer accent.
+- Muted text and the success, warning, and error colors use the theme's own colors.
 
-Outside Rozi, the terminal has its own theme, so these commands use the Rozi palette. The
-message Rozi prints when you detach from a session is part of Rozi's own interface, so it uses your
-active theme's chrome and muted colors. That chrome color matches `accent`. `NO_COLOR` and the
-other color switches turn styling off in every case.
+Clients with different themes each see the same output in their own colors, and output already on
+screen changes color when you switch themes.
 
-See [Terminal features](terminal.md) for clipboard, title, image, and scrollback behavior that is
-independent of the selected theme.
+Outside rozi, these commands use the default `rozi` palette, since the host terminal has its own
+theme. The message printed when you detach from a session uses your active theme's accent and muted
+colors. `NO_COLOR` and the other color switches turn styling off everywhere.
+
+See [Terminal features](terminal.md) for clipboard, title, image, and scrollback behavior, which does
+not depend on the theme.

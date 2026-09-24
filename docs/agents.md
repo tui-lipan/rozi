@@ -1,10 +1,24 @@
 # Agent definitions
 
-Rozi detects coding-agent CLIs in panes and shows their state in the sidebar's
-[Activity tab](sidebar.md#activity) and in the [Agents view](sessions.md#go-to-an-agent), which adds
-the agents in other local sessions and on every connected host. Add a `[[agents]]` entry when Rozi
-does not recognize a tool, or override a built-in entry when its screen rules do not match the
-installed version.
+rozi recognizes coding-agent CLIs running in panes and shows whether each one is working, blocked,
+done, or idle. This page covers adding or overriding an agent definition, the full rule reference,
+and the `rozi agents` commands for scripts.
+
+## What agent detection shows
+
+Detected agents appear in the sidebar's [Activity tab](sidebar.md#activity) and in the
+[Agents view](sessions.md#go-to-an-agent), which also lists agents in your other local sessions and
+on connected hosts.
+
+rozi ships definitions for common agent CLIs in
+[`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Add an `[[agents]]` entry
+to `config.toml` when rozi does not recognize a tool, or override a built-in when its screen rules do
+not match the version you run.
+
+Detection runs in the session server, so every client attached to a session sees the same agent
+label and state.
+
+## Add an agent
 
 Start with a process match:
 
@@ -15,42 +29,10 @@ label = "My Cool Agent"
 match = { names = ["mca"], paths = ["@acme/mca"] }
 ```
 
-This is enough to list the process as an agent. Add state rules only when its screen has stable text
-that distinguishes working, blocked, idle, or unknown views.
-
-## Match the process
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `id` | yes | Lowercase letters, digits, `-`, and `_`. |
-| `label` | no | Display name. Defaults to `id`. |
-| `base` | no | Use Rozi's common state rules. Defaults to `true`. |
-| `match.names` | one match field | Executable basenames. |
-| `match.paths` | one match field | Substrings found in executable paths or argument tokens. |
-| `states` | no | Screen or title rules. |
-| `resume.argv` | no | Native resume argv; `{session}` must be one whole element. |
-
-Names are matched without a directory, without case, and without these launcher suffixes:
-`.exe`, `.cmd`, `.bat`, `.ps1`, `.js`, `.mjs`, and `.py`.
-
-Use `paths` for tools launched through Node, Python, a package manager, or another generic
-executable. Path matching lowercases the value and normalizes backslashes to slashes:
-
-```toml
-match = {
-  names = ["mca", "mycoolagent"],
-  paths = ["@acme/mca"]
-}
-```
-
-Rozi inspects the foreground process group and unwraps common shell, language-runtime, and package
-launchers. Set `ROZI_AGENT` or `HERDR_AGENT` in the pane environment to provide an explicit name
-hint when the launcher cannot otherwise be identified.
-
-At least one name or path is required for a new definition. An override of an existing built-in id
-may omit `match` to retain that built-in's process match while replacing its label or state rules.
-
-## Add state rules
+This is enough to list the process as an agent. rozi's [common state rules](#common-rules) then
+detect typical approval prompts, spinners, and interrupt hints. Add your own state rules only when
+the tool's screen has stable text that shows it is working, blocked, idle, or in a view that hides
+its state:
 
 ```toml
 [[agents.states]]
@@ -66,16 +48,90 @@ screen = {
 }
 ```
 
-Each rule accepts:
+## Override a built-in agent
+
+Give your entry the same `id` as a built-in to replace that built-in. You can omit `match` to keep
+the built-in's process match while replacing its label or state rules. The override also keeps the
+built-in's [native resume](#declare-native-resume-support) setting unless you set `resume`.
+
+## Test a definition
+
+1. Save `config.toml`. rozi [reloads it](configuration.md#reloading) and re-runs detection.
+2. Check which definition matched:
+
+   ```bash
+   rozi list-panes --format json
+   ```
+
+   The `agent` field names the matched definition. `agent_state` reports screen detection, separate
+   from any status the program publishes itself.
+3. Capture the actual screen and title before writing a rule:
+
+   ```bash
+   rozi capture-pane --target 3 --format json
+   ```
+
+Match text that belongs to the tool's live controls, not text that can also appear in its
+transcript. Footer scope is usually safer for live status text.
+
+rozi reports config warnings for invalid ids, definitions without a process match, unknown states,
+empty pattern groups, invalid regular expressions, rules that set both `screen` and `title`, and
+invalid `scope` or `resume` values. An invalid rule is dropped and the rest of the definition still
+loads. An invalid definition is dropped as a whole.
+
+In a [shared session](shared-sessions.md), only the controlling client's reload updates the running
+server. After rebuilding rozi with changed built-in definitions, restart long-lived session servers
+to pick them up.
+
+## Match the process
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Lowercase letters, digits, `-`, and `_`. |
+| `label` | no | Display name. Defaults to `id`. |
+| `base` | no | Apply rozi's [common rules](#common-rules). Defaults to `true`. |
+| `match.names` | one match field | Executable basenames. |
+| `match.paths` | one match field | Substrings of executable paths or argument tokens. |
+| `states` | no | Screen or title rules. |
+| `resume.argv` | no | Native resume command; see [Declare native resume support](#declare-native-resume-support). |
+
+A new definition needs at least one name or path. Only an override of a built-in may omit `match`.
+A second definition with the same `id` in the same file is ignored.
+
+Names are compared without a directory, without case, and without these launcher suffixes: `.exe`,
+`.cmd`, `.bat`, `.ps1`, `.js`, `.mjs`, and `.py`.
+
+Use `paths` for tools launched through Node, Python, a package manager, or another generic
+executable. Paths are compared in lowercase, with backslashes treated as slashes:
+
+```toml
+match = {
+  names = ["mca", "mycoolagent"],
+  paths = ["@acme/mca"]
+}
+```
+
+rozi inspects the pane's foreground process and looks through common shell, language-runtime, and
+package launchers. If the launcher still hides the tool, set `ROZI_AGENT` (or `HERDR_AGENT`) in the
+pane's environment to the agent's name.
+
+## Add state rules
+
+Each `[[agents.states]]` rule accepts:
 
 | Field | Values |
 | --- | --- |
 | `state` | `blocked`, `working`, `idle`, or `unknown` |
-| `scope` | `all`, the default, or `footer` for screen rules |
+| `scope` | `all`, the default, or `footer`; screen rules only |
 | `screen` | Pattern group matched against visible terminal text |
 | `title` | Pattern group matched against the terminal title |
 
 Set exactly one of `screen` or `title`.
+
+`scope = "footer"` reads only the last eight non-empty lines of the screen. Use it for spinners,
+interrupt hints, and prompt controls that may also appear in transcript text. An unrecognized
+`scope` value falls back to `all` with a warning, and `scope` on a `title` rule is ignored with a
+warning.
 
 A pattern group accepts:
 
@@ -86,61 +142,80 @@ A pattern group accepts:
 | `none_of` | No listed pattern may match. |
 | `regex` | Treat all patterns in this group as regex-lite expressions. Defaults to `false`. |
 
-At least one `all_of` or `any_of` pattern is required. A group containing only `none_of` is
-rejected because it would match unrelated screens that merely lack a string.
+A group needs at least one `all_of` or `any_of` pattern. A group with only `none_of` is rejected,
+because it would match any unrelated screen that lacks the text. Empty patterns are rejected.
 
-Matching ignores case. Write literal patterns as the tool displays them. Regex patterns also run
-against lowercased text, so they do not need a case-insensitive flag.
+Matching ignores case, so write literal patterns as the tool displays them. Regex patterns run
+against lowercased text and do not need a case-insensitive flag.
 
-`scope = "footer"` reads the last eight non-empty screen lines. Use it for spinners, interrupt
-hints, and prompt controls that may also appear in transcript text. It does not apply to title
-rules.
+## State precedence
 
-## Understand state precedence
-
-When several rules match, Rozi uses this order:
+When several rules match, the first state in this order wins:
 
 ```text
 unknown, blocked, working, idle
 ```
 
-Declaration order does not change that precedence. A blocked approval prompt wins over a working
-spinner on the same screen.
+Declaration order does not matter. For example, an approval prompt (`blocked`) wins over a spinner
+(`working`) on the same screen. If no rule matches, the agent is idle.
 
-`unknown` means the current view does not reveal the run state. Rozi keeps the prior observed state
-instead of reporting idle. Use it for a navigator, help page, or subagent view that hides the
-tool's normal status area. A held state eventually returns to idle if no confirming evidence appears.
+`unknown` means the current view does not show the run state, such as a navigator, help page, or
+subagent view that hides the tool's usual status area. rozi keeps the last observed state instead of
+reporting idle. If nothing confirms that state for a while, it eventually returns to idle.
 
-If no rule matches, the detected agent is idle.
+### Common rules
 
-With `base = true`, Rozi also applies common rules for approval text, yes/no questions, trust
-prompts, choice dialogs, braille spinners, and interrupt hints. These common blocked rules share the
-same precedence as your own rules. Set `base = false` when the tool's transcript routinely quotes
-that text and creates false states, then define the needed working and blocked rules explicitly.
+With `base = true`, rozi also applies common rules for approval text, yes/no questions, trust
+prompts, choice dialogs, braille spinners, and interrupt hints. They follow the same precedence as
+your own rules, so adding a `working` rule does not override a common `blocked` rule.
 
-## Override and extension behavior
+Set `base = false` when the tool's transcript often quotes that kind of text and causes false
+states. Then define the working and blocked rules the tool needs yourself.
 
-Definitions are loaded in this order:
+## Load order and extensions
+
+Definitions are consulted in this order:
 
 1. `config.toml` entries
 2. extension entries
 3. built-in entries
 
-A `config.toml` definition with a built-in id replaces that built-in. A config definition with a new
-id can claim a process before a built-in definition does.
+A `config.toml` entry with a built-in's id replaces that built-in. An entry with a new id is checked
+before the built-ins, so it can claim a process that a built-in would also match.
 
-Extension agent ids are namespaced as `<extension>.<id>`. An extension cannot replace a built-in.
-Extension definitions use the same fields in `extension.toml`. See
-[Extensions](extensions.md).
+Extensions declare agents in `extension.toml` with the same fields. Their ids become
+`<extension>.<id>`, so an extension cannot replace a built-in. See [Extensions](extensions.md).
 
-Detection runs in the session server. All clients attached to one session therefore see the same
-agent label and state. Reloading config re-runs detection, but only the controlling client's reload
-updates a shared running server. Restart a long-lived server after rebuilding Rozi with changed
-built-in definitions.
+## Declare native resume support
+
+An agent that reports a native session (with `rozi agents report --native-session`) can declare how
+[resurrection](sessions.md#reopen-an-agent-conversation) reopens that conversation:
+
+```toml
+[[agents]]
+id = "mycoolagent"
+match = { names = ["mca"] }
+
+[agents.resume]
+argv = ["mca", "--resume", "{session}"]
+```
+
+`argv` must not be empty or contain empty strings. `{session}` must appear exactly once, as a whole
+argument, and not as the program. rozi puts the session reference directly into the argument list
+without a shell, so spaces and shell characters in it stay literal. An invalid `resume` is ignored
+with a warning, and the agent's detection rules still work.
+
+An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
+`resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.
+
+A snapshot stores only which agent and which conversation — never the command. rozi reads `argv`
+from the definition loaded when the session is restored, so changing `argv` also changes how
+existing snapshots reopen. See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore
+does.
 
 ## Inspect and wait for agents
 
-The `agents` commands expose the same effective state used by the sidebar:
+The `rozi agents` commands use the same state as the sidebar:
 
 ```bash
 rozi --session dev agents list
@@ -150,25 +225,32 @@ rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
 rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 ```
 
-`rozi agents --help` lists every subcommand and flag, including the integration `report` and
-`release` commands that `rozi --help` keeps under `--advanced`. A help flag anywhere after `agents`
-prints that help instead of running the command, so it is never submitted as prompt text.
+`rozi agents --help` lists every subcommand and flag, including `report` and `release`, which
+`rozi --help` shows only with `--advanced`. A help flag anywhere after `agents` prints help instead
+of running the command, so it is never sent as prompt text.
 
-`list` and `get` include an opaque `ref` in JSON output. Numeric pane ids are convenient for
-interactive use; automation can pass that exact object back with `--ref '<json>'` to fence the
-operation to one agent incarnation.
+Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. `list` and
+`get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
+the agent, so a replacement started in the same pane does not receive it.
 
-Wait predicates are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`.
-The wait is registered atomically inside the named session server, so it works while no UI is
-attached and cannot miss a transition between reading the agent and subscribing. Failures
-distinguish a gone agent, a replacement incarnation, a stale server reference, and a timeout.
-Use `--format json` for the stable response and error-code contract.
+### Wait for a state
 
-`agents prompt` resolves one exact incarnation, validates its state, installs any requested
-completion observation, and submits the text plus Enter as one server operation. A blocked agent is
-never typed into. A working agent is also refused unless `--allow-working` is explicit. This avoids
-typing into approval dialogs and closes the race where a fast run could finish between separate
-send and wait requests.
+`agents wait` and `agents prompt` need `--session`, because they run in the session server. That
+lets a wait work while no client is attached, without missing a change that happens between reading
+the agent and starting to wait.
+
+Wait states are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`. Errors
+distinguish a gone agent, a replacement agent, a stale reference, and a timeout. Use
+`--format json` for stable responses and error codes.
+
+### Send a prompt safely
+
+`agents prompt` checks the agent's state, sets up any `--wait`, and submits the text followed by
+`Enter` as one operation, so a fast run cannot finish unobserved between sending and waiting. It
+never types into a blocked agent, which could answer an approval dialog. It also refuses a working
+agent unless you pass `--allow-working`.
+
+### Report state from agent hooks
 
 Agent hooks can report state that screen detection cannot see:
 
@@ -180,77 +262,24 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   --integration "$AGENT_RUN_ID" --seq 2
 ```
 
-The caller generates one unique `--integration` token per agent process. Sequence numbers increase
-within that token. A released token cannot claim the pane again, so delayed hooks from an old
-process fail with `conflict` even after a replacement starts its own sequence at 1. `--agent` binds
-the claim to the currently detected agent incarnation.
+- Generate one unique `--integration` token per agent process. Sequence numbers increase within a
+  token.
+- A released token cannot claim the pane again. Late hooks from an old process fail with `conflict`,
+  even after a new process starts its own sequence at 1.
+- `--agent` ties the report to the agent currently detected in the pane.
+- A live report overrides screen detection and clears older published rows. Releasing it returns
+  the pane to screen detection or rows published later.
 
-Against a UI endpoint, an omitted `--target` uses the calling pane's `ROZI_PANE`. With
-`--session`, pass `--target` explicitly because an inherited pane number belongs to another session
-namespace. A live integration report has authority over screen detection and clears older published
-rows. Releasing it returns the pane to current detection or subsequently published rows.
+Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
+(`ROZI_PANE`). With `--session`, always pass `--target`, because an inherited pane number may belong
+to a different session.
 
 ## Publish state instead of reading the screen
 
-Screen matching only sees the view currently drawn in one terminal. It cannot reliably represent a
-program with several hidden tabs, parent and child agents, or state kept only in an API.
+Screen matching only sees what one terminal is currently drawing. It cannot reliably follow a
+program with several hidden tabs, parent and child agents, or state that exists only in an API.
 
-Use `rozi status` for one pane-level state or `rozi publish` for several activity rows. While a
-pane publishes rows, Rozi uses those values instead of screen detection. A published row can also
-bring its corresponding in-program activity into view when selected.
-
-See [Control](control.md#published-activity) for fields and lifecycle.
-
-## Declare native resume support
-
-An agent that reports `--native-session` can declare how resurrection resumes that opaque session:
-
-```toml
-[[agents]]
-id = "mycoolagent"
-match = { names = ["mca"] }
-
-[agents.resume]
-argv = ["mca", "--resume", "{session}"]
-```
-
-`{session}` must appear exactly once and occupy the entire argument. Rozi substitutes it directly
-into the argument vector; it never builds a shell command, so spaces and shell metacharacters in an
-opaque reference remain data. Invalid resume declarations are ignored with a config warning while
-the agent's detection rules continue to work.
-
-An override of a built-in agent inherits its resume capability when `resume` is omitted. Set
-`resume = false` on the `[[agents]]` entry to disable native resume for that override.
-
-A snapshot stores only the fact - this agent, this conversation reference - never the command. The
-argv is resolved from the definition loaded when the session is restored, so changing `argv` here
-also changes how an existing snapshot reopens. See
-[Sessions](sessions.md#reopen-an-agent-conversation) for what restore does with it.
-
-## Test a definition
-
-Save the config file and inspect:
-
-```bash
-rozi list-panes --format json
-```
-
-The `agent` field reports the matched definition. `agent_state` reports screen detection separately
-from status published by the program.
-
-Capture the actual screen and title before writing a rule:
-
-```bash
-rozi capture-pane --target 3 --format json
-```
-
-Use text that belongs to the tool's current controls, not content that can appear in its transcript.
-Footer scope is usually safer for live status text.
-
-Config warnings explain invalid ids, missing process matches, unknown states, empty pattern groups,
-invalid regular expressions, and rules that set both `screen` and `title`. An invalid rule is
-discarded without removing the rest of the definition. An invalid definition is dropped as a whole.
-
-The built-in definitions are in
-[`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Use them as examples, but
-verify patterns against the version of the agent CLI you run.
+For those programs, use `rozi status` to report one state for the pane, or `rozi publish` for
+several activity rows. While a pane publishes rows, rozi shows them instead of screen detection.
+Selecting a published row can also bring that activity into view inside the program. See
+[Control](control.md#published-activity) for fields and lifecycle.

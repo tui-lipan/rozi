@@ -1,83 +1,92 @@
 # Core concepts
 
-## Client and session server
+This page explains the handful of terms the rest of the documentation relies on: sessions, clients,
+panes, workspaces, layouts, and profiles.
 
-The rozi interface is a client. A session server owns the PTYs and processes inside panes. This
-separation lets a named session continue when a client closes or detaches.
+## Sessions and clients
 
-A client does not need to be attached to a session. By default, a bare `rozi` opens the session
-picker without creating a session. If you dismiss the picker, the launcher remains open with no
-session attached.
+A **session** is where your terminals live. It runs as a background server that owns every program
+in its panes. The rozi window you look at is a **client**: it displays a session and sends your
+keystrokes to it.
+
+Because the two are separate, closing the client does not stop a named session. Your shells,
+editors, and builds keep running, and you can attach to them again later, from the same terminal or
+another one.
+
+A client does not have to show a session. A bare `rozi` opens the session picker without starting
+anything. If you dismiss the picker, rozi stays open with no session attached until you choose one.
 
 ## Panes, workspaces, and layouts
 
-A pane is one terminal backed by a PTY. New panes split the focused pane unless you ask for a
-floating pane.
+A **pane** is one terminal. Opening a new pane splits the focused one, unless you ask for a floating
+pane.
 
-A workspace is a group of panes. Each of the nine workspaces has its own layout and can have a
-name. Moving to another workspace changes what the client displays, not which session it is
-attached to.
+A **workspace** is a group of panes, like a virtual desktop. Each session has nine workspaces, each
+with its own layout and an optional name. Switching workspaces changes what you see, not which
+session you are in.
 
-A layout decides how tiled panes share the workspace. Layout changes do not restart the programs
-inside panes. Floating and fullscreen are pane states layered on top of the tiled arrangement.
+A **layout** decides how tiled panes share a workspace, such as a spiral of splits or equal columns.
+Changing the layout never restarts the programs inside panes. Floating and fullscreen are states a
+single pane can take on top of the tiled arrangement.
 
-See [Layouts and panes](layouts-and-panes.md).
+See [Panes and layouts](layouts-and-panes.md).
 
 ## Named and temporary sessions
 
-A named session is the durable choice. It keeps running after the last client detaches and remains
-available until you kill it. Create one from the picker by typing a name and pressing `Ctrl+N`, or
-from a shell with:
+A **named session** is the durable choice. It keeps running after the last client detaches and
+stays available until you kill it. Create one from the picker by typing a name and pressing
+`Ctrl+N`, or from a shell:
 
 ```bash
 rozi sessions new dev
 ```
 
-Attach to an existing named session with:
+Attach to it again with:
 
 ```bash
 rozi sessions attach dev
 ```
 
-A temporary session has no durable user name. `Enter` or `Ctrl+T` in the startup picker creates
-one. After its last client leaves, it has a recovery window of about 45 seconds before its server
-stops. Do not use that window as storage for work you need to keep.
+A **temporary session** has no name you chose. Start one from the picker with `Enter` while the
+list is empty, or with `Ctrl+T` once it shows sessions. After its last client leaves, it waits about 45 seconds so a
+crashed client can reconnect, then stops. Do not rely on that window to keep work.
 
-See [Sessions](sessions.md) for naming, recovery, shared clients, and session shutdown.
+See [Sessions](sessions.md) for naming, recovery, and shutdown.
 
 ## Attach, detach, and kill
 
-Attaching connects a client to a running session. Detaching closes the client connection but does
-not stop a named session. The default detach binding is `Ctrl+A`, then `d`.
+- **Attaching** connects a client to a running session.
+- **Detaching** closes the client but leaves a named session running. The default key is `Ctrl+A`,
+  then `d`.
+- **Killing** a session stops it and every program in its panes.
 
-Killing a session stops its server and the processes in its panes. Detach when you plan to return.
-Kill only when the session is finished.
+Detach when you plan to return. Kill only when the work is finished.
 
 ## Sessions and profiles
 
-A session contains live processes. A profile is a reusable recipe for starting panes, commands,
+A session holds live programs. A **profile** is a reusable recipe for starting panes, commands,
 working directories, and layouts.
 
-Detaching and reattaching to a named session returns to the same running processes. Starting a
-profile creates new processes. Profiles are useful for repeatable setups, but they do not replace a
-live named session.
+Reattaching to a named session brings back the same running programs. Launching a profile starts
+new ones. Profiles make a setup repeatable, but they do not replace a live named session.
 
 See [Profiles](profiles.md).
 
-## Prefix and modifier controls
+## The prefix and the modifier
 
-The default prefix is `Ctrl+A`. Press it, release it, then press a command key. For example,
-`Ctrl+A`, then `Enter` opens another pane.
+Most commands start with the **prefix**, `Ctrl+A` by default: press it, release it, then press a
+**command key**. For example, `Ctrl+A`, then `Enter` opens another pane.
 
-Most default commands also have a direct `Alt` shortcut. Prefix mode is the portable control path
-and keeps ordinary typing available to the focused terminal. Both control paths can be rebound.
+Most command keys also work with a held modifier, `Alt` by default, so `Alt+Enter` does the same
+thing. The prefix works in every terminal and leaves ordinary typing to the focused program. Both
+can be rebound.
 
 See [Keybindings](keybindings.md).
 
-## Shared and local client state
+## Shared and per-client state
 
-When several clients attach to one session, they share the panes and layout. One client controls
-layout changes at a time. Each client still keeps its own focused pane, active workspace,
-scrollback position, overlays, sidebar, and theme.
+Several clients can attach to one session at once. They share the panes and the layout, and one
+client at a time controls layout changes. Each client keeps its own focused pane, active workspace,
+scroll position, open overlays, sidebar, and theme.
 
-See [Sessions](sessions.md#share-a-live-session).
+See [Shared sessions](shared-sessions.md).

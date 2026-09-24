@@ -1,15 +1,17 @@
 # Extension testing
 
-Local extension tests must run with an isolated home and isolated XDG directories. A disposable
-session name by itself is not isolation. Rozi can write config, data, state, cache, runtime files,
-and extension-owned files before the session is removed.
+This page shows how to test an extension, including the bundled examples, without touching your own
+`rozi` setup. Every test runs in an isolated lab: a temporary home and XDG directories that are
+removed afterwards.
 
-Do not copy unfinished extensions into your normal extension directory. Do not alter your normal
-SSH config, GitHub CLI config, or other user configuration for a test.
+A disposable session name alone is not isolation. `rozi` and extensions can write config, data,
+state, cache, runtime, and extension-owned files before the session is removed. Never copy
+unfinished extensions into your normal extension directory, and never change your normal SSH
+config, GitHub CLI config, or other user configuration for a test.
 
-## Create an isolated lab
+## Set up an isolated lab
 
-Build Rozi first, then run this setup from the repository root in a dedicated shell:
+From the repository root, in a dedicated shell, build `rozi` and run:
 
 ```sh
 cargo build
@@ -53,7 +55,9 @@ for extension in \
     docker \
     ssh-tools \
     agent-activity \
-    activity-dashboard
+    activity-dashboard \
+    snippets \
+    tasks
 do
     "$ROZI_BIN" extensions check "examples/extensions/$extension"
     "$ROZI_BIN" extensions install --link "examples/extensions/$extension"
@@ -63,20 +67,21 @@ done
 "$ROZI_BIN" sessions new "$ROZI_LAB_SESSION"
 ```
 
-Run the manual checks from panes in that UI. Detach when finished. The setup shell then kills the
-session and removes the whole lab. Its trap also runs after interruption.
+This opens a `rozi` UI inside the lab. Run the manual checks below from panes in that UI, then
+detach. The setup shell's trap kills the session and removes the whole lab, including after an
+interruption.
 
-Every local test command in this page assumes this environment. If you open another shell, export
-the same isolated `HOME`, all five XDG home/runtime variables, `TMPDIR`, and `ROZI_BIN` before
-running anything.
+Every command on this page assumes the lab environment. If you open another shell, first export the
+same `HOME`, all five XDG variables (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`,
+`XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`), `TMPDIR`, and `ROZI_BIN`.
 
-On Windows, use a fresh temporary directory and set `USERPROFILE`, `HOME`, `APPDATA`,
-`LOCALAPPDATA`, and Rozi's config, data, state, cache, and runtime locations to children of it.
-Remove the temporary tree and kill the test session in a `finally` block.
+On Windows, create a fresh temporary directory and point `USERPROFILE`, `HOME`, `APPDATA`,
+`LOCALAPPDATA`, and `rozi`'s config, data, state, cache, and runtime locations at children of it.
+Kill the test session and remove the temporary tree in a `finally` block.
 
-## Run non-interactive checks
+## Run the automated checks
 
-Validate every installed copy:
+Validate every installed extension:
 
 ```sh
 for extension in "$XDG_DATA_HOME/rozi/extensions"/*
@@ -94,12 +99,12 @@ do
 done
 ```
 
-These commands still require the lab environment. A test that currently appears not to use user
-directories may begin doing so later.
+Run these inside the lab too. A test that does not touch user directories today may start doing so
+later.
 
-## Test Git tools locally
+## Test Git tools
 
-This flow needs only Git and Python:
+This needs only Git and Python. Create a repository inside the lab:
 
 ```sh
 repo="$LAB/git repo"
@@ -110,7 +115,7 @@ git -C "$repo" commit --allow-empty -m initial
 cd "$repo"
 ```
 
-From that pane:
+From that pane, open the branch picker:
 
 ```sh
 "$ROZI_BIN" run-action git-tools.branches
@@ -118,25 +123,25 @@ From that pane:
 
 Check that:
 
-1. `Ctrl-N` creates a branch and refreshes the open picker.
-2. Enter switches to an eligible branch.
+1. `Ctrl+N` creates a branch and refreshes the open picker.
+2. `Enter` switches to an eligible branch.
 3. A dirty worktree disables branch switching.
-4. `Ctrl-D` requires a second press and uses non-forcing deletion.
-5. `r` refreshes without closing.
-6. Esc cancels without an error notification.
+4. `Ctrl+D` needs a second press and deletes without forcing.
+5. `r` refreshes without closing the picker.
+6. `Esc` cancels without an error notification.
 
-Then run:
+Then open the worktree picker:
 
 ```sh
 "$ROZI_BIN" run-action git-tools.worktrees
 ```
 
-Create a worktree, open it in a focused pane, make it dirty, and verify removal remains disabled
-until it is clean. All repositories and worktrees must stay below `$LAB`.
+Create a worktree, open it in a focused pane, make it dirty, and check that removal stays disabled
+until it is clean. Keep every repository and worktree below `$LAB`.
 
-## Test SSH discovery locally
+## Test SSH discovery
 
-Create an SSH fixture under the isolated home:
+Create an SSH config inside the lab home:
 
 ```sh
 mkdir -p "$HOME/.ssh/conf.d"
@@ -161,13 +166,13 @@ chmod 600 "$HOME/.ssh/config" "$HOME/.ssh/conf.d/extra.conf"
 "$ROZI_BIN" run-action ssh-tools.hosts
 ```
 
-Check that concrete aliases appear, wildcard entries do not, and editing the isolated include then
-pressing `r` refreshes the open picker. Do not select a row unless you intentionally want to start
-an SSH connection.
+Check that concrete aliases appear, wildcard entries do not, and that editing the included file and
+pressing `r` refreshes the open picker. Do not select a row unless you intend to start an SSH
+connection.
 
 ## Test pane status and activity
 
-No external account or service is needed:
+These need no external account or service:
 
 ```sh
 "$ROZI_BIN" status working --reason "run local checks"
@@ -177,8 +182,8 @@ No external account or service is needed:
 "$ROZI_BIN" run-action agent-activity.open
 ```
 
-Confirm that one stable row changes status, duplicate blocked status does not repeat its
-notification, activation focuses the owning pane, and clearing status withdraws the row.
+Check that one stable row changes status, a repeated blocked status does not repeat its
+notification, activating the row focuses the owning pane, and clearing status removes the row.
 
 For the activity dashboard:
 
@@ -188,56 +193,53 @@ For the activity dashboard:
 "$ROZI_BIN" status --clear
 ```
 
-Its state file is allowed only because the installed copy is inside `$LAB`. Reload and confirm the
-test-owned history survives its service restart.
+The dashboard keeps a history file, which is acceptable only because the installed copy is inside
+`$LAB`. Reload extensions and check that the history survives the service restart.
 
 ## Test reload and service cleanup
 
-Perform lifecycle edits only in the isolated installed copy:
+Make lifecycle edits only to the installed copy in the lab:
 
 ```sh
 manifest="$XDG_DATA_HOME/rozi/extensions/activity-dashboard/extension.toml"
 ```
 
-Check these cases:
+Check each case:
 
-1. Change a process-facing service field, reload, and confirm the old service and streams retire.
-2. Change only title, description, or version, reload, and confirm the service remains running.
-3. Add the extension ID to the isolated config's `[extensions].disabled`, reload, and confirm its
+1. Change a process-facing service field, reload, and confirm the old service and its streams stop.
+2. Change only `title`, `description`, or `version`, reload, and confirm the service keeps running.
+3. Add the extension ID to `[extensions] disabled` in the lab config, reload, and confirm its
    commands, service, picker, rows, and subscriptions disappear.
-4. Make the manifest invalid, reload, and confirm `extensions list --verbose` reports the error
-   without keeping the old generation active.
-5. Repair the manifest, validate it, reload, and confirm one service starts.
-6. Detach the only client and confirm client-side services stop.
+4. Make the manifest invalid, reload, and confirm `extensions list --verbose` reports the error and
+   the previously loaded version is no longer active.
+5. Repair the manifest, validate it, reload, and confirm exactly one service starts.
+6. Detach the only client and confirm its services stop.
 
-After interruption or failure, run the setup shell's `cleanup` function. Do not remove `$LAB`
-before stopping its client and session because services may still have files open.
+## Test GitHub integration (opt-in)
 
-## Opt-in GitHub integration
+This test contacts GitHub and may use API quota, so it is not part of the local pass.
 
-This test contacts GitHub and may consume API quota. It is not part of the local test pass.
-
-Use an explicit short-lived token in the isolated lab instead of copying or modifying normal
-GitHub CLI configuration:
+Use an explicit short-lived token in the lab rather than copying or modifying your normal GitHub CLI
+configuration:
 
 ```sh
 export GH_TOKEN
 gh auth status
 ```
 
-Open a pane inside a disposable clone below `$LAB`, focus away and back, then run:
+Open a pane in a disposable clone below `$LAB`, focus away and back, then run:
 
 ```sh
 "$ROZI_BIN" run-action pr-dashboard.open
 ```
 
-Compare the picker with `gh pr status --json …`. Verify refresh, browser actions, status
-transitions, and service retirement on detach. Unset `GH_TOKEN` when finished.
+Compare the picker with `gh pr status --json …`. Check refresh, browser actions, status transitions,
+and that the service stops on detach. Unset `GH_TOKEN` when finished.
 
-## Opt-in Docker integration
+## Test Docker integration (opt-in)
 
-This test creates containers in the configured Docker daemon. It is not part of the local test
-pass. Use unique names and add their cleanup to the lab trap before creating them:
+This test creates containers in the configured Docker daemon, so it is not part of the local pass.
+Use unique names, and add their cleanup to the lab trap before creating them:
 
 ```sh
 DOCKER_RUNNING="rozi-lab-running-$$"
@@ -256,7 +258,7 @@ docker create --name "$DOCKER_STOPPED" alpine sleep 600
 Check grouping, start, stop, restart, inspect, logs, and confirmed removal. Run `cleanup_docker`
 before leaving the lab, including after a failed check.
 
-## Visual checks
+## Check the visuals
 
 At narrow and wide terminal sizes, inspect:
 
@@ -264,9 +266,14 @@ At narrow and wide terminal sizes, inspect:
 - group order and disabled reasons
 - active, focused, and armed rows
 - action hints and prompt transitions
-- useful empty and error states
-- Activity title, status, reason, elapsed time, and activation
+- empty and error states that tell the user something useful
+- activity title, status, reason, elapsed time, and activation
 
-Close every picker, popup, and spawned pane before detaching. The outer trap remains responsible for
+## Clean up
+
+Close every picker, popup, and spawned pane, then detach. The setup shell's trap handles the rest:
 the session, supervised services, temporary repositories, installed test extensions, runtime files,
 and the lab directory.
+
+After an interruption or failure, run the setup shell's `cleanup` function. Do not remove `$LAB`
+before stopping its client and session, because services may still have files open.

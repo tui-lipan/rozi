@@ -1,0 +1,38 @@
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+name = "code"
+layout = "dwindle"
+focused_pane = 0
+
+[[workspaces.panes]]
+id = 0
+name = "editor"
+cwd = "~/src/rozi"
+argv = ["nvim", "src/layout/mod.rs"]
+
+[[workspaces.panes]]
+id = 1
+name = "log"
+cwd = "~/src/rozi"
+command = "git --no-pager log --oneline --color -30 --format='%C(yellow)%h%C(reset) %s'"
+
+[[workspaces.panes]]
+id = 2
+name = "tree"
+cwd = "~/src/rozi"
+command = "eza --tree --level 2 --icons=always --color=always src | head -40"
+
+[[workspaces.panes]]
+id = 3
+name = "docs"
+cwd = "~/src/rozi"
+command = "bat --style=plain --color=always --paging=never --theme=ansi docs/getting-started.md"
+
+[[workspaces.panes]]
+id = 4
+name = "shell"
+cwd = "~/src/rozi"
+command = "git status --short"

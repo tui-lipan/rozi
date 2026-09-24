@@ -31,6 +31,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// only there to let that answer win the race against the socket giving up on it.
 const WAIT_REPLY_SLACK: Duration = REQUEST_TIMEOUT;
 
+/// How long `record stop` may take to answer: the writer finishes what it has queued and syncs
+/// the file first, which a slow disk can stretch past an ordinary request's budget.
+const RECORDING_STOP_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Why a headless control request did not produce an answer.
 #[derive(Debug)]
 pub enum SessionControlError {
@@ -106,6 +110,10 @@ fn reply_timeout(command: &crate::control::ControlCommand) -> Option<Duration> {
     use crate::control::ControlCommand;
 
     let deadline_ms = match command {
+        // A foreground recording answers when it ends, which is whenever the caller stops it.
+        ControlCommand::RecordStart { follow: true, .. } => None,
+        // Answered once the file is finished: queued frames written and the file synced.
+        ControlCommand::RecordStop { .. } => return Some(RECORDING_STOP_TIMEOUT),
         ControlCommand::AgentWait { timeout_ms, .. } => *timeout_ms,
         ControlCommand::AgentPrompt {
             wait: Some(_),

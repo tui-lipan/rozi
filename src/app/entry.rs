@@ -137,6 +137,10 @@ pub fn run() -> Result<()> {
             cli::print_agents_help();
             return Ok(());
         }
+        cli::ParsedCli::RecordHelp => {
+            cli::print_record_help();
+            return Ok(());
+        }
         cli::ParsedCli::SkillHelp => {
             cli::print_skill_help();
             return Ok(());
@@ -172,6 +176,7 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
         cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
         cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),
+        cli::ParsedCli::Record(command) => return cli::run_record_cli(command),
         parsed => parsed,
     };
 
@@ -266,6 +271,8 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Publish(_)
         | cli::ParsedCli::Subscribe(_)
         | cli::ParsedCli::Pick(_)
+        | cli::ParsedCli::Record(_)
+        | cli::ParsedCli::RecordHelp
         | cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
         | cli::ParsedCli::ApiDescribe

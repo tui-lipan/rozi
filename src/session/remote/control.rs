@@ -168,8 +168,12 @@ pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
         .lock()
         .read_to_string(&mut payload)
         .map_err(|err| format!("could not read the control request: {err}"))?;
-    let request: ControlRequest = serde_json::from_str(payload.trim())
+    let mut request: ControlRequest = serde_json::from_str(payload.trim())
         .map_err(|err| format!("could not parse the control request: {err}"))?;
+    // A relative recording path means the directory this runner starts in: the remote login's.
+    if let Ok(cwd) = std::env::current_dir() {
+        request.command.resolve_output_against(&cwd);
+    }
     crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
 }
 

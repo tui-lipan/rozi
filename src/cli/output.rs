@@ -818,8 +818,108 @@ pub(super) fn format_control_text(
                 None => format!("{}\n", styles.paint("OK", OutputTone::Success)),
             }
         }
+        control::ControlCommand::RecordStart { follow: false, .. } => {
+            format_recording_started_text(data, styles)
+        }
+        control::ControlCommand::RecordStart { follow: true, .. }
+        | control::ControlCommand::RecordStop { .. } => format_recording_stopped_text(data, styles),
+        control::ControlCommand::RecordList => format_recordings_text(data, styles),
+        control::ControlCommand::RecordMark { .. } => {
+            let ids = data
+                .and_then(|data| data.get("ids"))
+                .and_then(serde_json::Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(serde_json::Value::as_u64)
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            format!("{} {ids}\n", styles.paint("Marked recording", OutputTone::Success))
+        }
         _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
     }
+}
+
+fn format_recording_started_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let Some(data) = data else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    format!(
+        "{}  pane {}  {}\n",
+        styles.paint(
+            &format!("Recording {}", value_u64(data, "id").unwrap_or_default()),
+            OutputTone::Accent
+        ),
+        value_u64(data, "pane").unwrap_or_default(),
+        value_string(data, "path").unwrap_or_default(),
+    )
+}
+
+fn format_recording_stopped_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let Some(data) = data else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    let reason = value_string(data, "reason").unwrap_or("stopped");
+    let dropped = value_u64(data, "dropped").unwrap_or_default();
+    let mut out = format!(
+        "{}  {}  {} frames  {}  {}{}\n",
+        styles.paint(
+            &format!("Recording {}", value_u64(data, "id").unwrap_or_default()),
+            OutputTone::Accent
+        ),
+        styles.paint(
+            reason,
+            if reason == "write-failed" {
+                OutputTone::Error
+            } else {
+                OutputTone::Success
+            }
+        ),
+        value_u64(data, "frames").unwrap_or_default(),
+        format_bytes(value_u64(data, "bytes").unwrap_or_default()),
+        value_string(data, "path").unwrap_or_default(),
+        if dropped > 0 {
+            styles.paint(&format!("  {dropped} dropped"), OutputTone::Warning)
+        } else {
+            String::new()
+        },
+    );
+    if let Some(error) = value_string(data, "error") {
+        out.push_str(&format!("{}\n", styles.paint(error, OutputTone::Error)));
+    }
+    out
+}
+
+fn format_recordings_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let rows = data
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return "No recordings found.\n".to_string();
+    }
+    let mut out = String::new();
+    for row in rows {
+        let seconds = value_u64(&row, "elapsed_ms").unwrap_or_default() / 1000;
+        out.push_str(&format!(
+            "{}  pane {}  {}  {} frames  {}  {}\n",
+            styles.paint(
+                &value_u64(&row, "id").unwrap_or_default().to_string(),
+                OutputTone::Key
+            ),
+            value_u64(&row, "pane").unwrap_or_default(),
+            styles.paint(
+                &format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60),
+                OutputTone::Muted
+            ),
+            value_u64(&row, "frames").unwrap_or_default(),
+            format_bytes(value_u64(&row, "bytes").unwrap_or_default()),
+            value_string(&row, "path").unwrap_or_default(),
+        ));
+    }
+    out
 }
 
 fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {

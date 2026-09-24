@@ -643,6 +643,20 @@ pub enum ControlCommand {
     },
 }
 
+impl ControlCommand {
+    /// Make a `record-start` path absolute against `base`, the directory it was typed in. The
+    /// session server takes only absolute paths, since its own working directory means nothing to
+    /// the caller.
+    pub fn resolve_output_against(&mut self, base: &Path) {
+        if let Self::RecordStart { output, .. } = self {
+            let path = Path::new(output.as_str());
+            if path.is_relative() {
+                *output = base.join(path).display().to_string();
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

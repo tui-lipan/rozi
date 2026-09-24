@@ -37,7 +37,7 @@ exclude = [
 
 [dependencies]
 # 0.13.0: terminal screen capture to styled ANSI and PNG, with font fallback and theme palettes.
-tui-lipan = { version = "0.15.0", features = [
+tui-lipan = { version = "0.16.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -717,6 +717,7 @@ mod tests {
         let ansi = std::array::from_fn(|i| Color::rgb(i as u8, 10 + i as u8, 20 + i as u8));
         HostTerminalColors {
             ansi,
+            ansi_reported: HostTerminalColors::ALL_ANSI_REPORTED,
             fg: Color::rgb(230, 231, 232),
             bg: Color::rgb(10, 11, 12),
         }

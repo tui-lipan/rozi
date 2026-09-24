@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
+use std::{io::BufRead, io::Write};
 
 use rozi::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
     SharedWorkspace,
 };
+use rozi::pane::launch::PaneLaunch;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, ControllerChangeReason, Frame, ServerMessage, WirePalette,
@@ -20,6 +22,30 @@ fn contains_output_line(output: &[u8], marker: &[u8]) -> bool {
     output
         .split(|byte| *byte == b'\r' || *byte == b'\n')
         .any(|line| line == marker)
+}
+
+#[test]
+fn interleaved_pane_child() {
+    if std::env::var_os("ROZI_TEST_INTERLEAVED_CHILD").is_none() {
+        return;
+    }
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+    for (input, output) in [
+        ("before", "rozi-interleaved-before"),
+        ("after", "rozi-interleaved-after"),
+    ] {
+        assert_eq!(
+            lines
+                .next()
+                .expect("pane input")
+                .expect("read pane input")
+                .trim_end_matches('\r'),
+            input
+        );
+        println!("{output}");
+        std::io::stdout().flush().expect("flush pane output");
+    }
 }
 
 #[test]
@@ -157,16 +183,24 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     let (mut follower, _) = attach_client(server.endpoint(), server.session(), "follower");
     let controller_id = attached_client_id(&attached);
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let test_binary = std::env::current_exe().expect("session test binary");
     controller.write_control(&ClientMessage::SpawnPane {
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
-        launch: None,
+        launch: Some(PaneLaunch::Direct {
+            argv: vec![
+                test_binary.to_string_lossy().into_owned(),
+                "--exact".to_string(),
+                "session_multi_client::interleaved_pane_child".to_string(),
+                "--nocapture".to_string(),
+            ],
+        }),
         cwd: None,
         cols: 80,
         rows: 24,
         keep_open: false,
-        env: Vec::new(),
+        env: vec![("ROZI_TEST_INTERLEAVED_CHILD".to_string(), "1".to_string())],
         title: Some("interleaved protocol test".to_string()),
         palette: WirePalette::from(TerminalColorPalette::default()),
         shell,
@@ -187,14 +221,13 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     });
 
     let first_marker = b"rozi-interleaved-before";
-    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"echo rozi-interleaved-before\r");
+    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"before\r");
     let mut first_output = Vec::new();
     read_until(&mut follower, |frame| {
         if let Frame::PaneBytes { bytes, .. } = frame {
             first_output.extend_from_slice(bytes);
         }
-        // The terminal can echo the typed command before the shell is ready to execute it.
-        // Wait for the command's output line before sending the next command.
+        // Only the helper emits this line, so echoed input cannot satisfy the wait.
         contains_output_line(&first_output, first_marker)
     });
 
@@ -203,7 +236,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         base_rev: 0,
         layout: layout.clone(),
     });
-    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"echo rozi-interleaved-after\r");
+    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"after\r");
 
     let second_marker = b"rozi-interleaved-after";
     let mut second_output = Vec::new();

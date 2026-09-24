@@ -1031,7 +1031,7 @@ body {
 .vp-doc :is(td, th) :not(pre) > code {
     white-space: normal;
     line-height: 1.95;
-    padding: 3px 6px;
+    padding: 1px 6px;
     color: #c9a8ff;
     background: #1e1834;
     border-color: transparent;

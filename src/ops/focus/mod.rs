@@ -671,8 +671,15 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
 /// the framework before the per-pane hover callback can run, so without this path on-hover focus
 /// would never fire over a full-screen TUI. Only tiled/floating panes in the active workspace
 /// participate; the scratchpad keeps its own focus lifecycle and must not hijack `focused_pane`.
-pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
-    if !ctx.state.config.pane.focus_on_hover {
+pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId, mods: KeyMods) -> Update {
+    if !ctx.state.config.pane.focus_on_hover
+        || ctx
+            .state
+            .config
+            .pane
+            .focus_on_hover_pause_modifier
+            .is_held(mods)
+    {
         return Update::none();
     }
     // Hover-focus is ambient: it follows the pointer with no intent behind it. While the app owns

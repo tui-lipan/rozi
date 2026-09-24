@@ -413,7 +413,7 @@ pub enum Msg {
     UserCommandFailed {
         message: String,
     },
-    HoverPane(PaneId),
+    HoverPane(PaneId, KeyMods),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),
     EndMove(PaneId, u16, u16),

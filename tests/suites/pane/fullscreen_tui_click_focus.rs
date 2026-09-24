@@ -4,11 +4,12 @@
 //! reconcile logical focus without also activating whatever the child drew under the pointer.
 
 use rozi::AppRoot;
+use rozi::config::HoverFocusPauseModifier;
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{Pane, PaneId};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus, MouseEvent, Rect};
+use tui_lipan::prelude::{FloatRect, KeyMods, ManagedTerminalStatus, MouseEvent, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -22,12 +23,11 @@ const CLICK_X: u16 = 75;
 const CLICK_Y: u16 = 15;
 
 fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
-    MouseEvent {
-        x,
-        y,
-        kind,
-        mods: Default::default(),
-    }
+    modified_mouse(x, y, kind, KeyMods::NONE)
+}
+
+fn modified_mouse(x: u16, y: u16, kind: MouseKind, mods: KeyMods) -> MouseEvent {
+    MouseEvent { x, y, kind, mods }
 }
 
 /// Two side-by-side panes, focus on the left, hover-focus off, and the right pane running a
@@ -159,6 +159,79 @@ fn hovering_a_mouse_tracking_pane_focuses_it_with_hover_focus_enabled() {
             backend.state().current().focused_pane,
             Some(11),
             "hover-focus must still reach a full-screen TUI pane"
+        );
+    });
+}
+
+#[test]
+fn shift_pauses_hover_but_still_allows_click_focus_on_a_tracking_pane() {
+    on_deep_stack(|| {
+        let mut backend = backend_with_tracking_pane_hover(true);
+        backend
+            .send_mouse(modified_mouse(
+                CLICK_X,
+                CLICK_Y,
+                MouseKind::Moved,
+                KeyMods::SHIFT,
+            ))
+            .expect("shift mouse move");
+        assert_eq!(backend.state().current().focused_pane, Some(10));
+
+        backend
+            .send_mouse(modified_mouse(
+                CLICK_X,
+                CLICK_Y,
+                MouseKind::Down(MouseButton::Left),
+                KeyMods::SHIFT,
+            ))
+            .expect("shift mouse down");
+        backend
+            .send_mouse(modified_mouse(
+                CLICK_X,
+                CLICK_Y,
+                MouseKind::Up(MouseButton::Left),
+                KeyMods::SHIFT,
+            ))
+            .expect("shift mouse up");
+        assert_eq!(backend.state().current().focused_pane, Some(11));
+        assert!(
+            !matches!(
+                backend.state().current().workspaces[0].panes[1]
+                    .terminal
+                    .status,
+                ManagedTerminalStatus::Error(_)
+            ),
+            "Shift keeps the gesture local instead of forwarding it to the disconnected child"
+        );
+    });
+}
+
+#[test]
+fn ctrl_pauses_hover_from_a_tracking_panes_forwarded_mouse_report() {
+    on_deep_stack(|| {
+        let mut backend = backend_with_tracking_pane_hover(true);
+        backend
+            .state_mut()
+            .config
+            .pane
+            .focus_on_hover_pause_modifier = HoverFocusPauseModifier::Ctrl;
+        backend
+            .send_mouse(modified_mouse(
+                CLICK_X,
+                CLICK_Y,
+                MouseKind::Moved,
+                KeyMods::CTRL,
+            ))
+            .expect("ctrl mouse move");
+        assert_eq!(backend.state().current().focused_pane, Some(10));
+        assert!(
+            matches!(
+                backend.state().current().workspaces[0].panes[1]
+                    .terminal
+                    .status,
+                ManagedTerminalStatus::Error(_)
+            ),
+            "the disconnected-child error proves the Ctrl report took the forwarded path"
         );
     });
 }

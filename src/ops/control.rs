@@ -98,7 +98,9 @@ pub(crate) fn handle_control_request(
         },
         ControlCommand::AgentRead { target, scrollback } => match resolve_agent(ctx, &target) {
             Ok(agent) => match validate_agent_input_reference(ctx, &agent.reference) {
-                Ok(()) => capture_pane(ctx, Some(agent.pane), scrollback, CaptureRender::Text),
+                Ok(()) => {
+                    capture_pane(ctx, Some(agent.pane), scrollback, CaptureRender::Text, None)
+                }
                 Err(response) => response,
             },
             Err(response) => response,
@@ -146,14 +148,21 @@ pub(crate) fn handle_control_request(
             target,
             scrollback,
             render,
+            scale,
         } => capture_pane(
             ctx,
             target.or(envelope.request.source_pane),
             scrollback,
             render,
+            scale,
         ),
-        ControlCommand::CaptureUi { render } => {
-            capture_ui(ctx, render, envelope.reply);
+        ControlCommand::CaptureUi { render, scale } => {
+            match crate::control::capture_scale(render, scale) {
+                Ok(scale) => capture_ui(ctx, (render, scale), envelope.reply),
+                Err(response) => {
+                    let _ = envelope.reply.send(response);
+                }
+            }
             return Update::none();
         }
         ControlCommand::Notify {
@@ -1265,6 +1274,7 @@ fn capture_pane(
     target: Option<PaneId>,
     scrollback: Option<CaptureScrollback>,
     render: CaptureRender,
+    scale: Option<u8>,
 ) -> ControlResponse {
     let Some(id) = target.or(ctx.state.focused_pane()) else {
         return ControlResponse::error_with(
@@ -1280,7 +1290,7 @@ fn capture_pane(
     };
     let content = match pane
         .terminal
-        .with_screen_mut(|screen| crate::pane::capture_screen(screen, scrollback, render))
+        .with_screen_mut(|screen| crate::pane::capture_screen(screen, scrollback, render, scale))
     {
         Ok(content) => content,
         Err(response) => return response,
@@ -1289,41 +1299,100 @@ fn capture_pane(
     ControlResponse::ok(PaneCapture { id, title, content })
 }
 
+/// What a `capture-ui` request asks the frame to be encoded as: its render and checked PNG scale.
+type UiCaptureForm = (CaptureRender, u8);
+
+/// `capture-ui` requests that will be answered from the same painted frame.
+#[derive(Default)]
+pub(crate) struct UiCaptureBatch {
+    waiters: Vec<(UiCaptureForm, std::sync::mpsc::Sender<ControlResponse>)>,
+    /// The frame has arrived; a request after this waits for the next one.
+    served: bool,
+}
+
 /// Answer `capture-ui` with the next frame the client paints.
 ///
-/// The request forces that paint, so an idle client answers too. Concurrent requests do not wait
-/// on each other: every one registered before the paint gets that paint's frame.
+/// The request forces that paint, so an idle client answers too. Requests that arrive before it
+/// join one batch: tui-lipan hands the frame to a single callback, which encodes each form asked
+/// for once and answers every waiter from it, so four agents asking for a PNG at once cost one
+/// encode rather than four.
 fn capture_ui(
     ctx: &mut Context<AppRoot>,
-    render: CaptureRender,
+    form: UiCaptureForm,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) {
+    if let Some(batch) = &ctx.state.pending_ui_capture {
+        let mut batch = batch.borrow_mut();
+        if !batch.served {
+            batch.waiters.push((form, reply));
+            return;
+        }
+    }
+
+    let batch = std::rc::Rc::new(std::cell::RefCell::new(UiCaptureBatch {
+        waiters: vec![(form, reply)],
+        served: false,
+    }));
+    ctx.state.pending_ui_capture = Some(std::rc::Rc::clone(&batch));
     let theme = &ctx.state.theme;
     let palette = TerminalColorPalette::from_theme(theme, theme.surface.backdrop);
     ctx.request_ui_snapshot(Callback::new(move |snapshot: tui_lipan::UiSnapshot| {
-        let frame = snapshot.frame;
-        let encoder_reply = reply.clone();
-        // A PNG of the whole client takes long enough to encode that it would stall the next
-        // frame, so the reply is built off the UI thread.
-        let spawned = std::thread::Builder::new()
-            .name("rozi-capture-ui".into())
-            .spawn(move || {
-                let response = match crate::pane::capture_ui_frame(&frame, render, palette) {
-                    Ok(content) => ControlResponse::ok(UiCapture {
-                        width: frame.width,
-                        height: frame.height,
-                        content,
-                    }),
-                    Err(response) => response,
-                };
-                let _ = encoder_reply.send(response);
-            });
-        if let Err(error) = spawned {
-            let _ = reply.send(ControlResponse::error(format!(
-                "cannot start the capture encoder: {error}"
-            )));
-        }
+        let waiters = {
+            let mut batch = batch.borrow_mut();
+            batch.served = true;
+            std::mem::take(&mut batch.waiters)
+        };
+        answer_ui_captures(snapshot.frame, palette, waiters);
     }));
+}
+
+/// Encode `frame` once per form the waiters asked for, and answer each of them.
+///
+/// A PNG of the whole client takes long enough to encode that it would stall the next frame, so
+/// the work runs off the UI thread.
+fn answer_ui_captures(
+    frame: tui_lipan::CapturedFrame,
+    palette: TerminalColorPalette,
+    waiters: Vec<(UiCaptureForm, std::sync::mpsc::Sender<ControlResponse>)>,
+) {
+    let fallback: Vec<_> = waiters.iter().map(|(_, reply)| reply.clone()).collect();
+    let spawned = std::thread::Builder::new()
+        .name("rozi-capture-ui".into())
+        .spawn(move || {
+            let mut encoded: Vec<(UiCaptureForm, ControlResponse)> = Vec::new();
+            for (form, reply) in waiters {
+                let response = match encoded.iter().find(|(done, _)| *done == form) {
+                    Some((_, response)) => response.clone(),
+                    None => {
+                        let response = encode_ui_capture(&frame, form, palette);
+                        encoded.push((form, response.clone()));
+                        response
+                    }
+                };
+                let _ = reply.send(response);
+            }
+        });
+    if let Err(error) = spawned {
+        let response = ControlResponse::error(format!("cannot start the capture encoder: {error}"));
+        for reply in fallback {
+            let _ = reply.send(response.clone());
+        }
+    }
+}
+
+fn encode_ui_capture(
+    frame: &tui_lipan::CapturedFrame,
+    (render, scale): UiCaptureForm,
+    palette: TerminalColorPalette,
+) -> ControlResponse {
+    match crate::pane::capture_ui_frame(frame, render, scale, palette) {
+        Ok(content) => ControlResponse::ok(UiCapture {
+            width: frame.width,
+            height: frame.height,
+            content,
+        }),
+        Err(response) => response,
+    }
 }
 
 /// Raise a toast on behalf of a script.
@@ -1670,10 +1739,17 @@ mod tests {
     use tui_lipan::TestBackend;
 
     fn capture_ui_request(render: CaptureRender) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
+        capture_ui_request_at(render, None)
+    }
+
+    fn capture_ui_request_at(
+        render: CaptureRender,
+        scale: Option<u8>,
+    ) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
         let (reply, response) = mpsc::channel();
         let message = crate::Msg::ControlRequest(ControlEnvelope {
             request: ControlRequest {
-                command: ControlCommand::CaptureUi { render },
+                command: ControlCommand::CaptureUi { render, scale },
                 source_pane: None,
                 extension: None,
             },
@@ -1730,6 +1806,93 @@ mod tests {
                     .decode(png_base64)
                     .unwrap();
                 assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_ui_encodes_each_scale_in_a_batch_and_refuses_a_bad_one_at_once() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.render();
+
+                // Refused before any paint, so nothing is left waiting.
+                let (request, reply) = capture_ui_request_at(CaptureRender::Text, Some(2));
+                backend.update_level(request).unwrap();
+                let refused = reply.try_recv().expect("answered at once");
+                assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+                assert!(backend.state().pending_ui_capture.is_none());
+
+                let (one, one_reply) = capture_ui_request_at(CaptureRender::Png, None);
+                let (two, two_reply) = capture_ui_request_at(CaptureRender::Png, Some(2));
+                backend.update_level(one).unwrap();
+                backend.update_level(two).unwrap();
+                backend.pump().unwrap();
+
+                let size = |capture: UiCapture| {
+                    let crate::control::CaptureContent::Png { png_base64 } = capture.content else {
+                        panic!("expected a png");
+                    };
+                    use base64::Engine as _;
+                    let png = base64::engine::general_purpose::STANDARD
+                        .decode(png_base64)
+                        .unwrap();
+                    let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+                    (field(16), field(20))
+                };
+                let (w1, h1) = size(capture_ui_reply(&one_reply));
+                let (w2, h2) = size(capture_ui_reply(&two_reply));
+                assert_eq!((w2, h2), (w1 * 2, h1 * 2), "each scale gets its own encode");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_ui_requests_before_one_paint_share_its_encodes() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.render();
+
+                // Handled without a paint in between, as requests arriving together would be.
+                let mut replies = Vec::new();
+                for render in [CaptureRender::Png, CaptureRender::Png, CaptureRender::Text] {
+                    let (request, reply) = capture_ui_request(render);
+                    backend.update_level(request).unwrap();
+                    replies.push(reply);
+                }
+                let batch = backend.state().pending_ui_capture.clone().expect("a batch");
+                assert_eq!(
+                    batch.borrow().waiters.len(),
+                    3,
+                    "one batch, and so one snapshot callback, for all three"
+                );
+
+                backend.pump().unwrap();
+                let captures: Vec<UiCapture> = replies.iter().map(capture_ui_reply).collect();
+                assert_eq!(
+                    captures[0], captures[1],
+                    "both PNG waiters get the one encode"
+                );
+                assert!(matches!(
+                    captures[2].content,
+                    crate::control::CaptureContent::Text { .. }
+                ));
+                assert!(batch.borrow().served && batch.borrow().waiters.is_empty());
+
+                // A request after the paint waits for a frame of its own.
+                let (request, reply) = capture_ui_request(CaptureRender::Text);
+                backend.dispatch(request).unwrap();
+                capture_ui_reply(&reply);
+                let next = backend.state().pending_ui_capture.clone().expect("a batch");
+                assert!(!std::rc::Rc::ptr_eq(&batch, &next));
             })
             .unwrap()
             .join()

@@ -340,6 +340,10 @@ pub struct State {
     /// Control-socket reply held while [`Self::pending_session_action`] waits for attach, so
     /// `new-pane` / `popup` can answer with the real pane id after the session is up.
     pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    /// `capture-ui` requests waiting for the next painted frame, which one snapshot callback
+    /// answers together. `None`, or already served, when no request is waiting.
+    pub(crate) pending_ui_capture:
+        Option<std::rc::Rc<std::cell::RefCell<crate::ops::control::UiCaptureBatch>>>,
     /// Acknowledged integration reports awaiting the owning session server's decision.
     pub pending_agent_report_replies: HashMap<u64, PendingAgentReportReply>,
     pub next_agent_report_request_id: u64,
@@ -565,6 +569,7 @@ impl State {
             launcher_scope: None,
             pending_session_action: None,
             pending_control_reply: None,
+            pending_ui_capture: None,
             pending_agent_report_replies: HashMap::new(),
             next_agent_report_request_id: 1,
             pending_spawn_replies: HashMap::new(),

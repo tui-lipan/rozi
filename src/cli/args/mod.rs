@@ -877,9 +877,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut output_format = None;
                 let mut render = control::CaptureRender::Text;
                 let mut output = None;
+                let mut scale = None;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
                         "--target" => target = Some(parse_target(&mut iter)?),
+                        "--scale" => scale = Some(parse_capture_scale(&mut iter)?),
                         "--render" => {
                             let value =
                                 require_value(&mut iter, "--render requires text, ansi, or png")?;
@@ -924,10 +926,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             .to_string(),
                     );
                 }
+                require_png_for_scale(render, scale)?;
                 let command = control::ControlCommand::CapturePane {
                     target,
                     scrollback,
                     render,
+                    scale,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -940,8 +944,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut output_format = None;
                 let mut render = control::CaptureRender::Text;
                 let mut output = None;
+                let mut scale = None;
                 while let Some(next) = iter.next() {
                     match next.as_str() {
+                        "--scale" => scale = Some(parse_capture_scale(&mut iter)?),
                         "--render" => {
                             let value =
                                 require_value(&mut iter, "--render requires text, ansi, or png")?;
@@ -972,7 +978,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "capture-ui --output writes the capture itself; drop --format".to_string(),
                     );
                 }
-                let command = control::ControlCommand::CaptureUi { render };
+                require_png_for_scale(render, scale)?;
+                let command = control::ControlCommand::CaptureUi { render, scale };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
@@ -1062,6 +1069,26 @@ pub(super) fn parse_target(
     value
         .parse()
         .map_err(|_| "--target requires a numeric pane id".to_string())
+}
+
+/// `--scale`: how many times larger than 1 a PNG capture is drawn.
+fn parse_capture_scale(iter: &mut impl Iterator<Item = String>) -> Result<u8, String> {
+    let max = control::MAX_CAPTURE_SCALE;
+    let message = || format!("--scale requires a number from 1 to {max}");
+    let value = require_value(iter, &message())?;
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|scale| (1..=max).contains(scale))
+        .ok_or_else(message)
+}
+
+/// Refuse `--scale` for a text or ANSI capture, which has no pixels to scale.
+fn require_png_for_scale(render: control::CaptureRender, scale: Option<u8>) -> Result<(), String> {
+    if scale.is_some() && render != control::CaptureRender::Png {
+        return Err("--scale applies to --render png".to_string());
+    }
+    Ok(())
 }
 
 /// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
@@ -1615,6 +1642,7 @@ mod tests {
                 target: None,
                 scrollback: None,
                 render: control::CaptureRender::Png,
+                scale: None,
             }
         );
         assert_eq!(capture.output, Some(PathBuf::from("pane.png")));
@@ -1661,6 +1689,7 @@ mod tests {
                 target: Some(3),
                 scrollback: None,
                 render: control::CaptureRender::Text,
+                scale: None,
             }
         );
     }
@@ -1792,6 +1821,35 @@ mod tests {
     }
 
     #[test]
+    fn capture_scale_parses_for_png_captures_only() {
+        let args = |argv: &[&str]| {
+            parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+        };
+        for command in ["capture-pane", "capture-ui"] {
+            let Ok(ParsedCli::Control(parsed)) =
+                args(&[command, "--render", "png", "--scale", "2"])
+            else {
+                panic!("{command} --scale should parse");
+            };
+            let scale = match parsed.request.command {
+                control::ControlCommand::CapturePane { scale, .. }
+                | control::ControlCommand::CaptureUi { scale, .. } => scale,
+                other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(scale, Some(2));
+
+            assert!(args(&[command, "--render", "png", "--scale", "4"]).is_err());
+            assert!(args(&[command, "--render", "png", "--scale", "0"]).is_err());
+            assert!(args(&[command, "--render", "png", "--scale"]).is_err());
+            assert!(
+                args(&[command, "--scale", "2"]).is_err(),
+                "text has no pixels"
+            );
+            assert!(args(&[command, "--render", "ansi", "--scale", "2"]).is_err());
+        }
+    }
+
+    #[test]
     fn capture_ui_takes_the_capture_pane_output_options() {
         let args = |argv: &[&str]| {
             parse_cli_args(argv.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
@@ -1804,7 +1862,8 @@ mod tests {
         assert_eq!(
             parsed.request.command,
             control::ControlCommand::CaptureUi {
-                render: control::CaptureRender::Png
+                render: control::CaptureRender::Png,
+                scale: None
             }
         );
         assert_eq!(parsed.output, Some(PathBuf::from("ui.png")));
@@ -1869,6 +1928,7 @@ mod tests {
                 target: None,
                 scrollback: None,
                 render: control::CaptureRender::Text,
+                scale: None,
             }
         );
 
@@ -1884,6 +1944,7 @@ mod tests {
                 target: Some(7),
                 scrollback: None,
                 render: control::CaptureRender::Text,
+                scale: None,
             }
         );
 
@@ -1903,6 +1964,7 @@ mod tests {
                     control::CaptureScrollbackNamed::Full
                 )),
                 render: control::CaptureRender::Text,
+                scale: None,
             }
         );
 
@@ -1919,6 +1981,7 @@ mod tests {
                     control::CaptureScrollbackNamed::LastOutput
                 )),
                 render: control::CaptureRender::Text,
+                scale: None,
             }
         );
 

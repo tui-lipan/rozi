@@ -1004,6 +1004,7 @@ mod tests {
                     target: Some(3),
                     scrollback: None,
                     render: control::CaptureRender::Text,
+                    scale: None,
                 },
                 &capture,
                 OutputStyles::plain()

@@ -63,6 +63,7 @@ fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> 
                 target: Some(pane),
                 scrollback: None,
                 render: CaptureRender::Text,
+                scale: None,
             },
         );
         let text = data["text"].as_str().unwrap_or_default().to_string();
@@ -134,6 +135,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
                 rozi::control::CaptureScrollbackNamed::Full,
             )),
             render: CaptureRender::Text,
+            scale: None,
         },
     );
     assert!(
@@ -242,6 +244,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
                 target: Some(pane),
                 scrollback: None,
                 render,
+                scale: None,
             },
         )
     };
@@ -269,6 +272,7 @@ fn a_detached_session_captures_its_screen_as_ansi_and_png() {
                 rozi::control::CaptureScrollbackNamed::Full,
             )),
             render: CaptureRender::Png,
+            scale: None,
         },
     );
     assert!(!refused.ok);
@@ -693,6 +697,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
                 rozi::control::CaptureScrollbackNamed::Full,
             )),
             render: CaptureRender::Text,
+            scale: None,
         },
     )["text"]
         .as_str()
@@ -744,6 +749,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             target: None,
             scrollback: None,
             render: CaptureRender::Text,
+            scale: None,
         },
     );
 
@@ -770,6 +776,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             target: None,
             scrollback: None,
             render: CaptureRender::Text,
+            scale: None,
         },
     );
     assert!(!ambiguous.ok);

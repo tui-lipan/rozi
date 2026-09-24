@@ -385,6 +385,7 @@ impl SessionServer {
                             Some(reference.pane.pane_id),
                             scrollback,
                             CaptureRender::Text,
+                            None,
                         ),
                         Err(response) => response,
                     },
@@ -405,7 +406,8 @@ impl SessionServer {
                 target,
                 scrollback,
                 render,
-            } => self.session_capture_pane(target, scrollback, render),
+                scale,
+            } => self.session_capture_pane(target, scrollback, render, scale),
             ControlCommand::SendText { target, text } => {
                 self.session_send_bytes(target, text.into_bytes())
             }
@@ -1078,6 +1080,7 @@ impl SessionServer {
         target: Option<PaneId>,
         scrollback: Option<CaptureScrollback>,
         render: CaptureRender,
+        scale: Option<u8>,
     ) -> ControlResponse {
         let id = match self.session_target_pane(target) {
             Ok(id) => id,
@@ -1091,11 +1094,15 @@ impl SessionServer {
         };
         // Reading a snapshot does not change what a replay would contain, so this must not bump
         // `content_generation` and make every snapshot re-export the pane it just captured.
-        let content =
-            match crate::pane::capture_screen(pane.screen_without_change(), scrollback, render) {
-                Ok(content) => content,
-                Err(response) => return response,
-            };
+        let content = match crate::pane::capture_screen(
+            pane.screen_without_change(),
+            scrollback,
+            render,
+            scale,
+        ) {
+            Ok(content) => content,
+            Err(response) => return response,
+        };
         let title = pane.screen().title();
         ControlResponse::ok(PaneCapture { id, title, content })
     }
@@ -2528,6 +2535,7 @@ mod tests {
                 target: Some(7),
                 scrollback: None,
                 render: CaptureRender::Text,
+                scale: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -2852,6 +2860,7 @@ mod tests {
                 target: Some(1),
                 scrollback: None,
                 render: CaptureRender::Text,
+                scale: None,
             },
         );
         assert!(captured.ok, "{:?}", captured.error);
@@ -3023,6 +3032,7 @@ mod tests {
             ControlCommand::Subscribe { events: Vec::new() },
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,
+                scale: None,
             },
         ] {
             let reason = session_control_unsupported(&command)

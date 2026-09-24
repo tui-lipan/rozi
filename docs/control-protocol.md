@@ -147,15 +147,19 @@ which the server loop, and so every client, waits on.
 {"cmd":"capture-pane","scrollback":"last-output"}
 {"cmd":"capture-pane","target":3,"render":"png"}
 {"cmd":"capture-ui","render":"png"}
+{"cmd":"capture-ui","render":"png","scale":2}
 ```
 
 `capture-pane.target` defaults to `source_pane`, then the focused pane. `scrollback` is a
 nonnegative line count, `"full"`, or `"last-output"`. `render` is `"text"` (the default),
 `"ansi"`, or `"png"`; `ansi` and `png` capture the visible grid only, and fail with
-`invalid-argument` when `scrollback` is set.
+`invalid-argument` when `scrollback` is set. `scale`, 1 to 3 and 1 when absent, enlarges a PNG;
+it fails with `invalid-argument` for any other render or out of range. `capture-ui` takes `scale`
+the same way.
 
-`capture-ui` answers from the next frame the UI paints, which the request forces. `render` works
-as it does for `capture-pane`. Only a UI answers it.
+`capture-ui` answers from the next frame the UI paints, which the request forces. Requests that
+arrive before that paint share it, and each distinct `render` among them is encoded once. `render`
+works as it does for `capture-pane`. Only a UI answers it.
 
 `list-panes` reports launch intent in either `command` or `argv`. It also reports current foreground
 program data, reported status, and detected agent data when available.

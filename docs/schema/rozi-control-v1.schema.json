@@ -433,7 +433,7 @@
         },
         {
           "const": "png",
-          "description": "The visible grid's text cells as a PNG image, in the theme's colors. Inline terminal\ngraphics are not drawn.",
+          "description": "The visible grid as a PNG image, in the theme's colors, with the images a program displayed\ndrawn over their cells.",
           "type": "string"
         }
       ]
@@ -1081,7 +1081,7 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only.",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.",
           "properties": {
             "cmd": {
               "const": "capture-pane",
@@ -1090,6 +1090,15 @@
             "render": {
               "$ref": "#/$defs/CaptureRender",
               "default": "text"
+            },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "scrollback": {
               "anyOf": [
@@ -1127,6 +1136,16 @@
             "render": {
               "$ref": "#/$defs/CaptureRender",
               "default": "text"
+            },
+            "scale": {
+              "description": "Enlarges a PNG, from 1 (the default) to 3.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2076,7 +2095,7 @@
           "type": "object"
         },
         {
-          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only.",
+          "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, or a PNG; the styled forms capture the\nvisible grid only. `scale` enlarges a PNG, from 1 (the default) to 3.",
           "properties": {
             "cmd": {
               "const": "capture-pane",
@@ -2085,6 +2104,15 @@
             "render": {
               "$ref": "#/$defs/CaptureRender",
               "default": "text"
+            },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "scrollback": {
               "anyOf": [
@@ -2122,6 +2150,16 @@
             "render": {
               "$ref": "#/$defs/CaptureRender",
               "default": "text"
+            },
+            "scale": {
+              "description": "Enlarges a PNG, from 1 (the default) to 3.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "required": [
@@ -3713,5 +3751,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 4
+  "x-rozi-schema-version": 5
 }

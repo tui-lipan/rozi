@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useData, withBase } from "vitepress";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
 import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
@@ -9,6 +9,12 @@ import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
 import { highlightToml } from "./toml";
 import captureClip from "../../assets/capture-ui.mp4";
 import capturePoster from "../../assets/capture-ui-poster.webp";
+import shotWorkspace from "../../assets/captures/workspace.webp";
+import shotTokyoNight from "../../assets/captures/theme-tokyo-night.webp";
+import shotRosePineDawn from "../../assets/captures/theme-rose-pine-dawn.webp";
+import shotMerged from "../../assets/captures/style-merged.webp";
+import shotPowerline from "../../assets/captures/style-powerline.webp";
+import shotPersonalized from "../../assets/captures/personalized.webp";
 
 /* The pre-paint script in config.ts has already decided this and hidden the
    page accordingly; reading its class back is what keeps the two in step. */
@@ -281,6 +287,71 @@ const docGroups = (theme.value.sidebar as DocGroup[])
 
 const docPages = docGroups.reduce((total, group) => total + group.items.length, 0);
 
+/* "Make it yours": one workspace, and the config lines that turn it into each
+   tab. On a wide screen the lines sit in the copy column, which has room to
+   spare beside the picture; stacked, the gallery keeps them under its own
+   frame, next to the tabs that change them. */
+const THEME_SHOTS = [
+  {
+    src: shotWorkspace,
+    alt: "A rozi workspace with Neovim, a Git log, lazygit, and btop in the default theme",
+    label: "rozi",
+    code: `[theme]
+name = "rozi"`,
+  },
+  {
+    src: shotTokyoNight,
+    alt: "The same workspace in the Tokyo Night theme",
+    label: "Tokyo Night",
+    code: `[theme]
+name = "tokyo-night"`,
+  },
+  {
+    src: shotRosePineDawn,
+    alt: "The same workspace in the light Rose Pine Dawn theme",
+    label: "Rose Pine Dawn",
+    code: `[theme]
+name = "rose-pine-dawn"`,
+  },
+  {
+    src: shotMerged,
+    alt: "Panes whose frames join into one grid, with rounded titles in the border",
+    label: "Merged",
+    code: `[pane]
+border_mode = "merged"
+titlebar = "integrated"
+title_style = "round"`,
+  },
+  {
+    src: shotPowerline,
+    alt: "Thick pane frames with arrow-shaped titles, tabs, and badges",
+    label: "Powerline",
+    code: `[pane]
+border_style = "thick"
+title_style = "arrow"
+workbar_style = "arrow"
+workbar_tab_style = "arrow"`,
+  },
+  {
+    src: shotPersonalized,
+    alt: "Gruvbox Dark, a master layout, merged thick frames, a bottom workbar, and the sidebar on the right",
+    label: "All together",
+    code: `[theme]
+name = "gruvbox-dark"
+
+[pane]
+border_mode = "merged"
+border_style = "thick"
+workbar_at_bottom = true
+
+[sidebar]
+visible = true
+position = "right"`,
+  },
+];
+const themeShot = ref(0);
+const themeCode = computed(() => highlightToml(THEME_SHOTS[themeShot.value].code));
+
 const CONFIG_SAMPLE = highlightToml(`[theme]
 name = "catppuccin-mocha"
 
@@ -459,7 +530,7 @@ restart = "on-failure"`);
           <h2>Make it yours</h2>
           <p class="lp-head-note">Previewed live · saved to config.toml · no restart</p>
         </header>
-        <div class="lp-two lp-capture">
+        <div class="lp-two lp-capture lp-themes">
           <div>
             <p class="lp-lead">
               Open <b>Settings</b> and move through a list: the theme, the pane
@@ -476,14 +547,19 @@ restart = "on-failure"`);
             <a class="lp-more lp-more-next" :href="withBase('/themes')"
               >{{ stats.themes }} themes →</a
             >
+            <div class="lp-code lp-theme-code">
+              <pre><code v-html="themeCode"></code></pre>
+            </div>
           </div>
-          <CaptureGallery title="~/src/rozi — dev">
-            <img src="../../assets/captures/workspace.webp" alt="A rozi workspace with Neovim, a Git log, lazygit, and btop in the default theme" data-label="rozi" data-code='[theme]\nname = "rozi"'>
-            <img src="../../assets/captures/theme-tokyo-night.webp" alt="The same workspace in the Tokyo Night theme" data-label="Tokyo Night" data-code='[theme]\nname = "tokyo-night"'>
-            <img src="../../assets/captures/theme-rose-pine-dawn.webp" alt="The same workspace in the light Rose Pine Dawn theme" data-label="Rose Pine Dawn" data-code='[theme]\nname = "rose-pine-dawn"'>
-            <img src="../../assets/captures/style-merged.webp" alt="Panes whose frames join into one grid, with rounded titles in the border" data-label="Merged" data-code='[pane]\nborder_mode = "merged"\ntitlebar = "integrated"\ntitle_style = "round"'>
-            <img src="../../assets/captures/style-powerline.webp" alt="Thick pane frames with arrow-shaped titles, tabs, and badges" data-label="Powerline" data-code='[pane]\nborder_style = "thick"\ntitle_style = "arrow"\nworkbar_style = "arrow"\nworkbar_tab_style = "arrow"'>
-            <img src="../../assets/captures/personalized.webp" alt="Gruvbox Dark, a master layout, merged thick frames, a bottom workbar, and the sidebar on the right" data-label="All together" data-code='[theme]\nname = "gruvbox-dark"\n\n[pane]\nborder_mode = "merged"\nborder_style = "thick"\nworkbar_at_bottom = true\n\n[sidebar]\nvisible = true\nposition = "right"'>
+          <CaptureGallery v-model:active="themeShot" title="~/src/rozi — dev">
+            <img
+              v-for="shot in THEME_SHOTS"
+              :key="shot.src"
+              :src="shot.src"
+              :alt="shot.alt"
+              :data-label="shot.label"
+              :data-code="shot.code"
+            />
           </CaptureGallery>
         </div>
 

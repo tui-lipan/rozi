@@ -1497,11 +1497,29 @@ html.rozi-intro-pending .lp {
 .lp-capture .rz-gallery {
     margin: 0;
 }
+
+/* The themes gallery's config lines move into the copy column, which has room
+   under its links, instead of stretching the band under the picture. Last in
+   the column, so a longer snippet grows into empty space and moves nothing. */
+.lp-theme-code {
+    margin-top: 28px;
+}
+.lp-themes .rz-gallery-caption {
+    display: none;
+}
 @media (max-width: 1000px) {
     .lp-two.lp-capture-flip {
         grid-template-columns: minmax(0, 1fr);
     }
     .lp-capture-flip > :first-child {
         order: 0;
+    }
+    /* Stacked, the copy sits above the tabs; the lines stay under the frame,
+       next to what changes them. */
+    .lp-theme-code {
+        display: none;
+    }
+    .lp-themes .rz-gallery-caption {
+        display: block;
     }
 }

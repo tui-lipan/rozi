@@ -26,6 +26,9 @@ import { highlightToml } from "./toml";
  * `mode="tabs"` compares variants of one screen: themes, layouts, styles. `mode="steps"` walks a
  * flow in order, advancing on its own while in view unless the reader prefers reduced motion or
  * has taken over.
+ *
+ * `v-model:active` shares the selected image's index, so a page can show something about it
+ * outside the frame.
  */
 const props = withDefaults(
   defineProps<{
@@ -71,7 +74,7 @@ const shots = computed<Shot[]>(() =>
   }),
 );
 
-const active = ref(0);
+const active = defineModel<number>("active", { default: 0 });
 const current = computed(() => shots.value[active.value]);
 const highlighted = computed(() =>
   current.value?.code ? highlightToml(current.value.code) : "",

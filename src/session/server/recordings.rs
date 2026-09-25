@@ -49,6 +49,9 @@ pub(super) struct ActiveRecording {
     palette: TerminalColorPalette,
     last_capture: Instant,
     meta: MetaSeen,
+    /// The pane's `content_generation` and runtime `sequence` when `meta` was taken. A title
+    /// arrives as output and the rest as runtime changes, so neither moving means nothing to note.
+    meta_seen: (u64, u64),
     /// The foreground `record pane` holding this recording, answered when it ends.
     follower: Option<RecordingReply>,
     /// `record stop` callers waiting for the file to be complete.
@@ -108,6 +111,11 @@ impl ActiveRecording {
 
     /// Write a meta event for whatever the server learned about the pane since the last look.
     fn observe(&mut self, pane: &ServerPane) {
+        let seen = (pane.content_generation, pane.runtime.sequence);
+        if seen == self.meta_seen {
+            return;
+        }
+        self.meta_seen = seen;
         let now = MetaSeen::of(pane);
         let t = self.elapsed_ms();
         for meta in self.meta.changes(&now) {
@@ -410,6 +418,7 @@ impl SessionServer {
                 palette,
                 last_capture: started,
                 meta,
+                meta_seen: (pane.content_generation, pane.runtime.sequence),
                 follower: None,
                 stoppers: Vec::new(),
             },
@@ -942,6 +951,42 @@ mod tests {
         assert!(ask(&mut server, client, start(&shutdown, None, false))[0].ok);
         server.finish_recordings_for_shutdown(EndReason::ServerShutdown);
         assert_eq!(replay(&shutdown).3.reason, EndReason::ServerShutdown);
+    }
+
+    #[test]
+    fn a_title_and_a_status_the_server_learns_become_meta_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.rozirec");
+        let mut server = server();
+        let (client, _stream) = add_client(&mut server);
+        assert!(ask(&mut server, client, start(&path, None, false))[0].ok);
+        print(&mut server, b"\x1b]2;building\x07");
+        server.pump_recordings();
+        server
+            .apply_pane_status(None, 3, 1, Some("working".into()), None)
+            .unwrap();
+        server.pump_recordings();
+        let (stopper, _s) = add_client(&mut server);
+        ask(
+            &mut server,
+            stopper,
+            ControlCommand::RecordStop { id: None },
+        );
+        pump_until_finished(&mut server);
+
+        let (_, meta, ..) = replay(&path);
+        assert!(
+            meta.contains(&RecordingMeta::Title {
+                title: Some("building".into())
+            }),
+            "{meta:?}"
+        );
+        assert!(
+            meta.contains(&RecordingMeta::Status {
+                status: Some("working".into())
+            }),
+            "{meta:?}"
+        );
     }
 
     fn server_with_pane() -> SessionServer {

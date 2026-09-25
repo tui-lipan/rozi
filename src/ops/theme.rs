@@ -567,6 +567,12 @@ pub(crate) fn pane_border_title_foreground(
     pane_title_foreground(theme, false, background)
 }
 
+/// The recording marker's colour over `background`: the theme's error colour where it reads, else
+/// `fallback`, the text beside it. The glyph and the word carry the marker either way.
+pub(crate) fn recording_marker_color(theme: &Theme, background: Color, fallback: Color) -> Color {
+    readable_chrome_color(theme.status.error, background, fallback)
+}
+
 fn readable_chrome_color(preferred: Color, background: Color, fallback: Color) -> Color {
     let preferred = preferred.resolve(Color::Reset);
     if is_readable_chrome_pair(preferred, background) {

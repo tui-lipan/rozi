@@ -64,9 +64,16 @@ writable only by you, and never replaces an existing file unless you pass `--for
 
 ## See that a pane is recording
 
-While a pane is recording, every attached UI adds `[rec]` to its title. `list-panes` reports
-`"recording": true` for it, `record list` shows the file and its progress, and `metrics` counts
-recordings in its `recordings` section.
+While a pane is recording, every attached UI marks it with a dot and `rec` in the theme's error
+color, at the start of its title so a long title never hides it. The dot blinks slowly; with
+`[animations] enabled` or `focus_chrome` off it holds steady. With `[pane] show_titles = false`,
+the dot sits in the top-left corner of the pane's border instead. A workspace tab carries the dot
+while its workspace holds a recorded pane you cannot see: one on another workspace, or one with
+neither a title nor a border to show it. The indicator is rozi's own chrome, so it never appears in
+the recording.
+
+`list-panes` reports `"recording": true` for the pane, `record list` shows the file and its
+progress, and `metrics` counts recordings in its `recordings` section.
 
 ## Where the file goes
 

@@ -12,7 +12,9 @@ mod widget_keys;
 mod workbar;
 mod workspace;
 
-pub(crate) use pane::{PaneKind, PaneMerge, has_pane_alert, pane_alert, pane_element};
+pub(crate) use pane::{
+    PaneKind, PaneMerge, has_pane_alert, pane_alert, pane_chrome_shows_recording, pane_element,
+};
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
 pub use widget_keys::pane_window_key;

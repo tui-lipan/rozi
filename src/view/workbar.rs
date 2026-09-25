@@ -695,6 +695,11 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
             let marker = workspace_marker(workspace, &state.config.workbar.alert);
             let label =
                 workspace_tab_label(state.current().workspaces[idx].name.as_deref(), idx, count);
+            let label = if workspace_tab_shows_recording(state, idx) {
+                format!("{} {label}", state.config.recording_icon())
+            } else {
+                label
+            };
             let mut tab = Tab::new(label);
             // `static` colors the marked tab without moving it; only `pulse` breathes. The active
             // tab is never restyled - its solid `active_style` pill already reads as current, and
@@ -818,6 +823,19 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
 /// Tab text is identity only - number, optional name, pane count. Alerts are carried entirely by the
 /// tab's background color, so a workspace does not change width when an agent blocks and the tabs
 /// beside it do not shift.
+/// Whether a workspace tab carries the recording dot: its workspace holds a recorded pane that the
+/// screen does not already mark, because the workspace is not the one showing or the pane's own
+/// chrome has nowhere to put the dot.
+fn workspace_tab_shows_recording(state: &crate::state::State, index: usize) -> bool {
+    let recording = state.current().workspaces[index]
+        .panes
+        .iter()
+        .any(|pane| pane.terminal.recording && !pane.closing);
+    recording
+        && (index != state.current().active_workspace
+            || !super::pane::pane_chrome_shows_recording(&state.config.pane))
+}
+
 fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
     let base = match name {
         Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),

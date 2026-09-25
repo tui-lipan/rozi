@@ -341,6 +341,17 @@ fn alert_pulse_should_run(state: &State) -> bool {
     (state.config.pane.alert_border == AlertMode::Pulse && visible_pane_alert_can_pulse(state))
         || (state.config.workbar.alert.mode == AlertMode::Pulse
             && inactive_tab_marker_can_pulse(state))
+        || visible_recording_dot(state)
+}
+
+/// A recorded pane on the workspace in view whose own chrome draws the dot that blinks.
+fn visible_recording_dot(state: &State) -> bool {
+    crate::view::pane_chrome_shows_recording(&state.config.pane)
+        && state
+            .active_workspace_ref()
+            .panes
+            .iter()
+            .any(|pane| pane.terminal.recording && !pane.closing)
 }
 
 fn visible_pane_alert_can_pulse(state: &State) -> bool {
@@ -486,6 +497,66 @@ mod tests {
             .finished_unseen = true;
         state.config.pane.alert_border = AlertMode::Off;
         assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn a_recording_in_view_runs_the_pulse_only_while_its_dot_can_blink() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let mut pane = blocked_pane(2);
+        pane.terminal.reported_status = None;
+        pane.terminal.recording = true;
+        state.current_mut().workspaces[0].panes.push(pane);
+        assert!(alert_pulse_should_run(&state));
+
+        state.config.animations.enabled = false;
+        assert!(!alert_pulse_should_run(&state), "motion off holds the dot");
+        state.config.animations.enabled = true;
+        state.config.animations.focus_chrome = false;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.animations.focus_chrome = true;
+
+        state.config.pane.show_titles = false;
+        assert!(alert_pulse_should_run(&state), "the corner dot blinks too");
+        state.config.pane.border_mode = PaneBorderMode::Dividers;
+        assert!(
+            !alert_pulse_should_run(&state),
+            "the tab carries a steady dot"
+        );
+        state.config.pane.show_titles = true;
+
+        let pane = state.current_mut().workspaces[0].panes.pop().unwrap();
+        state.current_mut().workspaces[1].panes.push(pane);
+        assert!(!alert_pulse_should_run(&state), "another workspace's tab");
+    }
+
+    #[test]
+    fn the_pulse_chain_stops_once_the_last_recording_ends() {
+        let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+        let id = {
+            let state = backend.state_mut();
+            state.config.animations.enabled = true;
+            state.config.animations.focus_chrome = true;
+            let id = state.focused_pane().expect("a pane");
+            crate::pane::lifecycle::find_pane_mut(state, id)
+                .unwrap()
+                .terminal
+                .recording = true;
+            state.alert_pulse_armed = true;
+            id
+        };
+        backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
+        backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
+        assert!(backend.state().alert_pulse_armed);
+        assert!(backend.state().alert_pulse_calm_phase);
+
+        crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id)
+            .unwrap()
+            .terminal
+            .recording = false;
+        backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
+        let state = backend.state();
+        assert!(!state.alert_pulse_armed);
+        assert!(!state.alert_pulse_phase && !state.alert_pulse_calm_phase);
     }
 
     #[test]

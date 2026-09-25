@@ -1967,6 +1967,11 @@ impl Config {
         if self.nerd_icons { nerd } else { fallback }
     }
 
+    /// The dot that marks a recorded pane in its title, border corner, or workspace tab.
+    pub fn recording_icon(&self) -> &'static str {
+        self.chrome_icon("󰑊", "●")
+    }
+
     /// Workbar location / SSH host prefix, including the trailing space.
     pub fn remote_host_icon(&self) -> &'static str {
         self.chrome_icon("󰒍 ", "⌁ ")

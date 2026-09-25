@@ -139,7 +139,7 @@ borders, overlays, and every visible pane. It needs a UI; `--session` refuses it
 To watch a pane over time rather than sample it, record it in the session server:
 `rozi --session dev record start --target <PANE_ID> --output /tmp/run.rozirec`, then
 `record mark "<label>"` at interesting moments and `record stop`. Only record when the user asked:
-the file holds everything the pane shows, and the pane is marked `[rec]` while it records.
+the file holds everything the pane shows, and the pane's title shows `● rec` while it records.
 `rozi record export <FILE> --to png-frames <DIR>` or `--to cast <FILE>` turns it into files.
 
 Re-read pane ids before acting after a delay or any layout or session change.

@@ -564,8 +564,11 @@ fn a_small_change_inside_a_row_writes_only_the_columns_that_changed() {
 
 #[test]
 fn random_screens_replay_exactly() {
-    let (_dir, path) = scratch();
-    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    // Straight through the encoder rather than a writer thread, whose queue would rightly coalesce
+    // a burst this fast on a slow machine.
+    let mut encoder = encode::FrameEncoder::default();
+    let mut file = serde_json::to_vec(&header(40, 12)).unwrap();
+    file.push(b'\n');
     let mut screen = TerminalScreen::new(12, 40, 100);
     let mut expected: Vec<(u64, SpanFrame)> = Vec::new();
     let mut seed: u64 = 0x5eed;
@@ -597,15 +600,23 @@ fn random_screens_replay_exactly() {
             }
         }
         screen.process_bytes(chunk.as_bytes());
-        push(&recorder, t * 7, &screen);
         let frame = span(&mut screen);
+        for event in encoder.encode(t * 7, frame.clone()) {
+            serde_json::to_writer(&mut file, &event).unwrap();
+            file.push(b'\n');
+        }
         if expected.last().is_none_or(|(_, last)| *last != frame) {
             expected.push((t * 7, frame));
         }
     }
-    let outcome = finish(recorder, 5_000, EndReason::Stopped);
-    assert_eq!(replay(&path).frames, expected);
-    let partial = events(&path)
+    assert_eq!(replay_bytes(&file).frames, expected);
+    let events: Vec<RecordingEvent> = file
+        .split(|&byte| byte == b'\n')
+        .skip(1)
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect();
+    let partial = events
         .iter()
         .filter_map(|event| match event {
             RecordingEvent::Delta(delta) => {
@@ -614,9 +625,5 @@ fn random_screens_replay_exactly() {
             _ => None,
         })
         .sum::<usize>();
-    assert!(
-        partial > 0,
-        "no partial rows in {} frames",
-        outcome.totals.frames
-    );
+    assert!(partial > 0, "no partial rows in {} frames", expected.len());
 }

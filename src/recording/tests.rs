@@ -682,6 +682,33 @@ fn a_frame_that_arrives_behind_a_mark_never_moves_ahead_of_it() {
 }
 
 #[test]
+fn the_last_frame_is_queued_past_a_full_queue_once_and_never_again() {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    for n in 0..writer::QUEUE_FRAMES as u64 {
+        screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
+        assert!(push(&recorder, n * 10, &screen));
+        assert!(recorder.mark(n * 10 + 5, format!("after {n}")));
+    }
+    screen.process_bytes(b"\x1b[1;1Hlast");
+    assert!(!push(&recorder, 100, &screen));
+    assert!(recorder.push_last_frame(100, screen.capture_frame(), screen.palette()));
+    assert_eq!(recorder.totals().dropped, 0);
+    // A second one takes the first's place at the end rather than growing the queue again.
+    screen.process_bytes(b"\x1b[1;1Hlater");
+    assert!(recorder.push_last_frame(110, screen.capture_frame(), screen.palette()));
+    assert_eq!(recorder.totals().dropped, 1);
+    let last = span(&mut screen);
+    let mut recorder = recorder;
+    recorder.resume();
+    finish(recorder, 200, EndReason::Stopped);
+    let replayed = replay(&path);
+    assert_eq!(replayed.frames.len(), writer::QUEUE_FRAMES + 1);
+    assert_eq!(replayed.frames.last().unwrap(), &(110, last));
+}
+
+#[test]
 fn a_queue_of_frames_each_before_an_event_refuses_another_rather_than_growing() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();

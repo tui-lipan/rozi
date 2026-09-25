@@ -93,7 +93,10 @@ impl ActiveRecording {
 
     /// Hand the writer the pane's screen if it changed since the last capture. `due` says whether
     /// the frame-rate ceiling allows a capture now.
-    fn capture(&mut self, pane: &mut ServerPane, now: Instant, due: bool) {
+    ///
+    /// `last` is the frame before the recording ends, which must not be refused: nothing will
+    /// offer it again.
+    fn capture(&mut self, pane: &mut ServerPane, now: Instant, due: bool, last: bool) {
         let palette = pane.screen().palette();
         if pane.content_generation == self.seen && palette == self.palette {
             return;
@@ -104,11 +107,13 @@ impl ActiveRecording {
         let frame = pane.screen_without_change().capture_frame();
         // A refused frame leaves the change pending, so it is taken again at the next interval.
         self.last_capture = now;
-        if self.recorder.push_frame(
-            now.duration_since(self.started).as_millis() as u64,
-            frame,
-            palette,
-        ) {
+        let t = now.duration_since(self.started).as_millis() as u64;
+        let queued = if last {
+            self.recorder.push_last_frame(t, frame, palette)
+        } else {
+            self.recorder.push_frame(t, frame, palette)
+        };
+        if queued {
             self.seen = pane.content_generation;
             self.palette = palette;
         }
@@ -543,8 +548,9 @@ impl SessionServer {
             let over = now >= recording.started + Duration::from_millis(recording.duration_ms);
             // A pane's last output, and the frame at a deadline, are written whatever the ceiling.
             let exited = pane.exited;
-            let due = over || exited.is_some() || recording.due(now);
-            recording.capture(pane, now, due);
+            let last = over || exited.is_some();
+            let due = last || recording.due(now);
+            recording.capture(pane, now, due, last);
             recording.observe(pane);
             if let Some(status) = exited {
                 recording
@@ -917,6 +923,93 @@ mod tests {
             frames,
             ["", "9"],
             "the start, then only the newest state of the burst"
+        );
+    }
+
+    /// Start recording pane 3 to `path` with its writer stalled and its queue full of frames that
+    /// each precede a mark, which none of the newer frames may displace.
+    fn stalled_and_full(server: &mut SessionServer, path: &Path, duration_ms: Option<u64>) {
+        let (client, _stream) = add_client(server);
+        let mut command = start(path, None, false);
+        if let ControlCommand::RecordStart {
+            duration_ms: duration,
+            ..
+        } = &mut command
+        {
+            *duration = duration_ms;
+        }
+        assert!(ask(server, client, command)[0].ok);
+        // Swap in a stalled writer on the same file, with the header the server wrote.
+        let header: crate::recording::RecordingHeader = serde_json::from_str(
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        let paused = Recorder::start_paused(RecorderOptions {
+            path: path.to_path_buf(),
+            overwrite: true,
+            header,
+            max_bytes: u64::MAX,
+        })
+        .unwrap();
+        let recording = server.recordings.get_mut(&1).unwrap();
+        let _ = std::mem::replace(&mut recording.recorder, paused).join(Duration::ZERO);
+        for n in 0..crate::recording::writer::QUEUE_FRAMES as u64 {
+            let pane = server.panes.get_mut(&3).unwrap();
+            pane.screen_mut()
+                .process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
+            let recording = server.recordings.get_mut(&1).unwrap();
+            let screen = pane.screen_without_change();
+            assert!(
+                recording
+                    .recorder
+                    .push_frame(n, screen.capture_frame(), screen.palette())
+            );
+            assert!(recording.recorder.mark(n, format!("after {n}")));
+        }
+    }
+
+    fn resume_and_finish(server: &mut SessionServer) {
+        server.recordings.get_mut(&1).unwrap().recorder.resume();
+        pump_until_finished(server);
+    }
+
+    #[test]
+    fn a_pane_exiting_behind_a_stalled_writer_still_ends_on_its_last_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stalled-exit.rozirec");
+        let mut server = server();
+        stalled_and_full(&mut server, &path, None);
+        print(&mut server, b"\x1b[2;1Hlast words");
+        server.panes.get_mut(&3).unwrap().exited = Some(1);
+        server.pump_recordings();
+        resume_and_finish(&mut server);
+
+        let (frames, meta, _, end) = replay(&path);
+        assert_eq!(end.reason, EndReason::PaneExited);
+        assert!(frames.last().unwrap().contains("last words"), "{frames:?}");
+        assert!(meta.contains(&RecordingMeta::Exited { status: 1 }));
+    }
+
+    #[test]
+    fn a_deadline_behind_a_stalled_writer_still_ends_on_the_last_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stalled-deadline.rozirec");
+        let mut server = server();
+        stalled_and_full(&mut server, &path, Some(50));
+        print(&mut server, b"\x1b[2;1Hat the deadline");
+        std::thread::sleep(Duration::from_millis(60));
+        server.pump_recordings();
+        resume_and_finish(&mut server);
+
+        let (frames, _, _, end) = replay(&path);
+        assert_eq!(end.reason, EndReason::Duration);
+        assert!(
+            frames.last().unwrap().contains("at the deadline"),
+            "{frames:?}"
         );
     }
 

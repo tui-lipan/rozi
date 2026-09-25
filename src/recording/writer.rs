@@ -213,6 +213,30 @@ impl Recorder {
     /// letting the queue grow.
     #[must_use]
     pub fn push_frame(&self, t: u64, frame: CapturedFrame, palette: TerminalColorPalette) -> bool {
+        self.push(t, frame, palette, false)
+    }
+
+    /// Hand the writer the last frame before the recording ends, as [`Self::push_frame`] does but
+    /// never refused while the recording is open: there is no later moment to offer it again. When
+    /// every queued frame is before an event, it is queued as one frame past [`QUEUE_FRAMES`],
+    /// which the end that follows keeps from happening twice.
+    #[must_use]
+    pub fn push_last_frame(
+        &self,
+        t: u64,
+        frame: CapturedFrame,
+        palette: TerminalColorPalette,
+    ) -> bool {
+        self.push(t, frame, palette, true)
+    }
+
+    fn push(
+        &self,
+        t: u64,
+        frame: CapturedFrame,
+        palette: TerminalColorPalette,
+        last: bool,
+    ) -> bool {
         let mut queue = self.shared.queue();
         if queue.closed {
             return false;
@@ -235,6 +259,9 @@ impl Recorder {
             queue.jobs.remove(victim);
             queue.jobs.push_back(job);
             self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+        } else if last && queue.frames == QUEUE_FRAMES {
+            queue.jobs.push_back(job);
+            queue.frames += 1;
         } else {
             return false;
         }

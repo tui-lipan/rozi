@@ -509,6 +509,8 @@ fn execute_action_inner(
         Action::ReloadExtensions => crate::ops::config::reload_extensions(ctx),
         Action::EditScrollback => crate::ops::scrollback::edit_scrollback(ctx),
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
+        Action::ScreenshotPane => crate::ops::screenshot::screenshot_pane(ctx),
+        Action::ScreenshotUi => crate::ops::screenshot::screenshot_ui(ctx),
         Action::TogglePaneSynchronization => {
             // No toast: synchronization is a persistent mode that silently multiplies every
             // keystroke across panes, so it needs a permanent `SYNC` chip in the workbar rather

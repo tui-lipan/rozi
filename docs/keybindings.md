@@ -91,7 +91,7 @@ Bare `n` renames the workspace; `N` renames the pane. See
 | Scratchpad | `` ` `` (backtick) |
 | Search scrollback | `/` |
 | Profiles | `o` |
-| Capture session as profile | `O` |
+| Save session as profile | `O` |
 | Sessions | `s` |
 | Agents | `a` |
 | Rename or name current session | `S` |
@@ -140,6 +140,8 @@ These actions are available in the command palette, and you can bind them under 
 - `restart-session`
 - `edit-scrollback`
 - `copy-last-output`
+- `screenshot-pane` (listed only when a pane has focus)
+- `screenshot-ui`
 
 Appearance actions live in **Settings** and can also be bound by their action ids.
 

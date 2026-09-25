@@ -1241,6 +1241,7 @@ pub struct Config {
     pub(crate) extension_runtime:
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
     pub logging: LoggingConfig,
+    pub capture: CaptureConfig,
     pub workbar: WorkbarConfig,
     /// `[keys]` action and named-command entries as written. The source of truth for anything that
     /// edits bindings; see [`crate::config::BindingExpr`].
@@ -1321,6 +1322,24 @@ impl Default for LoggingConfig {
         Self {
             dir: None,
             max_bytes: DEFAULT_LOG_MAX_BYTES,
+        }
+    }
+}
+
+/// `[capture]`: where the Screenshot pane and Screenshot UI actions write, and at what size.
+#[derive(Clone, Debug)]
+pub struct CaptureConfig {
+    /// `None` writes into `captures` in the state directory.
+    pub dir: Option<PathBuf>,
+    /// PNG scale, `1..=`[`crate::control::MAX_CAPTURE_SCALE`].
+    pub scale: u8,
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            scale: 1,
         }
     }
 }
@@ -1909,6 +1928,7 @@ impl Default for Config {
             suggested_keybinding_resolutions: Vec::new(),
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
+            capture: CaptureConfig::default(),
             workbar: WorkbarConfig::default(),
             key_sources: HashMap::new(),
             key_overrides: HashMap::new(),

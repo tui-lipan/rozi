@@ -398,6 +398,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ScreenshotPane,
+        label: "Screenshot pane",
+        category: "Capture",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::ScreenshotUi,
+        label: "Screenshot UI",
+        category: "Capture",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenProfilePicker,
         label: "Profiles…",
         category: "Profile",
@@ -413,7 +427,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::SaveProfile,
-        label: "Capture session as profile…",
+        label: "Save session as profile…",
         category: "Profile",
         default_keys: &["shift-o"],
         palette: true,

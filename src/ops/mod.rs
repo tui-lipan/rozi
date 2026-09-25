@@ -18,6 +18,7 @@ pub(crate) mod preferences;
 pub(crate) mod profile;
 pub(crate) mod published_rows;
 pub(crate) mod resize_move;
+pub(crate) mod screenshot;
 pub(crate) mod scrollback;
 pub(crate) mod search;
 pub(crate) mod services;

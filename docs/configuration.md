@@ -671,6 +671,15 @@ A command segment times out after 5 seconds and keeps at most 64 KiB from each o
 
 See [Pane logging](terminal.md#pane-logging).
 
+## `[capture]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `dir` | path string | `captures` in the state directory | Where **Screenshot pane** and **Screenshot UI** write PNGs. `~` expands. Created mode `0700` if missing. |
+| `scale` | integer | `1` | `1` to `3`. Other values warn and use `1`. |
+
+See [Take a screenshot](terminal.md#take-a-screenshot).
+
 ## `[[rules]]`
 
 Rules set how new panes open. They apply to ordinary panes started with an explicit command, in the

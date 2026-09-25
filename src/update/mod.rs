@@ -70,6 +70,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::pane::pty_events::notify_error(ctx, "Command failed", message);
             Update::full()
         }
+        Msg::ScreenshotSaved { target, path } => {
+            crate::ops::screenshot::screenshot_saved(ctx, target, path)
+        }
+        Msg::ScreenshotFailed { target, error } => {
+            crate::ops::screenshot::screenshot_failed(ctx, target, error)
+        }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
         Msg::UpdateAvailable { update, announce } => {
             overlays::update_available(ctx, update, announce)

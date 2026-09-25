@@ -10,6 +10,7 @@ use crate::layout::tiling::append_tiled_window;
 
 mod appearance;
 mod attachment;
+mod capture;
 mod drag;
 mod identity;
 mod keybindings;
@@ -29,6 +30,7 @@ mod workspace;
 
 pub use appearance::*;
 pub use attachment::*;
+pub use capture::*;
 pub use drag::*;
 pub use identity::*;
 pub use keybindings::*;
@@ -138,6 +140,7 @@ pub struct State {
     /// repeat across sessions, so without the snap the incoming session's chrome would fade from
     /// whatever the outgoing session's same-numbered panes and tabs were showing.
     pub session_view_changed: Cell<bool>,
+    pub screenshot: ScreenshotState,
     /// Grace period of the attach in flight, during which the previous session's picture stays on
     /// screen instead of the Connecting scene.
     pub connect_hold: Option<ConnectHold>,
@@ -480,6 +483,7 @@ impl State {
             workspace_slide: Cell::new(None),
             session_reveal_seen: Cell::new(None),
             session_view_changed: Cell::new(false),
+            screenshot: ScreenshotState::default(),
             connect_hold: None,
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),

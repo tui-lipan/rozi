@@ -172,7 +172,11 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
-        animation::scratch_transition_config(ctx),
+        if ctx.state.screenshot.ui_waiting {
+            crate::layout::anim::instant_transition()
+        } else {
+            animation::scratch_transition_config(ctx)
+        },
     );
     // The workspace layer dims for whichever focused layer is most deployed; the dims never
     // compound.
@@ -183,7 +187,20 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // anchor while the thing it navigates changes. Sampled before the workbar, panes, and sidebar
     // are built: it also decides whether their focus chrome snaps on this frame.
     let reveal = animation::session_reveal(ctx);
-    let workspace_opacity = workspace_dim * reveal.opacity;
+    // Before the panes are built: a pane's flash is read back from here.
+    let flash = animation::screenshot_flash(ctx);
+    ctx.state.screenshot.flash_frame.set(flash);
+    let ui_flash = match flash {
+        Some((crate::state::ScreenshotTarget::Ui, strength)) => {
+            Some((animation::screenshot_flash_color(theme), strength))
+        }
+        _ => None,
+    };
+    let (workspace_opacity, workspace_fade) = animation::dim_or_flash(
+        workspace_dim * reveal.opacity,
+        theme.surface.backdrop,
+        ui_flash,
+    );
     // Keyed by attachment so a switch replaces the whole layer, and the outgoing one is retained
     // frozen beneath its successor (see `animation::session_layer_exit`). A fresh attach still in
     // its grace period draws nothing, so the previous session's last picture stands in for it.
@@ -202,7 +219,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             Animated::new(session_content(ctx, content_viewport, viewport_changed))
                 .height(Length::Flex(1))
                 .opacity(workspace_opacity)
-                .opacity_target(theme.surface.backdrop)
+                .opacity_target(workspace_fade)
                 .transition(crate::layout::anim::instant_transition())
                 .into()
         };
@@ -221,7 +238,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         } else {
             Animated::new(session_content(ctx, content_viewport, viewport_changed))
                 .opacity(workspace_opacity)
-                .opacity_target(theme.surface.backdrop)
+                .opacity_target(workspace_fade)
         };
         layer
             .height(Length::Flex(1))
@@ -454,7 +471,11 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // always mounted so the sidebar's keyed splitter/tab state keeps the same parent as the
         // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
         // never covers the sidebar.
-        let sidebar_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);
+        let (sidebar_dim, sidebar_fade) = animation::dim_or_flash(
+            crate::scratchpad::backdrop_dim(dialog_dim_progress),
+            theme.surface.backdrop,
+            ui_flash,
+        );
         // The splitter spends one column on its own handle, so both the panel's settled width and
         // the window currently clipping it are one short of their reservations.
         let panel_width = ctx.state.sidebar_slide_width(viewport).saturating_sub(1);
@@ -485,7 +506,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let sidebar: Element = Animated::new(sidebar)
             .height(Length::Flex(1))
             .opacity(sidebar_dim)
-            .opacity_target(theme.surface.backdrop)
+            .opacity_target(sidebar_fade)
             .transition(crate::layout::anim::instant_transition())
             .into();
         // Whatever the sidebar has not reserved. It shrinks as the panel arrives, which is what
@@ -496,7 +517,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // by hand to keep the seam from staying lit between two dimmed panes.
         let divider_bg =
             sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_canvas)
-                .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
+                .blend_toward(sidebar_fade, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         // The same window `set_width` clamps to, handed to the splitter so the drag stops there
         // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,

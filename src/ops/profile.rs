@@ -808,7 +808,7 @@ mod tests {
             backend.render();
             let hints = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                hints.contains("capture ") && !hints.contains("name session"),
+                hints.contains("save Enter") && !hints.contains("name session"),
                 "capturing a temporary session must not also name it\n{hints}"
             );
 
@@ -816,7 +816,7 @@ mod tests {
             backend.render();
             let hints = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                hints.contains("capture ") && !hints.contains("name session"),
+                hints.contains("save Enter") && !hints.contains("name session"),
                 "a named session keeps its name, so the commit is a plain capture\n{hints}"
             );
         });

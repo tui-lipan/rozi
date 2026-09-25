@@ -178,6 +178,31 @@ Limits:
 - In a session that may have several clients, rozi refuses image transfers through temporary files
   or shared memory, which can be read only once.
 
+## Take a screenshot
+
+To save a PNG of what rozi shows, run one of these from the command palette, or bind its id under
+`[keys]`:
+
+| Command | Id | Saves |
+| --- | --- | --- |
+| **Screenshot pane** | `screenshot-pane` | The focused pane's visible screen, without its border or title. |
+| **Screenshot UI** | `screenshot-ui` | The whole window as drawn: bar, sidebar, borders, titles, and every visible pane. |
+
+**Screenshot UI** leaves out the command palette that ran it. A toast shows where the file went, and
+the pane or window flashes briefly in the theme's accent color. The flash comes after the picture
+is taken, so it never appears in the file. With `[animations] enabled` or `focus_chrome` off, only
+the toast appears.
+
+Files go into `[capture] dir`, which defaults to `captures` in the state directory, and are named
+`rozi-pane-<ID>-<YYYYMMDD-HHMMSS>.png` or `rozi-ui-<YYYYMMDD-HHMMSS>.png` in local time. A second
+screenshot in the same second gets `-2`, `-3`, and so on; an existing file is never replaced.
+`[capture] scale` (1 to 3) enlarges the image. A screenshot is always written on the machine
+running this rozi window, even when the session is on another host.
+
+Screenshots use the same drawing as `rozi capture-pane --render png` and
+`rozi capture-ui --render png`, which scripts should use instead; see
+[Capturing the whole UI](control.md#capturing-the-whole-ui). Those commands never flash.
+
 ## Pane logging
 
 To save a pane's raw output to a file, run **Pane logging** from the command palette or bind

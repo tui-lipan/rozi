@@ -1260,12 +1260,19 @@ pub(crate) fn pane_element(
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
+    let flash = match ctx.state.screenshot.flash_frame.get() {
+        Some((crate::state::ScreenshotTarget::Pane(target), strength)) if target == id => {
+            Some((animation::screenshot_flash_color(theme), strength))
+        }
+        _ => None,
+    };
     let pane_tree = pane_reveal_scope(
         pane_tree,
         pane.keys.effect_scope.clone(),
         crate::layout::anim::pane_animation_for_pane(animations, pane),
         reveal_progress,
         u64::from(id),
+        flash,
     );
     let animated = Animated::new(pane_tree)
         .height(Length::Flex(1))

@@ -716,6 +716,9 @@ image parts that remain visible.
 panes one at a time with `capture-pane` instead. The reply reports the frame's `width` and `height`
 in cells alongside the capture.
 
+To save a PNG by hand instead, use the **Screenshot pane** and **Screenshot UI** commands; see
+[Take a screenshot](terminal.md#take-a-screenshot).
+
 ## Actions, status, and notifications
 
 `run-action` accepts:

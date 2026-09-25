@@ -27,7 +27,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod headless;
-pub use headless::session_control_unsupported;
+pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
 mod pane_log;
 mod panes;

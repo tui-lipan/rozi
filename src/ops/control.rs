@@ -281,10 +281,13 @@ pub(crate) fn handle_control_request(
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
-        | ControlCommand::RecordMark { .. } => ControlResponse::error_with(
-            ControlErrorCode::Unsupported,
-            "pane recording is server-owned; select a named session with --session",
-        ),
+        | ControlCommand::RecordMark { .. } => {
+            return crate::ops::attached_control::forward_recording(
+                ctx,
+                envelope.request,
+                envelope.reply,
+            );
+        }
         ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
             ControlErrorCode::Unsupported,
             "agent prompt is server-owned; select a named session with --session",

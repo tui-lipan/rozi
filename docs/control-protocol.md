@@ -281,8 +281,10 @@ straddles a hidden cell is cleared.
 {"cmd":"record-stop","id":1}
 ```
 
-Only a session server answers these; a UI refuses them with `unsupported`. See
-[Record a pane](recording.md) for what a recording holds.
+A session server answers these. A UI passes `record-start`, `record-stop`, `record-list`, and
+`record-mark` to the session it is attached to and returns the server's answer, which
+`attached-control` in `rozi api describe` advertises. See [Record a pane](recording.md) for what a
+recording holds.
 
 `record-start` fields:
 
@@ -306,6 +308,19 @@ when writing failed. `record-mark` takes a `label` of up to 256 characters and a
 marks every running recording without one, and answers with the `ids` it marked. A recording that
 is ending, or whose writer is too far behind, cannot take a mark: naming it fails with
 `unavailable`, and a request without `id` fails when no running recording took the mark.
+
+Sent to a UI, these requests differ in a few ways:
+
+- `record-start` without `target` records `source_pane`, then the focused pane, and the UI names
+  that pane to the server. A scratch or popup pane runs outside the session and fails with
+  `unsupported`.
+- `follow: true` fails with `invalid-argument`; a foreground recording needs the session transport.
+- A UI with no session fails with `session-not-attached`, and one whose session disconnects before
+  answering fails with `session-not-connected`.
+- A UI attached read-only may send `record-list` only. The others fail with `read-only`. The
+  session's input lock does not apply, because a recording reads a pane rather than typing into it.
+- A request with `extension` provenance fails, as it does on the session transport.
+- The UI waits up to 60 seconds for `record-stop`, then fails with `request-timeout`.
 
 ### Recording format
 
@@ -514,12 +529,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":17,"min_protocol_version":17,
+{"type":"session-control","session":"dev","protocol_version":18,"min_protocol_version":18,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":17,
+{"type":"session-control-result","effective_protocol":18,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 

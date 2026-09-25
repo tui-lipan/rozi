@@ -15,15 +15,16 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("rozi --session <NAME> record <COMMAND> [OPTIONS]", ""),
+            row("rozi [--session <NAME>] record <COMMAND> [OPTIONS]", ""),
             row("rozi record export|play <FILE> [OPTIONS]", ""),
         ],
     },
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "Recording runs in the session server and needs --session <NAME>;\n    \
-               export and play read a file and need no session.",
+        note: "Recording runs in the session server. Without --session, the running rozi\n    \
+               passes start, stop, list, and mark to the session it is attached to;\n    \
+               pane needs --session <NAME>. export and play read a file here.",
         rows: &[
             row(
                 "start [pane] --target <PANE> --output <FILE>",
@@ -431,6 +432,25 @@ pub(super) fn parse_size(value: &str) -> Result<u64, String> {
     number.checked_mul(multiplier).ok_or_else(invalid)
 }
 
+/// Whether a `record` command can go to a UI, which forwards it to the session it is attached to.
+///
+/// `record pane` cannot: it holds its caller until the recording ends, and a UI answers each
+/// request once. A relative `--output` cannot either, since the file is written on the session's
+/// host and this side cannot tell whether that host is this one.
+pub(super) fn check_ui_endpoint(command: &ControlCommand, foreground: bool) -> Result<(), String> {
+    if foreground {
+        return Err("record pane runs in the foreground and needs --session <NAME>".to_string());
+    }
+    if let ControlCommand::RecordStart { output, .. } = command
+        && std::path::Path::new(output).is_relative()
+    {
+        return Err(format!(
+            "`{output}` is relative; the recording is written on the session's host, so give an absolute --output, or use --session <NAME> to resolve it here"
+        ));
+    }
+    Ok(())
+}
+
 /// Build the control half of a `record` command once its endpoint is known.
 pub(super) fn control_cli(
     endpoint: super::ControlEndpoint,
@@ -522,9 +542,19 @@ mod tests {
             ControlCommand::RecordStart { follow: true, .. }
         ));
 
-        let refused = parse(&["record", "list"]).unwrap_err();
-        assert!(refused.contains("--session"), "{refused}");
-        assert!(parse(&["record", "start", "--output", "x"]).is_err());
+        let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+            parse(&["record", "list"])
+        else {
+            panic!("expected a record list for the running rozi");
+        };
+        assert_eq!(control.endpoint, super::super::ControlEndpoint::Ui(None));
+        assert!(parse(&["record", "stop", "--id", "2"]).is_ok());
+        assert!(parse(&["record", "mark", "here"]).is_ok());
+        assert!(parse(&["record", "start", "--output", "/tmp/a.rozirec"]).is_ok());
+        let relative = parse(&["record", "start", "--output", "x"]).unwrap_err();
+        assert!(relative.contains("absolute"), "{relative}");
+        let foreground = parse(&["record", "pane", "--output", "/tmp/a.rozirec"]).unwrap_err();
+        assert!(foreground.contains("--session"), "{foreground}");
         assert!(parse(&["--session", "dev", "record", "start", "--target", "3"]).is_err());
 
         let Ok(super::super::ParsedCli::Record(export)) = parse(&[

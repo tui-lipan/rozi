@@ -125,38 +125,106 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
     }
 }
 
-/// A session control reply, as long as it fits the one protocol frame it travels in.
+/// Why an attached client may not have its session server run `command` for it, or `None` when it
+/// may.
 ///
-/// A reply too large for a frame - a PNG of a very large pane, a long scrollback export - becomes a
-/// `message-too-large` error here. Left alone, writing it would fail and drop the connection,
-/// and the caller would see a transport error instead of the reason. Measuring the serialized
-/// message rather than one field counts the envelope, the title, and whatever a reply gains later.
-pub(super) fn session_control_reply(
-    capabilities: Capabilities,
-    effective_protocol: u32,
-    response: ControlResponse,
-) -> ServerMessage {
-    let reply = ServerMessage::SessionControlResult {
-        capabilities: Some(capabilities.clone()),
-        effective_protocol,
-        response,
-    };
-    let encoded = serde_json::to_vec(&reply).map_or(usize::MAX, |body| body.len());
-    // A frame carries its kind byte alongside the body.
-    if encoded < MAX_FRAME_SIZE {
-        return reply;
+/// Deliberately a short list rather than [`session_control_unsupported`]'s inverse. An attached UI
+/// answers almost every command from its own state; these are the ones only the server can serve,
+/// because the server owns the recording. Each command added here becomes something any client
+/// attached to the session can ask the server to do on its behalf, so it is a choice, not a default.
+///
+/// A read-only client may look (`record-list`) but not start, stop, or mark: those write a file on
+/// the server's host. The input lock is not consulted, because a recording reads a pane rather than
+/// typing into it.
+pub fn attached_control_refusal(
+    command: &ControlCommand,
+    read_only: bool,
+) -> Option<(ControlErrorCode, &'static str)> {
+    match command {
+        ControlCommand::RecordList => None,
+        ControlCommand::RecordStart { follow: true, .. } => Some((
+            ControlErrorCode::InvalidArgument,
+            "foreground recording needs --session <NAME>; a UI cannot hold its caller open until the recording ends",
+        )),
+        ControlCommand::RecordStart { .. }
+        | ControlCommand::RecordStop { .. }
+        | ControlCommand::RecordMark { .. }
+            if read_only =>
+        {
+            Some((
+                ControlErrorCode::ReadOnly,
+                "this client is attached read-only and cannot start, stop, or mark a recording",
+            ))
+        }
+        ControlCommand::RecordStart { .. }
+        | ControlCommand::RecordStop { .. }
+        | ControlCommand::RecordMark { .. } => None,
+        _ => Some((
+            ControlErrorCode::Unsupported,
+            "only recording commands are run by the session server for an attached client",
+        )),
     }
-    ServerMessage::SessionControlResult {
-        capabilities: Some(capabilities),
-        effective_protocol,
-        response: ControlResponse::error_with(
+}
+
+/// Where the answer to a session-owned control command goes, which also decides whether the
+/// connection ends with it.
+#[derive(Clone, Debug)]
+pub(super) enum ReplyTo {
+    /// A headless [`ClientMessage::SessionControl`] connection, closed once its one answer has
+    /// flushed.
+    Headless {
+        capabilities: Capabilities,
+        effective_protocol: u32,
+    },
+    /// An attached client's [`ClientMessage::AttachedControl`]; the connection carries on.
+    Attached { request_id: u64 },
+}
+
+impl ReplyTo {
+    /// The reply carrying `response`, as long as it fits the one protocol frame it travels in.
+    ///
+    /// A reply too large for a frame - a PNG of a very large pane, a long scrollback export -
+    /// becomes a `message-too-large` error here. Left alone, writing it would fail and drop the
+    /// connection, and the caller would see a transport error instead of the reason. Measuring the
+    /// serialized message rather than one field counts the envelope, the title, and whatever a
+    /// reply gains later.
+    pub(super) fn message(&self, response: ControlResponse) -> ServerMessage {
+        let reply = self.wrap(response);
+        let encoded = serde_json::to_vec(&reply).map_or(usize::MAX, |body| body.len());
+        // A frame carries its kind byte alongside the body.
+        if encoded < MAX_FRAME_SIZE {
+            return reply;
+        }
+        self.wrap(ControlResponse::error_with(
             ControlErrorCode::MessageTooLarge,
             format!(
                 "reply is {} KiB, over the {} KiB a session reply can carry",
                 encoded / 1024,
                 MAX_FRAME_SIZE / 1024
             ),
-        ),
+        ))
+    }
+
+    fn wrap(&self, response: ControlResponse) -> ServerMessage {
+        match self {
+            Self::Headless {
+                capabilities,
+                effective_protocol,
+            } => ServerMessage::SessionControlResult {
+                capabilities: Some(capabilities.clone()),
+                effective_protocol: *effective_protocol,
+                response,
+            },
+            Self::Attached { request_id } => ServerMessage::AttachedControlResult {
+                request_id: *request_id,
+                response,
+            },
+        }
+    }
+
+    /// Whether answering ends the connection.
+    pub(super) fn closes(&self) -> bool {
+        matches!(self, Self::Headless { .. })
     }
 }
 
@@ -223,52 +291,69 @@ impl SessionServer {
                 },
             )];
         }
-        let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
-        if let ControlCommand::AgentWait {
-            target,
-            until,
-            timeout_ms,
-        } = &request.command
-        {
-            let response = if let Some(provenance) = &request.extension {
-                Some(ControlResponse::error(unverifiable_extension_provenance(
-                    provenance,
-                )))
-            } else {
-                self.register_agent_wait(
+        let reply = ReplyTo::Headless {
+            capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+            effective_protocol: effective,
+        };
+        self.serve_control(client_id, &reply, request)
+    }
+
+    /// Answer one control request an attached client sent to its session server.
+    ///
+    /// The same commands the headless path serves, narrowed to [`attached_control_refusal`]'s
+    /// list, and answered on the open connection by `request_id` instead of closing it.
+    pub(super) fn handle_attached_control(
+        &mut self,
+        client_id: ClientId,
+        request_id: u64,
+        request: ControlRequest,
+    ) -> Vec<(Target, ServerMessage)> {
+        let reply = ReplyTo::Attached { request_id };
+        let read_only = self.client_read_only(client_id);
+        if let Some((code, reason)) = attached_control_refusal(&request.command, read_only) {
+            return vec![(
+                Target::Sender,
+                reply.message(ControlResponse::error_with(code, reason)),
+            )];
+        }
+        self.serve_control(client_id, &reply, request)
+    }
+
+    /// Serve one control request whose answer goes to `reply`.
+    ///
+    /// Returns the answer plus whatever the command changed for everyone else. A command that
+    /// holds its answer - a wait, a recording's stop - returns no answer here and sends it to
+    /// `reply` later.
+    fn serve_control(
+        &mut self,
+        client_id: ClientId,
+        reply: &ReplyTo,
+        request: ControlRequest,
+    ) -> Vec<(Target, ServerMessage)> {
+        let held = if let Some(provenance) = &request.extension {
+            Some(Some(ControlResponse::error(
+                unverifiable_extension_provenance(provenance),
+            )))
+        } else {
+            match &request.command {
+                ControlCommand::AgentWait {
+                    target,
+                    until,
+                    timeout_ms,
+                } => Some(self.register_agent_wait(
                     client_id,
                     target.clone(),
                     *until,
                     *timeout_ms,
-                    capabilities.clone(),
-                    effective,
-                )
-            };
-            return response.map_or_else(Vec::new, |response| {
-                vec![(
-                    Target::Sender,
-                    ServerMessage::SessionControlResult {
-                        capabilities: Some(capabilities),
-                        effective_protocol: effective,
-                        response,
-                    },
-                )]
-            });
-        }
-        if let ControlCommand::AgentPrompt {
-            target,
-            prompt,
-            wait,
-            timeout_ms,
-            allow_working,
-        } = &request.command
-        {
-            let response = if let Some(provenance) = &request.extension {
-                Some(ControlResponse::error(unverifiable_extension_provenance(
-                    provenance,
-                )))
-            } else {
-                self.register_agent_prompt(
+                    reply.clone(),
+                )),
+                ControlCommand::AgentPrompt {
+                    target,
+                    prompt,
+                    wait,
+                    timeout_ms,
+                    allow_working,
+                } => Some(self.register_agent_prompt(
                     client_id,
                     SessionAgentPrompt {
                         target: target.clone(),
@@ -277,70 +362,45 @@ impl SessionServer {
                         timeout_ms: *timeout_ms,
                         allow_working: *allow_working,
                     },
-                    capabilities.clone(),
-                    effective,
-                )
-            };
-            return response.map_or_else(Vec::new, |response| {
-                vec![(
-                    Target::Sender,
-                    ServerMessage::SessionControlResult {
-                        capabilities: Some(capabilities),
-                        effective_protocol: effective,
-                        response,
-                    },
-                )]
-            });
-        }
-        if matches!(
-            request.command,
-            ControlCommand::RecordStart { .. }
+                    reply.clone(),
+                )),
+                ControlCommand::RecordStart { .. }
                 | ControlCommand::RecordStop { .. }
                 | ControlCommand::RecordList
-                | ControlCommand::RecordMark { .. }
-        ) {
-            let response = if let Some(provenance) = &request.extension {
-                Some(ControlResponse::error(unverifiable_extension_provenance(
-                    provenance,
-                )))
-            } else {
-                self.handle_record_command(
+                | ControlCommand::RecordMark { .. } => Some(self.handle_record_command(
                     client_id,
-                    request.command,
-                    capabilities.clone(),
-                    effective,
-                )
-            };
+                    request.command.clone(),
+                    reply.clone(),
+                )),
+                _ if request.command.pane_wait().is_some() => {
+                    Some(self.register_capture_wait(client_id, request.clone(), reply.clone()))
+                }
+                _ => None,
+            }
+        };
+        if let Some(response) = held {
             return response.map_or_else(Vec::new, |response| {
-                vec![(
-                    Target::Sender,
-                    session_control_reply(capabilities, effective, response),
-                )]
-            });
-        }
-        if request.command.pane_wait().is_some() {
-            let response = if let Some(provenance) = &request.extension {
-                Some(ControlResponse::error(unverifiable_extension_provenance(
-                    provenance,
-                )))
-            } else {
-                self.register_capture_wait(client_id, request, capabilities.clone(), effective)
-            };
-            return response.map_or_else(Vec::new, |response| {
-                vec![(
-                    Target::Sender,
-                    session_control_reply(capabilities, effective, response),
-                )]
+                vec![(Target::Sender, reply.message(response))]
             });
         }
         let mut broadcasts = Vec::new();
         let response = self.run_session_control(request, &mut broadcasts);
-        let mut messages = vec![(
-            Target::Sender,
-            session_control_reply(capabilities, effective, response),
-        )];
+        let mut messages = vec![(Target::Sender, reply.message(response))];
         messages.extend(broadcasts);
         messages
+    }
+
+    /// Send `response` to a reply held since its request, closing a headless connection behind it.
+    pub(super) fn answer_held(
+        &mut self,
+        client_id: ClientId,
+        reply: &ReplyTo,
+        response: ControlResponse,
+    ) {
+        self.enqueue(client_id, Target::Sender, reply.message(response));
+        if reply.closes() {
+            self.set_close_after_flush(client_id);
+        }
     }
 
     fn run_session_control(
@@ -984,8 +1044,7 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
         request: SessionAgentPrompt<'_>,
-        capabilities: protocol::Capabilities,
-        effective_protocol: u32,
+        reply: ReplyTo,
     ) -> Option<ControlResponse> {
         if request.prompt.is_empty() {
             return Some(ControlResponse::error_with(
@@ -1026,8 +1085,7 @@ impl SessionServer {
                 reference.clone(),
                 until,
                 request.timeout_ms,
-                capabilities,
-                effective_protocol,
+                reply,
             )
         {
             return Some(response);
@@ -1717,30 +1775,35 @@ mod tests {
 
     #[test]
     fn a_reply_too_large_for_one_frame_becomes_message_too_large() {
-        let reply = |response| {
-            let ServerMessage::SessionControlResult { response, .. } =
-                session_control_reply(Capabilities::current(), PROTOCOL_VERSION, response)
-            else {
-                panic!("expected a session control result");
-            };
-            response
+        let headless = ReplyTo::Headless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
         };
-        let fits = ControlResponse::ok(serde_json::json!({"text": "hello"}));
-        assert_eq!(reply(fits.clone()), fits);
+        let attached = ReplyTo::Attached { request_id: 7 };
+        for to in [headless, attached] {
+            let reply = |response| match to.message(response) {
+                ServerMessage::SessionControlResult { response, .. } => response,
+                ServerMessage::AttachedControlResult {
+                    request_id: 7,
+                    response,
+                } => response,
+                other => panic!("expected a control result, got {other:?}"),
+            };
+            let fits = ControlResponse::ok(serde_json::json!({"text": "hello"}));
+            assert_eq!(reply(fits.clone()), fits);
 
-        let oversized =
-            ControlResponse::ok(serde_json::json!({"text": "x".repeat(MAX_FRAME_SIZE)}));
-        let refused = reply(oversized);
-        assert!(!refused.ok);
-        assert_eq!(refused.code, Some(ControlErrorCode::MessageTooLarge));
-        // The refusal itself goes out, so it has to fit the frame the original could not.
-        let message = session_control_reply(
-            Capabilities::current(),
-            PROTOCOL_VERSION,
-            ControlResponse::ok(serde_json::json!({"text": "x".repeat(MAX_FRAME_SIZE)})),
-        );
-        crate::session::protocol::write_frame(&mut Vec::new(), &message)
-            .expect("the refusal fits a frame");
+            let oversized =
+                ControlResponse::ok(serde_json::json!({"text": "x".repeat(MAX_FRAME_SIZE)}));
+            let refused = reply(oversized);
+            assert!(!refused.ok);
+            assert_eq!(refused.code, Some(ControlErrorCode::MessageTooLarge));
+            // The refusal itself goes out, so it has to fit the frame the original could not.
+            let message = to.message(ControlResponse::ok(
+                serde_json::json!({"text": "x".repeat(MAX_FRAME_SIZE)}),
+            ));
+            crate::session::protocol::write_frame(&mut Vec::new(), &message)
+                .expect("the refusal fits a frame");
+        }
     }
 
     #[test]
@@ -2484,8 +2547,10 @@ mod tests {
                     timeout_ms: None,
                     allow_working: false,
                 },
-                protocol::Capabilities::default(),
-                PROTOCOL_VERSION,
+                ReplyTo::Headless {
+                    capabilities: protocol::Capabilities::default(),
+                    effective_protocol: PROTOCOL_VERSION,
+                },
             )
             .unwrap();
         assert_eq!(response.code, Some(ControlErrorCode::AgentBlocked));

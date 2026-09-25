@@ -5,7 +5,7 @@
 //! and answered from the pump, never by blocking it. Each iteration looks again at the panes whose
 //! screen changed since the last look, then at every wait's clock.
 
-use super::headless::{session_control_reply, session_control_unsupported};
+use super::headless::{ReplyTo, session_control_unsupported};
 use super::*;
 use crate::control::{
     ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneCapture,
@@ -19,8 +19,7 @@ pub(super) struct PendingCaptureWait {
     seen: u64,
     screen: ScreenWait,
     plan: WaitPlan,
-    capabilities: protocol::Capabilities,
-    effective_protocol: u32,
+    reply: ReplyTo,
 }
 
 impl SessionServer {
@@ -31,8 +30,7 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
         request: ControlRequest,
-        capabilities: protocol::Capabilities,
-        effective_protocol: u32,
+        reply: ReplyTo,
     ) -> Option<ControlResponse> {
         let plan = match WaitPlan::for_command(&request.command) {
             Ok(Some(plan)) => plan,
@@ -87,8 +85,7 @@ impl SessionServer {
                 seen,
                 screen,
                 plan,
-                capabilities,
-                effective_protocol,
+                reply,
             },
         );
         None
@@ -131,12 +128,7 @@ impl SessionServer {
                 continue;
             };
             let response = self.capture_wait_response(wait.pane_id, &wait.plan, end);
-            self.enqueue(
-                client_id,
-                Target::Sender,
-                session_control_reply(wait.capabilities, wait.effective_protocol, response),
-            );
-            self.set_close_after_flush(client_id);
+            self.answer_held(client_id, &wait.reply, response);
         }
     }
 

@@ -211,9 +211,10 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 8,
-  "session_protocol": 17,
+  "session_protocol": 18,
   "capabilities": [
     "agent-waits",
+    "attached-control",
     "capture-render",
     "capture-scale",
     "capture-spans",

@@ -529,10 +529,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     } => {
                         let endpoint = control_endpoint(&cli, socket, &command)?;
                         if !endpoint.is_session() {
-                            return Err(
-                                "pane recording is server-owned; select a named session with --session"
-                                    .to_string(),
-                            );
+                            record::check_ui_endpoint(&command, foreground)?;
                         }
                         Ok(ParsedCli::Record(record::control_cli(
                             endpoint,

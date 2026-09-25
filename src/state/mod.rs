@@ -350,6 +350,10 @@ pub struct State {
     /// Acknowledged integration reports awaiting the owning session server's decision.
     pub pending_agent_report_replies: HashMap<u64, PendingAgentReportReply>,
     pub next_agent_report_request_id: u64,
+    /// Control requests forwarded to a session server over its attachment, awaiting its answer.
+    /// Keyed by the request id the server echoes back.
+    pub pending_attached_controls: HashMap<u64, PendingAttachedControl>,
+    pub next_attached_control_request_id: u64,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by
     /// `(epoch, local, pane id, generation)` so a client-local pane and a shared pane that share a
@@ -396,6 +400,13 @@ pub struct PendingAgentReportReply {
     /// `None` identifies the process-wide scratch runtime, whose inbound frames are deliberately
     /// retagged with whichever attachment epoch is current when they are drained.
     pub origin_epoch: Option<u64>,
+    pub reply: std::sync::mpsc::Sender<crate::control::ControlResponse>,
+}
+
+/// A control request a session server is answering for this UI.
+pub struct PendingAttachedControl {
+    /// The attachment the request went out on. An answer arriving on any other is not this one's.
+    pub epoch: u64,
     pub reply: std::sync::mpsc::Sender<crate::control::ControlResponse>,
 }
 
@@ -579,6 +590,8 @@ impl State {
             pending_ui_capture: None,
             pending_agent_report_replies: HashMap::new(),
             next_agent_report_request_id: 1,
+            pending_attached_controls: HashMap::new(),
+            next_attached_control_request_id: 1,
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
             capture_waits: Default::default(),

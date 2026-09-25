@@ -700,6 +700,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             request_id,
             response,
         } => session::agent_report_result(ctx, epoch, request_id, response),
+        Msg::SessionAttachedControlResult {
+            epoch,
+            request_id,
+            response,
+        } => crate::ops::attached_control::result(ctx, epoch, request_id, response),
         Msg::SessionSpawnResult {
             epoch,
             pane_id,

@@ -59,6 +59,9 @@ pub const CAPTURE_SPANS_CAPABILITY: &str = "capture-spans";
 /// A session server records a pane with `record-start`, `record-stop`, `record-list`, and
 /// `record-mark`, and `list-panes` and `metrics` report recordings.
 pub const RECORD_PANE_CAPABILITY: &str = "record-pane";
+/// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
+/// forwarding them to the session server it is attached to.
+pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -80,6 +83,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
+                ATTACHED_CONTROL_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
                 CAPTURE_SPANS_CAPABILITY,
@@ -2346,9 +2350,13 @@ impl<R: io::Read> Iterator for ControlLines<R> {
 /// An ordinary request is answered on the app's next update, so ten seconds is a wedged UI. A pane
 /// wait is answered when its condition resolves or its own deadline passes, and the UI enforces
 /// that deadline itself, so the connection outlasts it by the same margin rather than cutting
-/// every wait off at ten seconds.
+/// every wait off at ten seconds. A `record-stop` is answered once the session server has finished
+/// the file, so it gets the budget a session caller gets.
 fn control_reply_timeout(command: &ControlCommand) -> Duration {
     const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+    if matches!(command, ControlCommand::RecordStop { .. }) {
+        return crate::session::headless::RECORDING_STOP_TIMEOUT;
+    }
     command.pane_wait().map_or(REPLY_TIMEOUT, |wait| {
         Duration::from_millis(wait.timeout_ms).saturating_add(REPLY_TIMEOUT)
     })

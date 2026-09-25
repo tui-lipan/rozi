@@ -214,13 +214,15 @@ fn attach_session_client_with_profile(
                 return;
             }
             Err(err) => {
-                // A server stalled by a large output burst can miss one handshake window and answer
-                // the next; a reconnect rides that out instead of abandoning a live session.
-                if reconnect && is_busy_attach_error(&err) && Instant::now() < reconnect_deadline {
-                    std::thread::sleep(Duration::from_millis(250));
-                    continue;
-                }
                 if is_busy_attach_error(&err) {
+                    let now = Instant::now();
+                    if let Some(delay) = busy_attach_retry_delay(
+                        reconnect && now < reconnect_deadline,
+                        spawned && now < deadline,
+                    ) {
+                        std::thread::sleep(delay);
+                        continue;
+                    }
                     link.send(Msg::SessionAttachFailed {
                         epoch,
                         message: format!("Session `{name}` is busy or not accepting clients"),
@@ -663,6 +665,25 @@ fn should_autostart_session(err: &std::io::Error) -> bool {
     )
 }
 
+/// How long to wait before retrying an attach that found the server busy, or `None` to fail now.
+///
+/// A server stalled by a large output burst can miss one handshake window and answer the next, so
+/// a reconnect rides that out instead of abandoning a live session. A server this attach just
+/// spawned may still be finishing startup, so it gets the rest of the startup deadline. A busy
+/// server that was already running on a first attach fails fast.
+fn busy_attach_retry_delay(
+    reconnect_window_open: bool,
+    spawned_startup_window_open: bool,
+) -> Option<std::time::Duration> {
+    if reconnect_window_open {
+        Some(std::time::Duration::from_millis(250))
+    } else if spawned_startup_window_open {
+        Some(std::time::Duration::from_millis(50))
+    } else {
+        None
+    }
+}
+
 fn is_busy_attach_error(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::TimedOut || crate::platform::ipc::is_busy_error(err)
 }
@@ -935,6 +956,14 @@ mod tests {
         assert!(RemoteAttachMode::Recover.recover_existing());
         assert!(!RemoteAttachMode::Recover.create_only(false));
         assert!(!RemoteAttachMode::Initial.reconnect());
+    }
+
+    #[test]
+    fn a_busy_attach_retries_only_a_reconnect_or_a_server_it_just_spawned() {
+        assert!(busy_attach_retry_delay(true, false).is_some());
+        assert!(busy_attach_retry_delay(false, true).is_some());
+        assert!(busy_attach_retry_delay(true, true).is_some());
+        assert_eq!(busy_attach_retry_delay(false, false), None);
     }
 
     #[test]

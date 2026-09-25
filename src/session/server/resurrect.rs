@@ -989,11 +989,10 @@ fn observed_foreground_command(
 }
 
 fn default_snapshot_dir() -> Option<PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    if env.home.is_none() && env.xdg_state_home.is_none() {
-        return None;
-    }
-    Some(crate::platform::paths::state_dir(&env).join("sessions"))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("sessions"))
 }
 
 /// Metadata needed for discovery. Reading it never touches pane replay files.

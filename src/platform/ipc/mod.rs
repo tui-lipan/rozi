@@ -62,6 +62,20 @@ mod windows;
 #[allow(unused_imports)]
 pub use windows::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener};
 
+/// Whether an IPC error means the endpoint was momentarily busy and the operation is worth
+/// retrying. Both backends report that as `WouldBlock`; on Windows a raw `ERROR_PIPE_BUSY` counts
+/// too, so callers never have to recognize a Win32 code themselves.
+pub fn is_busy_error(err: &io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        windows::is_pipe_busy(err)
+    }
+    #[cfg(not(windows))]
+    {
+        err.kind() == io::ErrorKind::WouldBlock
+    }
+}
+
 /// Wrap a spawned child's stdin/stdout as an [`IpcConnection`].
 ///
 /// Used by remote SSH attach: the child is `ssh … rozi --remote-serve`, and the resulting

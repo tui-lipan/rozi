@@ -126,7 +126,7 @@ Release notices are described in [Update notices](#update-notices).
 | --- | --- | --- |
 | Config | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
 | Data, including extensions | `$XDG_DATA_HOME/rozi`, else `~/.local/share/rozi` | `%LOCALAPPDATA%\rozi` |
-| State | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
+| State | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi\state` |
 | Cache | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
 | Runtime endpoints | `$XDG_RUNTIME_DIR/rozi`, else `/run/user/<uid>/rozi`, else a private per-user temporary directory | `%LOCALAPPDATA%\rozi\run` |
 

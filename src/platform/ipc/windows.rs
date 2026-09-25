@@ -44,13 +44,19 @@
 //! are translated to `WouldBlock`; a genuine peer disconnect (`ERROR_BROKEN_PIPE`) is what becomes
 //! `Ok(0)`.
 //!
+//! The mode itself is changed only when it actually differs from what the instance is in. Callers
+//! re-arm timeouts freely - the attach handshake does so on every poll - and each re-arm used to be
+//! a `SetNamedPipeHandleState` call whose failure surfaced as a raw Win32 error. A mode change that
+//! reports `ERROR_PIPE_BUSY` is retried briefly and then reported as `WouldBlock`, the same kind
+//! [`IpcEndpoint::connect`] gives a busy pipe, so no caller needs to know Win32 error 231.
+//!
 //! **Unverified at runtime**: this workspace has no Windows host. It type-checks under
 //! `cargo check --target x86_64-pc-windows-gnu` and is written against documented API contracts.
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
@@ -83,6 +89,10 @@ const CONNECT_BUSY_WAIT: u32 = 1_000;
 
 /// Poll interval for the `PIPE_NOWAIT` + deadline emulation of read/write timeouts.
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+/// How many times a mode change that reports `ERROR_PIPE_BUSY` is retried, [`POLL_INTERVAL`]
+/// apart, before it is reported as `WouldBlock`.
+const MODE_BUSY_RETRIES: u32 = 50;
 
 /// A named-pipe endpoint, identified by its runtime-directory registry entry. See the module doc
 /// comment for why the entry path - not the pipe name - is the identity.
@@ -170,7 +180,9 @@ impl IpcEndpoint {
                 )
             };
             if handle != INVALID_HANDLE_VALUE {
-                return Ok(IpcConnection::Local(LocalConnection::owning(handle, false)));
+                return Ok(IpcConnection::Local(LocalConnection::owning(
+                    handle, false, None,
+                )));
             }
             let err = io::Error::last_os_error();
             // Every instance is momentarily busy between one client connecting and the listener
@@ -347,7 +359,11 @@ impl IpcListener {
         // The accepted connection starts blocking regardless of the listener's mode; the caller
         // (`SessionServer::accept_new`) sets whatever mode it actually wants.
         set_pipe_mode(pending, false)?;
-        Ok(IpcConnection::Local(LocalConnection::owning(pending, true)))
+        Ok(IpcConnection::Local(LocalConnection::owning(
+            pending,
+            true,
+            Some(false),
+        )))
     }
 }
 
@@ -369,14 +385,21 @@ pub struct LocalConnection {
     nonblocking: std::cell::Cell<bool>,
     read_timeout: std::cell::Cell<Option<Duration>>,
     write_timeout: std::cell::Cell<Option<Duration>>,
+    /// The mode last applied to the pipe instance - `Some(true)` for `PIPE_NOWAIT` - or `None`
+    /// before anything is known. Shared with every clone because the mode belongs to the instance,
+    /// and locked across the `SetNamedPipeHandleState` call so two clones changing it at once cannot
+    /// leave the record disagreeing with the pipe.
+    applied_nowait: Arc<Mutex<Option<bool>>>,
 }
 
 impl LocalConnection {
-    fn owning(handle: HANDLE, server_end: bool) -> Self {
+    /// `applied_nowait` is the mode the instance is known to be in, when the caller just set it.
+    fn owning(handle: HANDLE, server_end: bool, applied_nowait: Option<bool>) -> Self {
         Self {
             handle: OwnedHandle(handle),
             server_end,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
+            applied_nowait: Arc::new(Mutex::new(applied_nowait)),
             nonblocking: std::cell::Cell::new(false),
             read_timeout: std::cell::Cell::new(None),
             write_timeout: std::cell::Cell::new(None),
@@ -498,23 +521,43 @@ impl LocalConnection {
             nonblocking: std::cell::Cell::new(self.nonblocking.get()),
             read_timeout: std::cell::Cell::new(self.read_timeout.get()),
             write_timeout: std::cell::Cell::new(self.write_timeout.get()),
+            applied_nowait: Arc::clone(&self.applied_nowait),
         };
         Ok(clone)
     }
 
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
         self.nonblocking.set(nonblocking);
-        set_pipe_mode(self.handle.0, self.needs_nowait())
+        self.apply_mode()
     }
 
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         self.read_timeout.set(timeout);
-        set_pipe_mode(self.handle.0, self.needs_nowait())
+        self.apply_mode()
     }
 
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         self.write_timeout.set(timeout);
-        set_pipe_mode(self.handle.0, self.needs_nowait())
+        self.apply_mode()
+    }
+
+    /// Put the instance in the mode [`Self::needs_nowait`] asks for, calling into Win32 only when
+    /// that differs from the mode it is already in.
+    fn apply_mode(&self) -> io::Result<()> {
+        let nowait = self.needs_nowait();
+        let mut applied = self
+            .applied_nowait
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *applied == Some(nowait) {
+            return Ok(());
+        }
+        // Forget the old mode first: a failed change leaves the instance in a state we no longer
+        // know, and the next call must try again rather than trust the record.
+        *applied = None;
+        set_pipe_mode(self.handle.0, nowait)?;
+        *applied = Some(nowait);
+        Ok(())
     }
 
     /// Non-blocking mode *or* a timeout on either direction forces the pipe out of `PIPE_WAIT`,
@@ -740,13 +783,36 @@ impl LocalConnection {
 }
 
 /// `PIPE_NOWAIT` when `nowait`, `PIPE_WAIT` otherwise. The pipe stays byte-mode in both.
+///
+/// `ERROR_PIPE_BUSY` is transient by definition, so it is retried for a moment and then reported as
+/// `WouldBlock` rather than escaping as a raw Win32 error that no caller treats as retryable.
 fn set_pipe_mode(handle: HANDLE, nowait: bool) -> io::Result<()> {
     let mode = PIPE_READMODE_BYTE | if nowait { PIPE_NOWAIT } else { PIPE_WAIT };
-    let ok = unsafe { SetNamedPipeHandleState(handle, &mode, std::ptr::null(), std::ptr::null()) };
-    if ok == 0 {
-        return Err(io::Error::last_os_error());
+    for attempt in 0..=MODE_BUSY_RETRIES {
+        let ok =
+            unsafe { SetNamedPipeHandleState(handle, &mode, std::ptr::null(), std::ptr::null()) };
+        if ok != 0 {
+            return Ok(());
+        }
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() != Some(ERROR_PIPE_BUSY as i32) {
+            return Err(err);
+        }
+        if attempt < MODE_BUSY_RETRIES {
+            std::thread::sleep(POLL_INTERVAL);
+        }
     }
-    Ok(())
+    Err(io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "named pipe stayed busy while changing its wait mode",
+    ))
+}
+
+/// Whether `err` means a pipe was momentarily busy. The backend already reports that as
+/// `WouldBlock`; the raw code is accepted too so a path that ever lets it through still reads as
+/// transient rather than fatal.
+pub(crate) fn is_pipe_busy(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::WouldBlock || err.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
 }
 
 /// Closes its handle on drop, so none of the `?` early-returns above can leak one.

@@ -39,9 +39,10 @@ fn last_session_scope_key(scope: Option<&remote::RemoteTarget>) -> String {
 }
 
 fn last_sessions_path() -> Option<std::path::PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    (env.home.is_some() || env.xdg_state_home.is_some())
-        .then(|| crate::platform::paths::state_dir(&env).join("last-sessions.json"))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("last-sessions.json"))
 }
 
 fn read_last_sessions() -> std::collections::HashMap<String, String> {
@@ -105,9 +106,10 @@ pub(crate) fn forget_last_session(scope: Option<&remote::RemoteTarget>) {
 const MAX_RECENT_REMOTES: usize = 10;
 
 fn recent_remotes_path() -> Option<std::path::PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    (env.home.is_some() || env.xdg_state_home.is_some())
-        .then(|| crate::platform::paths::state_dir(&env).join("recent-remotes"))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("recent-remotes"))
 }
 
 fn write_recent_remotes(entries: &[remote::RemoteTarget]) {
@@ -189,9 +191,10 @@ pub(crate) fn read_recent_remotes() -> Vec<remote::RemoteTarget> {
 const SAVED_HOSTS_FILE: &str = "saved-hosts";
 
 fn saved_hosts_path() -> Option<std::path::PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    (env.home.is_some() || env.xdg_state_home.is_some())
-        .then(|| crate::platform::paths::state_dir(&env).join(SAVED_HOSTS_FILE))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join(SAVED_HOSTS_FILE))
 }
 
 /// Write the roster, saying why if it could not be written.
@@ -316,9 +319,10 @@ pub struct CachedHostSession {
 pub type HostSessionCache = std::collections::HashMap<String, Vec<CachedHostSession>>;
 
 fn host_sessions_path() -> Option<std::path::PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    (env.home.is_some() || env.xdg_state_home.is_some())
-        .then(|| crate::platform::paths::state_dir(&env).join("host-sessions.json"))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("host-sessions.json"))
 }
 
 /// Read the persisted per-host session cache. Empty on any error (missing file, parse failure): the

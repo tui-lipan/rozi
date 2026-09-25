@@ -344,14 +344,19 @@ fn alert_pulse_should_run(state: &State) -> bool {
         || visible_recording_dot(state)
 }
 
-/// A recorded pane on the workspace in view whose own chrome draws the dot that blinks.
+/// A recording dot on screen, which blinks: in a recorded pane's own chrome on the workspace in
+/// view, or on a workspace tab.
 fn visible_recording_dot(state: &State) -> bool {
-    crate::view::pane_chrome_shows_recording(&state.config.pane)
+    let in_chrome = crate::view::pane_chrome_shows_recording(&state.config.pane)
         && state
             .active_workspace_ref()
             .panes
             .iter()
-            .any(|pane| pane.terminal.recording && !pane.closing)
+            .any(|pane| pane.terminal.recording && !pane.closing);
+    let on_a_tab = state.config.pane.show_workbar
+        && (0..state.current().workspaces.len())
+            .any(|index| crate::view::workspace_tab_shows_recording(state, index));
+    in_chrome || on_a_tab
 }
 
 fn visible_pane_alert_can_pulse(state: &State) -> bool {
@@ -518,15 +523,20 @@ mod tests {
         state.config.pane.show_titles = false;
         assert!(alert_pulse_should_run(&state), "the corner dot blinks too");
         state.config.pane.border_mode = PaneBorderMode::Dividers;
-        assert!(
-            !alert_pulse_should_run(&state),
-            "the tab carries a steady dot"
-        );
+        assert!(alert_pulse_should_run(&state), "the tab's dot blinks");
         state.config.pane.show_titles = true;
 
         let pane = state.current_mut().workspaces[0].panes.pop().unwrap();
         state.current_mut().workspaces[1].panes.push(pane);
-        assert!(!alert_pulse_should_run(&state), "another workspace's tab");
+        assert!(
+            alert_pulse_should_run(&state),
+            "another workspace's tab blinks"
+        );
+        state.config.pane.show_workbar = false;
+        assert!(
+            !alert_pulse_should_run(&state),
+            "no workbar, no tab to blink"
+        );
     }
 
     #[test]

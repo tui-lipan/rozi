@@ -14,6 +14,7 @@ mod workspace;
 
 pub(crate) use pane::{
     PaneKind, PaneMerge, has_pane_alert, pane_alert, pane_chrome_shows_recording, pane_element,
+    recording_dot_off_phase,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
@@ -28,6 +29,7 @@ pub use widget_keys::{
     session_picker_key, settings_choice_key, settings_palette_key, sidebar_body_key,
     sidebar_region_key, theme_picker_key, worktree_form_input_key, worktree_picker_key,
 };
+pub(crate) use workbar::workspace_tab_shows_recording;
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_active_pane_rects};
 

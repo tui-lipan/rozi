@@ -62,27 +62,59 @@ fn icon_lead(icon: &str) -> String {
     }
 }
 
-/// A title as spans: `lead` (the icon and its gap), the recording marker while the pane records,
-/// then the title. The marker leads the title so that an ellipsis never hides it: a recording must
-/// never be invisible.
-///
-/// `marker` is the marker's colour, from [`crate::ops::theme::recording_marker_color`].
-fn title_spans(
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    lead: &str,
-    title: &str,
-    marker: Color,
-) -> Vec<Span> {
-    let mut spans = Vec::with_capacity(5);
+/// A title as spans: `lead` (the icon and its gap), then the title.
+fn title_spans(lead: &str, title: &str) -> Vec<Span> {
+    let mut spans = Vec::with_capacity(2);
     if !lead.is_empty() {
         spans.push(Span::new(lead.to_owned()));
     }
-    if let Some(dot) = recording_dot(ctx, pane, marker) {
-        spans.extend([dot, Span::new(" rec").fg(marker), Span::new(" · ")]);
-    }
     spans.push(Span::new(title.to_owned()));
     spans
+}
+
+/// The recording marker, the dot then `rec`, while the pane records. `color` is the marker's
+/// colour, from [`crate::ops::theme::recording_marker_color`].
+fn recording_marker_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
+    let dot = recording_dot(ctx, pane, color)?;
+    Some(vec![dot, Span::new(" rec").fg(color)])
+}
+
+/// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.
+///
+/// Kept apart from the title so the title alone truncates: the marker always shows whole at the end
+/// of the row, since a recording must never be invisible.
+fn title_trailer(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    badge: Option<String>,
+    style: Style,
+    marker: Color,
+) -> Option<Element> {
+    let mut spans: Vec<Span> = badge.into_iter().map(Span::new).collect();
+    if let Some(marker) = recording_marker_spans(ctx, pane, marker) {
+        spans.push(Span::new(" "));
+        spans.extend(marker);
+    }
+    (!spans.is_empty()).then(|| {
+        Text::from_spans(spans)
+            .style(style)
+            .height(Length::Px(1))
+            .into()
+    })
+}
+
+/// A title that sizes to its text, followed by its trailer. Used where the title is drawn over a
+/// border line, which it must not paint past; the title truncates before the trailer does.
+fn inline_title(title: Text, trailer: Option<Element>) -> Element {
+    let title = title.overflow(Overflow::Ellipsis).height(Length::Px(1));
+    match trailer {
+        None => title.into(),
+        Some(trailer) => HStack::new()
+            .height(Length::Px(1))
+            .child(title)
+            .child(trailer)
+            .into(),
+    }
 }
 
 fn rich_title(spans: Vec<Span>) -> RichText {
@@ -96,7 +128,7 @@ fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Sp
         return None;
     }
     let style = Style::new().fg(color);
-    let style = if recording_dot_dimmed(&ctx.state) {
+    let style = if recording_dot_off_phase(&ctx.state) {
         style.dim()
     } else {
         style
@@ -104,7 +136,9 @@ fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Sp
     Some(Span::new(ctx.state.config.recording_icon()).style(style))
 }
 
-fn recording_dot_dimmed(state: &crate::state::State) -> bool {
+/// Whether the recording dot is in the off half of its blink: the calm pulse phase, while the pulse
+/// chain runs with motion on.
+pub(crate) fn recording_dot_off_phase(state: &crate::state::State) -> bool {
     let animations = state.config.animations;
     state.alert_pulse_armed
         && state.alert_pulse_calm_phase
@@ -583,33 +617,30 @@ pub(crate) fn divider_title_element(
     } = title_parts(ctx, pane, focused_pane);
 
     match titlebar {
-        PaneTitlebarMode::Border => {
-            let mut label = title;
-            if let Some(badge) = badge {
-                label.push_str(&format!("  · {badge}"));
-            }
-            Some(
-                Text::from_spans(title_spans(ctx, pane, &icon_lead(icon), &label, marker))
-                    .style(text_style)
-                    .overflow(Overflow::Ellipsis)
-                    .height(Length::Px(1))
-                    .into(),
-            )
-        }
+        PaneTitlebarMode::Border => Some(inline_title(
+            Text::from_spans(title_spans(&icon_lead(icon), &title)).style(text_style),
+            title_trailer(
+                ctx,
+                pane,
+                badge.map(|badge| format!("  · {badge}")),
+                text_style,
+                marker,
+            ),
+        )),
         PaneTitlebarMode::Integrated => {
-            let title_text: Element =
-                Text::from_spans(title_spans(ctx, pane, &icon_lead(icon), &title, marker))
-                    .style(text_style)
-                    .overflow(Overflow::Ellipsis)
-                    .width(Length::Flex(1))
-                    .height(Length::Px(1))
-                    .into();
-            let badge_text: Option<Element> = badge.map(|badge| {
-                Text::new(format!(" {badge}"))
-                    .style(text_style)
-                    .height(Length::Px(1))
-                    .into()
-            });
+            let title_text: Element = Text::from_spans(title_spans(&icon_lead(icon), &title))
+                .style(text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .into();
+            let badge_text = title_trailer(
+                ctx,
+                pane,
+                badge.map(|badge| format!(" {badge}")),
+                text_style,
+                marker,
+            );
             let title_row = filled_title_row(
                 title_bar_fill_style,
                 title_cap_style(ctx).glyphs(),
@@ -659,25 +690,21 @@ pub(crate) fn seam_title_element(
     let id = pane.id;
     let title_style = title_cap_style(ctx);
     let parts = title_parts(ctx, pane, focused_pane);
-    let label = title_spans(
-        ctx,
-        pane,
-        &icon_lead(parts.icon),
-        &parts.title,
-        parts.marker,
-    );
+    let label = title_spans(&icon_lead(parts.icon), &parts.title);
 
     match ctx.state.config.pane.titlebar {
         // The neighbour above redraws the border line itself, so only the label is missing. Place
         // it where `BorderLabels::padding(1)` puts it: past the corner and its one `─` of padding.
-        PaneTitlebarMode::Border => Some(SeamTitle {
-            inset: 2.0,
-            element: Text::from_spans(label)
-                .style(parts.text_style.bg(parts.frame_bg))
-                .overflow(Overflow::Ellipsis)
-                .height(Length::Px(1))
-                .into(),
-        }),
+        PaneTitlebarMode::Border => {
+            let style = parts.text_style.bg(parts.frame_bg);
+            Some(SeamTitle {
+                inset: 2.0,
+                element: inline_title(
+                    Text::from_spans(label).style(style),
+                    title_trailer(ctx, pane, None, style, parts.marker),
+                ),
+            })
+        }
         PaneTitlebarMode::Integrated => {
             let title_text: Element = Text::from_spans(label)
                 .style(parts.text_style)
@@ -685,6 +712,16 @@ pub(crate) fn seam_title_element(
                 .width(Length::Flex(1))
                 .height(Length::Px(1))
                 .into();
+            let title_text: Element =
+                match title_trailer(ctx, pane, None, parts.text_style, parts.marker) {
+                    None => title_text,
+                    Some(trailer) => HStack::new()
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(title_text)
+                        .child(trailer)
+                        .into(),
+                };
             let cap_style = Style::new()
                 .fg(parts.title_bg)
                 .bg(parts.frame_bg)
@@ -905,23 +942,21 @@ pub(crate) fn pane_element(
     let mut window_stack = VStack::new().align(Align::Stretch);
     if show_titles && titlebar == PaneTitlebarMode::Bar {
         let title_text: Element = Text::from_spans(title_spans(
-            ctx,
-            pane,
             &icon_lead(icon),
             title.as_ref().expect("visible titlebar has a title"),
-            marker,
         ))
         .style(title_bar_text_style)
         .overflow(Overflow::Ellipsis)
         .width(Length::Flex(1))
         .height(Length::Px(1))
         .into();
-        let badge_text: Option<Element> = badge.map(|badge| {
-            Text::new(format!(" {badge}"))
-                .style(title_bar_text_style)
-                .height(Length::Px(1))
-                .into()
-        });
+        let badge_text = title_trailer(
+            ctx,
+            pane,
+            badge.map(|badge| format!(" {badge}")),
+            title_bar_text_style,
+            marker,
+        );
 
         // `Padded` keeps the title flush with the frame below, with blank side padding. The cap
         // styles instead draw the titlebar color as end caps over the backdrop, so the row reads
@@ -1122,36 +1157,42 @@ pub(crate) fn pane_element(
         match titlebar {
             PaneTitlebarMode::Border if !merge.title_outside_frame() => {
                 let title = title.as_ref().expect("visible titlebar has a title");
-                let border_title =
-                    rich_title(title_spans(ctx, pane, &icon_lead(icon), title, marker));
+                let border_title = rich_title(title_spans(&icon_lead(icon), title));
                 let mut labels = BorderLabels::new()
                     .left(border_title)
                     .style(border_title_text_style)
                     .padding(1);
-                if let Some(badge) = badge {
-                    labels = labels.right(badge);
+                // The badge and the recording marker share the right label, which keeps its width
+                // while the title truncates.
+                let mut right: Vec<Span> = badge.map(Span::new).into_iter().collect();
+                if let Some(marker) = recording_marker_spans(ctx, pane, marker) {
+                    if !right.is_empty() {
+                        right.push(Span::new(" · "));
+                    }
+                    right.extend(marker);
+                }
+                if !right.is_empty() {
+                    labels = labels.right(rich_title(right));
                 }
                 body = body.header(labels);
             }
             PaneTitlebarMode::Integrated if !merge.title_outside_frame() => {
                 let title_text: Element = Text::from_spans(title_spans(
-                    ctx,
-                    pane,
                     &format!("{icon}  "),
                     title.as_ref().expect("visible titlebar has a title"),
-                    marker,
                 ))
                 .style(title_bar_text_style)
                 .overflow(Overflow::Ellipsis)
                 .width(Length::Flex(1))
                 .height(Length::Px(1))
                 .into();
-                let badge_text: Option<Element> = badge.map(|badge| {
-                    Text::new(format!(" {badge}"))
-                        .style(title_bar_text_style)
-                        .height(Length::Px(1))
-                        .into()
-                });
+                let badge_text = title_trailer(
+                    ctx,
+                    pane,
+                    badge.map(|badge| format!(" {badge}")),
+                    title_bar_text_style,
+                    marker,
+                );
                 let title_style = title_cap_style(ctx);
                 let title_row: Element = match title_style.glyphs() {
                     // The frame's own top-edge decoration draws the half-block caps as its corner
@@ -1203,11 +1244,8 @@ pub(crate) fn pane_element(
             // up with where `border` puts it, just a row lower.
             PaneTitlebarMode::Inset => {
                 let title_text: Element = Text::from_spans(title_spans(
-                    ctx,
-                    pane,
                     &icon_lead(icon),
                     title.as_ref().expect("visible titlebar has a title"),
-                    marker,
                 ))
                 .style(border_title_text_style)
                 .overflow(Overflow::Ellipsis)
@@ -1219,12 +1257,14 @@ pub(crate) fn pane_element(
                     .width(Length::Flex(1))
                     .height(Length::Px(1))
                     .child(title_text);
-                if let Some(badge) = badge {
-                    title_row = title_row.child(
-                        Text::new(badge)
-                            .style(border_title_text_style)
-                            .height(Length::Px(1)),
-                    );
+                if let Some(trailer) = title_trailer(
+                    ctx,
+                    pane,
+                    badge.map(str::to_string),
+                    border_title_text_style,
+                    marker,
+                ) {
+                    title_row = title_row.child(trailer);
                 }
                 inset_title_row = Some(
                     MouseRegion::new()
@@ -1249,7 +1289,7 @@ pub(crate) fn pane_element(
             ),
         )
     {
-        body = body.header(BorderLabels::new().left(dot).padding(1));
+        body = body.header(BorderLabels::new().right(dot).padding(1));
     }
     let content: Element = match inset_title_row {
         Some(title_row) => VStack::new()
@@ -2573,23 +2613,38 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_pane_leads_its_title_with_a_red_dot_in_every_titlebar_layout() {
+    fn a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout() {
         for &titlebar in PaneTitlebarMode::all() {
             let mut backend = recording_backend();
             backend.state_mut().config.pane.titlebar = titlebar;
+            let id = backend.state().focused_pane().unwrap();
+            crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id)
+                .unwrap()
+                .identity
+                .custom_title = Some("short title".into());
             backend.render();
             let frame = backend.capture_frame();
+            let lines = frame.to_fixed_grid_lines();
             let error = backend.state().theme.status.error;
-            let (row, column, dot) = cell_at(&frame, "● rec · ").unwrap_or_else(|| {
+            let (row, column, dot) = cell_at(&frame, "● rec")
+                .unwrap_or_else(|| panic!("{titlebar:?} draws no marker\n{}", lines.join("\n")));
+            let title_at = lines[row].find("short title").unwrap_or_else(|| {
                 panic!(
-                    "{titlebar:?} draws no marker\n{}",
-                    frame.to_fixed_grid_lines().join("\n")
+                    "{titlebar:?}: the marker is not on the title row\n{}",
+                    lines.join("\n")
                 )
             });
+            assert!(
+                lines[row][..title_at].chars().count() < column,
+                "{titlebar:?}: the marker leads the title\n{}",
+                lines[row]
+            );
             let at = |offset: usize| &frame.cells[row * usize::from(frame.width) + column + offset];
-            let (rec, title) = (at(2), at("● rec · ".chars().count()));
+            let rec = at(2);
             assert_eq!(rec.symbol, "r");
             // Red where red reads; a focused strip is often too close to it for that.
+            let title = &frame.cells
+                [row * usize::from(frame.width) + lines[row][..title_at].chars().count()];
             let expected =
                 crate::ops::theme::recording_marker_color(&backend.state().theme, dot.bg, title.fg);
             assert_eq!(dot.fg, expected, "{titlebar:?}: the dot");
@@ -2605,7 +2660,18 @@ mod tests {
                 "{titlebar:?}: the dot is dimmed at rest"
             );
 
-            let id = backend.state().focused_pane().unwrap();
+            // A title too long for the row truncates before the marker, never over it.
+            crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id)
+                .unwrap()
+                .identity
+                .custom_title = Some("a very long title ".repeat(12));
+            backend.render();
+            let text = backend.capture_frame().plain_text();
+            assert!(
+                text.contains("● rec"),
+                "{titlebar:?}: a long title hides the marker\n{text}"
+            );
+
             crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id)
                 .unwrap()
                 .terminal
@@ -2625,8 +2691,8 @@ mod tests {
         backend.render();
         let text = backend.capture_frame().plain_text();
         assert!(
-            text.contains("╭─●") || text.contains("┌─●"),
-            "no dot in the border corner\n{text}"
+            text.contains("●─╮") || text.contains("●─┐"),
+            "no dot in the border's top-right corner\n{text}"
         );
         assert!(
             !text.contains("● 1"),
@@ -2637,7 +2703,7 @@ mod tests {
         backend.state_mut().config.pane.border_mode = PaneBorderMode::Dividers;
         backend.render();
         let text = backend.capture_frame().plain_text();
-        assert!(!text.contains("─●"), "{text}");
+        assert!(!text.contains("●─"), "{text}");
         assert!(text.contains("● 1"), "the recording is invisible\n{text}");
     }
 
@@ -2656,6 +2722,41 @@ mod tests {
         assert!(
             !text.contains("● 1"),
             "the workspace in view marks its pane's title instead\n{text}"
+        );
+    }
+
+    #[test]
+    fn a_workspace_tab_dot_blinks_without_the_tab_changing_width() {
+        let mut backend = recording_backend();
+        {
+            let state = backend.state_mut();
+            let mut pane = Pane::new(9, 100, FloatRect::default());
+            pane.terminal.recording = true;
+            state.current_mut().workspaces[1].panes.push(pane);
+            state.config.animations.enabled = true;
+            state.config.animations.focus_chrome = true;
+            state.alert_pulse_armed = true;
+        }
+        let bar = |backend: &mut tui_lipan::TestBackend<AppRoot>, off: bool| {
+            backend.state_mut().alert_pulse_calm_phase = off;
+            backend.render();
+            backend.capture_frame().to_fixed_grid_lines()[0].clone()
+        };
+        let lit = bar(&mut backend, false);
+        let dark = bar(&mut backend, true);
+        assert!(lit.contains("● 2"), "{lit}");
+        assert!(!dark.contains('●') && dark.contains("  2"), "{dark}");
+        let column = |line: &str| line[..line.find(" 3").unwrap()].chars().count();
+        assert_eq!(
+            column(&lit),
+            column(&dark),
+            "the tabs beside it move\n{lit}\n{dark}"
+        );
+
+        backend.state_mut().config.animations.enabled = false;
+        assert!(
+            bar(&mut backend, true).contains("● 2"),
+            "it blinks with motion off"
         );
     }
 

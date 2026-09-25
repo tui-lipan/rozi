@@ -696,7 +696,15 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
             let label =
                 workspace_tab_label(state.current().workspaces[idx].name.as_deref(), idx, count);
             let label = if workspace_tab_shows_recording(state, idx) {
-                format!("{} {label}", state.config.recording_icon())
+                // A tab's label takes one style, so the dot blinks by giving way to blanks of its
+                // own width: the tab keeps its size and the tabs beside it stay put.
+                let icon = state.config.recording_icon();
+                let dot = if super::recording_dot_off_phase(state) {
+                    " ".repeat(unicode_width::UnicodeWidthStr::width(icon))
+                } else {
+                    icon.to_string()
+                };
+                format!("{dot} {label}")
             } else {
                 label
             };
@@ -818,15 +826,10 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .into()
 }
 
-/// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
-/// with a ` ·<count>` suffix while it holds panes.
-/// Tab text is identity only - number, optional name, pane count. Alerts are carried entirely by the
-/// tab's background color, so a workspace does not change width when an agent blocks and the tabs
-/// beside it do not shift.
 /// Whether a workspace tab carries the recording dot: its workspace holds a recorded pane that the
 /// screen does not already mark, because the workspace is not the one showing or the pane's own
 /// chrome has nowhere to put the dot.
-fn workspace_tab_shows_recording(state: &crate::state::State, index: usize) -> bool {
+pub(crate) fn workspace_tab_shows_recording(state: &crate::state::State, index: usize) -> bool {
     let recording = state.current().workspaces[index]
         .panes
         .iter()
@@ -836,6 +839,12 @@ fn workspace_tab_shows_recording(state: &crate::state::State, index: usize) -> b
             || !super::pane::pane_chrome_shows_recording(&state.config.pane))
 }
 
+/// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
+/// with a ` ·<count>` suffix while it holds panes.
+///
+/// Tab text is identity only - number, optional name, pane count. Alerts are carried entirely by the
+/// tab's background color, so a workspace does not change width when an agent blocks and the tabs
+/// beside it do not shift. The recording dot is the one addition, ahead of this label.
 fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
     let base = match name {
         Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),

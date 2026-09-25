@@ -32,7 +32,8 @@ pub fn png_frames<R: BufRead>(
     scale: u8,
     overwrite: bool,
 ) -> Result<ExportSummary, String> {
-    std::fs::create_dir_all(dir).map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
     let mut frames: Vec<(String, u64)> = Vec::new();
     let mut end = None;
     while let Some(step) = replay.step()? {
@@ -59,7 +60,9 @@ pub fn png_frames<R: BufRead>(
     write_new(&dir.join(CONCAT_LISTING), listing.as_bytes(), overwrite)?;
     Ok(ExportSummary {
         frames: frames.len() as u64,
-        duration_ms: frames.first().map_or(0, |(_, first)| last_frame_end(&frames, end) - first),
+        duration_ms: frames
+            .first()
+            .map_or(0, |(_, first)| last_frame_end(&frames, end) - first),
         truncated: replay.truncated(),
     })
 }
@@ -134,12 +137,16 @@ pub fn cast<R: BufRead>(
 fn write_new(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
     let describe = |error: std::io::Error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
-            format!("{} already exists; pass --force to replace it", path.display())
+            format!(
+                "{} already exists; pass --force to replace it",
+                path.display()
+            )
         } else {
             format!("cannot write {}: {error}", path.display())
         }
     };
-    let mut file = crate::platform::persist::create_private_file(path, overwrite).map_err(describe)?;
+    let mut file =
+        crate::platform::persist::create_private_file(path, overwrite).map_err(describe)?;
     file.write_all(bytes).map_err(describe)
 }
 
@@ -147,7 +154,8 @@ fn write_new(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
 pub fn open(path: &Path) -> Result<Replay<std::io::BufReader<std::fs::File>>, String> {
     let file = std::fs::File::open(path)
         .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-    Replay::new(std::io::BufReader::new(file)).map_err(|error| format!("{}: {error}", path.display()))
+    Replay::new(std::io::BufReader::new(file))
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// `path` made absolute against `base`, for a path the user typed relative to where they are.

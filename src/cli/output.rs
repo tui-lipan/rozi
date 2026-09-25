@@ -836,7 +836,10 @@ pub(super) fn format_control_text(
                         .join(", ")
                 })
                 .unwrap_or_default();
-            format!("{} {ids}\n", styles.paint("Marked recording", OutputTone::Success))
+            format!(
+                "{} {ids}\n",
+                styles.paint("Marked recording", OutputTone::Success)
+            )
         }
         _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
     }
@@ -911,7 +914,12 @@ fn format_recordings_text(data: Option<&serde_json::Value>, styles: OutputStyles
             ),
             value_u64(&row, "pane").unwrap_or_default(),
             styles.paint(
-                &format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60),
+                &format!(
+                    "{}:{:02}:{:02}",
+                    seconds / 3600,
+                    seconds / 60 % 60,
+                    seconds % 60
+                ),
                 OutputTone::Muted
             ),
             value_u64(&row, "frames").unwrap_or_default(),

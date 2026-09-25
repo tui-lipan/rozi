@@ -48,7 +48,9 @@ fn push(recorder: &Recorder, t: u64, screen: &TerminalScreen) {
 
 fn finish(recorder: Recorder, t: u64, reason: EndReason) -> RecorderOutcome {
     recorder.finish(t, reason);
-    recorder.join(Duration::from_secs(10)).expect("the writer finished")
+    recorder
+        .join(Duration::from_secs(10))
+        .expect("the writer finished")
 }
 
 /// Every frame, mark, meta, and end a recording replays, with each frame whole.
@@ -142,13 +144,16 @@ fn keyframes_and_deltas_reproduce_every_frame_exactly() {
     assert_eq!(
         kinds,
         [
-            "keyframe", "delta", "delta", "keyframe", "delta", "delta", "resize", "keyframe",
-            "end"
+            "keyframe", "delta", "delta", "keyframe", "delta", "delta", "resize", "keyframe", "end"
         ],
         "a keyframe starts, recurs after the interval, and follows a resize"
     );
     assert_eq!(
-        (outcome.totals.frames, outcome.totals.keyframes, outcome.totals.deltas),
+        (
+            outcome.totals.frames,
+            outcome.totals.keyframes,
+            outcome.totals.deltas
+        ),
         (7, 3, 4)
     );
 }
@@ -295,7 +300,11 @@ fn a_stalled_writer_keeps_the_newest_state_and_counts_what_it_dropped() {
     let replayed = replay(&path);
     assert_eq!(replayed.frames.last().unwrap(), &((total - 1) * 10, last));
     assert_eq!(replayed.marks, [(500, "kept".to_string())]);
-    assert_eq!(replayed.end.unwrap().totals.dropped, 12, "the file records it");
+    assert_eq!(
+        replayed.end.unwrap().totals.dropped,
+        12,
+        "the file records it"
+    );
 }
 
 #[test]
@@ -312,7 +321,9 @@ fn a_recording_stops_at_its_byte_cap_and_stays_readable() {
             break;
         }
     }
-    let outcome = recorder.join(Duration::from_secs(10)).expect("the cap ended it");
+    let outcome = recorder
+        .join(Duration::from_secs(10))
+        .expect("the cap ended it");
     assert_eq!(outcome.reason, EndReason::MaxBytes);
     let size = std::fs::metadata(&path).unwrap().len();
     assert!(size <= max_bytes, "{size} > {max_bytes}");
@@ -352,14 +363,20 @@ fn every_end_reason_is_written_as_the_last_event() {
 fn a_recording_is_private_and_never_replaces_a_file_unless_forced() {
     let (_dir, path) = scratch();
     std::fs::write(&path, b"precious").unwrap();
-    let refused = Recorder::start(options(&path, u64::MAX)).err().expect("refused");
+    let refused = Recorder::start(options(&path, u64::MAX))
+        .err()
+        .expect("refused");
     assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(std::fs::read(&path).unwrap(), b"precious");
 
     let mut forced = options(&path, u64::MAX);
     forced.overwrite = true;
     finish(Recorder::start(forced).unwrap(), 0, EndReason::Stopped);
-    assert!(std::fs::read(&path).unwrap().starts_with(b"{\"format\":\"rozi-recording\""));
+    assert!(
+        std::fs::read(&path)
+            .unwrap()
+            .starts_with(b"{\"format\":\"rozi-recording\"")
+    );
 
     #[cfg(unix)]
     {
@@ -390,10 +407,16 @@ fn the_wire_shape_of_events() {
     let parsed: RecordingEvent =
         serde_json::from_value(serde_json::json!({"kind": "delta", "t": 7, "cursor": null}))
             .unwrap();
-    assert_eq!(parsed, delta, "a null cursor is a change, not an absent one");
+    assert_eq!(
+        parsed, delta,
+        "a null cursor is a change, not an absent one"
+    );
     let unchanged: RecordingEvent =
         serde_json::from_value(serde_json::json!({"kind": "delta", "t": 7})).unwrap();
-    assert!(matches!(unchanged, RecordingEvent::Delta(FrameDelta { cursor: None, .. })));
+    assert!(matches!(
+        unchanged,
+        RecordingEvent::Delta(FrameDelta { cursor: None, .. })
+    ));
 
     let meta = RecordingEvent::Meta {
         t: 3,
@@ -481,9 +504,16 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
     let cast = std::fs::read_to_string(&cast_path).unwrap();
     let mut lines = cast.lines();
     let head: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
-    assert_eq!((head["version"].as_u64(), head["width"].as_u64()), (Some(2), Some(20)));
+    assert_eq!(
+        (head["version"].as_u64(), head["width"].as_u64()),
+        (Some(2), Some(20))
+    );
     let times: Vec<f64> = lines
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()[0].as_f64().unwrap())
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()[0]
+                .as_f64()
+                .unwrap()
+        })
         .collect();
     assert_eq!(times, [0.0, 0.25, 1.0, 1.5]);
 }
@@ -491,7 +521,9 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
 #[test]
 fn a_recorded_frame_draws_back_into_the_same_cells() {
     let mut screen = TerminalScreen::new(3, 12, 100);
-    screen.process_bytes("\x1b[1;31mred\x1b[0m 中 \x1b[4:3mx\x1b[0m\r\n\x1b[44m   \x1b[0m".as_bytes());
+    screen.process_bytes(
+        "\x1b[1;31mred\x1b[0m 中 \x1b[4:3mx\x1b[0m\r\n\x1b[44m   \x1b[0m".as_bytes(),
+    );
     let captured = screen.capture_frame();
     let span = crate::pane::spans::span_frame(&captured, screen.palette(), false).unwrap();
     let rebuilt = frame::captured_frame(&span, &Default::default());
@@ -523,7 +555,10 @@ fn a_small_change_inside_a_row_writes_only_the_columns_that_changed() {
     let change = &delta.rows[0];
     assert!(change.partial, "{change:?}");
     let covered: u16 = change.runs.iter().map(|run| run.width).sum();
-    assert!(covered <= 2, "a one-digit change covers {covered} columns: {change:?}");
+    assert!(
+        covered <= 2,
+        "a one-digit change covers {covered} columns: {change:?}"
+    );
     assert_eq!(replay(&path).frames.last().unwrap().1, span(&mut screen));
 }
 
@@ -579,5 +614,9 @@ fn random_screens_replay_exactly() {
             _ => None,
         })
         .sum::<usize>();
-    assert!(partial > 0, "no partial rows in {} frames", outcome.totals.frames);
+    assert!(
+        partial > 0,
+        "no partial rows in {} frames",
+        outcome.totals.frames
+    );
 }

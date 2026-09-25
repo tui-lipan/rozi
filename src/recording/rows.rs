@@ -93,7 +93,10 @@ fn lay<'a>(columns: &mut [Column<'a>], runs: &'a [SpanRun]) {
             x += width;
         }
         for column in columns.iter_mut().take(end).skip(x) {
-            *column = Column { style: run, ..BLANK };
+            *column = Column {
+                style: run,
+                ..BLANK
+            };
         }
     }
 }

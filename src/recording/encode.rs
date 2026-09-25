@@ -109,10 +109,12 @@ fn diff(previous: &SpanFrame, next: &SpanFrame, t: u64) -> FrameDelta {
 pub fn apply_delta(frame: &mut SpanFrame, delta: &FrameDelta) -> std::result::Result<(), String> {
     for change in &delta.rows {
         let width = frame.width;
-        let row = frame
-            .rows
-            .get_mut(usize::from(change.y))
-            .ok_or_else(|| format!("delta replaces row {} of a frame {} tall", change.y, frame.height))?;
+        let row = frame.rows.get_mut(usize::from(change.y)).ok_or_else(|| {
+            format!(
+                "delta replaces row {} of a frame {} tall",
+                change.y, frame.height
+            )
+        })?;
         super::rows::apply(row, change, width);
     }
     if let Some(cursor) = &delta.cursor {
@@ -159,7 +161,8 @@ impl ImageStore {
                 None => image_id(image),
             };
             if self.stored.insert(id.clone()) {
-                let whole = CapturedImage::new(image.area, image.width, image.height, image.rgba.clone());
+                let whole =
+                    CapturedImage::new(image.area, image.width, image.height, image.rgba.clone());
                 let png = whole
                     .to_png()
                     .map_err(|error| format!("cannot encode an image: {error}"))?;

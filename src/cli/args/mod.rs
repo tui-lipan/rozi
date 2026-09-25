@@ -26,11 +26,11 @@ pub(crate) use extensions::print_install_help as print_extensions_install_help;
 pub(crate) use extensions::print_remove_help as print_extensions_remove_help;
 pub(crate) use extensions::print_update_help as print_extensions_update_help;
 #[cfg(test)]
-pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
+pub(super) use record::HELP_SECTIONS as RECORD_HELP_SECTIONS;
 pub(crate) use record::print_help as print_record_help;
 pub(crate) use record::{ExportTarget, PlayFrom, RecordCli};
 #[cfg(test)]
-pub(super) use record::HELP_SECTIONS as RECORD_HELP_SECTIONS;
+pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
 pub(crate) use sessions::print_help as print_sessions_help;
 #[cfg(test)]
 pub(super) use worktrees::HELP_SECTIONS as WORKTREES_HELP_SECTIONS;
@@ -513,7 +513,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 return match record::parse(args)? {
                     record::RecordArgs::Offline(command) => {
-                        if cli.attach_session.is_some() || cli.remote.is_some() || socket.is_some() {
+                        if cli.attach_session.is_some() || cli.remote.is_some() || socket.is_some()
+                        {
                             return Err(
                                 "record export and play read a file here; they take no session"
                                     .to_string(),

@@ -513,6 +513,14 @@ mod tests {
                         "last_reused_panes": 0,
                         "last_exported_bytes": 0
                     },
+                    "recordings": {
+                        "active": 0,
+                        "started": 0,
+                        "finished": 0,
+                        "frames": 0,
+                        "bytes": 0,
+                        "dropped": 0
+                    },
                     "age_ms": 10,
                     "stale": false
                 }

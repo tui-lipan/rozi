@@ -13,8 +13,7 @@ use super::headless::session_control_reply;
 use super::*;
 use crate::control::{
     ControlCommand, ControlErrorCode, ControlResponse, RecordingInfo, RecordingListPayload,
-    RecordingMarked,
-    RecordingStopped,
+    RecordingMarked, RecordingStopped,
 };
 use crate::recording::{
     EndReason, RECORDING_FORMAT, RECORDING_VERSION, Recorder, RecorderOptions, RecordingHeader,
@@ -93,8 +92,11 @@ impl ActiveRecording {
             return;
         }
         let frame = pane.screen_without_change().capture_frame();
-        self.recorder
-            .push_frame(now.duration_since(self.started).as_millis() as u64, frame, palette);
+        self.recorder.push_frame(
+            now.duration_since(self.started).as_millis() as u64,
+            frame,
+            palette,
+        );
         self.seen = pane.content_generation;
         self.palette = palette;
         self.last_capture = now;
@@ -135,7 +137,11 @@ impl MetaSeen {
                     protocol::detected_agent_status(detected),
                 )
             }),
-            status: pane.runtime.status.as_ref().map(|status| status.value.clone()),
+            status: pane
+                .runtime
+                .status
+                .as_ref()
+                .map(|status| status.value.clone()),
         }
     }
 
@@ -209,7 +215,14 @@ impl SessionServer {
                 force,
                 follow,
             } => {
-                let plan = match self.plan_recording(target, &output, max_fps, duration_ms, max_bytes, force) {
+                let plan = match self.plan_recording(
+                    target,
+                    &output,
+                    max_fps,
+                    duration_ms,
+                    max_bytes,
+                    force,
+                ) {
                     Ok(plan) => plan,
                     Err(response) => return Some(response),
                 };
@@ -256,7 +269,9 @@ impl SessionServer {
         max_bytes: Option<u64>,
         force: bool,
     ) -> std::result::Result<RecordingPlan, ControlResponse> {
-        let invalid = |message: String| ControlResponse::error_with(ControlErrorCode::InvalidArgument, message);
+        let invalid = |message: String| {
+            ControlResponse::error_with(ControlErrorCode::InvalidArgument, message)
+        };
         let path = PathBuf::from(output);
         if !path.is_absolute() {
             return Err(invalid(format!(
@@ -287,7 +302,11 @@ impl SessionServer {
                 format!("this session already runs {MAX_RECORDINGS} recordings"),
             ));
         }
-        if self.recordings.values().any(|recording| recording.path == path) {
+        if self
+            .recordings
+            .values()
+            .any(|recording| recording.path == path)
+        {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::Conflict,
                 format!("{output} is already being recorded to"),
@@ -295,7 +314,10 @@ impl SessionServer {
         }
         let pane_id = self.session_target_pane(target)?;
         let pane = self.panes.get(&pane_id).ok_or_else(|| {
-            ControlResponse::error_with(ControlErrorCode::PaneNotFound, format!("pane {pane_id} not found"))
+            ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {pane_id} not found"),
+            )
         })?;
         if pane.exited.is_some() {
             return Err(ControlResponse::error_with(
@@ -313,7 +335,10 @@ impl SessionServer {
         })
     }
 
-    fn start_recording(&mut self, plan: RecordingPlan) -> std::result::Result<u64, ControlResponse> {
+    fn start_recording(
+        &mut self,
+        plan: RecordingPlan,
+    ) -> std::result::Result<u64, ControlResponse> {
         let session = self.session_name.clone();
         let pane = self.panes.get_mut(&plan.pane_id).ok_or_else(|| {
             ControlResponse::error_with(ControlErrorCode::PaneNotFound, "pane not found")
@@ -426,7 +451,10 @@ impl SessionServer {
             .take(control::MAX_RECORDING_MARK_CHARS)
             .collect();
         if label.is_empty() {
-            return ControlResponse::error_with(ControlErrorCode::InvalidArgument, "a mark needs a label");
+            return ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "a mark needs a label",
+            );
         }
         let ids: Vec<u64> = match id {
             Some(id) => match self.recording_id(Some(id)) {
@@ -436,11 +464,16 @@ impl SessionServer {
             None => self.recordings.keys().copied().collect(),
         };
         if ids.is_empty() {
-            return ControlResponse::error_with(ControlErrorCode::InvalidArgument, "no recording is running");
+            return ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "no recording is running",
+            );
         }
         for id in &ids {
             let recording = &self.recordings[id];
-            recording.recorder.mark(recording.elapsed_ms(), label.clone());
+            recording
+                .recorder
+                .mark(recording.elapsed_ms(), label.clone());
         }
         ControlResponse::ok(RecordingMarked { ids })
     }
@@ -535,7 +568,9 @@ impl SessionServer {
     /// A departed client stops the recording it followed, and waits for nothing.
     pub(super) fn release_recording_replies(&mut self, client_id: ClientId) {
         for recording in self.recordings.values_mut() {
-            recording.stoppers.retain(|reply| reply.client_id != client_id);
+            recording
+                .stoppers
+                .retain(|reply| reply.client_id != client_id);
             if recording
                 .follower
                 .as_ref()
@@ -598,10 +633,10 @@ pub(super) type Recordings = BTreeMap<u64, ActiveRecording>;
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::path::Path;
     use crate::control::ControlRequest;
-    use crate::recording::{Replay, ReplayStep, RecordingEnd};
+    use crate::recording::{RecordingEnd, Replay, ReplayStep};
     use crate::session::server::tests::{add_client, decode_outbox_controls, test_pane};
+    use std::path::Path;
 
     fn server() -> SessionServer {
         let mut server = SessionServer::new_named("dev");
@@ -621,7 +656,11 @@ mod tests {
         }
     }
 
-    fn ask(server: &mut SessionServer, client: ClientId, command: ControlCommand) -> Vec<ControlResponse> {
+    fn ask(
+        server: &mut SessionServer,
+        client: ClientId,
+        command: ControlCommand,
+    ) -> Vec<ControlResponse> {
         server
             .handle_session_control(
                 client,
@@ -644,7 +683,11 @@ mod tests {
     }
 
     fn outbox(server: &SessionServer, client: ClientId) -> Vec<ServerMessage> {
-        let conn = server.clients.iter().find(|conn| conn.id == client).unwrap();
+        let conn = server
+            .clients
+            .iter()
+            .find(|conn| conn.id == client)
+            .unwrap();
         decode_outbox_controls(conn)
     }
 
@@ -659,7 +702,12 @@ mod tests {
     }
 
     fn print(server: &mut SessionServer, bytes: &[u8]) {
-        server.panes.get_mut(&3).unwrap().screen_mut().process_bytes(bytes);
+        server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(bytes);
     }
 
     /// Pump until every recording has finished and been answered for.
@@ -703,7 +751,9 @@ mod tests {
         outbox(server, client)
             .into_iter()
             .filter_map(|message| match message {
-                ServerMessage::PaneRuntimeChanged { pane_id: 3, state, .. } => Some(state.recording),
+                ServerMessage::PaneRuntimeChanged {
+                    pane_id: 3, state, ..
+                } => Some(state.recording),
                 _ => None,
             })
             .collect()
@@ -712,7 +762,12 @@ mod tests {
     fn attached(server: &mut SessionServer) -> ClientId {
         let (client, stream) = add_client(server);
         std::mem::forget(stream);
-        server.clients.iter_mut().find(|conn| conn.id == client).unwrap().attached = true;
+        server
+            .clients
+            .iter_mut()
+            .find(|conn| conn.id == client)
+            .unwrap()
+            .attached = true;
         client
     }
 
@@ -730,7 +785,11 @@ mod tests {
         let info: RecordingInfo = serde_json::from_value(started[0].data.clone().unwrap()).unwrap();
         assert_eq!((info.id, info.pane, info.max_fps), (1, 3, 120));
         assert!(server.panes[&3].runtime.recording);
-        assert_eq!(runtime_flags(&server, watcher), [true], "every client sees it start");
+        assert_eq!(
+            runtime_flags(&server, watcher),
+            [true],
+            "every client sees it start"
+        );
 
         // Nothing changes: nothing is captured, however often the pump looks.
         for _ in 0..5 {
@@ -744,13 +803,32 @@ mod tests {
         server.pump_recordings();
 
         let listed = ask(&mut server, client, ControlCommand::RecordList);
-        let list: RecordingListPayload = serde_json::from_value(listed[0].data.clone().unwrap()).unwrap();
+        let list: RecordingListPayload =
+            serde_json::from_value(listed[0].data.clone().unwrap()).unwrap();
         assert_eq!(list.0.len(), 1);
         let (marker, _marker_stream) = add_client(&mut server);
-        assert!(ask(&mut server, marker, ControlCommand::RecordMark { label: "built".into(), id: None })[0].ok);
+        assert!(
+            ask(
+                &mut server,
+                marker,
+                ControlCommand::RecordMark {
+                    label: "built".into(),
+                    id: None
+                }
+            )[0]
+            .ok
+        );
 
         let (stopper, _stop_stream) = add_client(&mut server);
-        assert!(ask(&mut server, stopper, ControlCommand::RecordStop { id: None }).is_empty(), "held");
+        assert!(
+            ask(
+                &mut server,
+                stopper,
+                ControlCommand::RecordStop { id: None }
+            )
+            .is_empty(),
+            "held"
+        );
         assert!(server.holds_recording_reply(stopper));
         pump_until_finished(&mut server);
 
@@ -784,11 +862,19 @@ mod tests {
         std::thread::sleep(Duration::from_millis(210));
         server.pump_recordings();
         let (stopper, _s) = add_client(&mut server);
-        ask(&mut server, stopper, ControlCommand::RecordStop { id: None });
+        ask(
+            &mut server,
+            stopper,
+            ControlCommand::RecordStop { id: None },
+        );
         pump_until_finished(&mut server);
 
         let (frames, ..) = replay(&path);
-        assert_eq!(frames, ["", "9"], "the start, then only the newest state of the burst");
+        assert_eq!(
+            frames,
+            ["", "9"],
+            "the start, then only the newest state of the burst"
+        );
     }
 
     #[test]
@@ -797,7 +883,10 @@ mod tests {
         let path = dir.path().join("pane.rozirec");
         let mut server = server();
         let (client, _stream) = add_client(&mut server);
-        assert!(ask(&mut server, client, start(&path, Some(1), true)).is_empty(), "follow holds");
+        assert!(
+            ask(&mut server, client, start(&path, Some(1), true)).is_empty(),
+            "follow holds"
+        );
         print(&mut server, b"bye");
         server.panes.get_mut(&3).unwrap().exited = Some(2);
         pump_until_finished(&mut server);
@@ -806,7 +895,11 @@ mod tests {
             serde_json::from_value(answered(&server, client)[0].data.clone().unwrap()).unwrap();
         assert_eq!(stopped.reason, EndReason::PaneExited);
         let (frames, meta, _, end) = replay(&path);
-        assert_eq!(frames.last().unwrap(), "bye", "the last output is written despite max_fps");
+        assert_eq!(
+            frames.last().unwrap(),
+            "bye",
+            "the last output is written despite max_fps"
+        );
         assert!(meta.contains(&RecordingMeta::Exited { status: 2 }));
         assert_eq!(end.reason, EndReason::PaneExited);
     }
@@ -865,7 +958,10 @@ mod tests {
         let refused = |server: &mut SessionServer, command| ask(server, client, command)[0].code;
 
         assert_eq!(
-            refused(&mut server, start(Path::new("relative.rozirec"), None, false)),
+            refused(
+                &mut server,
+                start(Path::new("relative.rozirec"), None, false)
+            ),
             Some(ControlErrorCode::InvalidArgument)
         );
         assert_eq!(
@@ -882,7 +978,13 @@ mod tests {
             Some(ControlErrorCode::InvalidArgument)
         );
         assert_eq!(
-            refused(&mut server, ControlCommand::RecordMark { label: "x".into(), id: None }),
+            refused(
+                &mut server,
+                ControlCommand::RecordMark {
+                    label: "x".into(),
+                    id: None
+                }
+            ),
             Some(ControlErrorCode::InvalidArgument)
         );
         server.panes.get_mut(&3).unwrap().exited = Some(0);
@@ -904,7 +1006,10 @@ mod tests {
         if let ControlCommand::RecordStart { force, .. } = &mut again {
             *force = true;
         }
-        assert_eq!(refused(&mut server, again), Some(ControlErrorCode::Conflict));
+        assert_eq!(
+            refused(&mut server, again),
+            Some(ControlErrorCode::Conflict)
+        );
         server.finish_recordings_for_shutdown(EndReason::ServerShutdown);
     }
 }

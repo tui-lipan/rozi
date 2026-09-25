@@ -99,9 +99,17 @@ impl<R: BufRead> RecordingReader<R> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ReplayStep {
     /// The screen changed; [`Replay::frame`] is the new one.
-    Frame { t: u64 },
-    Mark { t: u64, label: String },
-    Meta { t: u64, meta: RecordingMeta },
+    Frame {
+        t: u64,
+    },
+    Mark {
+        t: u64,
+        label: String,
+    },
+    Meta {
+        t: u64,
+        meta: RecordingMeta,
+    },
     End(RecordingEnd),
 }
 

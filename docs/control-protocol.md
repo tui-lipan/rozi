@@ -150,6 +150,7 @@ Byte buffers report `current_bytes`, `high_water_bytes`, and `capacity_bytes`. Q
 | `attach_seed` | Replay sent to clients while they attach. |
 | `client_resync` | Replay for clients that fell too far behind a pane's output. |
 | `resurrection` | Snapshots written for [resurrection](sessions.md#resurrection). |
+| `recordings` | [Pane recordings](recording.md): `active` now, `started` and `finished` so far, and `frames`, `bytes`, and `dropped` across all of them. |
 
 `attach_seed` fields:
 
@@ -196,7 +197,8 @@ client and replays the pane from the server's screen instead.
 ```
 
 `list-panes` reports how each pane was launched in either `command` or `argv`, plus its current
-foreground program, reported status, and detected agent when available.
+foreground program, reported status, and detected agent when available. `recording` is `true` while
+the session server records the pane, and absent otherwise.
 
 `layout-get.workspace` is optional and one-based. A number outside `1`–`9` fails with
 `invalid-argument`.
@@ -268,6 +270,92 @@ it or it is off the grid, are fully transparent, so the PNG never reveals what t
 Pixels are placed on cells as a `png` capture draws them: fitted inside the image's cells from the
 top-left corner, keeping their shape, in cells twice as tall as they are wide. A pixel that
 straddles a hidden cell is cleared.
+
+### Pane recordings
+
+```json
+{"cmd":"record-start","target":3,"output":"/home/me/agent.rozirec","max_fps":30,"duration_ms":28800000}
+{"cmd":"record-start","target":3,"output":"/home/me/demo.rozirec","follow":true}
+{"cmd":"record-list"}
+{"cmd":"record-mark","label":"tests started"}
+{"cmd":"record-stop","id":1}
+```
+
+Only a session server answers these; a UI refuses them with `unsupported`. See
+[Record a pane](recording.md) for what a recording holds.
+
+`record-start` fields:
+
+- `target` is the pane. With one pane in the session it may be left out.
+- `output` is an absolute path on the session server's host. A relative path fails with
+  `invalid-argument`; the CLI makes one absolute first. An existing path fails with `conflict`
+  unless `force` is `true`, which replaces a regular file only.
+- `max_fps` (1–120, default 30), `duration_ms` (up to 7 days, default 24 hours), and `max_bytes`
+  (at least 64 KiB, default 1 GiB) bound the recording.
+- `follow`, when `true`, holds the reply until the recording ends and stops the recording when the
+  connection closes. The reply is then the same as `record-stop`'s.
+
+Without `follow`, `record-start` answers at once with a recording: `id`, `session`, `pane`, `path`,
+`started_at_unix_ms`, `elapsed_ms`, `max_fps`, `duration_ms`, `max_bytes`, `follow`, and the
+running totals `frames`, `keyframes`, `deltas`, `images`, `marks`, `dropped`, and `bytes`.
+`record-list` answers with an array of them.
+
+`record-stop` takes `id`, which may be left out when one recording is running, and answers once the
+file is complete with `id`, `pane`, `path`, `reason`, `elapsed_ms`, the final totals, and `error`
+when writing failed. `record-mark` takes a `label` of up to 256 characters and an optional `id`,
+marks every running recording without one, and answers with the `ids` it marked.
+
+### Recording format
+
+A recording file is line-delimited JSON in UTF-8. The first line is a header, and every later line
+is one event. rozi appends lines as the recording runs, so a file that was cut short is valid up to
+its last complete line: a reader ignores a final line with no newline. The header and events are
+`RecordingHeader` and `RecordingEvent` in the [JSON Schema](control.md#json-schema).
+
+The header has:
+
+| Field | Contents |
+| --- | --- |
+| `format`, `version` | `"rozi-recording"` and the format's version, currently `1`. |
+| `rozi` | The version of rozi that wrote the file. |
+| `target` | What was recorded: `{"kind":"pane","session":…,"pane":…}`. |
+| `width`, `height` | The screen's size in cells when the recording started. |
+| `started_at_unix_ms` | When it started. |
+| `max_fps`, `keyframe_interval_ms` | The frame-rate ceiling, and the longest gap between keyframes. |
+| `spans_version` | The [spans frame](#spans-frames) version of every frame in the file. |
+| `palette` | The colors the screen was drawn in at the start, as in a spans frame. |
+| `compression` | Absent. Reserved for compressing the lines after the header; a reader refuses a value it does not know. |
+
+The format's version changes only when a field changes meaning or goes away. A reader ignores
+fields and event kinds it does not know. The version is independent of the control API, the session
+protocol, and the spans frame version.
+
+Every event has `kind`, and every event but `image` has `t`, milliseconds since the recording
+started:
+
+| `kind` | Contents |
+| --- | --- |
+| `keyframe` | `frame`, a whole [spans frame](#spans-frames). Written first, after a resize, and at least every `keyframe_interval_ms` or 1,000 deltas while the screen changes, so a player can start at any keyframe. |
+| `delta` | What changed since the previous frame: `rows`, and `cursor`, `images`, or `palette` when they changed. A `cursor` of `null` means the frame no longer has one. |
+| `resize` | `width` and `height`. A keyframe at the new size follows. |
+| `image` | `id`, `pixel_width`, `pixel_height`, and `png_base64`: an image's pixels, stored once and written before the first frame that shows it. The pixels are whole, not cleared where something covers them; a frame's `visible` says which cells show them. |
+| `mark` | `label`, from `record mark`. |
+| `meta` | `event` and its fields: `title` (`title`), `command-started`, `command-finished` (`status`), `agent` (`agent`, `state`), `status` (`status`), or `exited` (`status`). |
+| `end` | `reason`, and the totals `frames`, `keyframes`, `deltas`, `images`, `marks`, `dropped`, and `bytes`. The last event of a finished recording. |
+
+`reason` is `stopped`, `duration`, `max-bytes`, `pane-exited`, `pane-closed`, `session-ended`,
+`server-shutdown`, or `write-failed`. `dropped` counts changes the writer skipped, keeping the latest
+screen, because it had fallen behind. `bytes` is the file's size before the `end` line.
+
+Each entry in a delta's `rows` has `y` and `runs`. Without `partial`, `runs` is the whole row, as a
+spans frame writes it. With `"partial": true`, the runs replace only the columns they cover, from
+the first run's `x` to the end of the last, and tile that range without gaps, blanks included; the
+rest of the row is unchanged. A row can have several partial entries in one delta. After replacing
+columns, the row is the same as the spans frame of that moment: runs as long as their style, and
+default blanks at its end left out.
+
+An image in a recorded frame has an `id` naming the `image` event that holds its pixels, and never
+`png_base64`.
 
 ### Layout changes
 
@@ -423,12 +511,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":16,"min_protocol_version":16,
+{"type":"session-control","session":"dev","protocol_version":17,"min_protocol_version":17,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":16,
+{"type":"session-control-result","effective_protocol":17,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
@@ -441,7 +529,9 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 - A wrong session name or an incompatible version is answered with a session-protocol `error` frame
   carrying `session-mismatch` or `protocol-mismatch`, not with a control response.
 - A request with a pane wait holds the connection open until the wait resolves or times out. A
-  client should read with a timeout longer than `timeout_ms`.
+  client should read with a timeout longer than `timeout_ms`. `record-stop` holds it until the
+  recording's file is complete, and `record-start` with `follow` until the recording ends; closing
+  a followed recording's connection stops it.
 - A reply travels in one frame of at most 8 MiB. A reply that would not fit, such as a PNG of a very
   large pane, a long `"full"` scrollback, or a `spans` frame carrying a large image's pixels, is
   answered with `message-too-large` instead. The UI endpoint has no such limit.
@@ -455,7 +545,8 @@ gains no authority an attached client would not have.
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
-`send-keys`, `new-pane`, `set-status`, and `pane-logging`. It refuses every other `cmd` with
+`send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
+and `record-mark`. It refuses every other `cmd` with
 `ok: false` and a reason naming what the request needs a UI for.
 
 These requests behave differently than against a UI:

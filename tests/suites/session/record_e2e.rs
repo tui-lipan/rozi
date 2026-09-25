@@ -7,7 +7,9 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use rozi::control::{ControlCommand, ControlRequest, ControlResponse, RecordingInfo, RecordingStopped};
+use rozi::control::{
+    ControlCommand, ControlRequest, ControlResponse, RecordingInfo, RecordingStopped,
+};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::recording::export;
 use rozi::recording::{EndReason, RecordingMeta, ReplayStep};
@@ -155,7 +157,8 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
 
     // The request's connection closes once it is answered, as the CLI's would: the recording
     // carries on in the server.
-    let started: RecordingInfo = serde_json::from_value(expect_ok(&session, start(pane, &path))).unwrap();
+    let started: RecordingInfo =
+        serde_json::from_value(expect_ok(&session, start(pane, &path))).unwrap();
     assert_eq!(started.pane, pane);
     assert!(pane_recording(&session, pane));
     wait_until("the last tick recorded", || {
@@ -170,7 +173,8 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
         },
     );
     let stopped: RecordingStopped =
-        serde_json::from_value(expect_ok(&session, ControlCommand::RecordStop { id: None })).unwrap();
+        serde_json::from_value(expect_ok(&session, ControlCommand::RecordStop { id: None }))
+            .unwrap();
     assert_eq!(stopped.reason, EndReason::Stopped);
     assert_eq!(stopped.totals.dropped, 0);
     assert!(recordings(&session).is_empty());
@@ -180,10 +184,15 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
     assert_eq!(played.end, EndReason::Stopped);
     assert_eq!(played.marks, ["ticked"]);
     // Each tick is a change of its own, written when it happened: about 300ms apart.
-    let seen: Vec<u64> = (1..=6).map(|i| first_seen(&played, &format!("tick {i}"))).collect();
+    let seen: Vec<u64> = (1..=6)
+        .map(|i| first_seen(&played, &format!("tick {i}")))
+        .collect();
     for pair in seen.windows(2) {
         let gap = pair[1] - pair[0];
-        assert!((150..=1_000).contains(&gap), "ticks {gap}ms apart: {seen:?}");
+        assert!(
+            (150..=1_000).contains(&gap),
+            "ticks {gap}ms apart: {seen:?}"
+        );
     }
     // Only changes are written: nothing between one tick and the next.
     assert!(
@@ -193,8 +202,7 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
     );
 
     let frames_dir = dir.path().join("frames");
-    let summary =
-        export::png_frames(export::open(&path).unwrap(), &frames_dir, 1, false).unwrap();
+    let summary = export::png_frames(export::open(&path).unwrap(), &frames_dir, 1, false).unwrap();
     assert_eq!(summary.frames, played.frames.len() as u64);
     let listing = std::fs::read_to_string(frames_dir.join(export::CONCAT_LISTING)).unwrap();
     let durations: Vec<f64> = listing
@@ -209,7 +217,11 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
         "listing covers {total}s of {}ms",
         summary.duration_ms
     );
-    assert!(frames_dir.join(format!("frame-{:06}.png", summary.frames)).is_file());
+    assert!(
+        frames_dir
+            .join(format!("frame-{:06}.png", summary.frames))
+            .is_file()
+    );
 }
 
 #[test]
@@ -220,7 +232,9 @@ fn a_pane_exiting_mid_recording_ends_it_on_the_last_screen() {
     let path = dir.path().join("exit.rozirec");
     let pane = spawn(&session, "sleep 0.5; echo last words; exit 3");
     expect_ok(&session, start(pane, &path));
-    wait_until("the recording to end with the pane", || recordings(&session).is_empty());
+    wait_until("the recording to end with the pane", || {
+        recordings(&session).is_empty()
+    });
 
     let played = play(&path);
     assert_eq!(played.end, EndReason::PaneExited);
@@ -262,6 +276,8 @@ fn a_foreground_recording_stops_when_its_caller_goes_away() {
     });
     // Ctrl-C on `rozi record pane` closes this connection.
     drop(caller);
-    wait_until("the recording to stop with its caller", || recordings(&session).is_empty());
+    wait_until("the recording to stop with its caller", || {
+        recordings(&session).is_empty()
+    });
     assert_eq!(play(&path).end, EndReason::Stopped);
 }

@@ -416,6 +416,18 @@
         "pty_ingress": {
           "$ref": "#/$defs/QueueMetrics"
         },
+        "recordings": {
+          "$ref": "#/$defs/RecordingMetrics",
+          "default": {
+            "active": 0,
+            "bytes": 0,
+            "dropped": 0,
+            "finished": 0,
+            "frames": 0,
+            "started": 0
+          },
+          "description": "Pane recordings (`rozi record`). Absent from a server that predates them."
+        },
         "resurrection": {
           "$ref": "#/$defs/ResurrectionMetrics"
         },
@@ -1622,6 +1634,123 @@
           "type": "object"
         },
         {
+          "description": "Start recording a pane's screen to `output`, a file on the session server's host. Served by\na session server only: it records the pane's canonical screen with or without a UI.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes.",
+          "properties": {
+            "cmd": {
+              "const": "record-start",
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "follow": {
+              "type": "boolean"
+            },
+            "force": {
+              "description": "Replace an existing regular file at `output`.",
+              "type": "boolean"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_fps": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "output": {
+              "description": "An absolute path. The CLI resolves a relative one against its working directory.",
+              "type": "string"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop a recording and answer once its file is complete. `id` may be left out when only one\nrecording is running.",
+          "properties": {
+            "cmd": {
+              "const": "record-stop",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the recordings running in the session.",
+          "properties": {
+            "cmd": {
+              "const": "record-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a labelled mark to a recording, or to every running recording when `id` is left out.",
+          "properties": {
+            "cmd": {
+              "const": "record-mark",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "actions": {
               "description": "Extra chords offered beside select and cancel, advertised in the footer.",
@@ -2714,6 +2843,123 @@
           "type": "object"
         },
         {
+          "description": "Start recording a pane's screen to `output`, a file on the session server's host. Served by\na session server only: it records the pane's canonical screen with or without a UI.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes.",
+          "properties": {
+            "cmd": {
+              "const": "record-start",
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "follow": {
+              "type": "boolean"
+            },
+            "force": {
+              "description": "Replace an existing regular file at `output`.",
+              "type": "boolean"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_fps": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "output": {
+              "description": "An absolute path. The CLI resolves a relative one against its working directory.",
+              "type": "string"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop a recording and answer once its file is complete. `id` may be left out when only one\nrecording is running.",
+          "properties": {
+            "cmd": {
+              "const": "record-stop",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the recordings running in the session.",
+          "properties": {
+            "cmd": {
+              "const": "record-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a labelled mark to a recording, or to every running recording when `id` is left out.",
+          "properties": {
+            "cmd": {
+              "const": "record-mark",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "actions": {
               "description": "Extra chords offered beside select and cancel, advertised in the footer.",
@@ -2832,6 +3078,57 @@
       ],
       "type": "object"
     },
+    "EndReason": {
+      "description": "Why a recording stopped.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "`rozi record stop`, or the foreground `rozi record pane` exiting.",
+          "type": "string"
+        },
+        {
+          "const": "duration",
+          "description": "It reached its `--duration`.",
+          "type": "string"
+        },
+        {
+          "const": "max-bytes",
+          "description": "It reached its `--max-bytes`.",
+          "type": "string"
+        },
+        {
+          "const": "pane-exited",
+          "description": "The pane's program exited.",
+          "type": "string"
+        },
+        {
+          "const": "pane-closed",
+          "description": "The pane was closed or replaced.",
+          "type": "string"
+        },
+        {
+          "const": "session-ended",
+          "description": "The session was killed.",
+          "type": "string"
+        },
+        {
+          "const": "server-shutdown",
+          "description": "The session server shut down.",
+          "type": "string"
+        },
+        {
+          "const": "write-failed",
+          "description": "Writing the file failed, such as on a full disk. The file holds what was written before.",
+          "type": "string"
+        }
+      ]
+    },
     "EventKind": {
       "enum": [
         "pane-spawned",
@@ -2896,6 +3193,58 @@
         "y",
         "width",
         "height"
+      ],
+      "type": "object"
+    },
+    "FrameDelta": {
+      "description": "The rows, cursor, images, and palette that changed since the previous frame. A field that is\nabsent did not change.",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The new cursor, or `null` when the frame no longer has one."
+        },
+        "images": {
+          "description": "The frame's whole image list, when anything about its images changed.",
+          "items": {
+            "$ref": "#/$defs/SpanImage"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "palette": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanPalette"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "description": "Replaced rows, or the parts of them that changed.",
+          "items": {
+            "$ref": "#/$defs/RowChange"
+          },
+          "type": "array"
+        },
+        "t": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "t"
       ],
       "type": "object"
     },
@@ -3259,6 +3608,10 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "recording": {
+          "description": "The session server is recording this pane; `record list` says where.",
+          "type": "boolean"
         },
         "reference": {
           "anyOf": [
@@ -3655,6 +4008,771 @@
       ],
       "type": "object"
     },
+    "RecordedImage": {
+      "description": "An image's pixels, stored once for however many frames show them.",
+      "properties": {
+        "id": {
+          "description": "The content id frames name in a `rozi-spans` image's `id`: a hash of the pixels.",
+          "type": "string"
+        },
+        "pixel_height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pixel_width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "png_base64": {
+          "description": "The pixels as a base64 PNG with alpha, uncropped by whatever covers the image in a frame.",
+          "type": "string"
+        },
+        "t": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "t",
+        "id",
+        "pixel_width",
+        "pixel_height",
+        "png_base64"
+      ],
+      "type": "object"
+    },
+    "RecordingEnd": {
+      "description": "Why a recording ended, and what it holds.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes written before the `end` event.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deltas": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Changes the recorder never wrote because it had fallen behind and kept only the newest\nstate. Zero unless the disk could not keep up.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames": {
+          "description": "Frames written: keyframes and deltas.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "images": {
+          "description": "Distinct images stored.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keyframes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "marks": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/EndReason"
+        },
+        "t": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "t",
+        "reason",
+        "frames",
+        "keyframes",
+        "deltas",
+        "images",
+        "marks",
+        "dropped",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "RecordingEvent": {
+      "description": "One line after the header. Every event but `image` carries `t`, the milliseconds since the\nrecording started.",
+      "oneOf": [
+        {
+          "description": "The whole screen. Written first, after a resize, and periodically, so a player can start\nfrom any keyframe.",
+          "properties": {
+            "frame": {
+              "$ref": "#/$defs/SpanFrame"
+            },
+            "kind": {
+              "const": "keyframe",
+              "type": "string"
+            },
+            "t": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "t",
+            "frame"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/FrameDelta",
+          "description": "What changed since the previous frame.",
+          "properties": {
+            "kind": {
+              "const": "delta",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The screen changed size. A keyframe at the new size follows.",
+          "properties": {
+            "height": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "resize",
+              "type": "string"
+            },
+            "t": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "t",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/RecordedImage",
+          "description": "Pixels of an image a frame shows, written once per distinct content before the first frame\nthat references it by `id`.",
+          "properties": {
+            "kind": {
+              "const": "image",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A label someone added with `rozi record mark`.",
+          "properties": {
+            "kind": {
+              "const": "mark",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "t": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "t",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Something the session server noticed about the pane.",
+          "oneOf": [
+            {
+              "description": "The pane's title changed.",
+              "properties": {
+                "event": {
+                  "const": "title",
+                  "type": "string"
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Shell integration reported a command starting.",
+              "properties": {
+                "event": {
+                  "const": "command-started",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Shell integration reported a command finishing.",
+              "properties": {
+                "event": {
+                  "const": "command-finished",
+                  "type": "string"
+                },
+                "status": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The pane's detected agent, or its state, changed.",
+              "properties": {
+                "agent": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "event": {
+                  "const": "agent",
+                  "type": "string"
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A script set or cleared the pane's status.",
+              "properties": {
+                "event": {
+                  "const": "status",
+                  "type": "string"
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The pane's program exited.",
+              "properties": {
+                "event": {
+                  "const": "exited",
+                  "type": "string"
+                },
+                "status": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "event",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "event": {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "kind": {
+              "const": "meta",
+              "type": "string"
+            },
+            "t": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "t"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/RecordingEnd",
+          "description": "The last event of a finished recording.",
+          "properties": {
+            "kind": {
+              "const": "end",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An event kind this version does not know. Readers skip it.",
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RecordingHeader": {
+      "description": "The first line of a recording.",
+      "properties": {
+        "compression": {
+          "description": "How the lines after this one are compressed. Absent means they are plain text; a reader\nrefuses a value it does not know.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "Always `\"rozi-recording\"`.",
+          "type": "string"
+        },
+        "height": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keyframe_interval_ms": {
+          "description": "The longest gap between keyframes while the screen keeps changing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_fps": {
+          "description": "The most frames a second the recorder writes. Changes arriving faster are coalesced into the\nlatest state per interval.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "palette": {
+          "$ref": "#/$defs/SpanPalette",
+          "description": "The colors the screen was drawn in when the recording started, so a player can show what the\nuser saw. A frame carries its own palette, which wins when the two differ."
+        },
+        "rozi": {
+          "description": "The version of rozi that wrote the file.",
+          "type": "string"
+        },
+        "spans_version": {
+          "description": "The `rozi-spans` version of every frame in the file.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "$ref": "#/$defs/RecordingTarget"
+        },
+        "version": {
+          "description": "The recording format's version, currently 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "description": "The recorded screen's size in cells when the recording started. A `resize` event changes it.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "rozi",
+        "target",
+        "width",
+        "height",
+        "started_at_unix_ms",
+        "max_fps",
+        "keyframe_interval_ms",
+        "spans_version",
+        "palette"
+      ],
+      "type": "object"
+    },
+    "RecordingInfo": {
+      "description": "A running recording, as `record-start` and `record-list` report it.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes written before the `end` event.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deltas": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Changes the recorder never wrote because it had fallen behind and kept only the newest\nstate. Zero unless the disk could not keep up.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "elapsed_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "follow": {
+          "description": "Held by a foreground `record pane`, which stops it on exit.",
+          "type": "boolean"
+        },
+        "frames": {
+          "description": "Frames written: keyframes and deltas.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "images": {
+          "description": "Distinct images stored.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keyframes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "marks": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_fps": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pane": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Where the file is, on the session server's host.",
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "started_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "session",
+        "pane",
+        "path",
+        "started_at_unix_ms",
+        "elapsed_ms",
+        "max_fps",
+        "duration_ms",
+        "max_bytes",
+        "frames",
+        "keyframes",
+        "deltas",
+        "images",
+        "marks",
+        "dropped",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "RecordingListPayload": {
+      "description": "What `record-list` answers with.",
+      "items": {
+        "$ref": "#/$defs/RecordingInfo"
+      },
+      "type": "array"
+    },
+    "RecordingMarked": {
+      "description": "What `record-mark` answers with: the recordings that got the mark.",
+      "properties": {
+        "ids": {
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "type": "object"
+    },
+    "RecordingMetrics": {
+      "description": "Pane recordings on a session server.",
+      "properties": {
+        "active": {
+          "description": "Recordings running now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Changes coalesced away because a writer fell behind, across running and finished recordings.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finished": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames": {
+          "description": "Frames and bytes written, across running and finished recordings.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started": {
+          "description": "Recordings this server has started and finished.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "started",
+        "finished",
+        "frames",
+        "bytes",
+        "dropped"
+      ],
+      "type": "object"
+    },
+    "RecordingStopped": {
+      "description": "A finished recording, as `record-stop` and a followed `record-start` report it.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes written before the `end` event.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deltas": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Changes the recorder never wrote because it had fallen behind and kept only the newest\nstate. Zero unless the disk could not keep up.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "elapsed_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "description": "Why writing failed, for a `write-failed` reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frames": {
+          "description": "Frames written: keyframes and deltas.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "images": {
+          "description": "Distinct images stored.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keyframes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "marks": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pane": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/EndReason"
+        }
+      },
+      "required": [
+        "id",
+        "pane",
+        "path",
+        "reason",
+        "elapsed_ms",
+        "frames",
+        "keyframes",
+        "deltas",
+        "images",
+        "marks",
+        "dropped",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "RecordingTarget": {
+      "description": "What a recording shows.",
+      "oneOf": [
+        {
+          "description": "One pane's terminal screen, as the session server holds it: the canonical screen\n`capture-pane --session` sees, without any client's chrome.",
+          "properties": {
+            "kind": {
+              "const": "pane",
+              "type": "string"
+            },
+            "pane": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "session",
+            "pane"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ResurrectionMetrics": {
       "properties": {
         "attempts": {
@@ -3722,6 +4840,31 @@
         "last_exported_panes",
         "last_reused_panes",
         "last_exported_bytes"
+      ],
+      "type": "object"
+    },
+    "RowChange": {
+      "description": "A replaced row, or part of one.\n\nWhole, `runs` is the row as a `rozi-spans` frame writes it. `partial` replaces only the columns\nthe runs cover, from the first run's `x` to the end of the last; those runs tile that range\nwithout gaps, blanks included. A row can have several partial changes in one delta.",
+      "properties": {
+        "partial": {
+          "type": "boolean"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/SpanRun"
+          },
+          "type": "array"
+        },
+        "y": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "y",
+        "runs"
       ],
       "type": "object"
     },
@@ -3984,6 +5127,13 @@
           "maximum": 65535,
           "minimum": 0,
           "type": "integer"
+        },
+        "id": {
+          "description": "In a recording, the content id of the `image` event holding these pixels. Never set in a\ncapture.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pixel_height": {
           "format": "uint32",
@@ -4346,5 +5496,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 7
+  "x-rozi-schema-version": 8
 }

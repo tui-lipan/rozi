@@ -108,7 +108,9 @@ struct Shared {
 
 impl Shared {
     fn queue(&self) -> MutexGuard<'_, Queue> {
-        self.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn finish(&self, outcome: RecorderOutcome) {
@@ -372,7 +374,8 @@ impl Writer {
             }
             if last_flush.elapsed() >= FLUSH_INTERVAL {
                 if let Err(error) = self.out.flush() {
-                    let outcome = self.end(self.last_t, EndReason::WriteFailed, Some(error.to_string()));
+                    let outcome =
+                        self.end(self.last_t, EndReason::WriteFailed, Some(error.to_string()));
                     self.shared.finish(outcome);
                     return;
                 }
@@ -421,7 +424,8 @@ impl Writer {
     fn write(&mut self, events: &[RecordingEvent]) -> std::result::Result<(), Stop> {
         let mut lines = Vec::new();
         for event in events {
-            serde_json::to_writer(&mut lines, event).map_err(|error| Stop::Failed(error.to_string()))?;
+            serde_json::to_writer(&mut lines, event)
+                .map_err(|error| Stop::Failed(error.to_string()))?;
             lines.push(b'\n');
         }
         let written = self.shared.counters.bytes.load(Ordering::Relaxed);

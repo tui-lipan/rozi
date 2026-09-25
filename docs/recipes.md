@@ -324,8 +324,18 @@ the stream and withdraws its rows.
 
 ## Record a pane or the whole UI as a GIF
 
-Record a pane, or everything rozi draws, as a GIF or video. The script captures PNG frames in a
-loop, stamps each with the time it was taken, and has ffmpeg assemble them, so the result plays in
+To record one pane, use [`rozi record`](recording.md). It writes every change with its exact time,
+from inside the session server, with or without a UI, and exports frames with an ffmpeg listing:
+
+```sh
+rozi --session dev record pane --target 3 --output demo.rozirec   # Ctrl+C to stop
+rozi record export demo.rozirec --to png-frames frames --scale 2
+ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
+  -vf "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" demo.gif
+```
+
+To record everything rozi draws, bar and borders included, capture the UI in a loop instead. The
+script below captures PNG frames in a loop, stamps each with the time it was taken, and has ffmpeg assemble them, so the result plays in
 real time however fast the captures ran. Save it as `record.py`:
 
 ```python

@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 use tui_lipan::Result;
 
 use super::args::{ControlEndpoint, ExportTarget, PlayFrom, RecordCli};
+use crate::recording::ReplayStep;
 use crate::recording::export;
 use crate::recording::frame::captured_frame;
-use crate::recording::ReplayStep;
 
 pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
     let result = match command {
@@ -31,7 +31,7 @@ pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
                 let pane = target.map_or_else(|| "the pane".to_string(), |id| format!("pane {id}"));
                 eprintln!("Recording {pane} to {output}; press Ctrl-C to stop.");
             }
-            return super::run_control_cli(control);
+            return super::run_control_cli(*control);
         }
         RecordCli::Export {
             input,
@@ -48,7 +48,12 @@ pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
     Ok(())
 }
 
-fn run_export(input: &Path, to: &ExportTarget, scale: u8, force: bool) -> std::result::Result<(), String> {
+fn run_export(
+    input: &Path,
+    to: &ExportTarget,
+    scale: u8,
+    force: bool,
+) -> std::result::Result<(), String> {
     let replay = export::open(input)?;
     let (summary, written) = match to {
         ExportTarget::PngFrames(dir) => (export::png_frames(replay, dir, scale, force)?, dir),

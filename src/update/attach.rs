@@ -48,6 +48,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.foreground_executable = meta.runtime.foreground_executable.clone();
     pane.terminal.foreground_arguments = meta.runtime.foreground_arguments.clone();
     pane.terminal.reported_status = meta.runtime.status.clone();
+    pane.terminal.recording = meta.runtime.recording;
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
     pane.terminal.agent_integration = meta.runtime.integration.clone();
     pane.terminal.work_started_at = meta.runtime.work_started_at;

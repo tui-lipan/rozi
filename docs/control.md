@@ -168,6 +168,13 @@ attached.
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, PNG, or styled runs. | yes |
 | `capture-ui [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
+| `record start [pane] --target ID --output FILE [--max-fps N] [--duration DUR] [--max-bytes SIZE] [--force]` | Start recording a pane. | only |
+| `record pane --target ID --output FILE [OPTIONS]` | Record a pane until `Ctrl+C`. | only |
+| `record list [--format text\|json]` | List running recordings. | only |
+| `record mark TEXT [--id ID]` | Label the current moment of running recordings. | only |
+| `record stop [--id ID]` | Stop a recording once its file is complete. | only |
+| `record export FILE --to png-frames DIR [--scale 1-3] \| --to cast OUT [--force]` | Export a recording. | — |
+| `record play FILE [--speed N] [--from MARK\|TIME]` | Replay a recording in this terminal. | — |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
@@ -187,6 +194,10 @@ they need `--session` and are refused against a UI. See
 [Inspect and wait for agents](agents.md#inspect-and-wait-for-agents) for states, references, and
 integration reports.
 
+The `record` commands that record run inside the session server, so they need `--session` and are
+refused against a UI. `record export` and `record play` read a file and take no endpoint. See
+[Record a pane](recording.md).
+
 Control commands reject the launch-only options `--config`, `--read-only`, `--profile`, `--pick`,
 and `--cwd`. `--session <NAME>` is the one target they accept, optionally qualified by
 `--remote <HOST>`.
@@ -199,8 +210,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 7,
-  "session_protocol": 16,
+  "schema": 8,
+  "session_protocol": 17,
   "capabilities": [
     "agent-waits",
     "capture-render",
@@ -211,6 +222,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "layout-control",
     "pane-control",
     "published-activity",
+    "record-pane",
     "remote-control",
     "session-control"
   ]
@@ -222,7 +234,7 @@ only concerns how two rozi binaries talk to each other.
 
 ## Output and exit status
 
-`list-panes`, `layout get`, `metrics`, `capture-pane`, and `capture-ui` print human-readable output
+`list-panes`, `layout get`, `metrics`, `capture-pane`, `capture-ui`, and `record list` print human-readable output
 to a terminal and stable JSON when redirected. Use `--format text` or `--format json` to choose
 explicitly.
 

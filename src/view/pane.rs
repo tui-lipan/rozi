@@ -365,6 +365,9 @@ fn status_title(ctx: &Context<AppRoot>, pane: &Pane) -> String {
     if pane.logging {
         title.push_str(" [log]");
     }
+    if pane.terminal.recording {
+        title.push_str(" [rec]");
+    }
     title
 }
 

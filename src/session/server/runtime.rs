@@ -1034,6 +1034,8 @@ fn compute_runtime_state(
         // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
         rows: pane.runtime.rows.clone(),
         integration: pane.runtime.integration.clone(),
+        // Owned by the recorder; a recompute carries it.
+        recording: pane.runtime.recording,
         sequence: pane.runtime.sequence,
     };
     let changed = runtime_state_changed(&candidate, &pane.runtime);

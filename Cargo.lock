@@ -2790,6 +2790,7 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
  "notify",
+ "png",
  "regex-lite",
  "relswap",
  "schemars",

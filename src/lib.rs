@@ -29,6 +29,7 @@ mod ops;
 pub mod pane;
 pub mod platform;
 mod profiles;
+pub mod recording;
 mod release_app;
 pub mod runtime_metrics;
 mod scratchpad;

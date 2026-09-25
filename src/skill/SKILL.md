@@ -136,6 +136,12 @@ on), plus the cursor's position and shape. Colors are ANSI names like `red`, 256
 `capture-ui --render png --output ui.png` captures the whole UI as drawn instead: the bar,
 borders, overlays, and every visible pane. It needs a UI; `--session` refuses it.
 
+To watch a pane over time rather than sample it, record it in the session server:
+`rozi --session dev record start --target <PANE_ID> --output /tmp/run.rozirec`, then
+`record mark "<label>"` at interesting moments and `record stop`. Only record when the user asked:
+the file holds everything the pane shows, and the pane is marked `[rec]` while it records.
+`rozi record export <FILE> --to png-frames <DIR>` or `--to cast <FILE>` turns it into files.
+
 Re-read pane ids before acting after a delay or any layout or session change.
 
 ## Coding agents in panes
@@ -205,7 +211,8 @@ bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"acti
 closing it withdraws the rows. `switch-workspace` and `move-to-workspace` also require a UI.
 
 A detached endpoint supports `list-panes`, `layout get`, `layout set`, the `pane` commands,
-`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, `status`, and the `agents` commands.
+`metrics`, `send-text`, `send-keys`, `capture-pane`, `split`, `status`, `record`, and the `agents`
+commands.
 Input still obeys the session's input lock.
 
 ## Detached-session limits

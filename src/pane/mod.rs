@@ -130,6 +130,19 @@ fn encode_png(
     scale: u8,
 ) -> std::result::Result<CaptureContent, ControlResponse> {
     use base64::Engine as _;
+
+    let png = png_bytes(frame, palette, scale)
+        .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
+    let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
+    Ok(CaptureContent::Png { png_base64 })
+}
+
+/// `frame` as PNG bytes, drawn in `palette` the way `capture-pane --render png` draws it.
+pub(crate) fn png_bytes(
+    frame: &tui_lipan::CapturedFrame,
+    palette: TerminalColorPalette,
+    scale: u8,
+) -> tui_lipan::Result<Vec<u8>> {
     use tui_lipan::{PngOptions, PngTextRenderer};
 
     let (default_fg, default_bg) = png_default_colors(&palette);
@@ -141,11 +154,7 @@ fn encode_png(
         ansi_palette: palette.ansi,
         ..PngOptions::default()
     };
-    let png = frame
-        .to_png(&options)
-        .map_err(|error| ControlResponse::error(format!("png capture failed: {error}")))?;
-    let png_base64 = base64::engine::general_purpose::STANDARD.encode(png);
-    Ok(CaptureContent::Png { png_base64 })
+    frame.to_png(&options)
 }
 
 use std::cell::RefCell;
@@ -228,6 +237,8 @@ pub struct TerminalPane {
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
+    /// The session server is recording this pane (`rozi record`).
+    pub recording: bool,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
     pub agent_integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
     /// Set when this agent pane's effective status transitions from `working` to a quiescent state
@@ -398,6 +409,7 @@ impl TerminalPane {
             foreground_executable: None,
             foreground_arguments: Vec::new(),
             reported_status: None,
+            recording: false,
             detected_agent: None,
             agent_integration: None,
             finished_unseen: false,
@@ -466,6 +478,7 @@ impl TerminalPane {
             self.project_root = None;
             self.git_branch = None;
             self.reported_status = None;
+            self.recording = false;
             self.detected_agent = None;
             self.agent_integration = None;
             self.finished_unseen = false;

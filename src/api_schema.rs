@@ -48,7 +48,15 @@ pub fn bundle() -> Value {
     add::<crate::control::AgentPromptAccepted>(&mut generator, &mut roots);
     add::<crate::control::AgentWaitResult>(&mut generator, &mut roots);
     add::<crate::control::SessionMetricsReport>(&mut generator, &mut roots);
+    add::<crate::control::RecordingInfo>(&mut generator, &mut roots);
+    add::<crate::control::RecordingListPayload>(&mut generator, &mut roots);
+    add::<crate::control::RecordingStopped>(&mut generator, &mut roots);
+    add::<crate::control::RecordingMarked>(&mut generator, &mut roots);
     add::<crate::runtime_metrics::RuntimeMetrics>(&mut generator, &mut roots);
+
+    // The lines of a `rozi-recording` file: its header, then one event per line.
+    add::<crate::recording::RecordingHeader>(&mut generator, &mut roots);
+    add::<crate::recording::RecordingEvent>(&mut generator, &mut roots);
 
     // Published activity, and the events `subscribe` streams.
     add::<crate::session::protocol::PublishedRow>(&mut generator, &mut roots);

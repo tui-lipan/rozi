@@ -383,6 +383,7 @@ impl SessionServer {
         self.clear_browse_requests(id);
         self.remove_agent_wait(id);
         self.capture_waits.remove(&id);
+        self.release_recording_replies(id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }

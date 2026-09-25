@@ -90,7 +90,11 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentWait { .. }
         | ControlCommand::AgentPrompt { .. }
         | ControlCommand::AgentReport { .. }
-        | ControlCommand::AgentRelease { .. } => None,
+        | ControlCommand::AgentRelease { .. }
+        | ControlCommand::RecordStart { .. }
+        | ControlCommand::RecordStop { .. }
+        | ControlCommand::RecordList
+        | ControlCommand::RecordMark { .. } => None,
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
@@ -288,6 +292,32 @@ impl SessionServer {
                 )]
             });
         }
+        if matches!(
+            request.command,
+            ControlCommand::RecordStart { .. }
+                | ControlCommand::RecordStop { .. }
+                | ControlCommand::RecordList
+                | ControlCommand::RecordMark { .. }
+        ) {
+            let response = if let Some(provenance) = &request.extension {
+                Some(ControlResponse::error(unverifiable_extension_provenance(
+                    provenance,
+                )))
+            } else {
+                self.handle_record_command(
+                    client_id,
+                    request.command,
+                    capabilities.clone(),
+                    effective,
+                )
+            };
+            return response.map_or_else(Vec::new, |response| {
+                vec![(
+                    Target::Sender,
+                    session_control_reply(capabilities, effective, response),
+                )]
+            });
+        }
         if request.command.pane_wait().is_some() {
             let response = if let Some(provenance) = &request.extension {
                 Some(ControlResponse::error(unverifiable_extension_provenance(
@@ -464,6 +494,12 @@ impl SessionServer {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
             ControlCommand::AgentWait { .. } => unreachable!("agent waits are registered above"),
+            ControlCommand::RecordStart { .. }
+            | ControlCommand::RecordStop { .. }
+            | ControlCommand::RecordList
+            | ControlCommand::RecordMark { .. } => {
+                unreachable!("record commands are served above")
+            }
             ControlCommand::AgentPrompt { .. } => {
                 unreachable!("agent prompts are submitted above")
             }
@@ -883,6 +919,7 @@ impl SessionServer {
                     agent_state: runtime
                         .as_ref()
                         .map(|runtime| runtime.state.as_str().to_string()),
+                    recording: pane.runtime.recording,
                 }
             })
             .collect();

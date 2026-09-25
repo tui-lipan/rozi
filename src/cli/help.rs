@@ -244,6 +244,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             row("", "changing for DUR, or both. A send matches"),
             row("", "new output only; --capture <RENDER> adds it"),
             row("capture-ui [OPTIONS]", "Capture the whole UI as drawn"),
+            row(
+                "record start|pane|list|mark|stop|export|play",
+                "Record a pane over time; see record --help",
+            ),
             row("switch-workspace <1-9>", "Switch the active workspace"),
             row(
                 "move-to-workspace <1-9>",
@@ -549,8 +553,8 @@ pub(crate) fn print_version() {
 mod tests {
     use super::*;
     use crate::cli::args::{
-        AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, ParsedCli, SESSIONS_HELP_SECTIONS,
-        WORKTREES_HELP_SECTIONS, parse_cli_args,
+        AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, ParsedCli, RECORD_HELP_SECTIONS,
+        SESSIONS_HELP_SECTIONS, WORKTREES_HELP_SECTIONS, parse_cli_args,
     };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
 
@@ -594,6 +598,7 @@ mod tests {
         }
         for (name, sections) in [
             ("agents", AGENTS_HELP_SECTIONS),
+            ("record", RECORD_HELP_SECTIONS),
             ("sessions", SESSIONS_HELP_SECTIONS),
             ("worktrees", WORKTREES_HELP_SECTIONS),
             ("extensions", EXTENSIONS_HELP_SECTIONS),

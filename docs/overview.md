@@ -69,6 +69,7 @@ Tiling behavior, animations, and keyboard flow take their cues from the
 | [Scripting quick start](scripting.md) | Common automation tasks with the `rozi` command |
 | [Control CLI](control.md) | The full reference for inspecting and controlling rozi from scripts |
 | [Control protocol](control-protocol.md) | The raw transport, for clients that cannot run the CLI |
+| [Record a pane](recording.md) | Record a pane over time, then replay it or export frames, a GIF, or a cast |
 | [Hooks](hooks.md) | Running commands when rozi events happen |
 | [Extensions](extensions.md) | Installing, writing, and managing extensions |
 | [Automation recipes](recipes.md) | Complete scripting and extension examples |

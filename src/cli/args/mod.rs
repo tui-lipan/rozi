@@ -10,6 +10,7 @@ use crate::{control, session};
 mod agents;
 mod extensions;
 mod layout;
+mod record;
 mod sessions;
 mod skill;
 mod worktrees;
@@ -24,6 +25,10 @@ pub(crate) use extensions::print_help as print_extensions_help;
 pub(crate) use extensions::print_install_help as print_extensions_install_help;
 pub(crate) use extensions::print_remove_help as print_extensions_remove_help;
 pub(crate) use extensions::print_update_help as print_extensions_update_help;
+#[cfg(test)]
+pub(super) use record::HELP_SECTIONS as RECORD_HELP_SECTIONS;
+pub(crate) use record::print_help as print_record_help;
+pub(crate) use record::{ExportTarget, RecordCli};
 #[cfg(test)]
 pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
 pub(crate) use sessions::print_help as print_sessions_help;
@@ -162,6 +167,8 @@ pub(crate) enum ParsedCli {
     Publish(PublishCli),
     Subscribe(SubscribeCli),
     Pick(PickCli),
+    Record(RecordCli),
+    RecordHelp,
     Server {
         name: String,
         fresh: bool,
@@ -498,6 +505,43 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output_format,
                     output: None,
                 }));
+            }
+            "record" => {
+                let args = iter.collect::<Vec<_>>();
+                if record::wants_help(&args) {
+                    return Ok(ParsedCli::RecordHelp);
+                }
+                return match record::parse(args)? {
+                    record::RecordArgs::Offline(command) => {
+                        if cli.attach_session.is_some() || cli.remote.is_some() || socket.is_some()
+                        {
+                            return Err(
+                                "record export and play read a file here; they take no session"
+                                    .to_string(),
+                            );
+                        }
+                        Ok(ParsedCli::Record(command))
+                    }
+                    record::RecordArgs::Control {
+                        command,
+                        output_format,
+                        foreground,
+                    } => {
+                        let endpoint = control_endpoint(&cli, socket, &command)?;
+                        if !endpoint.is_session() {
+                            return Err(
+                                "pane recording is server-owned; select a named session with --session"
+                                    .to_string(),
+                            );
+                        }
+                        Ok(ParsedCli::Record(record::control_cli(
+                            endpoint,
+                            command,
+                            output_format,
+                            foreground,
+                        )))
+                    }
+                };
             }
             "list-panes" => {
                 let output_format = parse_output_format(&mut iter, "list-panes")?;

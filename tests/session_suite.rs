@@ -6,6 +6,9 @@ mod headless_control_e2e;
 mod pane_status_e2e;
 #[path = "suites/session/published_rows_e2e.rs"]
 mod published_rows_e2e;
+#[cfg(unix)]
+#[path = "suites/session/record_e2e.rs"]
+mod record_e2e;
 #[path = "suites/session/session_file_tree.rs"]
 mod session_file_tree;
 #[path = "suites/session/session_multi_client.rs"]

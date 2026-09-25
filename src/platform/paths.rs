@@ -176,6 +176,23 @@ pub fn state_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_state_home.as_ref(), &env.home, ".local/state")
 }
 
+/// [`state_dir`], but only when the environment names a real base for it: `%LOCALAPPDATA%` on
+/// Windows, `$XDG_STATE_HOME` or `$HOME` elsewhere. `None` means `state_dir` would have fallen back
+/// to a path relative to the working directory, which no persistent file should land in.
+///
+/// Callers that persist state use this rather than testing environment fields themselves. Each of
+/// them once asked whether `HOME` or `XDG_STATE_HOME` was set, which is the Unix question: a Windows
+/// process normally has neither, only `LOCALAPPDATA`, so every new session server exited with "state
+/// directory unavailable" before it was ready.
+pub fn state_dir_if_available(env: &PlatformEnv) -> Option<PathBuf> {
+    let available = if cfg!(windows) {
+        env.local_appdata.is_some()
+    } else {
+        env.xdg_state_home.is_some() || env.home.is_some()
+    };
+    available.then(|| state_dir(env))
+}
+
 /// Base cache directory: `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi`;
 /// `%LOCALAPPDATA%\rozi\cache` on Windows.
 ///
@@ -896,6 +913,53 @@ mod tests {
             state_dir(&env),
             PathBuf::from("/home/user/.local/state/rozi")
         );
+    }
+
+    /// The production Windows environment: `LOCALAPPDATA`, and neither `HOME` nor any `XDG_*`.
+    /// Every state writer once refused it, so a new session server could not start on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn state_is_available_on_windows_from_local_appdata_alone() {
+        let env = PlatformEnv {
+            local_appdata: Some(PathBuf::from(r"C:\Users\user\AppData\Local")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(
+            state_dir_if_available(&env),
+            Some(PathBuf::from(r"C:\Users\user\AppData\Local\rozi\state"))
+        );
+        assert_eq!(
+            state_dir_if_available(&env_with_home(r"C:\Users\user")),
+            None,
+            "a HOME without LOCALAPPDATA would put Windows state under a Unix-style path"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn state_is_available_on_unix_from_home_or_xdg_state_home() {
+        assert_eq!(
+            state_dir_if_available(&env_with_home("/home/user")),
+            Some(PathBuf::from("/home/user/.local/state/rozi"))
+        );
+        let xdg_only = PlatformEnv {
+            xdg_state_home: Some(PathBuf::from("/custom/state")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(
+            state_dir_if_available(&xdg_only),
+            Some(PathBuf::from("/custom/state/rozi"))
+        );
+        let appdata_only = PlatformEnv {
+            local_appdata: Some(PathBuf::from("/somewhere")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(state_dir_if_available(&appdata_only), None);
+    }
+
+    #[test]
+    fn state_is_unavailable_rather_than_relative_to_the_working_directory() {
+        assert_eq!(state_dir_if_available(&PlatformEnv::default()), None);
     }
 
     #[test]

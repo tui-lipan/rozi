@@ -664,10 +664,7 @@ fn should_autostart_session(err: &std::io::Error) -> bool {
 }
 
 fn is_busy_attach_error(err: &std::io::Error) -> bool {
-    matches!(
-        err.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    )
+    err.kind() == std::io::ErrorKind::TimedOut || crate::platform::ipc::is_busy_error(err)
 }
 
 fn is_handshake_rejected(err: &std::io::Error) -> bool {

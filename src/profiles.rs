@@ -45,13 +45,12 @@ pub fn session_path(config: &crate::config::Config) -> Option<PathBuf> {
     if let Some(path) = &config.session.path {
         return Some(path.clone());
     }
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    if env.home.is_none() && env.xdg_state_home.is_none() {
-        // No usable state-directory source at all: preserve the historical "autosave silently
-        // does nothing" behavior rather than falling back to a cwd-relative `.local/state`.
-        return None;
-    }
-    Some(crate::platform::paths::state_dir(&env).join("session.toml"))
+    // No usable state-directory source at all: autosave silently does nothing rather than falling
+    // back to a cwd-relative `.local/state`.
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("session.toml"))
 }
 
 /// Write the live layout to the session file when `[session] autosave` is enabled. Called

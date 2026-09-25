@@ -986,11 +986,10 @@ fn session_log_dir(settings: &ServerSettings, session_name: &str) -> Option<(Pat
 }
 
 fn default_log_dir() -> Option<PathBuf> {
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    if env.home.is_none() && env.xdg_state_home.is_none() {
-        return None;
-    }
-    Some(crate::platform::paths::state_dir(&env).join("logs"))
+    crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .map(|dir| dir.join("logs"))
 }
 
 /// The directory a pane's child actually starts in, set explicitly so it is *known* (and can be

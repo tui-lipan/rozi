@@ -13,6 +13,8 @@ mod record_e2e;
 mod session_file_tree;
 #[path = "suites/session/session_multi_client.rs"]
 mod session_multi_client;
+#[path = "suites/session/session_platform_env.rs"]
+mod session_platform_env;
 #[path = "suites/session/session_protocol_errors.rs"]
 mod session_protocol_errors;
 #[path = "suites/session/session_protocol_skew.rs"]

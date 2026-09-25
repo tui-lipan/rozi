@@ -1861,11 +1861,10 @@ mod tests {
         let (_client, attached) = loop {
             match SessionClient::connect_attached(&endpoint, "test", inbound_tx.clone(), false) {
                 Ok(attached) => break attached,
+                // The transport reports a busy pipe as `WouldBlock`; this loop deliberately does
+                // not recognize the raw Win32 code, so a regression that lets it escape fails here.
                 Err(err)
-                    if (err.kind() == io::ErrorKind::WouldBlock
-                        || err.raw_os_error()
-                            == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32))
-                        && Instant::now() < deadline =>
+                    if err.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
                 {
                     thread::sleep(Duration::from_millis(5));
                 }

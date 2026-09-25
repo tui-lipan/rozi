@@ -498,3 +498,86 @@ fn a_recorded_frame_draws_back_into_the_same_cells() {
     assert_eq!(rebuilt.plain_text(), captured.plain_text());
     assert_eq!(rebuilt.to_ansi_text(), captured.to_ansi_text());
 }
+
+#[test]
+fn a_small_change_inside_a_row_writes_only_the_columns_that_changed() {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 60, 100);
+    screen.process_bytes(
+        "CPU \x1b[32m######\x1b[0m   5% 中 load \x1b[1m0.25\x1b[0m trailing text".as_bytes(),
+    );
+    push(&recorder, 0, &screen);
+    screen.process_bytes(b"\x1b[1;15H7");
+    push(&recorder, 10, &screen);
+    finish(recorder, 20, EndReason::Stopped);
+
+    let delta = events(&path)
+        .into_iter()
+        .find_map(|event| match event {
+            RecordingEvent::Delta(delta) => Some(delta),
+            _ => None,
+        })
+        .expect("a delta");
+    assert_eq!(delta.rows.len(), 1);
+    let change = &delta.rows[0];
+    assert!(change.partial, "{change:?}");
+    let covered: u16 = change.runs.iter().map(|run| run.width).sum();
+    assert!(covered <= 2, "a one-digit change covers {covered} columns: {change:?}");
+    assert_eq!(replay(&path).frames.last().unwrap().1, span(&mut screen));
+}
+
+#[test]
+fn random_screens_replay_exactly() {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(12, 40, 100);
+    let mut expected: Vec<(u64, SpanFrame)> = Vec::new();
+    let mut seed: u64 = 0x5eed;
+    let mut next = |bound: u64| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) % bound
+    };
+    let pieces = ["ab", "中文", "é", "  ", "│", "x", "日本語", "▀▄", "ok"];
+    for t in 0..400u64 {
+        let mut chunk = String::new();
+        for _ in 0..next(6) + 1 {
+            match next(7) {
+                0 => chunk.push_str(&format!("\x1b[{};{}H", next(12) + 1, next(40) + 1)),
+                1 => chunk.push_str(&format!(
+                    "\x1b[{}m",
+                    [0, 1, 4, 7, 31, 42, 93, 2][next(8) as usize]
+                )),
+                2 => chunk.push_str(&format!(
+                    "\x1b[38;2;{};{};{}m",
+                    next(256),
+                    next(256),
+                    next(256)
+                )),
+                3 => chunk.push_str("\x1b[K"),
+                4 => chunk.push_str("\r\n"),
+                _ => chunk.push_str(pieces[next(pieces.len() as u64) as usize]),
+            }
+        }
+        screen.process_bytes(chunk.as_bytes());
+        push(&recorder, t * 7, &screen);
+        let frame = span(&mut screen);
+        if expected.last().is_none_or(|(_, last)| *last != frame) {
+            expected.push((t * 7, frame));
+        }
+    }
+    let outcome = finish(recorder, 5_000, EndReason::Stopped);
+    assert_eq!(replay(&path).frames, expected);
+    let partial = events(&path)
+        .iter()
+        .filter_map(|event| match event {
+            RecordingEvent::Delta(delta) => {
+                Some(delta.rows.iter().filter(|row| row.partial).count())
+            }
+            _ => None,
+        })
+        .sum::<usize>();
+    assert!(partial > 0, "no partial rows in {} frames", outcome.totals.frames);
+}

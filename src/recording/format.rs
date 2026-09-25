@@ -114,7 +114,7 @@ impl RecordingEvent {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct FrameDelta {
     pub t: u64,
-    /// Replaced rows, each whole.
+    /// Replaced rows, or the parts of them that changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<RowChange>,
     /// The new cursor, or `null` when the frame no longer has one.
@@ -141,12 +141,18 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
-/// One replaced row: its index and its runs, as a `rozi-spans` row.
+/// A replaced row, or part of one.
+///
+/// Whole, `runs` is the row as a `rozi-spans` frame writes it. `partial` replaces only the columns
+/// the runs cover, from the first run's `x` to the end of the last; those runs tile that range
+/// without gaps, blanks included. A row can have several partial changes in one delta.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct RowChange {
     pub y: u16,
     pub runs: Vec<SpanRun>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 
 /// An image's pixels, stored once for however many frames show them.

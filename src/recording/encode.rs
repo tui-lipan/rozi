@@ -90,9 +90,13 @@ fn diff(previous: &SpanFrame, next: &SpanFrame, t: u64) -> FrameDelta {
             .iter()
             .enumerate()
             .filter(|(y, row)| previous.rows.get(*y) != Some(*row))
-            .map(|(y, row)| RowChange {
-                y: y as u16,
-                runs: row.clone(),
+            .flat_map(|(y, row)| match previous.rows.get(y) {
+                Some(old) => super::rows::diff(y as u16, old, row, next.width),
+                None => vec![RowChange {
+                    y: y as u16,
+                    runs: row.clone(),
+                    partial: false,
+                }],
             })
             .collect(),
         cursor: (previous.cursor != next.cursor).then(|| next.cursor.clone()),
@@ -104,11 +108,12 @@ fn diff(previous: &SpanFrame, next: &SpanFrame, t: u64) -> FrameDelta {
 /// Apply `delta` to `frame`, the frame it was taken against.
 pub fn apply_delta(frame: &mut SpanFrame, delta: &FrameDelta) -> std::result::Result<(), String> {
     for change in &delta.rows {
+        let width = frame.width;
         let row = frame
             .rows
             .get_mut(usize::from(change.y))
             .ok_or_else(|| format!("delta replaces row {} of a frame {} tall", change.y, frame.height))?;
-        row.clone_from(&change.runs);
+        super::rows::apply(row, change, width);
     }
     if let Some(cursor) = &delta.cursor {
         frame.cursor.clone_from(cursor);

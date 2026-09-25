@@ -10,6 +10,7 @@ pub mod export;
 pub mod format;
 pub mod frame;
 pub mod read;
+mod rows;
 pub mod writer;
 
 #[cfg(test)]

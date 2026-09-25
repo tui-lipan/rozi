@@ -24,7 +24,8 @@ rozi --session dev record stop
 ```
 
 `record stop` answers once the file is complete. With more than one recording running, name one
-with `--id`, from `record list`. `record mark` labels every running recording unless given `--id`.
+with `--id`, from `record list`. `record mark` labels every running recording unless given `--id`,
+and fails for a recording that is already ending, so a mark it reports was written.
 
 To record only while a command runs in the foreground, use `record pane`. It records until you press
 `Ctrl+C`. If the recording ends on its own first, such as when the pane's program exits, it prints
@@ -106,9 +107,10 @@ rozi record play agent.rozirec --from "tests started"
 rozi record play agent.rozirec --from 1h30m
 ```
 
-`--from` starts at a mark, by its label, or at a time into the recording. Playback uses your
-terminal's colors, so make the terminal at least as large as the recorded pane. Press `Ctrl+C` to
-stop.
+`--from` starts at a mark, by its label, or at a time into the recording, on the screen as it was
+at that moment. Playback lasts until the recording ended, holding the last screen for as long as it
+stood still. It uses your terminal's colors, so make the terminal at least as large as the recorded
+pane. Press `Ctrl+C` to stop.
 
 ## Export frames, a GIF, or a video
 
@@ -137,7 +139,8 @@ rozi record export agent.rozirec --to cast agent.cast
 ```
 
 A cast is text, so images appear as the half-block approximations their cells hold, and marks are
-left out. Neither export replaces existing files unless you pass `--force`.
+left out. A cast has one terminal size, the largest the pane reached; when the pane changes size,
+the screen is redrawn from the top-left corner at its new size. Neither export replaces existing files unless you pass `--force`.
 
 Export and play read the file on the machine you run them on and need no session.
 

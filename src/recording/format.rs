@@ -61,8 +61,8 @@ pub enum RecordingTarget {
     Pane { session: String, pane: PaneId },
 }
 
-/// One line after the header. Every event but `image` carries `t`, the milliseconds since the
-/// recording started.
+/// One line after the header. Every event carries `t`, the milliseconds since the recording
+/// started, and events are in time order.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

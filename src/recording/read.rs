@@ -46,6 +46,13 @@ impl<R: BufRead> RecordingReader<R> {
                 header.version
             ));
         }
+        if header.spans_version > crate::control::SPAN_FRAME_VERSION {
+            return Err(format!(
+                "recording frames use rozi-spans version {}, newer than this rozi reads ({}); update rozi",
+                header.spans_version,
+                crate::control::SPAN_FRAME_VERSION
+            ));
+        }
         if let Some(compression) = &header.compression {
             return Err(format!(
                 "recording is compressed with `{compression}`, which this rozi cannot read"
@@ -155,22 +162,41 @@ impl<R: BufRead> Replay<R> {
 
     /// Decoded pixels of every image the current frame names, decoding each only once.
     pub fn frame_images(&mut self) -> Result<&HashMap<String, DecodedImage>, String> {
-        if let Some(frame) = &self.frame {
-            for id in frame.images.iter().filter_map(|image| image.id.as_ref()) {
-                if self.decoded.contains_key(id) {
-                    continue;
-                }
-                let Some(image) = self.images.get(id) else {
-                    continue;
-                };
-                let png = base64::engine::general_purpose::STANDARD
-                    .decode(&image.png_base64)
-                    .map_err(|error| format!("image {id}: {error}"))?;
-                self.decoded
-                    .insert(id.clone(), DecodedImage::from_png(&png)?);
-            }
-        }
+        let ids: Vec<String> = self
+            .frame
+            .iter()
+            .flat_map(|frame| frame.images.iter().filter_map(|image| image.id.clone()))
+            .collect();
+        self.decode(&ids)?;
         Ok(&self.decoded)
+    }
+
+    /// `frame`, one this replay has produced, as cells and pixels to draw.
+    pub fn captured(&mut self, frame: &SpanFrame) -> Result<tui_lipan::CapturedFrame, String> {
+        let ids: Vec<String> = frame
+            .images
+            .iter()
+            .filter_map(|image| image.id.clone())
+            .collect();
+        self.decode(&ids)?;
+        Ok(super::frame::captured_frame(frame, &self.decoded))
+    }
+
+    fn decode(&mut self, ids: &[String]) -> Result<(), String> {
+        for id in ids {
+            if self.decoded.contains_key(id) {
+                continue;
+            }
+            let Some(image) = self.images.get(id) else {
+                continue;
+            };
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(&image.png_base64)
+                .map_err(|error| format!("image {id}: {error}"))?;
+            self.decoded
+                .insert(id.clone(), DecodedImage::from_png(&png)?);
+        }
+        Ok(())
     }
 
     /// Read events until one says something, or the recording ends.

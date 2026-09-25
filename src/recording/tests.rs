@@ -42,8 +42,8 @@ fn span(screen: &mut TerminalScreen) -> SpanFrame {
     crate::pane::spans::span_frame(&screen.capture_frame(), screen.palette(), false).unwrap()
 }
 
-fn push(recorder: &Recorder, t: u64, screen: &TerminalScreen) {
-    recorder.push_frame(t, screen.capture_frame(), screen.palette());
+fn push(recorder: &Recorder, t: u64, screen: &TerminalScreen) -> bool {
+    recorder.push_frame(t, screen.capture_frame(), screen.palette())
 }
 
 fn finish(recorder: Recorder, t: u64, reason: EndReason) -> RecorderOutcome {
@@ -288,7 +288,7 @@ fn a_stalled_writer_keeps_the_newest_state_and_counts_what_it_dropped() {
         // Never waits, however far behind the writer is.
         push(&recorder, t * 10, &screen);
     }
-    recorder.mark(500, "kept".to_string());
+    assert!(recorder.mark(500, "kept".to_string()));
     assert_eq!(recorder.totals().dropped, 12);
     let last = span(&mut screen);
 
@@ -499,7 +499,7 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
     assert!(export::png_frames(export::open(&path).unwrap(), &frames, 1, true).is_ok());
 
     let cast_path = dir.path().join("out.cast");
-    let summary = export::cast(export::open(&path).unwrap(), &cast_path, false).unwrap();
+    let summary = export::cast(&path, &cast_path, false).unwrap();
     assert_eq!(summary.frames, 3);
     let cast = std::fs::read_to_string(&cast_path).unwrap();
     let mut lines = cast.lines();
@@ -626,4 +626,147 @@ fn random_screens_replay_exactly() {
         })
         .sum::<usize>();
     assert!(partial > 0, "no partial rows in {} frames", expected.len());
+}
+
+/// Every event's time, in file order.
+fn times(path: &Path) -> Vec<(u64, &'static str)> {
+    events(path)
+        .iter()
+        .filter_map(|event| {
+            let kind = match event {
+                RecordingEvent::Keyframe { .. } | RecordingEvent::Delta(_) => "frame",
+                RecordingEvent::Mark { .. } => "mark",
+                RecordingEvent::Meta { .. } => "meta",
+                RecordingEvent::End(_) => "end",
+                _ => return None,
+            };
+            Some((event.time()?, kind))
+        })
+        .collect()
+}
+
+#[test]
+fn a_frame_that_arrives_behind_a_mark_never_moves_ahead_of_it() {
+    let (_dir, path) = scratch();
+    let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    for n in 0..writer::QUEUE_FRAMES as u64 {
+        screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
+        assert!(push(&recorder, n * 10, &screen));
+    }
+    let at_mark = span(&mut screen);
+    assert!(recorder.mark(85, "here".to_string()));
+    screen.process_bytes(b"\x1b[1;1Hlater");
+    assert!(push(&recorder, 90, &screen));
+    assert_eq!(recorder.totals().dropped, 1);
+    recorder.resume();
+    finish(recorder, 100, EndReason::Stopped);
+
+    let times = times(&path);
+    assert!(
+        times.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "time runs backwards: {times:?}"
+    );
+    let mark = times.iter().position(|(_, kind)| *kind == "mark").unwrap();
+    assert_eq!(
+        times[mark - 1],
+        (70, "frame"),
+        "the screen the mark was made on"
+    );
+    assert_eq!(times[mark + 1], (90, "frame"));
+    let replayed = replay(&path);
+    assert_eq!(
+        replayed.frames.iter().find(|(t, _)| *t == 70).unwrap().1,
+        at_mark
+    );
+}
+
+#[test]
+fn a_queue_of_frames_each_before_an_event_refuses_another_rather_than_growing() {
+    let (_dir, path) = scratch();
+    let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    for n in 0..writer::QUEUE_FRAMES as u64 {
+        screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
+        assert!(push(&recorder, n * 10, &screen));
+        assert!(recorder.mark(n * 10 + 5, format!("after {n}")));
+    }
+    screen.process_bytes(b"\x1b[1;1Hrefused");
+    assert!(!push(&recorder, 100, &screen), "no frame can give way");
+    assert_eq!(recorder.totals().dropped, 0, "nothing was lost");
+    recorder.resume();
+    // Once the writer catches up the same change is taken.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !push(&recorder, 110, &screen) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    finish(recorder, 200, EndReason::Stopped);
+    let replayed = replay(&path);
+    assert_eq!(replayed.frames.len(), writer::QUEUE_FRAMES + 1);
+    assert_eq!(replayed.marks.len(), writer::QUEUE_FRAMES);
+}
+
+#[test]
+fn a_recording_that_is_ending_takes_no_mark() {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    recorder.finish(10, EndReason::Stopped);
+    assert!(!recorder.mark(20, "late".to_string()));
+}
+
+#[test]
+fn a_reader_refuses_frames_newer_than_it_reads() {
+    let mut newer = header(2, 1);
+    newer.spans_version = SPAN_FRAME_VERSION + 1;
+    let mut file = serde_json::to_vec(&newer).unwrap();
+    file.push(b'\n');
+    let refused = Replay::new(BufReader::new(file.as_slice()))
+        .err()
+        .expect("refused");
+    assert!(refused.contains("rozi-spans"), "{refused}");
+}
+
+#[test]
+fn a_cast_is_as_large_as_the_screen_ever_was_and_repaints_on_a_resize() {
+    let (dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    screen.process_bytes(b"small");
+    assert!(push(&recorder, 0, &screen));
+    screen.resize(6, 30);
+    screen.process_bytes(b"\x1b[6;25Hcorner");
+    assert!(push(&recorder, 100, &screen));
+    screen.resize(3, 10);
+    assert!(push(&recorder, 200, &screen));
+    finish(recorder, 300, EndReason::Stopped);
+
+    let cast_path = dir.path().join("resized.cast");
+    export::cast(&path, &cast_path, false).unwrap();
+    let cast = std::fs::read_to_string(&cast_path).unwrap();
+    let mut lines = cast.lines();
+    let head: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(
+        (head["width"].as_u64(), head["height"].as_u64()),
+        (Some(30), Some(6))
+    );
+    let data: Vec<String> = lines
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()[2]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        data[1].contains("corner"),
+        "the grown screen is drawn whole: {:?}",
+        data[1]
+    );
+    for resized in &data[1..3] {
+        assert!(
+            resized.starts_with("\x1b[2J"),
+            "a new size clears the old one: {resized:?}"
+        );
+    }
 }

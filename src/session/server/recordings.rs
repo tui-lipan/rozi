@@ -25,6 +25,11 @@ pub(super) const MAX_RECORDINGS: usize = 16;
 /// How long a server that is shutting down waits for each recording's file to be finished.
 const SHUTDOWN_FINISH: Duration = Duration::from_secs(5);
 
+/// The shortest gap between two frames at `max_fps`, rounded up so the ceiling is never exceeded.
+fn frame_interval(max_fps: u32) -> Duration {
+    Duration::from_nanos(1_000_000_000_u64.div_ceil(u64::from(max_fps.max(1))))
+}
+
 /// A reply held until a recording's file is complete.
 pub(super) struct RecordingReply {
     client_id: ClientId,
@@ -37,6 +42,8 @@ pub(super) struct ActiveRecording {
     pane_id: PaneId,
     generation: u64,
     path: PathBuf,
+    /// `path` fully resolved once the file exists, to recognize another spelling of it.
+    resolved: PathBuf,
     started: Instant,
     started_unix_ms: u64,
     max_fps: u32,
@@ -95,14 +102,16 @@ impl ActiveRecording {
             return;
         }
         let frame = pane.screen_without_change().capture_frame();
-        self.recorder.push_frame(
+        // A refused frame leaves the change pending, so it is taken again at the next interval.
+        self.last_capture = now;
+        if self.recorder.push_frame(
             now.duration_since(self.started).as_millis() as u64,
             frame,
             palette,
-        );
-        self.seen = pane.content_generation;
-        self.palette = palette;
-        self.last_capture = now;
+        ) {
+            self.seen = pane.content_generation;
+            self.palette = palette;
+        }
     }
 
     fn due(&self, now: Instant) -> bool {
@@ -310,11 +319,14 @@ impl SessionServer {
                 format!("this session already runs {MAX_RECORDINGS} recordings"),
             ));
         }
-        if self
-            .recordings
-            .values()
-            .any(|recording| recording.path == path)
-        {
+        // Compared as the file each path names, not as spelled: `--force` on another spelling of a
+        // file being recorded would unlink it from under its writer.
+        let resolved = crate::platform::persist::resolved_file_path(&path)
+            .map_err(|error| invalid(format!("cannot record to {output}: {error}")))?;
+        if self.recordings.values().any(|recording| {
+            recording.resolved == resolved
+                || crate::platform::persist::same_file(&path, &recording.path)
+        }) {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::Conflict,
                 format!("{output} is already being recorded to"),
@@ -393,7 +405,8 @@ impl SessionServer {
             }
         })?;
         let started = Instant::now();
-        recorder.push_frame(0, frame, palette);
+        let queued = recorder.push_frame(0, frame, palette);
+        debug_assert!(queued, "an empty queue takes the first frame");
         let meta = MetaSeen::of(pane);
         for change in MetaSeen::default().changes(&meta) {
             recorder.meta(0, change);
@@ -406,11 +419,13 @@ impl SessionServer {
                 id,
                 pane_id: plan.pane_id,
                 generation: pane.generation,
+                resolved: crate::platform::persist::resolved_file_path(&plan.path)
+                    .unwrap_or_else(|_| plan.path.clone()),
                 path: plan.path,
                 started,
                 started_unix_ms,
                 max_fps: plan.max_fps,
-                min_interval: Duration::from_millis(1000 / u64::from(plan.max_fps)),
+                min_interval: frame_interval(plan.max_fps),
                 duration_ms: plan.duration_ms,
                 max_bytes: plan.max_bytes,
                 recorder,
@@ -465,24 +480,43 @@ impl SessionServer {
                 "a mark needs a label",
             );
         }
-        let ids: Vec<u64> = match id {
+        // A recording that is ending takes no more marks: its writer is finishing the file.
+        let candidates: Vec<u64> = match id {
             Some(id) => match self.recording_id(Some(id)) {
                 Ok(id) => vec![id],
                 Err(response) => return response,
             },
-            None => self.recordings.keys().copied().collect(),
+            None => self
+                .recordings
+                .iter()
+                .filter(|(_, recording)| !recording.recorder.closed())
+                .map(|(&id, _)| id)
+                .collect(),
         };
-        if ids.is_empty() {
+        if candidates.is_empty() {
             return ControlResponse::error_with(
                 ControlErrorCode::InvalidArgument,
                 "no recording is running",
             );
         }
-        for id in &ids {
+        let (ids, refused): (Vec<u64>, Vec<u64>) = candidates.into_iter().partition(|id| {
             let recording = &self.recordings[id];
             recording
                 .recorder
-                .mark(recording.elapsed_ms(), label.clone());
+                .mark(recording.elapsed_ms(), label.clone())
+        });
+        if !refused.is_empty() && (id.is_some() || ids.is_empty()) {
+            let listed = refused
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return ControlResponse::error_with(
+                ControlErrorCode::Unavailable,
+                format!(
+                    "recording {listed} could not take the mark: it is ending, or too far behind"
+                ),
+            );
         }
         ControlResponse::ok(RecordingMarked { ids })
     }
@@ -987,6 +1021,95 @@ mod tests {
             }),
             "{meta:?}"
         );
+    }
+
+    #[test]
+    fn a_mark_sent_while_a_recording_ends_is_refused_rather_than_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ending.rozirec");
+        let mut server = server();
+        let (client, _stream) = add_client(&mut server);
+        assert!(ask(&mut server, client, start(&path, None, false))[0].ok);
+        let (stopper, _s) = add_client(&mut server);
+        assert!(
+            ask(
+                &mut server,
+                stopper,
+                ControlCommand::RecordStop { id: None }
+            )
+            .is_empty()
+        );
+        // The recording is still listed while its writer finishes the file.
+        assert_eq!(server.recordings.len(), 1);
+
+        let named = ask(
+            &mut server,
+            client,
+            ControlCommand::RecordMark {
+                label: "late".into(),
+                id: Some(1),
+            },
+        );
+        assert!(!named[0].ok);
+        assert_eq!(named[0].code, Some(ControlErrorCode::Unavailable));
+        let any = ask(
+            &mut server,
+            client,
+            ControlCommand::RecordMark {
+                label: "late".into(),
+                id: None,
+            },
+        );
+        assert!(!any[0].ok, "{any:?}");
+
+        pump_until_finished(&mut server);
+        assert!(replay(&path).2.is_empty(), "no mark was written");
+    }
+
+    #[test]
+    fn another_spelling_of_a_file_being_recorded_is_refused_even_with_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rozirec");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("link")).unwrap();
+        let mut server = server();
+        let (client, _stream) = add_client(&mut server);
+        assert!(ask(&mut server, client, start(&path, None, false))[0].ok);
+
+        for alias in [
+            dir.path().join("sub/../a.rozirec"),
+            dir.path().join("link/a.rozirec"),
+            dir.path().join("./a.rozirec"),
+        ] {
+            let mut forced = start(&alias, None, false);
+            if let ControlCommand::RecordStart { force, .. } = &mut forced {
+                *force = true;
+            }
+            let refused = ask(&mut server, client, forced);
+            assert_eq!(
+                refused[0].code,
+                Some(ControlErrorCode::Conflict),
+                "{alias:?}"
+            );
+        }
+        assert!(path.is_file(), "the recording's file is still there");
+        assert_eq!(server.recordings.len(), 1);
+
+        let missing = ask(
+            &mut server,
+            client,
+            start(&dir.path().join("missing/b.rozirec"), None, false),
+        );
+        assert_eq!(missing[0].code, Some(ControlErrorCode::InvalidArgument));
+        server.finish_recordings_for_shutdown(EndReason::ServerShutdown);
+    }
+
+    #[test]
+    fn max_fps_is_a_ceiling_the_interval_never_undercuts() {
+        for fps in 1..=control::MAX_RECORDING_MAX_FPS {
+            assert!(frame_interval(fps) * fps >= Duration::from_secs(1), "{fps}");
+        }
+        assert_eq!(frame_interval(30), Duration::from_nanos(33_333_334));
     }
 
     fn server_with_pane() -> SessionServer {

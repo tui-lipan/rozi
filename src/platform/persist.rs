@@ -60,6 +60,45 @@ pub fn create_private_file(path: &Path, overwrite: bool) -> io::Result<fs::File>
     options.open(path)
 }
 
+/// Whether two paths name the same existing file, however each is spelled: through `..`, a
+/// symlinked directory, or another letter case on a case-insensitive filesystem. `false` when
+/// either does not exist.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::metadata(a), fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(windows)]
+    {
+        // The final path Windows reports for an open file is unique to it, in its stored case.
+        match (fs::canonicalize(a), fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+/// The file `path` names, spelled one way: an existing path fully resolved, otherwise its resolved
+/// directory joined with its file name. Fails when the directory does not exist or the path names
+/// no file.
+pub fn resolved_file_path(path: &Path) -> io::Result<PathBuf> {
+    if let Ok(resolved) = fs::canonicalize(path) {
+        return Ok(resolved);
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path names no file"))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(fs::canonicalize(parent)?.join(name))
+}
+
 fn follow_leaf_symlinks(path: &Path) -> io::Result<PathBuf> {
     let mut current = path.to_path_buf();
     for _ in 0..MAX_SYMLINK_FOLLOW {

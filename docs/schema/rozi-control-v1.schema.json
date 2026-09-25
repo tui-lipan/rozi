@@ -4109,7 +4109,7 @@
       "type": "object"
     },
     "RecordingEvent": {
-      "description": "One line after the header. Every event but `image` carries `t`, the milliseconds since the\nrecording started.",
+      "description": "One line after the header. Every event carries `t`, the milliseconds since the recording\nstarted, and events are in time order.",
       "oneOf": [
         {
           "description": "The whole screen. Written first, after a resize, and periodically, so a player can start\nfrom any keyframe.",

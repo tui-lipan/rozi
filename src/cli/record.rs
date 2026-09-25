@@ -6,10 +6,9 @@ use std::time::{Duration, Instant};
 
 use tui_lipan::Result;
 
-use super::args::{ControlEndpoint, ExportTarget, PlayFrom, RecordCli};
-use crate::recording::ReplayStep;
+use super::args::{ControlEndpoint, ExportTarget, RecordCli};
 use crate::recording::export;
-use crate::recording::frame::captured_frame;
+use crate::recording::play::{Cue, Playback, Seek};
 
 pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
     let result = match command {
@@ -54,10 +53,12 @@ fn run_export(
     scale: u8,
     force: bool,
 ) -> std::result::Result<(), String> {
-    let replay = export::open(input)?;
     let (summary, written) = match to {
-        ExportTarget::PngFrames(dir) => (export::png_frames(replay, dir, scale, force)?, dir),
-        ExportTarget::Cast(path) => (export::cast(replay, path, force)?, path),
+        ExportTarget::PngFrames(dir) => (
+            export::png_frames(export::open(input)?, dir, scale, force)?,
+            dir,
+        ),
+        ExportTarget::Cast(path) => (export::cast(input, path, force)?, path),
     };
     println!(
         "Wrote {} frames covering {:.1}s to {}",
@@ -79,72 +80,39 @@ fn run_export(
 }
 
 /// Replay a recording in this terminal at its own pace, or `speed` times faster.
-fn play(input: &Path, speed: f64, from: Option<&PlayFrom>) -> std::result::Result<(), String> {
-    let mut replay = export::open(input)?;
+fn play(input: &Path, speed: f64, from: Option<&Seek>) -> std::result::Result<(), String> {
+    let mut playback = Playback::new(export::open(input)?, from.cloned());
     let mut stdout = std::io::stdout().lock();
     let mut previous = None;
-    let mut playing = from.is_none_or(|from| matches!(from, PlayFrom::Time(0)));
-    // The recording time and wall-clock instant playback is measured from.
-    let mut origin: Option<(u64, Instant)> = None;
-    let mut end = None;
-    while let Some(step) = replay.step()? {
-        let t = match step {
-            ReplayStep::Frame { t } => {
-                if !playing && let Some(PlayFrom::Time(at)) = from {
-                    playing = t >= *at;
-                }
-                t
-            }
-            ReplayStep::Mark { t, label } => {
-                if !playing
-                    && let Some(PlayFrom::Mark(want)) = from
-                    && &label == want
-                {
-                    playing = true;
-                    origin = Some((t, Instant::now()));
-                    t
-                } else {
-                    continue;
-                }
-            }
-            ReplayStep::End(summary) => {
-                end = Some(summary.t);
-                break;
-            }
-            ReplayStep::Meta { .. } => continue,
-        };
-        if !playing || replay.frame().is_none() {
-            continue;
-        }
-        let (base, started) = *origin.get_or_insert((t, Instant::now()));
-        let due = started + Duration::from_secs_f64(t.saturating_sub(base) as f64 / 1000.0 / speed);
+    let started = Instant::now();
+    let wait_until = |at: u64| {
+        let due = started + Duration::from_secs_f64(at as f64 / 1000.0 / speed);
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
-        let images = replay.frame_images()?.clone();
-        let frame = replay.frame().expect("checked above");
-        let captured = captured_frame(frame, &images);
-        let ansi = captured.to_ansi_diff(previous.as_ref());
-        if stdout
-            .write_all(ansi.as_bytes())
-            .and_then(|()| stdout.flush())
-            .is_err()
-        {
-            return Ok(());
+    };
+    let result = loop {
+        match playback.next_cue() {
+            Ok(Some(Cue::Show { at, frame })) => {
+                wait_until(at);
+                let ansi = frame.to_ansi_diff(previous.as_ref());
+                if stdout
+                    .write_all(ansi.as_bytes())
+                    .and_then(|()| stdout.flush())
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                previous = Some(frame);
+            }
+            Ok(Some(Cue::Hold { until })) => wait_until(until),
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error),
         }
-        previous = Some(captured);
+    };
+    if previous.is_some() {
+        let _ = stdout.write_all(b"\x1b[0m\x1b[?25h\r\n");
+        let _ = stdout.flush();
     }
-    let _ = stdout.write_all(b"\x1b[0m\x1b[?25h\r\n");
-    let _ = stdout.flush();
-    if !playing && let Some(from) = from {
-        return Err(match from {
-            PlayFrom::Mark(label) => format!("the recording has no mark named {label:?}"),
-            PlayFrom::Time(ms) => format!(
-                "the recording is {:.1}s long, shorter than {:.1}s",
-                end.unwrap_or_else(|| replay.elapsed()) as f64 / 1000.0,
-                *ms as f64 / 1000.0
-            ),
-        });
-    }
-    Ok(())
+    result
 }

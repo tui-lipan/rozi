@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::control::ControlCommand;
 use crate::recording::export::CONCAT_LISTING;
+use crate::recording::play::Seek;
 
 use super::{ControlCli, ListFormat, control_request, parse_list_format, require_value};
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
@@ -104,7 +105,7 @@ pub(crate) enum RecordCli {
     Play {
         input: PathBuf,
         speed: f64,
-        from: Option<PlayFrom>,
+        from: Option<Seek>,
     },
 }
 
@@ -112,13 +113,6 @@ pub(crate) enum RecordCli {
 pub(crate) enum ExportTarget {
     PngFrames(PathBuf),
     Cast(PathBuf),
-}
-
-/// Where `record play --from` starts.
-#[derive(Debug, PartialEq)]
-pub(crate) enum PlayFrom {
-    Time(u64),
-    Mark(String),
 }
 
 /// Whether `rozi record ...` asked for help.
@@ -356,8 +350,8 @@ fn parse_play(args: Vec<String>) -> Result<RecordCli, String> {
                 let value =
                     require_value(&mut iter, "--from requires a mark or a time such as 1m30s")?;
                 from = Some(match parse_long_duration(&value) {
-                    Ok(ms) => PlayFrom::Time(ms),
-                    Err(_) => PlayFrom::Mark(value),
+                    Ok(ms) => Seek::Time(ms),
+                    Err(_) => Seek::Mark(value),
                 });
             }
             _ if input.is_none() && !arg.starts_with('-') => input = Some(PathBuf::from(arg)),
@@ -584,7 +578,7 @@ mod tests {
             RecordCli::Play {
                 input: "a".into(),
                 speed: 2.0,
-                from: Some(PlayFrom::Mark("tests started".into())),
+                from: Some(Seek::Mark("tests started".into())),
             }
         );
     }

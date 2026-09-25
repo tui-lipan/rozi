@@ -2,9 +2,12 @@
 //! wait.
 //!
 //! The producer - the session server's loop - only captures a frame and hands it over. Turning it
-//! into spans, diffing, hashing images, and writing all happen here. When the queue is full the
-//! newest queued frame is replaced by the newer one: the recording keeps the latest state and counts
-//! what it dropped, and the producer never blocks on the disk.
+//! into spans, diffing, hashing images, and writing all happen here. When the queue is full a queued
+//! frame gives way to the newer one: the recording keeps the latest state and counts what it
+//! dropped, and the producer never blocks on the disk.
+//!
+//! Marks and meta events are barriers. The frame just before one is the screen that event happened
+//! on, so it is never the one that gives way, and nothing is ever moved past an event.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -26,7 +29,7 @@ use super::format::{
 /// Frames waiting for the writer before a newer one replaces the newest of them.
 pub const QUEUE_FRAMES: usize = 8;
 /// Marks and meta events waiting for the writer before more are dropped.
-const QUEUE_EVENTS: usize = 1024;
+pub const QUEUE_EVENTS: usize = 1024;
 /// How long written events may sit in the buffer before they reach the file.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 /// Room kept under `max_bytes` for the `end` event.
@@ -199,57 +202,70 @@ impl Recorder {
         }
     }
 
-    /// Hand the writer a frame shown at `t`. Never waits on the writer: when it has fallen
-    /// [`QUEUE_FRAMES`] behind, the newest queued frame is replaced and counted as dropped.
-    pub fn push_frame(&self, t: u64, frame: CapturedFrame, palette: TerminalColorPalette) {
+    /// Hand the writer a frame shown at `t`, without waiting on it. Returns whether the frame was
+    /// queued; a refused one should be offered again later.
+    ///
+    /// When the writer has fallen [`QUEUE_FRAMES`] behind, the newer frame takes the place of a
+    /// queued one, counted as dropped: the last frame in the queue when nothing follows it, or
+    /// else the newest frame followed by another frame, which then moves to the end. A frame
+    /// right before a mark or meta event is never given up, since it is the screen the event
+    /// happened on. When every queued frame is one of those, the frame is refused rather than
+    /// letting the queue grow.
+    #[must_use]
+    pub fn push_frame(&self, t: u64, frame: CapturedFrame, palette: TerminalColorPalette) -> bool {
         let mut queue = self.shared.queue();
         if queue.closed {
-            return;
+            return false;
         }
         let job = Job::Frame {
             t,
             frame: Box::new(frame),
             palette,
         };
-        if queue.frames >= QUEUE_FRAMES
-            && let Some(newest) = queue
-                .jobs
-                .iter_mut()
-                .rev()
-                .find(|job| matches!(job, Job::Frame { .. }))
-        {
-            *newest = job;
-            self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
-        } else {
+        if queue.frames < QUEUE_FRAMES {
             queue.jobs.push_back(job);
             queue.frames += 1;
+        } else if let Some(last @ Job::Frame { .. }) = queue.jobs.back_mut() {
+            *last = job;
+            self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+        } else if let Some(victim) = (0..queue.jobs.len().saturating_sub(1)).rev().find(|&at| {
+            matches!(queue.jobs[at], Job::Frame { .. })
+                && matches!(queue.jobs[at + 1], Job::Frame { .. })
+        }) {
+            queue.jobs.remove(victim);
+            queue.jobs.push_back(job);
+            self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+        } else {
+            return false;
         }
         drop(queue);
         self.shared.ready.notify_one();
+        true
     }
 
-    /// Add a mark at `t`.
-    pub fn mark(&self, t: u64, label: String) {
-        self.push_event(RecordingEvent::Mark { t, label });
+    /// Add a mark at `t`. Returns whether it was queued: not once the recording is ending, nor
+    /// while [`QUEUE_EVENTS`] events already wait.
+    #[must_use]
+    pub fn mark(&self, t: u64, label: String) -> bool {
+        self.push_event(RecordingEvent::Mark { t, label })
     }
 
-    /// Add a meta event at `t`.
+    /// Add a meta event at `t`. One that cannot be queued is counted as dropped.
     pub fn meta(&self, t: u64, meta: RecordingMeta) {
-        self.push_event(RecordingEvent::Meta { t, meta });
+        if !self.push_event(RecordingEvent::Meta { t, meta }) && !self.closed() {
+            self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
-    fn push_event(&self, event: RecordingEvent) {
+    fn push_event(&self, event: RecordingEvent) -> bool {
         let mut queue = self.shared.queue();
-        if queue.closed {
-            return;
-        }
-        if queue.jobs.len() - queue.frames >= QUEUE_EVENTS {
-            self.shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
-            return;
+        if queue.closed || queue.jobs.len() - queue.frames >= QUEUE_EVENTS {
+            return false;
         }
         queue.jobs.push_back(Job::Event(event));
         drop(queue);
         self.shared.ready.notify_one();
+        true
     }
 
     /// End the recording at `t`: everything already queued is written, then the `end` event. Does

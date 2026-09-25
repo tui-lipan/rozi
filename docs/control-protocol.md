@@ -303,7 +303,9 @@ running totals `frames`, `keyframes`, `deltas`, `images`, `marks`, `dropped`, an
 `record-stop` takes `id`, which may be left out when one recording is running, and answers once the
 file is complete with `id`, `pane`, `path`, `reason`, `elapsed_ms`, the final totals, and `error`
 when writing failed. `record-mark` takes a `label` of up to 256 characters and an optional `id`,
-marks every running recording without one, and answers with the `ids` it marked.
+marks every running recording without one, and answers with the `ids` it marked. A recording that
+is ending, or whose writer is too far behind, cannot take a mark: naming it fails with
+`unavailable`, and a request without `id` fails when no running recording took the mark.
 
 ### Recording format
 
@@ -327,11 +329,12 @@ The header has:
 | `compression` | Absent. Reserved for compressing the lines after the header; a reader refuses a value it does not know. |
 
 The format's version changes only when a field changes meaning or goes away. A reader ignores
-fields and event kinds it does not know. The version is independent of the control API, the session
+fields and event kinds it does not know, and refuses a file whose `version` or `spans_version` is
+newer than it reads. The version is independent of the control API, the session
 protocol, and the spans frame version.
 
-Every event has `kind`, and every event but `image` has `t`, milliseconds since the recording
-started:
+Every event has `kind` and `t`, milliseconds since the recording started. Events are in time order,
+and a mark or meta event follows the frame that was showing when it happened:
 
 | `kind` | Contents |
 | --- | --- |

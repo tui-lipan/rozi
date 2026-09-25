@@ -28,7 +28,7 @@ pub(crate) use extensions::print_update_help as print_extensions_update_help;
 #[cfg(test)]
 pub(super) use record::HELP_SECTIONS as RECORD_HELP_SECTIONS;
 pub(crate) use record::print_help as print_record_help;
-pub(crate) use record::{ExportTarget, PlayFrom, RecordCli};
+pub(crate) use record::{ExportTarget, RecordCli};
 #[cfg(test)]
 pub(super) use sessions::HELP_SECTIONS as SESSIONS_HELP_SECTIONS;
 pub(crate) use sessions::print_help as print_sessions_help;

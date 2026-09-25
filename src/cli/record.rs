@@ -58,7 +58,7 @@ fn run_export(
             export::png_frames(export::open(input)?, dir, scale, force)?,
             dir,
         ),
-        ExportTarget::Cast(path) => (export::cast(input, path, force)?, path),
+        ExportTarget::Cast(path) => (export::cast(export::open(input)?, path, force)?, path),
     };
     println!(
         "Wrote {} frames covering {:.1}s to {}",

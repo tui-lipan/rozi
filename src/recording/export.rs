@@ -96,17 +96,16 @@ fn concat_listing(frames: &[(String, u64)], end: u64) -> String {
     out
 }
 
-/// Write the recording at `input` as an asciinema cast v2 file at `path`. Images appear as the
-/// half-block stand-ins their cells hold, since a cast is text; marks and meta events are left out.
-///
-/// A cast's terminal has one size, so it is the largest the recorded screen ever was. A frame at a
-/// new size is drawn as a full repaint from the top-left corner, clearing what the previous size
-/// left behind.
-pub fn cast(input: &Path, path: &Path, overwrite: bool) -> Result<ExportSummary, String> {
-    let (width, height) = largest_screen(input)?;
-    let mut replay = open(input)?;
+/// Write `replay` as an asciinema cast v2 file. Images appear as the half-block stand-ins their
+/// cells hold, since a cast is text. Marks become cast markers, and a change of size a resize
+/// event; meta events are left out.
+pub fn cast<R: BufRead>(
+    mut replay: Replay<R>,
+    path: &Path,
+    overwrite: bool,
+) -> Result<ExportSummary, String> {
     let header = replay.header().clone();
-    let mut cast = CastRecording::new(width, height).title(match &header.target {
+    let mut cast = CastRecording::new(header.width, header.height).title(match &header.target {
         super::format::RecordingTarget::Pane { session, pane } => {
             format!("rozi {session} pane {pane}")
         }
@@ -122,8 +121,9 @@ pub fn cast(input: &Path, path: &Path, overwrite: bool) -> Result<ExportSummary,
                     frames += 1;
                 }
             }
+            ReplayStep::Mark { t, label } => cast.push_marker(t as f64 / 1000.0, label),
             ReplayStep::End(summary) => end = Some(summary.t),
-            ReplayStep::Mark { .. } | ReplayStep::Meta { .. } => {}
+            ReplayStep::Meta { .. } => {}
         }
     }
     let end = end.unwrap_or_else(|| replay.elapsed());
@@ -134,25 +134,6 @@ pub fn cast(input: &Path, path: &Path, overwrite: bool) -> Result<ExportSummary,
         duration_ms: end,
         truncated: replay.truncated(),
     })
-}
-
-/// The widest and tallest the screen in the recording at `input` ever was.
-fn largest_screen(input: &Path) -> Result<(u16, u16), String> {
-    let file = std::fs::File::open(input)
-        .map_err(|error| format!("cannot open {}: {error}", input.display()))?;
-    let mut reader = super::read::RecordingReader::new(std::io::BufReader::new(file))?;
-    let header = reader.header();
-    let (mut width, mut height) = (header.width, header.height);
-    while let Some(event) = reader.next_event()? {
-        let size = match &event {
-            super::format::RecordingEvent::Resize { width, height, .. } => (*width, *height),
-            super::format::RecordingEvent::Keyframe { frame, .. } => (frame.width, frame.height),
-            _ => continue,
-        };
-        width = width.max(size.0);
-        height = height.max(size.1);
-    }
-    Ok((width, height))
 }
 
 fn write_new(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {

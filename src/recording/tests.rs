@@ -499,7 +499,7 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
     assert!(export::png_frames(export::open(&path).unwrap(), &frames, 1, true).is_ok());
 
     let cast_path = dir.path().join("out.cast");
-    let summary = export::cast(&path, &cast_path, false).unwrap();
+    let summary = export::cast(export::open(&path).unwrap(), &cast_path, false).unwrap();
     assert_eq!(summary.frames, 3);
     let cast = std::fs::read_to_string(&cast_path).unwrap();
     let mut lines = cast.lines();
@@ -755,12 +755,13 @@ fn a_reader_refuses_frames_newer_than_it_reads() {
 }
 
 #[test]
-fn a_cast_is_as_large_as_the_screen_ever_was_and_repaints_on_a_resize() {
+fn a_cast_resizes_its_terminal_with_the_pane_and_keeps_marks() {
     let (dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
     let mut screen = TerminalScreen::new(4, 20, 100);
     screen.process_bytes(b"small");
     assert!(push(&recorder, 0, &screen));
+    assert!(recorder.mark(50, "before growing".to_string()));
     screen.resize(6, 30);
     screen.process_bytes(b"\x1b[6;25Hcorner");
     assert!(push(&recorder, 100, &screen));
@@ -769,31 +770,43 @@ fn a_cast_is_as_large_as_the_screen_ever_was_and_repaints_on_a_resize() {
     finish(recorder, 300, EndReason::Stopped);
 
     let cast_path = dir.path().join("resized.cast");
-    export::cast(&path, &cast_path, false).unwrap();
+    export::cast(export::open(&path).unwrap(), &cast_path, false).unwrap();
     let cast = std::fs::read_to_string(&cast_path).unwrap();
     let mut lines = cast.lines();
     let head: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(
         (head["width"].as_u64(), head["height"].as_u64()),
-        (Some(30), Some(6))
+        (Some(20), Some(4)),
+        "the size the recording started at"
     );
-    let data: Vec<String> = lines
+    let events: Vec<(f64, String, String)> = lines
         .map(|line| {
-            serde_json::from_str::<serde_json::Value>(line).unwrap()[2]
-                .as_str()
-                .unwrap()
-                .to_string()
+            let event: serde_json::Value = serde_json::from_str(line).unwrap();
+            (
+                event[0].as_f64().unwrap(),
+                event[1].as_str().unwrap().to_string(),
+                event[2].as_str().unwrap().to_string(),
+            )
         })
         .collect();
-    assert!(
-        data[1].contains("corner"),
-        "the grown screen is drawn whole: {:?}",
-        data[1]
+    let kinds: Vec<(f64, &str)> = events
+        .iter()
+        .map(|(t, kind, _)| (*t, kind.as_str()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (0.0, "o"),
+            (0.05, "m"),
+            (0.1, "r"),
+            (0.1, "o"),
+            (0.2, "r"),
+            (0.2, "o"),
+            (0.3, "o")
+        ]
     );
-    for resized in &data[1..3] {
-        assert!(
-            resized.starts_with("\x1b[2J"),
-            "a new size clears the old one: {resized:?}"
-        );
-    }
+    assert_eq!(events[1].2, "before growing");
+    assert_eq!(events[2].2, "30x6");
+    assert!(events[3].2.contains("corner"), "{:?}", events[3].2);
+    assert_eq!(events[4].2, "10x3");
 }

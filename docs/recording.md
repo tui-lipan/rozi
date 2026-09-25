@@ -138,9 +138,9 @@ and keeps the text selectable:
 rozi record export agent.rozirec --to cast agent.cast
 ```
 
-A cast is text, so images appear as the half-block approximations their cells hold, and marks are
-left out. A cast has one terminal size, the largest the pane reached; when the pane changes size,
-the screen is redrawn from the top-left corner at its new size. Neither export replaces existing files unless you pass `--force`.
+A cast is text, so images appear as the half-block approximations their cells hold. Marks become
+cast markers, which players list as chapters to jump to, and when the pane changes size the cast's
+terminal changes size with it. Neither export replaces existing files unless you pass `--force`.
 
 Export and play read the file on the machine you run them on and need no session.
 

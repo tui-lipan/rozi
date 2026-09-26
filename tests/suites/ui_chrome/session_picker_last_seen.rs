@@ -253,10 +253,10 @@ fn a_remembered_row_can_still_be_activated() {
         let target = RemoteTarget::Alias("winvm".to_string());
         let mut backend = picker_showing(vec![last_seen("test", 1, &target)]);
 
-        // `update_level`, not `dispatch`: activation queues a real SSH attach to `winvm`, and
-        // `dispatch` keeps draining the queue. Whenever that attach failed fast enough, its reply
-        // cleared the pending attach before the assertion ran. The test is about what activation
-        // decides, not about reaching a host.
+        // `update_level`, not `dispatch`: activation starts a real SSH attach to `winvm`, and
+        // `dispatch` keeps draining replies. Whenever that attach failed fast enough, its failure
+        // cleared the pending attach before the assertion ran. `update_level` never reads the
+        // reply, so the test sees only what activation decided.
         backend
             .update_level(Msg::SessionPickerActivate(0))
             .expect("activate the remembered row");

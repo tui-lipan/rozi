@@ -163,6 +163,34 @@ pub(crate) fn notify_info(ctx: &mut Context<AppRoot>, message: impl Into<String>
     )
 }
 
+/// A saved local screenshot opens in the default application when clicked.
+pub(crate) fn notify_screenshot_saved(
+    ctx: &mut Context<AppRoot>,
+    shown_path: String,
+    path: std::path::PathBuf,
+) -> Notified {
+    let title = "Screenshot saved";
+    let content = toast_content(Some(title), &shown_path);
+    let callback = ctx
+        .link()
+        .callback(move |_| crate::Msg::OpenScreenshot(path.clone()));
+    let toast = titled_toast(
+        &ctx.state.theme,
+        ctx.state.theme.status.info,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        shown_path,
+    )
+    .copyable(false)
+    .on_click(callback);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
 /// Report a failure. Identical repeats renew, which matters most for errors a loop can retry.
 pub(crate) fn notify_error(
     ctx: &mut Context<AppRoot>,

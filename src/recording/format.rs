@@ -59,6 +59,16 @@ pub enum RecordingTarget {
     /// One pane's terminal screen, as the session server holds it: the canonical screen
     /// `capture-pane --session` sees, without any client's chrome.
     Pane { session: String, pane: PaneId },
+    /// A whole UI as it painted its terminal, chrome included: what `capture-ui` sees, over time.
+    /// `session` is the session it showed when the recording started, if any.
+    Ui {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
+    },
+    /// A target this version does not know. Readers without this variant, from before UI
+    /// recordings, refuse any target but a pane.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One line after the header. Every event carries `t`, the milliseconds since the recording
@@ -79,7 +89,7 @@ pub enum RecordingEvent {
     Image(RecordedImage),
     /// A label someone added with `rozi record mark`.
     Mark { t: u64, label: String },
-    /// Something the session server noticed about the pane.
+    /// Something the recorder noticed about what it records.
     Meta {
         t: u64,
         #[serde(flatten)]
@@ -168,7 +178,8 @@ pub struct RecordedImage {
     pub png_base64: String,
 }
 
-/// Semantic events the session server already tracks for a pane.
+/// Semantic events the recorder already tracks: the session server's for a pane, a UI's for
+/// itself.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -188,6 +199,18 @@ pub enum RecordingMeta {
     Status { status: Option<String> },
     /// The pane's program exited.
     Exited { status: i32 },
+    /// A UI recording's focus moved to `pane`, or to no pane.
+    Focus { pane: Option<PaneId> },
+    /// A UI recording switched to workspace `workspace`, counted from 1 as the workbar shows it,
+    /// with the name the user gave it, if any.
+    Workspace {
+        workspace: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// A UI recording's overlay opened or closed: the modal on top, such as `palette` or
+    /// `settings`, or `null` once none is open.
+    Overlay { overlay: Option<String> },
     #[serde(other)]
     Unknown,
 }
@@ -225,7 +248,8 @@ pub struct RecordingTotals {
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum EndReason {
-    /// `rozi record stop`, or the foreground `rozi record pane` exiting.
+    /// `rozi record stop`, the foreground `rozi record pane` exiting, or the UI's Stop recording
+    /// command.
     #[default]
     Stopped,
     /// It reached its `--duration`.
@@ -242,6 +266,8 @@ pub enum EndReason {
     ServerShutdown,
     /// Writing the file failed, such as on a full disk. The file holds what was written before.
     WriteFailed,
+    /// The recorded UI exited.
+    UiExited,
     #[serde(other)]
     Unknown,
 }
@@ -257,6 +283,7 @@ impl EndReason {
             Self::SessionEnded => "session-ended",
             Self::ServerShutdown => "server-shutdown",
             Self::WriteFailed => "write-failed",
+            Self::UiExited => "ui-exited",
             Self::Unknown => "unknown",
         }
     }

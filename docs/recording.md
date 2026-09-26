@@ -1,9 +1,12 @@
-# Record a pane
+# Record a pane or the UI
 
 `rozi record` records a pane's screen over time, change by change, to a file you can replay in a
 terminal or export to PNG frames, a GIF, a video, or an asciinema cast. The session server does the
 recording, so it runs with no UI attached: start one before you detach, and review what a coding
 agent did overnight in the morning.
+
+It can also record the whole rozi UI as you see it, chrome included, for a demo or a bug report.
+See [Record the whole UI](#record-the-whole-ui).
 
 ## Record a pane
 
@@ -57,16 +60,19 @@ recordings but not start, stop, or mark one.
 | **Start pane recording** | Starts recording the focused pane, with the file named by the server. |
 | **Stop pane recording** | Shown instead while the focused pane records. Stops every recording of it. |
 | **Mark pane recording…** | Asks for a label and marks the focused pane's recordings with it. |
+| **Start UI recording** | Starts recording this whole UI, with the file named by rozi. |
+| **Stop UI recording** | Shown instead while the UI records. |
 
-The commands appear only when the focused pane can be recorded: the UI is attached to a session, it
+The pane commands appear only when the focused pane can be recorded: the UI is attached to a session, it
 is not attached read-only, and the pane is not a scratch or popup pane. **Mark pane recording…** also
 needs the pane to be recording. When the mark lands, a toast says so and the recording dot flashes,
-unless `[animations] enabled` or `focus_chrome` is off.
+unless `[animations] enabled = false` or `focus_chrome = false`.
 
 When a recording starts or stops, a toast shows the path of its file. For a session on another host
 it also names the host, because that is where the file is. A command that fails shows why.
 
-They have no default keys. Bind `toggle-pane-recording` or `mark-pane-recording` under
+They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`, or
+`toggle-ui-recording` under
 [`[keys]`](keybindings.md#rebind-a-command), for example to `Ctrl+A`, then `Shift+R`:
 
 ```toml
@@ -83,6 +89,47 @@ rozi --session dev record pane --target 3 --output demo.rozirec
 ```
 
 Recording always starts from one of these commands. Nothing records in the background on its own.
+
+## Record the whole UI
+
+A UI recording holds every frame rozi paints in your terminal: the panes, borders, titles, the bar,
+the sidebar, toasts, and any open overlay, as `capture-ui` would photograph them. It is taken on
+your machine, like a screenshot, even when the session is on another host, and it lasts only as
+long as that rozi runs.
+
+In rozi, open the command palette and run **Start UI recording**. A toast says where the file is;
+run **Stop UI recording** to finish. From a shell inside rozi:
+
+```sh
+rozi record start ui
+rozi record mark --ui "opened the palette"
+rozi record stop --ui
+```
+
+From another terminal, name the UI with `--socket`. `--session` does not apply: a session server
+draws nothing to record. A relative `--output` is resolved against the directory you run `rozi` in,
+because the UI writes on this machine. The limits and `--force` work as for a pane recording.
+
+`record stop --ui` answers once the file is complete. There is no foreground form: `rozi record ui`
+refuses, and suggests `record start ui` and `record stop --ui`.
+
+rozi writes a frame only when it paints, so a UI that sits still costs nothing, and a UI that is
+not recording does no recording work at all. Frames painted faster than `--max-fps` are merged: the
+latest waits, and is written when the cap allows. A frame that changes one of the noted events
+below is written at once. The recording also notes, with their times:
+
+- your marks;
+- the focused pane changing;
+- switching workspace, with its number and name;
+- an overlay, such as the palette or Settings, opening and closing.
+
+The recording holds exactly what the terminal showed, so the `REC` indicator is in it too. Leaving
+it out would mean drawing every frame a second time, and that frame would no longer be the one you
+saw. Everything on screen is recorded, secrets included; see
+[What a recording holds](#what-a-recording-holds).
+
+A UI recording ends when you stop it, when it reaches its duration or size, or when rozi exits,
+which waits up to five seconds for the file to be finished. Switching sessions does not end it.
 
 ## What a recording holds
 
@@ -111,25 +158,40 @@ writable only by you, and never replaces an existing file unless you pass `--for
 
 ## See that a pane is recording
 
-While a pane is recording, every attached UI marks it with a dot and `rec` in the theme's error
-color at the end of its title bar, after any `fullscreen` or `floating` badge. A long title is
-shortened before the marker, so the marker always shows. The dot blinks slowly; with `[animations]
-enabled = false` or `focus_chrome = false` it holds steady. With `[pane] show_titles = false`, the
+While a pane is recording, every attached UI marks it with `● REC` in the theme's error color at
+the end of its title bar, after any `fullscreen` or `floating` badge: `fullscreen · ● REC`. A long
+title is shortened before the marker, so the marker always shows. Only the dot blinks, slowly, and
+the text after it holds still; with `[animations] enabled = false` or `focus_chrome = false` the dot
+holds steady too. With `[pane] show_titles = false`, the
 dot sits in the top-right corner of the pane's border instead. A workspace tab carries a blinking
 dot while its workspace holds a recorded pane you cannot see: one on another workspace, or one with
 neither a title nor a border to show it. A fullscreen pane covers the other panes and the workbar,
-so it shows `rec elsewhere` while another pane records, or `rec + elsewhere` when it records too.
+so its one marker counts the recordings it hides: `● 1 PANE REC` while another pane records, or
+`● REC · +1 pane` when it records too. A title never shows two dots.
 The one exception: with `show_titles = false` and a `border_mode` of `"dividers"` or `"none"`, a
 fullscreen pane has no title or border to carry the marker, so a recording shows only in
 `list-panes` and `record list` until the pane leaves fullscreen. The indicator is rozi's own chrome,
 so it never appears in the recording.
+
+While the UI records itself, the bar shows a `REC` chip with a blinking dot, in the theme's error
+color, just before its right-hand segments. The dot holds steady with `[animations] enabled = false`
+or `focus_chrome = false`, and `REC` is always spelled out, so the chip never depends on color
+alone. A fullscreen pane covers the bar, so while one is up its title carries the indicator
+instead, after its badge: `fullscreen · ● UI REC`. It takes the place of the pane marker there,
+with the same single dot, and counts any pane recordings behind it: `fullscreen · ● UI REC · +1
+pane`. Only with no bar and no title
+to carry it (`[pane] show_workbar = false`, or a fullscreen pane with `show_titles = false`) does
+the chip sit over the top-right corner of the screen. Unlike the pane marker, this chip is part of
+the recording.
 
 `list-panes` reports `"recording": true` for the pane, `record list` shows the file and its
 progress, and `metrics` counts recordings in its `recordings` section.
 
 ## Where the file goes
 
-The session server writes the file, so the path is on the session's host.
+The session server writes a pane recording, so the path is on the session's host. A UI recording is
+written by the UI, on your machine, into `[recording] dir` from your own configuration, named
+`<session>-ui-<date>-<time>.rozirec`, or `rozi-ui-<date>-<time>.rozirec` with no session.
 
 Without `--output`, the server names the file `<session>-pane-<id>-<date>-<time>.rozirec`, such as
 `dev-pane-3-20260925-141503.rozirec`, and adds `-2`, `-3`, and so on rather than replace one that
@@ -152,7 +214,8 @@ may run a different OS: a Windows session takes `C:\…`, a Linux or macOS one `
 | `--max-bytes SIZE` | `1GiB` | Stop before the file grows past this size, such as `512MiB`; at least `64KiB`. |
 | `--force` | off | Replace an existing file at `--output`. Needs `--output`. |
 
-Change the defaults under `[recording]` in the configuration on the session's host. The session
+Change the defaults under `[recording]` in the configuration on the session's host, or for a UI
+recording in the configuration of the UI. The session
 server reads it each time a recording starts, so an edit applies to the next recording without a
 restart. The palette commands always use these defaults.
 

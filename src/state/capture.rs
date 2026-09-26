@@ -1,4 +1,6 @@
 use std::cell::Cell;
+use std::path::PathBuf;
+use std::time::Instant;
 
 use tui_lipan::prelude::TextInput;
 
@@ -50,6 +52,75 @@ pub enum RecordingAction {
 pub struct RecordingMarkPrompt {
     pub target: PaneId,
     pub input: TextInput,
+}
+
+/// A recording of this UI as it paints, from `record-ui-start` or the Start UI recording command.
+///
+/// It holds the paint subscription, so the framework captures frames only while one runs, and it
+/// writes on this client's machine even when the session it shows is remote.
+pub struct UiRecording {
+    /// Tells this recording's timers from those of one stopped before it.
+    pub id: u64,
+    pub subscription: tui_lipan::PaintSubscription,
+    pub max_fps: u32,
+    pub duration_ms: u64,
+    pub max_bytes: u64,
+    pub phase: UiRecordingPhase,
+    /// When the last frame handed to the writer was painted. The `max_fps` ceiling counts from it.
+    pub last_written: Option<Instant>,
+    /// The newest frame painted but not yet handed to the writer: the ceiling did not allow it
+    /// yet, or the writer refused it. Written when the ceiling allows, or before a mark or the end.
+    pub pending: Option<UiRecordingPending>,
+    /// The revision of the timer that will write [`Self::pending`]; later frames only replace it.
+    /// Writing a frame any other way disarms it, since the ceiling then counts from that frame.
+    pub armed_flush: Option<u64>,
+    /// The revision of the last flush timer armed. A timer that fires no longer armed does nothing.
+    pub flush_revision: u64,
+    /// What the meta events last reported: the state of the last frame the writer took.
+    pub seen: UiRecordingSeen,
+    /// Started from the palette, so its start is shown as a toast.
+    pub from_action: bool,
+}
+
+/// Where a UI recording is in its life.
+pub enum UiRecordingPhase {
+    /// Waiting for the first frame, whose size and colors the file's header records. The start
+    /// repaints the UI, since it puts the recording indicator on screen, so this is one frame.
+    Starting {
+        output: crate::recording::start::Output,
+        force: bool,
+        /// The `record-ui-start` waiting to hear where the file is.
+        reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+        requested: Instant,
+    },
+    Running(Box<UiRecordingFile>),
+}
+
+/// A UI recording's open file.
+pub struct UiRecordingFile {
+    pub recorder: crate::recording::Recorder,
+    pub path: PathBuf,
+    /// When the first frame was painted, by the runtime clock frames are stamped with.
+    pub first_painted: Instant,
+    /// When the first frame arrived, by this machine's clock: what the duration limit counts from.
+    pub started: Instant,
+    pub started_at_unix_ms: u64,
+}
+
+/// A painted frame waiting for the writer, with the UI state it showed. Its meta events are
+/// queued with it, never before it.
+pub struct UiRecordingPending {
+    pub painted: tui_lipan::PaintedFrame,
+    pub seen: UiRecordingSeen,
+}
+
+/// The UI state a recording reports as meta events when it changes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UiRecordingSeen {
+    pub focus: Option<PaneId>,
+    pub workspace: usize,
+    pub workspace_name: Option<String>,
+    pub overlay: Option<&'static str>,
 }
 
 /// The blink that confirms a mark landed.

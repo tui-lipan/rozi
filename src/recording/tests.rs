@@ -709,6 +709,86 @@ fn the_last_frame_is_queued_past_a_full_queue_once_and_never_again() {
 }
 
 #[test]
+fn a_frame_and_the_events_on_it_are_queued_together_or_not_at_all() {
+    let (_dir, path) = scratch();
+    let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    for n in 0..writer::QUEUE_FRAMES as u64 {
+        screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
+        assert!(push(&recorder, n * 10, &screen));
+        assert!(recorder.mark(n * 10 + 5, format!("after {n}")));
+    }
+    screen.process_bytes(b"\x1b[1;1Hrefused");
+    let mark = |t| {
+        vec![RecordingEvent::Mark {
+            t,
+            label: "on it".to_string(),
+        }]
+    };
+    assert!(!recorder.push_frame_with(
+        100,
+        screen.capture_frame(),
+        screen.palette(),
+        mark(100),
+        false
+    ));
+    assert!(recorder.push_frame_with(
+        110,
+        screen.capture_frame(),
+        screen.palette(),
+        mark(110),
+        true
+    ));
+    recorder.resume();
+    finish(recorder, 200, EndReason::Stopped);
+
+    let times = times(&path);
+    assert_eq!(
+        times[times.len() - 4..],
+        [(75, "mark"), (110, "frame"), (110, "mark"), (200, "end")],
+        "the refused frame left no event behind: {times:?}"
+    );
+}
+
+#[test]
+fn the_last_frame_keeps_its_events_past_a_full_event_queue() {
+    let (_dir, path) = scratch();
+    let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    assert!(push(&recorder, 0, &screen));
+    for n in 0..writer::QUEUE_EVENTS as u64 {
+        assert!(recorder.mark(n / 100, format!("mark {n}")));
+    }
+    screen.process_bytes(b"\x1b[1;1Hsettings");
+    let meta = || {
+        vec![RecordingEvent::Meta {
+            t: 50,
+            meta: RecordingMeta::Overlay {
+                overlay: Some("settings".to_string()),
+            },
+        }]
+    };
+    assert!(
+        !recorder.push_frame_with(50, screen.capture_frame(), screen.palette(), meta(), false),
+        "a frame whose events do not fit waits"
+    );
+    assert!(
+        recorder.push_frame_with(50, screen.capture_frame(), screen.palette(), meta(), true),
+        "the last frame takes its events with it"
+    );
+    recorder.resume();
+    finish(recorder, 60, EndReason::Stopped);
+
+    let times = times(&path);
+    assert_eq!(
+        times[times.len() - 3..],
+        [(50, "frame"), (50, "meta"), (60, "end")],
+        "{:?}",
+        &times[times.len() - 5..]
+    );
+}
+
+#[test]
 fn a_queue_of_frames_each_before_an_event_refuses_another_rather_than_growing() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();

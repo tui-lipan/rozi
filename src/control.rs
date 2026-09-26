@@ -29,10 +29,12 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
 /// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
 /// 7 with the `spans` render and its `image_pixels`, version 8 with the `record-*` commands and
-/// the `rozi-recording` file format, version 9 with a request's `source_session`, and version 10
+/// the `rozi-recording` file format, version 9 with a request's `source_session`, version 10
 /// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
-/// `record-stop`'s list reply.
-pub const API_SCHEMA_VERSION: u32 = 10;
+/// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
+/// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
+/// meta events, and the `ui-exited` end reason.
+pub const API_SCHEMA_VERSION: u32 = 11;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -64,6 +66,9 @@ pub const RECORD_PANE_CAPABILITY: &str = "record-pane";
 /// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
 /// forwarding them to the session server it is attached to.
 pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
+/// A UI records itself as it paints, chrome included, with `record-ui-start`, `record-ui-stop`,
+/// and `record-ui-mark`, into a file on the UI's own host.
+pub const RECORD_UI_CAPABILITY: &str = "record-ui";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -95,6 +100,7 @@ impl ApiDescription {
                 PANE_CONTROL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 RECORD_PANE_CAPABILITY,
+                RECORD_UI_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
             ],
@@ -637,6 +643,31 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<PaneId>,
     },
+    /// Start recording the UI that serves the request: every frame it paints, chrome included, at
+    /// most `max_fps` times a second, into a file on the UI's host, until `record-ui-stop`, the UI
+    /// exiting, or a limit. Served by a UI only; limits left out come from its `[recording]`
+    /// config.
+    RecordUiStart {
+        /// An absolute path. The CLI resolves a relative one against its working directory. Left
+        /// out, the UI names a new file in `[recording] dir`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_fps: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+        /// Replace an existing regular file at `output`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+    },
+    /// Stop the UI's recording and answer once its file is complete.
+    RecordUiStop,
+    /// Add a labelled mark to the UI's recording.
+    RecordUiMark {
+        label: String,
+    },
     Pick {
         #[serde(default)]
         title: Option<String>,
@@ -662,11 +693,15 @@ pub enum ControlCommand {
 }
 
 impl ControlCommand {
-    /// Make a `record-start` path absolute against `base`, the directory it was typed in. The
+    /// Make a `record-start` or `record-ui-start` path absolute against `base`, the directory it was typed in. The
     /// session server takes only absolute paths, since its own working directory means nothing to
     /// the caller.
     pub fn resolve_output_against(&mut self, base: &Path) {
         if let Self::RecordStart {
+            output: Some(output),
+            ..
+        }
+        | Self::RecordUiStart {
             output: Some(output),
             ..
         } = self
@@ -1699,6 +1734,32 @@ pub struct RecordingMarked {
     pub ids: Vec<u64>,
 }
 
+/// A UI recording, as `record-ui-start` reports it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UiRecordingInfo {
+    /// Where the file is, on the UI's host.
+    pub path: String,
+    pub started_at_unix_ms: u64,
+    pub max_fps: u32,
+    pub duration_ms: u64,
+    pub max_bytes: u64,
+}
+
+/// A finished UI recording, as `record-ui-stop` reports it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UiRecordingStopped {
+    pub path: String,
+    pub reason: crate::recording::EndReason,
+    pub elapsed_ms: u64,
+    /// Why writing failed, for a `write-failed` reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(flatten)]
+    pub totals: crate::recording::RecordingTotals,
+}
+
 /// What `agents prompt` answers with when it was asked not to wait.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2376,10 +2437,13 @@ impl<R: io::Read> Iterator for ControlLines<R> {
 /// wait is answered when its condition resolves or its own deadline passes, and the UI enforces
 /// that deadline itself, so the connection outlasts it by the same margin rather than cutting
 /// every wait off at ten seconds. A `record-stop` is answered once the session server has finished
-/// the file, so it gets the budget a session caller gets.
+/// the file, so it gets the budget a session caller gets, and a `record-ui-stop` once the UI has.
 fn control_reply_timeout(command: &ControlCommand) -> Duration {
     const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
-    if matches!(command, ControlCommand::RecordStop { .. }) {
+    if matches!(
+        command,
+        ControlCommand::RecordStop { .. } | ControlCommand::RecordUiStop
+    ) {
         return crate::session::headless::RECORDING_STOP_TIMEOUT;
     }
     command.pane_wait().map_or(REPLY_TIMEOUT, |wait| {

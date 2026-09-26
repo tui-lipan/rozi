@@ -40,7 +40,7 @@ exclude = [
 # 0.16.0: keeps a Kitty image that reaches the UI in the same relayed chunk as the `clear` before it.
 # 0.16.1: PNG captures draw Powerline caps flush with the segment they close.
 # 0.16.2: cast recordings write resize and marker events (`rozi record export --to cast`).
-tui-lipan = { version = "0.16.2", features = [
+tui-lipan = { version = "0.16.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -683,12 +683,14 @@ See [Take a screenshot](terminal.md#take-a-screenshot).
 
 ## `[recording]`
 
-Defaults for [pane recordings](recording.md). The session server reads these from the configuration
-on its own host each time a recording starts, so for a remote session they come from that host.
+Defaults for [recordings](recording.md). For a pane recording the session server reads these from
+the configuration on its own host each time a recording starts, so for a remote session they come
+from that host. A [UI recording](recording.md#record-the-whole-ui) uses the UI's own configuration
+and writes on the UI's machine.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `dir` | path string | `recordings` in the state directory | Where a recording started without `--output` is written, including from **Start pane recording**. `~` expands. Created mode `0700` if missing. |
+| `dir` | path string | `recordings` in the state directory | Where a recording started without `--output` is written, including from **Start pane recording** and **Start UI recording**. `~` expands. Created mode `0700` if missing. |
 | `max_fps` | integer | `30` | `1` to `120`. |
 | `duration` | duration string | `"24h"` | Such as `"90s"`, `"8h"`, or `"1h30m"`; at most `"7d"`. |
 | `max_bytes` | size string | `"1GiB"` | Such as `"512MiB"`; at least `"64KiB"`. |

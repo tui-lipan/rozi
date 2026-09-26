@@ -112,6 +112,13 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     if let Some((label, color)) = collaboration_status(state, theme) {
         trailing.push(TrailingChip::badge(label, chip_fg(color), color));
     }
+    // Last before the configured segments, so a mode chip appearing on its left never moves it.
+    if ui_recording_chip(state) == Some(UiRecordingChip::Workbar)
+        && let Some(label) = ui_recording_label(state)
+    {
+        let color = theme.status.error;
+        trailing.push(TrailingChip::badge(label, chip_fg(color), color));
+    }
     for item in &workbar_cfg.right {
         if let Some(chip) = trailing_chip(ctx, item) {
             trailing.push(chip);
@@ -136,6 +143,47 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
         left_cap_color.unwrap_or(panel_bg),
         right_cap_color,
     )
+}
+
+/// Where the `● REC` that says this UI is recording itself goes: on the chrome in view that can
+/// carry it, so it takes part in layout rather than covering something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiRecordingChip {
+    /// A badge on the workbar.
+    Workbar,
+    /// Text at the end of this pane's title row: the pane is fullscreen and covers the workbar.
+    Title(crate::state::PaneId),
+    /// A badge over the top-right corner, when no workbar or title can carry it.
+    Overlay,
+}
+
+/// Where the UI recording indicator goes while the UI records itself.
+pub(crate) fn ui_recording_chip(state: &crate::state::State) -> Option<UiRecordingChip> {
+    if !crate::ops::ui_recording::is_recording(state) {
+        return None;
+    }
+    let cover = super::fullscreen_pane(state.active_workspace_ref());
+    Some(match cover {
+        None if state.config.pane.show_workbar => UiRecordingChip::Workbar,
+        Some(cover) if state.config.pane.show_titles => UiRecordingChip::Title(cover.id),
+        _ => UiRecordingChip::Overlay,
+    })
+}
+
+/// The label of the chip that says this UI is recording itself, while it is: the recording dot and
+/// `REC`, so the chip never relies on its color alone. The dot blinks as a pane's does, by giving way
+/// to blanks of its own width, and holds steady whenever motion is off.
+pub(crate) fn ui_recording_label(state: &crate::state::State) -> Option<String> {
+    if !crate::ops::ui_recording::is_recording(state) {
+        return None;
+    }
+    let icon = state.config.recording_icon();
+    let dot = if super::recording_dot_off_phase(state) {
+        " ".repeat(unicode_width::UnicodeWidthStr::width(icon))
+    } else {
+        icon.to_string()
+    };
+    Some(format!(" {dot} REC "))
 }
 
 fn workbar_fill(ctx: &Context<AppRoot>) -> Color {

@@ -175,6 +175,9 @@ attached.
 | `record list [--format text\|json]` | List running recordings. | yes |
 | `record mark TEXT [--id ID \| --target ID]` | Label the current moment of running recordings. | yes |
 | `record stop [--id ID \| --target ID]` | Stop recordings once their files are complete. | yes |
+| `record start ui [--output FILE [--force]] [--max-fps N] [--duration DUR] [--max-bytes SIZE]` | Record the UI as it paints, chrome included. | no |
+| `record mark --ui TEXT` | Label the current moment of the UI recording. | no |
+| `record stop --ui` | Stop the UI recording once its file is complete. | no |
 | `record export FILE --to png-frames DIR [--scale 1-3] \| --to cast OUT [--force]` | Export a recording. | — |
 | `record play FILE [--speed N] [--from MARK\|TIME]` | Replay a recording in this terminal. | — |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
@@ -198,8 +201,10 @@ integration reports.
 
 The `record` commands that record run inside the session server. Against a UI, `record start`,
 `stop`, `list`, and `mark` are passed to the session it is attached to, and act on the pane the
-command runs in unless given `--target` or `--id`. `record pane` needs `--session`. `record export`
-and `record play` read a file and take no endpoint. See [Record a pane](recording.md).
+command runs in unless given `--target` or `--id`. `record pane` needs `--session`. `record start
+ui`, `record mark --ui`, and `record stop --ui` record the UI itself, which writes the file on its
+own machine. `record export` and `record play` read a file and take no endpoint. See
+[Record a pane or the UI](recording.md).
 
 Control commands reject the launch-only options `--config`, `--read-only`, `--profile`, `--pick`,
 and `--cwd`. `--session <NAME>` is the one target they accept, optionally qualified by
@@ -213,7 +218,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 10,
+  "schema": 11,
   "session_protocol": 19,
   "capabilities": [
     "agent-waits",
@@ -227,6 +232,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "pane-control",
     "published-activity",
     "record-pane",
+    "record-ui",
     "remote-control",
     "session-control"
   ]

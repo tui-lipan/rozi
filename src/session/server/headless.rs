@@ -110,6 +110,11 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::CaptureUi { .. } => Some(
             "capture-ui photographs a UI; a session server draws nothing (capture one pane with `capture-pane --render png`)",
         ),
+        ControlCommand::RecordUiStart { .. }
+        | ControlCommand::RecordUiStop
+        | ControlCommand::RecordUiMark { .. } => Some(
+            "record ui records a UI; a session server draws nothing (record one pane with `record start pane`)",
+        ),
         ControlCommand::Notify { .. } => {
             Some("toasts are drawn by a UI; a session server has nowhere to show one")
         }

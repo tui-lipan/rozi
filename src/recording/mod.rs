@@ -1,8 +1,8 @@
 //! Recordings: a screen's changes over time, written as they happen and read back later.
 //!
 //! A domain core of its own because both ends of it are layer-independent: the session server
-//! writes a recording from its pane screens with no client involved, and the CLI exports and plays
-//! one with no session at all. The format is `rozi-recording` ([`format`]), line-delimited JSON
+//! writes a recording from its pane screens with no client involved, a UI writes one of itself, and
+//! the CLI exports and plays one with no session at all. The format is `rozi-recording` ([`format`]), line-delimited JSON
 //! whose frames are `rozi-spans` frames.
 
 pub mod encode;
@@ -12,6 +12,7 @@ pub mod frame;
 pub mod play;
 pub mod read;
 mod rows;
+pub mod start;
 pub mod units;
 pub mod writer;
 

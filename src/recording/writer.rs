@@ -1,7 +1,7 @@
 //! The thread that writes a recording, fed through a bounded queue that never makes its producer
 //! wait.
 //!
-//! The producer - the session server's loop - only captures a frame and hands it over. Turning it
+//! The producer - the session server's loop, or a UI recording itself - only captures a frame and hands it over. Turning it
 //! into spans, diffing, hashing images, and writing all happen here. When the queue is full a queued
 //! frame gives way to the newer one: the recording keeps the latest state and counts what it
 //! dropped, and the producer never blocks on the disk.
@@ -58,7 +58,7 @@ pub struct RecorderOutcome {
 enum Job {
     Frame {
         t: u64,
-        frame: Box<CapturedFrame>,
+        frame: Arc<CapturedFrame>,
         palette: TerminalColorPalette,
     },
     Event(RecordingEvent),
@@ -212,8 +212,13 @@ impl Recorder {
     /// happened on. When every queued frame is one of those, the frame is refused rather than
     /// letting the queue grow.
     #[must_use]
-    pub fn push_frame(&self, t: u64, frame: CapturedFrame, palette: TerminalColorPalette) -> bool {
-        self.push(t, frame, palette, false)
+    pub fn push_frame(
+        &self,
+        t: u64,
+        frame: impl Into<Arc<CapturedFrame>>,
+        palette: TerminalColorPalette,
+    ) -> bool {
+        self.push(t, frame.into(), palette, false)
     }
 
     /// Hand the writer the last frame before the recording ends, as [`Self::push_frame`] does but
@@ -224,16 +229,53 @@ impl Recorder {
     pub fn push_last_frame(
         &self,
         t: u64,
-        frame: CapturedFrame,
+        frame: impl Into<Arc<CapturedFrame>>,
         palette: TerminalColorPalette,
     ) -> bool {
-        self.push(t, frame, palette, true)
+        self.push(t, frame.into(), palette, true)
+    }
+
+    /// Hand the writer a frame together with the marks and meta events that happened on it, all
+    /// or nothing: either the frame is queued with `events` right after it, or nothing is. Queued
+    /// as [`Self::push_frame`] does, or [`Self::push_last_frame`] when `last`. Refused while the
+    /// events would not fit in [`QUEUE_EVENTS`], except with the last frame: like the frame, its
+    /// events have no later moment, so they are queued past the limit, which the end that follows
+    /// keeps from happening again. The caller keeps that group small.
+    #[must_use]
+    pub fn push_frame_with(
+        &self,
+        t: u64,
+        frame: impl Into<Arc<CapturedFrame>>,
+        palette: TerminalColorPalette,
+        events: Vec<RecordingEvent>,
+        last: bool,
+    ) -> bool {
+        let mut queue = self.shared.queue();
+        let queued_events = queue.jobs.len() - queue.frames;
+        if queue.closed || (!last && queued_events + events.len() > QUEUE_EVENTS) {
+            return false;
+        }
+        if !self.place_frame(
+            &mut queue,
+            Job::Frame {
+                t,
+                frame: frame.into(),
+                palette,
+            },
+            last,
+        ) {
+            return false;
+        }
+        queue.jobs.extend(events.into_iter().map(Job::Event));
+        drop(queue);
+        self.shared.ready.notify_one();
+        true
     }
 
     fn push(
         &self,
         t: u64,
-        frame: CapturedFrame,
+        frame: Arc<CapturedFrame>,
         palette: TerminalColorPalette,
         last: bool,
     ) -> bool {
@@ -241,11 +283,15 @@ impl Recorder {
         if queue.closed {
             return false;
         }
-        let job = Job::Frame {
-            t,
-            frame: Box::new(frame),
-            palette,
-        };
+        if !self.place_frame(&mut queue, Job::Frame { t, frame, palette }, last) {
+            return false;
+        }
+        drop(queue);
+        self.shared.ready.notify_one();
+        true
+    }
+
+    fn place_frame(&self, queue: &mut Queue, job: Job, last: bool) -> bool {
         if queue.frames < QUEUE_FRAMES {
             queue.jobs.push_back(job);
             queue.frames += 1;
@@ -265,8 +311,6 @@ impl Recorder {
         } else {
             return false;
         }
-        drop(queue);
-        self.shared.ready.notify_one();
         true
     }
 

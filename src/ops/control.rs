@@ -288,6 +288,31 @@ pub(crate) fn handle_control_request(
                 envelope.reply,
             );
         }
+        ControlCommand::RecordUiStart {
+            output,
+            max_fps,
+            duration_ms,
+            max_bytes,
+            force,
+        } => {
+            return crate::ops::ui_recording::start_command(
+                ctx,
+                crate::ops::ui_recording::StartRequest {
+                    output,
+                    max_fps,
+                    duration_ms,
+                    max_bytes,
+                    force,
+                },
+                envelope.reply,
+            );
+        }
+        ControlCommand::RecordUiStop => {
+            return crate::ops::ui_recording::stop_command(ctx, envelope.reply);
+        }
+        ControlCommand::RecordUiMark { label } => {
+            crate::ops::ui_recording::mark_command(ctx, &label)
+        }
         ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
             ControlErrorCode::Unsupported,
             "agent prompt is server-owned; select a named session with --session",

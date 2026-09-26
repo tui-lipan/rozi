@@ -24,6 +24,10 @@ const INBOUND_DRAIN_MAX_TIME: std::time::Duration = std::time::Duration::from_mi
 enum PostUpdateKind {
     Full,
     SessionOutputOnly,
+    /// A UI recording's own traffic: a painted frame, or one of its timers. Unless it ended the
+    /// recording it changes nothing on screen, and the epilogue's timers and syncs would make every
+    /// recorded frame schedule work that paints the next one.
+    Passive,
 }
 
 struct HandledUpdate {
@@ -48,6 +52,11 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
 fn post_update_kind(msg: &Msg) -> PostUpdateKind {
     if matches!(msg, Msg::SessionOutput { .. }) {
         PostUpdateKind::SessionOutputOnly
+    } else if matches!(
+        msg,
+        Msg::UiRecordingFrame(_) | Msg::UiRecordingFlush { .. } | Msg::UiRecordingPoll { .. }
+    ) {
+        PostUpdateKind::Passive
     } else {
         PostUpdateKind::Full
     }
@@ -79,6 +88,14 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SubmitRecordingMark => crate::ops::recording::submit_mark_prompt(ctx),
         Msg::RecordingMarkBlinkEnded { revision } => {
             crate::ops::recording::blink_ended(ctx, revision)
+        }
+        Msg::UiRecordingFrame(painted) => crate::ops::ui_recording::frame(ctx, painted),
+        Msg::UiRecordingFlush { id, revision } => {
+            crate::ops::ui_recording::flush(ctx, id, revision)
+        }
+        Msg::UiRecordingPoll { id } => crate::ops::ui_recording::poll(ctx, id),
+        Msg::UiRecordingFinished { stopped, notify } => {
+            crate::ops::ui_recording::finished(ctx, stopped, notify)
         }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
         Msg::UpdateAvailable { update, announce } => {
@@ -956,6 +973,9 @@ fn post_update_sync(
     // or bell marker, so ordinary chunks do not have to scan every pane for alerts.
     if post_update == PostUpdateKind::SessionOutputOnly {
         crate::commands::sync_if_needed(ctx);
+        return update;
+    }
+    if post_update == PostUpdateKind::Passive && update.level() == UpdateLevel::None {
         return update;
     }
 

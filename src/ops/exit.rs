@@ -98,6 +98,7 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
     crate::ops::session::release_background_for_exit(ctx, close_temporary);
     crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
     crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::ui_recording::finish_for_exit(&mut ctx.state);
     // A session whose server goes down with us leaves no other copy of its layout, so mirror it to
     // disk regardless of `[session] autosave`; anything still running is its own record.
     if shutdown_current {
@@ -187,6 +188,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     }
     crate::ops::session::release_background_for_exit(ctx, false);
     crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::ui_recording::finish_for_exit(&mut ctx.state);
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()

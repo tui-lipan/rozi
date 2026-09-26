@@ -144,6 +144,12 @@ pub struct State {
     /// The Mark pane recording prompt, while it is open.
     pub recording_mark: Option<RecordingMarkPrompt>,
     pub recording_mark_blink: RecordingMarkBlink,
+    /// This UI's recording of itself, while one runs.
+    pub ui_recording: Option<UiRecording>,
+    /// The id the next UI recording takes.
+    pub next_ui_recording: u64,
+    /// Threads finishing the files of UI recordings that ended, which leaving waits for.
+    pub ui_recording_finishing: Vec<std::thread::JoinHandle<()>>,
     /// Grace period of the attach in flight, during which the previous session's picture stays on
     /// screen instead of the Connecting scene.
     pub connect_hold: Option<ConnectHold>,
@@ -510,6 +516,9 @@ impl State {
             screenshot: ScreenshotState::default(),
             recording_mark: None,
             recording_mark_blink: RecordingMarkBlink::default(),
+            ui_recording: None,
+            next_ui_recording: 0,
+            ui_recording_finishing: Vec::new(),
             connect_hold: None,
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
@@ -1024,26 +1033,36 @@ impl State {
 
     /// Whether any modal overlay (help, palette, settings, pickers, prompts) is currently open.
     pub fn has_modal_overlay(&self) -> bool {
-        self.show_pick
-            || self.show_palette
-            || self.show_settings
-            || self.keybindings.is_some()
-            || self.show_theme_picker
-            || self.show_layout_picker
-            || self.extensions.is_some()
-            || self.search.is_some()
-            || self.rename.is_some()
-            || self.rename_session.is_some()
-            || self.save_profile_prompt.is_some()
-            || self.recording_mark.is_some()
-            || self.show_profile_picker
-            || self.worktree_picker.is_some()
-            || self.show_session_picker
-            || self.remote_picker.is_some()
-            || self.agent_picker.is_some()
-            || self.collaboration.is_some()
-            || self.follow_prompt.is_some()
-            || self.askpass.is_some()
+        self.modal_overlay().is_some()
+    }
+
+    /// The name of the modal overlay drawn on top, if any, as a UI recording's `overlay` meta event
+    /// reports it. Checked topmost first, in the order the view stacks them.
+    pub fn modal_overlay(&self) -> Option<&'static str> {
+        [
+            (self.askpass.is_some(), "askpass"),
+            (self.follow_prompt.is_some(), "follow-prompt"),
+            (self.collaboration.is_some(), "collaboration"),
+            (self.agent_picker.is_some(), "agent-picker"),
+            (self.remote_picker.is_some(), "remote-picker"),
+            (self.show_session_picker, "session-picker"),
+            (self.worktree_picker.is_some(), "worktree-picker"),
+            (self.show_profile_picker, "profile-picker"),
+            (self.recording_mark.is_some(), "recording-mark"),
+            (self.save_profile_prompt.is_some(), "save-profile"),
+            (self.rename_session.is_some(), "rename-session"),
+            (self.rename.is_some(), "rename"),
+            (self.search.is_some(), "search"),
+            (self.show_pick, "pick"),
+            (self.show_layout_picker, "layout-picker"),
+            (self.show_theme_picker, "theme-picker"),
+            (self.keybindings.is_some(), "help"),
+            (self.extensions.is_some(), "extensions"),
+            (self.show_settings, "settings"),
+            (self.show_palette, "palette"),
+        ]
+        .into_iter()
+        .find_map(|(open, name)| open.then_some(name))
     }
 
     /// Whether a pointer gesture is currently reshaping the layout: a pane move, a pane corner

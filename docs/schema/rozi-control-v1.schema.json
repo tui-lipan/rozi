@@ -1769,6 +1769,84 @@
           "type": "object"
         },
         {
+          "description": "Start recording the UI that serves the request: every frame it paints, chrome included, at\nmost `max_fps` times a second, into a file on the UI's host, until `record-ui-stop`, the UI\nexiting, or a limit. Served by a UI only; limits left out come from its `[recording]`\nconfig.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-start",
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "force": {
+              "description": "Replace an existing regular file at `output`.",
+              "type": "boolean"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_fps": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "output": {
+              "description": "An absolute path. The CLI resolves a relative one against its working directory. Left\nout, the UI names a new file in `[recording] dir`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop the UI's recording and answer once its file is complete.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-stop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a labelled mark to the UI's recording.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-mark",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "actions": {
               "description": "Extra chords offered beside select and cancel, advertised in the footer.",
@@ -2996,6 +3074,84 @@
           "type": "object"
         },
         {
+          "description": "Start recording the UI that serves the request: every frame it paints, chrome included, at\nmost `max_fps` times a second, into a file on the UI's host, until `record-ui-stop`, the UI\nexiting, or a limit. Served by a UI only; limits left out come from its `[recording]`\nconfig.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-start",
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "force": {
+              "description": "Replace an existing regular file at `output`.",
+              "type": "boolean"
+            },
+            "max_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_fps": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "output": {
+              "description": "An absolute path. The CLI resolves a relative one against its working directory. Left\nout, the UI names a new file in `[recording] dir`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop the UI's recording and answer once its file is complete.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-stop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add a labelled mark to the UI's recording.",
+          "properties": {
+            "cmd": {
+              "const": "record-ui-mark",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "actions": {
               "description": "Extra chords offered beside select and cancel, advertised in the footer.",
@@ -3136,7 +3292,7 @@
         },
         {
           "const": "stopped",
-          "description": "`rozi record stop`, or the foreground `rozi record pane` exiting.",
+          "description": "`rozi record stop`, the foreground `rozi record pane` exiting, or the UI's Stop recording\ncommand.",
           "type": "string"
         },
         {
@@ -3172,6 +3328,11 @@
         {
           "const": "write-failed",
           "description": "Writing the file failed, such as on a full disk. The file holds what was written before.",
+          "type": "string"
+        },
+        {
+          "const": "ui-exited",
+          "description": "The recorded UI exited.",
           "type": "string"
         }
       ]
@@ -4266,7 +4427,7 @@
           "type": "object"
         },
         {
-          "description": "Something the session server noticed about the pane.",
+          "description": "Something the recorder noticed about what it records.",
           "oneOf": [
             {
               "description": "The pane's title changed.",
@@ -4379,6 +4540,71 @@
               "required": [
                 "event",
                 "status"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A UI recording's focus moved to `pane`, or to no pane.",
+              "properties": {
+                "event": {
+                  "const": "focus",
+                  "type": "string"
+                },
+                "pane": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A UI recording switched to workspace `workspace`, counted from 1 as the workbar shows it,\nwith the name the user gave it, if any.",
+              "properties": {
+                "event": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "workspace": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "event",
+                "workspace"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A UI recording's overlay opened or closed: the modal on top, such as `palette` or\n`settings`, or `null` once none is open.",
+              "properties": {
+                "event": {
+                  "const": "overlay",
+                  "type": "string"
+                },
+                "overlay": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event"
               ],
               "type": "object"
             },
@@ -4830,6 +5056,38 @@
             "kind",
             "session",
             "pane"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A whole UI as it painted its terminal, chrome included: what `capture-ui` sees, over time.\n`session` is the session it showed when the recording started, if any.",
+          "properties": {
+            "kind": {
+              "const": "ui",
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A target this version does not know. Readers without this variant, from before UI\nrecordings, refuse any target but a pane.",
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         }
@@ -5558,5 +5816,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 10
+  "x-rozi-schema-version": 11
 }

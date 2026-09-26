@@ -513,6 +513,7 @@ fn execute_action_inner(
         Action::ScreenshotUi => crate::ops::screenshot::screenshot_ui(ctx),
         Action::TogglePaneRecording => crate::ops::recording::toggle_pane_recording(ctx),
         Action::MarkPaneRecording => crate::ops::recording::open_mark_prompt(ctx),
+        Action::ToggleUiRecording => crate::ops::ui_recording::toggle(ctx),
         Action::TogglePaneSynchronization => {
             // No toast: synchronization is a persistent mode that silently multiplies every
             // keystroke across panes, so it needs a permanent `SYNC` chip in the workbar rather

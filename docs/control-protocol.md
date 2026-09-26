@@ -344,6 +344,29 @@ Sent to a UI, these requests differ in a few ways:
 - A request with `extension` provenance fails, as it does on the session transport.
 - The UI waits up to 60 seconds for `record-stop`, then fails with `request-timeout`.
 
+### UI recordings
+
+```json
+{"cmd":"record-ui-start"}
+{"cmd":"record-ui-start","output":"/home/me/demo.rozirec","max_fps":20}
+{"cmd":"record-ui-mark","label":"opened the palette"}
+{"cmd":"record-ui-stop"}
+```
+
+A UI answers these, and records itself: every frame it paints, chrome included. A session server
+refuses them with `unsupported`. `record-ui` in `rozi api describe` advertises them. See
+[Record the whole UI](recording.md#record-the-whole-ui).
+
+`record-ui-start` takes the `output`, `max_fps`, `duration_ms`, `max_bytes`, and `force` fields of
+`record-start`, with the UI's own `[recording]` settings for the ones left out and its own host for
+the file. It answers once the first frame is in the file, with `path`, `started_at_unix_ms`,
+`max_fps`, `duration_ms`, and `max_bytes`. A UI already recording itself fails with `conflict`.
+
+`record-ui-stop` answers once the file is complete, with one stopped recording as described for
+`record-stop`, without `id` or `pane`. `record-ui-mark` takes a `label` and answers with no data.
+Both fail with `invalid-argument` when the UI is not recording, and a mark fails with `unavailable`
+while the recording is starting or ending. The UI waits up to 60 seconds for `record-ui-stop`.
+
 ### Recording format
 
 A recording file is line-delimited JSON in UTF-8. The first line is a header, and every later line
@@ -357,7 +380,7 @@ The header has:
 | --- | --- |
 | `format`, `version` | `"rozi-recording"` and the format's version, currently `1`. |
 | `rozi` | The version of rozi that wrote the file. |
-| `target` | What was recorded: `{"kind":"pane","session":…,"pane":…}`. |
+| `target` | What was recorded: `{"kind":"pane","session":…,"pane":…}`, or a whole UI, `{"kind":"ui","session":…}`, where `session` is the one it showed when the recording started and is absent without one. A reader from this version on shows a `kind` it does not know as an unknown target; a rozi from before UI recordings refuses a `ui` file. |
 | `width`, `height` | The screen's size in cells when the recording started. |
 | `started_at_unix_ms` | When it started. |
 | `max_fps`, `keyframe_interval_ms` | The frame-rate ceiling, and the longest gap between keyframes. |
@@ -380,12 +403,12 @@ and a mark or meta event follows the frame that was showing when it happened:
 | `resize` | `width` and `height`. A keyframe at the new size follows. |
 | `image` | `id`, `pixel_width`, `pixel_height`, and `png_base64`: an image's pixels, stored once and written before the first frame that shows it. The pixels are whole, not cleared where something covers them; a frame's `visible` says which cells show them. |
 | `mark` | `label`, from `record mark`. |
-| `meta` | `event` and its fields: `title` (`title`), `command-started`, `command-finished` (`status`), `agent` (`agent`, `state`), `status` (`status`), or `exited` (`status`). |
+| `meta` | `event` and its fields: `title` (`title`), `command-started`, `command-finished` (`status`), `agent` (`agent`, `state`), `status` (`status`), or `exited` (`status`) for a pane; `focus` (`pane`, or `null`), `workspace` (`workspace`, counted from 1, and `name` when it has one), or `overlay` (`overlay`, such as `"palette"`, or `null` once none is open) for a UI. |
 | `end` | `reason`, and the totals `frames`, `keyframes`, `deltas`, `images`, `marks`, `dropped`, and `bytes`. The last event of a finished recording. |
 
 `reason` is `stopped`, `duration`, `max-bytes`, `pane-exited`, `pane-closed`, `session-ended`,
-`server-shutdown`, or `write-failed`. `dropped` counts changes the writer skipped, keeping the latest
-screen, because it had fallen behind. `bytes` is the file's size before the `end` line.
+`server-shutdown`, `write-failed`, or `ui-exited`. `dropped` counts changes the writer skipped,
+keeping the latest screen, because it had fallen behind. `bytes` is the file's size before the `end` line.
 
 Each entry in a delta's `rows` has `y` and `runs`. Without `partial`, `runs` is the whole row, as a
 spans frame writes it. With `"partial": true`, the runs replace only the columns they cover, from

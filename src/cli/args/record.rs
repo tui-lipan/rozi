@@ -436,6 +436,11 @@ mod tests {
 
     #[test]
     fn recording_is_sent_to_a_session_and_files_are_read_here() {
+        let absolute_output = if cfg!(windows) {
+            r"C:\tmp\a.rozirec"
+        } else {
+            "/tmp/a.rozirec"
+        };
         let Ok(super::super::ParsedCli::Record(RecordCli::Control {
             control,
             foreground,
@@ -520,7 +525,7 @@ mod tests {
                 "{output} is sent as written"
             );
         }
-        let foreground = parse(&["record", "pane", "--output", "/tmp/a.rozirec"]).unwrap_err();
+        let foreground = parse(&["record", "pane", "--output", absolute_output]).unwrap_err();
         assert!(foreground.contains("--session"), "{foreground}");
         let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
             parse(&["--session", "dev", "record", "start", "--target", "3"])

@@ -357,6 +357,8 @@ pub struct State {
     /// Keyed by the request id the server echoes back.
     pub pending_attached_controls: HashMap<u64, PendingAttachedControl>,
     pub next_attached_control_request_id: u64,
+    /// Start/Stop toggles awaiting the server's authoritative recording flag, by attachment and pane.
+    pub pending_recording_toggles: HashMap<(u64, PaneId), bool>,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by
     /// `(epoch, local, pane id, generation)` so a client-local pane and a shared pane that share a
@@ -605,6 +607,7 @@ impl State {
             next_agent_report_request_id: 1,
             pending_attached_controls: HashMap::new(),
             next_attached_control_request_id: 1,
+            pending_recording_toggles: HashMap::new(),
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
             capture_waits: Default::default(),

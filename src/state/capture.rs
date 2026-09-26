@@ -40,8 +40,8 @@ pub struct ScreenshotFlash {
 /// A recording command this UI sent its session server, and so how it shows the answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordingAction {
-    Start,
-    Stop,
+    Start(PaneId),
+    Stop(PaneId),
     /// A mark on the recordings of this pane, whose dot blinks once it lands.
     Mark(PaneId),
 }

@@ -224,6 +224,13 @@ fn answer(
 /// This UI's own recording commands go unanswered: the attachment ending says more on screen than
 /// a toast per command lost with it.
 pub(crate) fn fail_epoch(state: &mut State, epoch: u64, message: &str) {
+    let before = state.pending_recording_toggles.len();
+    state
+        .pending_recording_toggles
+        .retain(|(pending_epoch, _), _| *pending_epoch != epoch);
+    if state.pending_recording_toggles.len() != before {
+        state.commands_dirty = true;
+    }
     let ended = state
         .pending_attached_controls
         .iter()

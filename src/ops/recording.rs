@@ -45,17 +45,42 @@ pub(crate) fn target_is_recording(state: &State) -> bool {
         .is_some_and(|pane| pane.terminal.recording)
 }
 
+pub(crate) fn target_toggle_pending(state: &State) -> bool {
+    recording_command_target(state).is_some_and(|pane| {
+        state
+            .pending_recording_toggles
+            .contains_key(&(state.runtime_epoch, pane))
+    })
+}
+
+/// Release a toggle only after the server's recording flag reaches the requested state.
+pub(crate) fn runtime_recording_changed(
+    state: &mut State,
+    epoch: u64,
+    pane: PaneId,
+    recording: bool,
+) {
+    let key = (epoch, pane);
+    if state.pending_recording_toggles.get(&key) == Some(&recording) {
+        state.pending_recording_toggles.remove(&key);
+        state.commands_dirty = true;
+    }
+}
+
 pub(crate) fn toggle_pane_recording(ctx: &mut Context<AppRoot>) -> Update {
     let Some(pane) = recording_command_target(&ctx.state) else {
         return Update::none();
     };
+    if target_toggle_pending(&ctx.state) {
+        return Update::none();
+    }
     let (command, action) = if target_is_recording(&ctx.state) {
         (
             ControlCommand::RecordStop {
                 id: None,
                 target: Some(pane),
             },
-            RecordingAction::Stop,
+            RecordingAction::Stop(pane),
         )
     } else {
         (
@@ -68,9 +93,14 @@ pub(crate) fn toggle_pane_recording(ctx: &mut Context<AppRoot>) -> Update {
                 force: false,
                 follow: false,
             },
-            RecordingAction::Start,
+            RecordingAction::Start(pane),
         )
     };
+    ctx.state.pending_recording_toggles.insert(
+        (ctx.state.runtime_epoch, pane),
+        matches!(action, RecordingAction::Start(_)),
+    );
+    ctx.state.commands_dirty = true;
     send(ctx, command, action);
     Update::none()
 }
@@ -153,9 +183,17 @@ pub(crate) fn answered(
     response: ControlResponse,
 ) -> Update {
     if !response.ok {
+        if let RecordingAction::Start(pane) | RecordingAction::Stop(pane) = action {
+            let expected = matches!(action, RecordingAction::Start(_));
+            let key = (epoch, pane);
+            if ctx.state.pending_recording_toggles.get(&key) == Some(&expected) {
+                ctx.state.pending_recording_toggles.remove(&key);
+                ctx.state.commands_dirty = true;
+            }
+        }
         let title = match action {
-            RecordingAction::Start => "Recording did not start",
-            RecordingAction::Stop => "Recording did not stop",
+            RecordingAction::Start(_) => "Recording did not start",
+            RecordingAction::Stop(_) => "Recording did not stop",
             RecordingAction::Mark(_) => "Mark failed",
         };
         notify_error(ctx, title, response.error.unwrap_or_default());
@@ -175,7 +213,7 @@ pub(crate) fn answered(
         .map(|host| format!(" on {host}"))
         .unwrap_or_default();
     match action {
-        RecordingAction::Start => {
+        RecordingAction::Start(_) => {
             let path = response
                 .data
                 .and_then(|data| serde_json::from_value::<RecordingInfo>(data).ok())
@@ -183,7 +221,7 @@ pub(crate) fn answered(
                 .unwrap_or_default();
             notify_info(ctx, format!("Recording started{on_host}\n{path}"));
         }
-        RecordingAction::Stop => {
+        RecordingAction::Stop(_) => {
             let paths = response
                 .data
                 .and_then(|data| serde_json::from_value::<RecordingStopList>(data).ok())
@@ -241,6 +279,7 @@ mod tests {
     use crate::input::Action;
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
+    use crate::session::protocol::PaneRuntimeState;
 
     use super::*;
 
@@ -307,6 +346,29 @@ mod tests {
         focused
     }
 
+    fn runtime_recording(backend: &mut TestBackend<AppRoot>, recording: bool) {
+        let state = backend.state();
+        let pane_id = state.focused_pane().unwrap();
+        let pane = find_pane(state, pane_id).unwrap();
+        let generation = pane.pty_generation;
+        let sequence = pane.terminal.runtime_sequence + 1;
+        let epoch = state.runtime_epoch;
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                agent_refs: Vec::new(),
+                state: PaneRuntimeState {
+                    sequence,
+                    recording,
+                    ..PaneRuntimeState::default()
+                },
+            })
+            .unwrap();
+    }
+
     #[test]
     fn start_and_stop_name_no_file_and_say_which_host_the_file_is_on() {
         on_large_stack(|| {
@@ -346,7 +408,7 @@ mod tests {
                 toasts(&backend)
             );
 
-            set_recording(&mut backend, true);
+            runtime_recording(&mut backend, true);
             backend
                 .dispatch(Msg::RunAction(Action::TogglePaneRecording))
                 .unwrap();
@@ -383,6 +445,80 @@ mod tests {
     }
 
     #[test]
+    fn toggle_waits_for_runtime_state_before_sending_another_request() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = attached(Some("devbox"));
+            let pane = backend.state().focused_pane().unwrap();
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            let [(start_id, command)] = sent(&outbound).try_into().unwrap();
+            assert!(matches!(command, ControlCommand::RecordStart { .. }));
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            assert!(sent(&outbound).is_empty());
+
+            answer(
+                &mut backend,
+                start_id,
+                RecordingInfo {
+                    id: 1,
+                    session: "work".into(),
+                    pane,
+                    path: "/tmp/a.rozirec".into(),
+                    started_at_unix_ms: 0,
+                    elapsed_ms: 0,
+                    max_fps: 30,
+                    duration_ms: 1,
+                    max_bytes: 1,
+                    follow: false,
+                    totals: Default::default(),
+                },
+            );
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            assert!(
+                sent(&outbound).is_empty(),
+                "the reply precedes runtime state"
+            );
+
+            runtime_recording(&mut backend, true);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            let [(stop_id, command)] = sent(&outbound).try_into().unwrap();
+            let ControlCommand::RecordStop { target, .. } = command else {
+                panic!("expected one stop request");
+            };
+            assert_eq!(target, Some(pane));
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            assert!(sent(&outbound).is_empty());
+            answer(&mut backend, stop_id, RecordingStopList { stopped: vec![] });
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            assert!(
+                sent(&outbound).is_empty(),
+                "stop stays pending until runtime state"
+            );
+
+            runtime_recording(&mut backend, false);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            let [(_, command)] = sent(&outbound).try_into().unwrap();
+            let ControlCommand::RecordStart { target, .. } = command else {
+                panic!("expected a new start after the stop completed");
+            };
+            assert_eq!(target, Some(pane));
+        });
+    }
+
+    #[test]
     fn a_refused_start_says_why() {
         on_large_stack(|| {
             let (mut backend, outbound) = attached(None);
@@ -404,6 +540,13 @@ mod tests {
                 "{:?}",
                 toasts(&backend)
             );
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            assert!(matches!(
+                sent(&outbound).as_slice(),
+                [(_, ControlCommand::RecordStart { .. })]
+            ));
         });
     }
 

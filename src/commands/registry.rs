@@ -352,6 +352,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::ScreenshotPane => state.focused_pane().is_some(),
         Action::TogglePaneRecording => {
             crate::ops::recording::recording_command_target(state).is_some()
+                && !crate::ops::recording::target_toggle_pending(state)
         }
         Action::MarkPaneRecording => crate::ops::recording::target_is_recording(state),
         _ => true,

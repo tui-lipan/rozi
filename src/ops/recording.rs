@@ -53,15 +53,19 @@ pub(crate) fn target_toggle_pending(state: &State) -> bool {
     })
 }
 
-/// Release a toggle only after the server's recording flag reaches the requested state.
+/// Release a toggle when the server's recording flag reaches the requested state.
 pub(crate) fn runtime_recording_changed(
     state: &mut State,
     epoch: u64,
     pane: PaneId,
     recording: bool,
 ) {
+    clear_pending_toggle(state, epoch, pane, recording);
+}
+
+fn clear_pending_toggle(state: &mut State, epoch: u64, pane: PaneId, expected: bool) {
     let key = (epoch, pane);
-    if state.pending_recording_toggles.get(&key) == Some(&recording) {
+    if state.pending_recording_toggles.get(&key) == Some(&expected) {
         state.pending_recording_toggles.remove(&key);
         state.commands_dirty = true;
     }
@@ -182,15 +186,18 @@ pub(crate) fn answered(
     action: RecordingAction,
     response: ControlResponse,
 ) -> Update {
-    if !response.ok {
-        if let RecordingAction::Start(pane) | RecordingAction::Stop(pane) = action {
-            let expected = matches!(action, RecordingAction::Start(_));
-            let key = (epoch, pane);
-            if ctx.state.pending_recording_toggles.get(&key) == Some(&expected) {
-                ctx.state.pending_recording_toggles.remove(&key);
-                ctx.state.commands_dirty = true;
-            }
+    match action {
+        RecordingAction::Start(pane) if !response.ok => {
+            clear_pending_toggle(&mut ctx.state, epoch, pane, true);
         }
+        // Stop's reply is held until its selected recordings finish. Another recording can keep
+        // the pane's aggregate flag true, so completion also releases this toggle.
+        RecordingAction::Stop(pane) => {
+            clear_pending_toggle(&mut ctx.state, epoch, pane, false);
+        }
+        _ => {}
+    }
+    if !response.ok {
         let title = match action {
             RecordingAction::Start(_) => "Recording did not start",
             RecordingAction::Stop(_) => "Recording did not stop",
@@ -445,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_waits_for_runtime_state_before_sending_another_request() {
+    fn toggle_waits_for_start_runtime_and_stop_completion() {
         on_large_stack(|| {
             let (mut backend, outbound) = attached(Some("devbox"));
             let pane = backend.state().focused_pane().unwrap();
@@ -497,22 +504,29 @@ mod tests {
                 .dispatch(Msg::RunAction(Action::TogglePaneRecording))
                 .unwrap();
             assert!(sent(&outbound).is_empty());
-            answer(&mut backend, stop_id, RecordingStopList { stopped: vec![] });
-            backend
-                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
-                .unwrap();
-            assert!(
-                sent(&outbound).is_empty(),
-                "stop stays pending until runtime state"
+            // A newer recording B keeps the pane's aggregate flag true while Stop A completes.
+            answer(
+                &mut backend,
+                stop_id,
+                RecordingStopList {
+                    stopped: vec![crate::control::RecordingStopped {
+                        id: 1,
+                        pane,
+                        path: "/tmp/a.rozirec".into(),
+                        reason: crate::recording::EndReason::Stopped,
+                        elapsed_ms: 5,
+                        error: None,
+                        totals: Default::default(),
+                    }],
+                },
             );
-
-            runtime_recording(&mut backend, false);
+            assert!(find_pane(backend.state(), pane).unwrap().terminal.recording);
             backend
                 .dispatch(Msg::RunAction(Action::TogglePaneRecording))
                 .unwrap();
             let [(_, command)] = sent(&outbound).try_into().unwrap();
-            let ControlCommand::RecordStart { target, .. } = command else {
-                panic!("expected a new start after the stop completed");
+            let ControlCommand::RecordStop { target, .. } = command else {
+                panic!("expected a stop for recording B after A completed");
             };
             assert_eq!(target, Some(pane));
         });

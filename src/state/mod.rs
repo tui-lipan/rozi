@@ -357,7 +357,7 @@ pub struct State {
     /// Keyed by the request id the server echoes back.
     pub pending_attached_controls: HashMap<u64, PendingAttachedControl>,
     pub next_attached_control_request_id: u64,
-    /// Start/Stop toggles awaiting the server's authoritative recording flag, by attachment and pane.
+    /// Start/Stop toggles awaiting the runtime flag or Stop completion, by attachment and pane.
     pub pending_recording_toggles: HashMap<(u64, PaneId), bool>,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by

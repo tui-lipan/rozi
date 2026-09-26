@@ -1389,6 +1389,21 @@ pub(crate) struct UiCaptureBatch {
     served: bool,
 }
 
+/// Whether a Screenshot UI is still waiting for the frame it will save.
+///
+/// Read from the batch rather than kept as a flag, so it ends the moment that frame is taken: not
+/// when the file is written, and not when an earlier screenshot's write finishes under a later one.
+pub(crate) fn ui_screenshot_waiting(state: &crate::state::State) -> bool {
+    state.pending_ui_capture.as_ref().is_some_and(|batch| {
+        let batch = batch.borrow();
+        !batch.served
+            && batch
+                .waiters
+                .iter()
+                .any(|waiter| matches!(waiter, UiCaptureWaiter::Screenshot(_)))
+    })
+}
+
 /// Answer `capture-ui` with the next frame the client paints.
 ///
 /// The request forces that paint, so an idle client answers too. Requests that arrive before it
@@ -1438,7 +1453,8 @@ fn wait_for_ui_frame(ctx: &mut Context<AppRoot>, waiter: UiCaptureWaiter) {
     }));
 }
 
-/// Encode `frame` once per form the waiters asked for, and answer each of them.
+/// Encode `frame` once per form the waiters asked for, and once per scale screenshots asked for,
+/// and answer each of them.
 ///
 /// A PNG of the whole client takes long enough to encode that it would stall the next frame, so
 /// the work runs off the UI thread.
@@ -1452,11 +1468,19 @@ fn answer_ui_captures(
         .name("rozi-capture-ui".into())
         .spawn(move || {
             let mut encoded: Vec<(UiCaptureForm, ControlResponse)> = Vec::new();
+            let mut pngs: Vec<(u8, std::result::Result<Vec<u8>, String>)> = Vec::new();
             for waiter in waiters {
                 let (form, reply) = match waiter {
                     UiCaptureWaiter::Control(form, reply) => (form, reply),
                     UiCaptureWaiter::Screenshot(job) => {
-                        job.write(&frame, palette);
+                        let index = match pngs.iter().position(|(scale, _)| *scale == job.scale()) {
+                            Some(index) => index,
+                            None => {
+                                pngs.push((job.scale(), job.encode(&frame, palette)));
+                                pngs.len() - 1
+                            }
+                        };
+                        job.save(&pngs[index].1);
                         continue;
                     }
                 };

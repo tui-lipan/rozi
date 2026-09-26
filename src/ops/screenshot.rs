@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tui_lipan::prelude::*;
 
-use crate::pane::lifecycle::find_pane_mut;
+use crate::pane::lifecycle::{find_pane_mut, pane_is_local};
 use crate::pane::pty_events::{notify_error, notify_info};
 use crate::state::{ScreenshotFlash, ScreenshotTarget};
 use crate::{AppRoot, Msg};
@@ -30,9 +30,30 @@ pub(crate) struct ScreenshotJob {
 impl ScreenshotJob {
     /// Encode `frame`, write it, and report the result. Runs off the UI thread.
     pub(crate) fn write(self, frame: &tui_lipan::CapturedFrame, palette: TerminalColorPalette) {
-        let result = crate::pane::png_bytes(frame, palette, self.scale)
+        let png = self.encode(frame, palette);
+        self.save(&png);
+    }
+
+    /// The PNG scale this screenshot is written at; jobs at the same scale share one encode.
+    pub(crate) fn scale(&self) -> u8 {
+        self.scale
+    }
+
+    pub(crate) fn encode(
+        &self,
+        frame: &tui_lipan::CapturedFrame,
+        palette: TerminalColorPalette,
+    ) -> std::result::Result<Vec<u8>, String> {
+        crate::pane::png_bytes(frame, palette, self.scale)
             .map_err(|error| format!("could not encode the PNG: {error}"))
-            .and_then(|png| save_png(self.dir.as_deref(), self.target, &png));
+    }
+
+    /// Write an already encoded PNG, and report the result. Runs off the UI thread.
+    pub(crate) fn save(self, png: &std::result::Result<Vec<u8>, String>) {
+        let result = png
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|png| save_png(self.dir.as_deref(), self.target, png));
         match result {
             Ok(path) => self.link.send(Msg::ScreenshotSaved {
                 target: self.target,
@@ -43,10 +64,7 @@ impl ScreenshotJob {
     }
 
     pub(crate) fn fail(self, error: String) {
-        self.link.send(Msg::ScreenshotFailed {
-            target: self.target,
-            error,
-        });
+        self.link.send(Msg::ScreenshotFailed { error });
     }
 }
 
@@ -70,7 +88,8 @@ pub(crate) fn screenshot_pane(ctx: &mut Context<AppRoot>) -> Update {
         notify_error(ctx, "Screenshot failed", "No focused pane");
         return Update::full();
     };
-    let Some(job) = job(ctx, ScreenshotTarget::Pane(id)) else {
+    let attachment = (!pane_is_local(&ctx.state, id)).then_some(ctx.state.runtime_epoch);
+    let Some(job) = job(ctx, ScreenshotTarget::Pane { id, attachment }) else {
         return Update::full();
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
@@ -94,13 +113,12 @@ pub(crate) fn screenshot_pane(ctx: &mut Context<AppRoot>) -> Update {
 /// Save the whole client as the next frame paints it.
 ///
 /// Running this from the palette has already closed it, so that frame no longer draws the palette.
-/// It would still draw the dim the palette left on everything else, fading out, so
-/// [`crate::state::ScreenshotState::ui_waiting`] has the view settle it at once for that frame.
+/// It would still draw the dim the palette left on everything else, fading out, so until that frame
+/// is taken [`crate::ops::control::ui_screenshot_waiting`] has the view settle it at once.
 pub(crate) fn screenshot_ui(ctx: &mut Context<AppRoot>) -> Update {
     let Some(job) = job(ctx, ScreenshotTarget::Ui) else {
         return Update::full();
     };
-    ctx.state.screenshot.ui_waiting = true;
     crate::ops::control::capture_ui_for_screenshot(ctx, job);
     Update::full()
 }
@@ -110,7 +128,6 @@ pub(crate) fn screenshot_saved(
     target: ScreenshotTarget,
     path: PathBuf,
 ) -> Update {
-    finish(ctx, target);
     if crate::layout::anim::screenshot_flash_enabled(ctx.state.config.animations) {
         let revision = ctx.state.screenshot.next_revision;
         ctx.state.screenshot.next_revision = revision.wrapping_add(1);
@@ -121,20 +138,9 @@ pub(crate) fn screenshot_saved(
     Update::full()
 }
 
-pub(crate) fn screenshot_failed(
-    ctx: &mut Context<AppRoot>,
-    target: ScreenshotTarget,
-    error: String,
-) -> Update {
-    finish(ctx, target);
+pub(crate) fn screenshot_failed(ctx: &mut Context<AppRoot>, error: String) -> Update {
     notify_error(ctx, "Screenshot failed", error);
     Update::full()
-}
-
-fn finish(ctx: &mut Context<AppRoot>, target: ScreenshotTarget) {
-    if target == ScreenshotTarget::Ui {
-        ctx.state.screenshot.ui_waiting = false;
-    }
 }
 
 fn save_png(
@@ -165,7 +171,7 @@ fn save_png(
 fn file_stem(target: ScreenshotTarget, now: chrono::DateTime<chrono::Local>) -> String {
     let stamp = now.format("%Y%m%d-%H%M%S");
     match target {
-        ScreenshotTarget::Pane(id) => format!("rozi-pane-{id}-{stamp}"),
+        ScreenshotTarget::Pane { id, .. } => format!("rozi-pane-{id}-{stamp}"),
         ScreenshotTarget::Ui => format!("rozi-ui-{stamp}"),
     }
 }
@@ -331,7 +337,10 @@ mod tests {
             );
             assert_eq!(
                 backend.state().screenshot.flash.map(|flash| flash.target),
-                Some(ScreenshotTarget::Pane(id))
+                Some(ScreenshotTarget::Pane {
+                    id,
+                    attachment: Some(backend.state().runtime_epoch),
+                })
             );
         });
     }
@@ -401,7 +410,7 @@ mod tests {
                     .unwrap(),
                 "the file is capture-ui's PNG of that frame"
             );
-            assert!(!backend.state().screenshot.ui_waiting);
+            assert!(!crate::ops::control::ui_screenshot_waiting(backend.state()));
             assert_eq!(
                 backend.state().screenshot.flash.map(|flash| flash.target),
                 Some(ScreenshotTarget::Ui)
@@ -427,6 +436,46 @@ mod tests {
             backend.advance(Duration::from_secs(1));
             assert_eq!(backend.state().screenshot.flash_frame.get(), None);
             assert_eq!(workbar(&backend.capture_frame().to_ansi_text()), rest_bar);
+        });
+    }
+
+    /// The dim settles for the frame a screenshot waits for, and only that long: an earlier
+    /// screenshot's file landing does not end a later one's wait.
+    #[test]
+    fn a_ui_screenshot_waits_until_its_own_frame_is_taken() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut backend = backend_writing_to(dir.path());
+            let waiting = |backend: &TestBackend<AppRoot>| {
+                crate::ops::control::ui_screenshot_waiting(backend.state())
+            };
+
+            backend
+                .update_level(Msg::RunAction(Action::ScreenshotUi))
+                .unwrap();
+            assert!(waiting(&backend));
+            backend.render();
+            assert!(!waiting(&backend), "the first frame has been taken");
+
+            backend
+                .update_level(Msg::RunAction(Action::ScreenshotUi))
+                .unwrap();
+            assert!(waiting(&backend));
+            // The first screenshot's write reports back before the second frame is painted.
+            backend
+                .update_level(Msg::ScreenshotSaved {
+                    target: ScreenshotTarget::Ui,
+                    path: dir.path().join("first.png"),
+                })
+                .unwrap();
+            assert!(waiting(&backend), "the second frame has not been taken");
+            backend.render();
+            assert!(!waiting(&backend));
+
+            // A script's capture-ui leaves the dim to fade as usual.
+            let (request, _reply) = capture_ui_request(CaptureRender::Text);
+            backend.update_level(request).unwrap();
+            assert!(!waiting(&backend));
         });
     }
 
@@ -465,7 +514,7 @@ mod tests {
             assert!(toast.starts_with("Screenshot failed"), "{toast}");
             assert!(toast.contains("not a directory"), "{toast}");
             assert_eq!(std::fs::read(&not_a_directory).unwrap(), b"keep");
-            assert!(!backend.state().screenshot.ui_waiting);
+            assert!(!crate::ops::control::ui_screenshot_waiting(backend.state()));
             assert_eq!(backend.state().screenshot.flash, None);
         });
     }
@@ -521,7 +570,13 @@ mod tests {
             .single()
             .unwrap();
         assert_eq!(
-            file_stem(ScreenshotTarget::Pane(12), at),
+            file_stem(
+                ScreenshotTarget::Pane {
+                    id: 12,
+                    attachment: None,
+                },
+                at
+            ),
             "rozi-pane-12-20260925-132307"
         );
         assert_eq!(

@@ -172,7 +172,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
-        if ctx.state.screenshot.ui_waiting {
+        if crate::ops::control::ui_screenshot_waiting(&ctx.state) {
             crate::layout::anim::instant_transition()
         } else {
             animation::scratch_transition_config(ctx)

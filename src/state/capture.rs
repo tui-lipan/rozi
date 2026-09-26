@@ -1,21 +1,23 @@
 use std::cell::Cell;
 
-use super::PaneId;
+use super::{AttachmentId, PaneId};
 
 /// What a screenshot action photographed, and so what its flash covers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenshotTarget {
-    Pane(PaneId),
+    /// A pane, named with its namespace: a popup or scratch pane and a shared pane may carry the
+    /// same numeric id, and a session switch reuses ids from another attachment.
+    Pane {
+        id: PaneId,
+        /// The attachment epoch a shared pane belongs to; `None` for a local popup or scratch pane.
+        attachment: Option<AttachmentId>,
+    },
     Ui,
 }
 
 /// The screenshot actions' client-local state.
 #[derive(Debug, Default)]
 pub struct ScreenshotState {
-    /// A Screenshot UI is waiting for the frame it will save. While it is, the view settles the
-    /// dialog dim at once instead of fading it, so the frame shows the UI at rest rather than the
-    /// palette that ran the action still lifting off it.
-    pub ui_waiting: bool,
     /// The latest flash. Each screenshot takes a new `revision`, which restarts the flash rather
     /// than stacking a second one on it; a finished flash is left here at rest.
     pub flash: Option<ScreenshotFlash>,

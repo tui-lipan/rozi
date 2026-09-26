@@ -1260,12 +1260,8 @@ pub(crate) fn pane_element(
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
-    let flash = match ctx.state.screenshot.flash_frame.get() {
-        Some((crate::state::ScreenshotTarget::Pane(target), strength)) if target == id => {
-            Some((animation::screenshot_flash_color(theme), strength))
-        }
-        _ => None,
-    };
+    let flash = pane_screenshot_flash(&ctx.state, id, kind)
+        .map(|strength| (animation::screenshot_flash_color(theme), strength));
     let pane_tree = pane_reveal_scope(
         pane_tree,
         pane.keys.effect_scope.clone(),
@@ -1291,6 +1287,25 @@ pub(crate) fn pane_element(
 /// Returned separately from the screen so the widget can re-apply them to whatever the screen
 /// reports at paint time. Both sources depend only on hint/search state, and a change in either
 /// already warrants a full frame of its own.
+/// How strongly this frame's screenshot flash tints pane `id`, drawn as `kind`.
+///
+/// Popup and scratch panes share numeric ids with the attachment's panes, and a session switch
+/// brings in another attachment's, so the flash matches the pane's namespace as well as its id.
+fn pane_screenshot_flash(state: &crate::state::State, id: PaneId, kind: PaneKind) -> Option<f32> {
+    let namespace =
+        (!matches!(kind, PaneKind::Popup | PaneKind::Scratch)).then_some(state.runtime_epoch);
+    match state.screenshot.flash_frame.get()? {
+        (
+            crate::state::ScreenshotTarget::Pane {
+                id: target,
+                attachment,
+            },
+            strength,
+        ) if target == id && attachment == namespace => Some(strength),
+        _ => None,
+    }
+}
+
 fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<TerminalDecoration> {
     if let Some(hints) = ctx
         .state
@@ -1936,6 +1951,45 @@ mod tests {
                 h: 24.0,
             },
         )
+    }
+
+    #[test]
+    fn a_pane_screenshot_flash_covers_only_the_pane_in_its_namespace() {
+        use crate::state::ScreenshotTarget;
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        state.runtime_epoch = 3;
+        let flash = |state: &crate::state::State, kind| pane_screenshot_flash(state, 4, kind);
+
+        let shared = ScreenshotTarget::Pane {
+            id: 4,
+            attachment: Some(3),
+        };
+        state.screenshot.flash_frame.set(Some((shared, 0.5)));
+        assert_eq!(flash(&state, PaneKind::Tiled), Some(0.5));
+        assert_eq!(flash(&state, PaneKind::Floating), Some(0.5));
+        assert_eq!(flash(&state, PaneKind::Scratch), None);
+        assert_eq!(flash(&state, PaneKind::Popup), None);
+        assert_eq!(pane_screenshot_flash(&state, 5, PaneKind::Tiled), None);
+
+        // Another attachment's pane 4, once the session has switched away from it.
+        state.runtime_epoch = 4;
+        assert_eq!(flash(&state, PaneKind::Tiled), None);
+
+        let local = ScreenshotTarget::Pane {
+            id: 4,
+            attachment: None,
+        };
+        state.screenshot.flash_frame.set(Some((local, 0.5)));
+        assert_eq!(flash(&state, PaneKind::Scratch), Some(0.5));
+        assert_eq!(flash(&state, PaneKind::Popup), Some(0.5));
+        assert_eq!(flash(&state, PaneKind::Tiled), None);
+
+        state
+            .screenshot
+            .flash_frame
+            .set(Some((ScreenshotTarget::Ui, 0.5)));
+        assert_eq!(flash(&state, PaneKind::Tiled), None);
     }
 
     #[test]

@@ -419,7 +419,6 @@ pub enum Msg {
         path: std::path::PathBuf,
     },
     ScreenshotFailed {
-        target: crate::state::ScreenshotTarget,
         error: String,
     },
     HoverPane(PaneId, KeyMods),

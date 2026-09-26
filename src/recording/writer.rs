@@ -1,7 +1,7 @@
 //! The thread that writes a recording, fed through a bounded queue that never makes its producer
 //! wait.
 //!
-//! The producer - the session server's loop - only captures a frame and hands it over. Turning it
+//! The producer - the session server's loop, or a UI recording itself - only captures a frame and hands it over. Turning it
 //! into spans, diffing, hashing images, and writing all happen here. When the queue is full a queued
 //! frame gives way to the newer one: the recording keeps the latest state and counts what it
 //! dropped, and the producer never blocks on the disk.
@@ -58,7 +58,7 @@ pub struct RecorderOutcome {
 enum Job {
     Frame {
         t: u64,
-        frame: Box<CapturedFrame>,
+        frame: Arc<CapturedFrame>,
         palette: TerminalColorPalette,
     },
     Event(RecordingEvent),
@@ -212,8 +212,13 @@ impl Recorder {
     /// happened on. When every queued frame is one of those, the frame is refused rather than
     /// letting the queue grow.
     #[must_use]
-    pub fn push_frame(&self, t: u64, frame: CapturedFrame, palette: TerminalColorPalette) -> bool {
-        self.push(t, frame, palette, false)
+    pub fn push_frame(
+        &self,
+        t: u64,
+        frame: impl Into<Arc<CapturedFrame>>,
+        palette: TerminalColorPalette,
+    ) -> bool {
+        self.push(t, frame.into(), palette, false)
     }
 
     /// Hand the writer the last frame before the recording ends, as [`Self::push_frame`] does but
@@ -224,16 +229,16 @@ impl Recorder {
     pub fn push_last_frame(
         &self,
         t: u64,
-        frame: CapturedFrame,
+        frame: impl Into<Arc<CapturedFrame>>,
         palette: TerminalColorPalette,
     ) -> bool {
-        self.push(t, frame, palette, true)
+        self.push(t, frame.into(), palette, true)
     }
 
     fn push(
         &self,
         t: u64,
-        frame: CapturedFrame,
+        frame: Arc<CapturedFrame>,
         palette: TerminalColorPalette,
         last: bool,
     ) -> bool {
@@ -241,11 +246,7 @@ impl Recorder {
         if queue.closed {
             return false;
         }
-        let job = Job::Frame {
-            t,
-            frame: Box::new(frame),
-            palette,
-        };
+        let job = Job::Frame { t, frame, palette };
         if queue.frames < QUEUE_FRAMES {
             queue.jobs.push_back(job);
             queue.frames += 1;

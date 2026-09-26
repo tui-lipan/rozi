@@ -428,6 +428,21 @@ pub enum Msg {
     RecordingMarkBlinkEnded {
         revision: u64,
     },
+    /// The framework painted a frame while this UI records itself.
+    UiRecordingFrame(tui_lipan::PaintedFrame),
+    /// The frame-rate ceiling of UI recording `id` allows its waiting frame now.
+    UiRecordingFlush {
+        id: u64,
+    },
+    /// Look at UI recording `id`'s deadline and writer between frames.
+    UiRecordingPoll {
+        id: u64,
+    },
+    /// A UI recording's file is complete. `notify` shows it as a toast.
+    UiRecordingFinished {
+        stopped: control::UiRecordingStopped,
+        notify: bool,
+    },
     HoverPane(PaneId, KeyMods),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),

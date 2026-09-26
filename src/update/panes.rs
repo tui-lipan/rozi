@@ -345,8 +345,12 @@ fn alert_pulse_should_run(state: &State) -> bool {
 }
 
 /// A recording dot on screen, which blinks: in a recorded pane's own chrome on the workspace in
-/// view, in the chrome of a fullscreen pane covering a recording, or on a workspace tab.
+/// view, in the chrome of a fullscreen pane covering a recording, on a workspace tab, or in the
+/// chip of a UI recording itself.
 fn visible_recording_dot(state: &State) -> bool {
+    if crate::ops::ui_recording::is_recording(state) {
+        return true;
+    }
     let workspace = state.active_workspace_ref();
     let chrome = crate::view::pane_chrome_shows_recording(&state.config.pane);
     // A fullscreen pane covers everything else, the workbar included, so only its chrome shows.

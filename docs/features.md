@@ -73,7 +73,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
   script or an SSH login that never starts a terminal.
 - Record a pane's screen change by change, from the command palette or a script and even with no UI
   attached, then replay it in a terminal or export PNG frames for a GIF or video, or an asciinema
-  cast. See [Record a pane](recording.md).
+  cast. Record the whole UI as you see it, chrome included, for a demo or a bug report. See
+  [Record a pane or the UI](recording.md).
 - Run hooks when pane, focus, workspace, session, or profile events occur.
 - Build extensions with static navigation targets plus out-of-process commands, services, tabbed
   pickers, activity rows, and notifications.

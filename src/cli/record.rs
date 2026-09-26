@@ -17,10 +17,14 @@ pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
             foreground,
         } => {
             // A local session shares this filesystem, so a relative path means here. A remote one
-            // resolves it on its own host, against the directory its login starts in.
-            if matches!(control.endpoint, ControlEndpoint::Session(_))
-                && let Ok(cwd) = std::env::current_dir()
-            {
+            // resolves it on its own host, against the directory its login starts in. A UI's
+            // control socket is always on this machine, and so is the file a UI recording writes.
+            let local = matches!(control.endpoint, ControlEndpoint::Session(_))
+                || matches!(
+                    control.request.command,
+                    crate::control::ControlCommand::RecordUiStart { .. }
+                );
+            if local && let Ok(cwd) = std::env::current_dir() {
                 control.request.command.resolve_output_against(&cwd);
             }
             if foreground

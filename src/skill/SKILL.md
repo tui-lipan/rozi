@@ -145,6 +145,9 @@ session pane, drop `--session`: the UI sends the request to that pane's session
 calling pane unless given `--target`. A scratch or popup pane still needs `--session`. Only record
 when the user asked: the file holds everything the pane shows, and the pane's title shows `● rec`
 while it records.
+To record what the user sees instead, chrome included, run `rozi record start ui` in a pane inside
+rozi and `rozi record stop --ui` to finish; the UI writes the file on its own machine and shows a
+`● REC` chip meanwhile.
 `rozi record export <FILE> --to png-frames <DIR>` or `--to cast <FILE>` turns it into files.
 
 Re-read pane ids before acting after a delay or any layout or session change.

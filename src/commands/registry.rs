@@ -628,6 +628,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             "Start pane recording"
         }
         .to_string(),
+        Action::ToggleUiRecording => if crate::ops::ui_recording::is_recording(state) {
+            "Stop UI recording"
+        } else {
+            "Start UI recording"
+        }
+        .to_string(),
         Action::ToggleFloat => {
             let enabled = focused_pane(state).is_some_and(|pane| pane.floating);
             enable_disable_label("floating", enabled)
@@ -1347,6 +1353,7 @@ mod tests {
             ("screenshot-ui", "Screenshot UI"),
             ("toggle-pane-recording", "Start pane recording"),
             ("mark-pane-recording", "Mark pane recording…"),
+            ("toggle-ui-recording", "Start UI recording"),
         ] {
             let action = Action::from_id(id).unwrap_or_else(|| panic!("`{id}` parses"));
             let command = BUILTIN_COMMANDS

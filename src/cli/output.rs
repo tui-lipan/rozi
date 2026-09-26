@@ -835,6 +835,17 @@ pub(super) fn format_control_text(
             })
             .unwrap_or_else(|| format_recording_stopped_text(None, styles)),
         control::ControlCommand::RecordList => format_recordings_text(data, styles),
+        control::ControlCommand::RecordUiStart { .. } => format!(
+            "{}  {}\n",
+            styles.paint("Recording the UI", OutputTone::Accent),
+            data.and_then(|data| value_string(data, "path"))
+                .unwrap_or_default(),
+        ),
+        control::ControlCommand::RecordUiStop => format_recording_stopped_text(data, styles),
+        control::ControlCommand::RecordUiMark { .. } => format!(
+            "{}\n",
+            styles.paint("Marked the UI recording", OutputTone::Success)
+        ),
         control::ControlCommand::RecordMark { .. } => {
             let ids = data
                 .and_then(|data| data.get("ids"))
@@ -880,7 +891,10 @@ fn format_recording_stopped_text(data: Option<&serde_json::Value>, styles: Outpu
     let mut out = format!(
         "{}  {}  {} frames  {}  {}{}\n",
         styles.paint(
-            &format!("Recording {}", value_u64(data, "id").unwrap_or_default()),
+            &match value_u64(data, "id") {
+                Some(id) => format!("Recording {id}"),
+                None => "UI recording".to_string(),
+            },
             OutputTone::Accent
         ),
         styles.paint(

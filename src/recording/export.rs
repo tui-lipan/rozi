@@ -109,6 +109,11 @@ pub fn cast<R: BufRead>(
         super::format::RecordingTarget::Pane { session, pane } => {
             format!("rozi {session} pane {pane}")
         }
+        super::format::RecordingTarget::Ui {
+            session: Some(session),
+        } => format!("rozi {session}"),
+        super::format::RecordingTarget::Ui { session: None }
+        | super::format::RecordingTarget::Unknown => "rozi".to_string(),
     });
     let mut frames = 0;
     let mut end = None;

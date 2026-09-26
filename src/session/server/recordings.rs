@@ -7,7 +7,7 @@
 //! image hashing, the disk - happens there.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::headless::ReplyTo;
 use super::*;
@@ -15,22 +15,13 @@ use crate::control::{
     ControlCommand, ControlErrorCode, ControlResponse, RecordingInfo, RecordingListPayload,
     RecordingMarked, RecordingStopList, RecordingStopped,
 };
-use crate::recording::{
-    EndReason, RECORDING_FORMAT, RECORDING_VERSION, Recorder, RecorderOptions, RecordingHeader,
-    RecordingMeta, RecordingTarget,
-};
+use crate::recording::start::{Limits, Output, frame_interval};
+use crate::recording::{EndReason, Recorder, RecordingMeta, RecordingTarget};
 
 /// Recordings one session runs at once.
 pub(super) const MAX_RECORDINGS: usize = 16;
 /// How long a server that is shutting down waits for each recording's file to be finished.
 const SHUTDOWN_FINISH: Duration = Duration::from_secs(5);
-/// Names a server tries for a recording it names itself before giving up on the directory.
-const MAX_NAME_ATTEMPTS: u32 = 1000;
-
-/// The shortest gap between two frames at `max_fps`, rounded up so the ceiling is never exceeded.
-fn frame_interval(max_fps: u32) -> Duration {
-    Duration::from_nanos(1_000_000_000_u64.div_ceil(u64::from(max_fps.max(1))))
-}
 
 /// A reply held until a recording's file is complete.
 pub(super) struct RecordingReply {
@@ -208,22 +199,11 @@ impl MetaSeen {
     }
 }
 
-/// Where a recording is written.
-enum PlannedOutput {
-    /// The file the request named.
-    File(PathBuf),
-    /// A new file the server names: `<stem>.rozirec` in `dir`, or `<stem>-2.rozirec`, … when that
-    /// is taken.
-    Named { dir: PathBuf, stem: String },
-}
-
 /// What a `record-start` asked for, checked.
 struct RecordingPlan {
     pane_id: PaneId,
-    output: PlannedOutput,
-    max_fps: u32,
-    duration_ms: u64,
-    max_bytes: u64,
+    output: Output,
+    limits: Limits,
     force: bool,
 }
 
@@ -319,25 +299,7 @@ impl SessionServer {
                 "the recording path must be absolute on the session's host, not {output:?}"
             )));
         }
-        let defaults = &self.settings.recording;
-        let max_fps = max_fps.unwrap_or(defaults.max_fps);
-        if !(1..=control::MAX_RECORDING_MAX_FPS).contains(&max_fps) {
-            return Err(invalid(format!(
-                "max fps must be from 1 to {}",
-                control::MAX_RECORDING_MAX_FPS
-            )));
-        }
-        let duration_ms = duration_ms.unwrap_or(defaults.duration_ms);
-        if !(1..=control::MAX_RECORDING_DURATION_MS).contains(&duration_ms) {
-            return Err(invalid("a recording lasts from 1ms to 7 days".to_string()));
-        }
-        let max_bytes = max_bytes.unwrap_or(defaults.max_bytes);
-        if max_bytes < crate::recording::writer::MIN_MAX_BYTES {
-            return Err(invalid(format!(
-                "max bytes must be at least {} KiB",
-                crate::recording::writer::MIN_MAX_BYTES / 1024
-            )));
-        }
+        let limits = Limits::resolve(max_fps, duration_ms, max_bytes, &self.settings.recording)?;
         if self.recordings.len() >= MAX_RECORDINGS {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::Conflict,
@@ -374,18 +336,18 @@ impl SessionServer {
             ));
         }
         let output = match path {
-            Some(path) => PlannedOutput::File(path),
-            None => PlannedOutput::Named {
-                dir: self.recording_dir()?,
+            Some(path) => Output::File(path),
+            None => Output::Named {
+                dir: crate::recording::start::recording_dir(
+                    self.settings.recording.dir.as_deref(),
+                )?,
                 stem: recording_stem(&self.session_name, pane_id, chrono::Local::now()),
             },
         };
         Ok(RecordingPlan {
             pane_id,
             output,
-            max_fps,
-            duration_ms,
-            max_bytes,
+            limits,
             force,
         })
     }
@@ -402,76 +364,21 @@ impl SessionServer {
         let palette = pane.screen().palette();
         let first = crate::pane::spans::span_frame(&frame, palette, false)?;
         let started_unix_ms = crate::runtime_metrics::unix_time_millis();
-        let header = RecordingHeader {
-            format: RECORDING_FORMAT.to_string(),
-            version: RECORDING_VERSION,
-            rozi: env!("CARGO_PKG_VERSION").to_string(),
-            target: RecordingTarget::Pane {
+        let header = crate::recording::start::header(
+            RecordingTarget::Pane {
                 session,
                 pane: plan.pane_id,
             },
-            width: first.width,
-            height: first.height,
-            started_at_unix_ms: started_unix_ms,
-            max_fps: plan.max_fps,
-            keyframe_interval_ms: crate::recording::format::KEYFRAME_INTERVAL_MS,
-            spans_version: crate::control::SPAN_FRAME_VERSION,
-            palette: first.palette,
-            compression: None,
-        };
-        let start = |path: &Path, overwrite: bool| {
-            Recorder::start(RecorderOptions {
-                path: path.to_path_buf(),
-                overwrite,
-                header: header.clone(),
-                max_bytes: plan.max_bytes,
-            })
-        };
-        let cannot_create = |path: &Path, error: io::Error| {
-            ControlResponse::error_with(
-                ControlErrorCode::RequestFailed,
-                format!("cannot create {}: {error}", path.display()),
-            )
-        };
-        let (path, recorder) = match plan.output {
-            PlannedOutput::File(path) => match start(&path, plan.force) {
-                Ok(recorder) => (path, recorder),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::Conflict,
-                        format!(
-                            "{} already exists; pass --force to replace it",
-                            path.display()
-                        ),
-                    ));
-                }
-                Err(error) => return Err(cannot_create(&path, error)),
-            },
-            PlannedOutput::Named { dir, stem } => {
-                let mut started = None;
-                for attempt in 1..=MAX_NAME_ATTEMPTS {
-                    let path = if attempt == 1 {
-                        dir.join(format!("{stem}.rozirec"))
-                    } else {
-                        dir.join(format!("{stem}-{attempt}.rozirec"))
-                    };
-                    match start(&path, false) {
-                        Ok(recorder) => {
-                            started = Some((path, recorder));
-                            break;
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                        Err(error) => return Err(cannot_create(&path, error)),
-                    }
-                }
-                started.ok_or_else(|| {
-                    ControlResponse::error_with(
-                        ControlErrorCode::Conflict,
-                        format!("no free file name for {stem}.rozirec in {}", dir.display()),
-                    )
-                })?
-            }
-        };
+            &first,
+            plan.limits.max_fps,
+            started_unix_ms,
+        );
+        let (path, recorder) = crate::recording::start::start(
+            plan.output,
+            plan.force,
+            &header,
+            plan.limits.max_bytes,
+        )?;
         let started = Instant::now();
         let queued = recorder.push_frame(0, frame, palette);
         debug_assert!(queued, "an empty queue takes the first frame");
@@ -492,10 +399,10 @@ impl SessionServer {
                 path,
                 started,
                 started_unix_ms,
-                max_fps: plan.max_fps,
-                min_interval: frame_interval(plan.max_fps),
-                duration_ms: plan.duration_ms,
-                max_bytes: plan.max_bytes,
+                max_fps: plan.limits.max_fps,
+                min_interval: frame_interval(plan.limits.max_fps),
+                duration_ms: plan.limits.duration_ms,
+                max_bytes: plan.limits.max_bytes,
                 recorder,
                 seen: pane.content_generation,
                 palette,
@@ -567,36 +474,18 @@ impl SessionServer {
         }
     }
 
-    /// The directory a recording the server names goes in, created private when rozi makes it.
-    fn recording_dir(&self) -> std::result::Result<PathBuf, ControlResponse> {
-        let configured = self.settings.recording.dir.as_deref();
-        let env = crate::platform::paths::PlatformEnv::from_process();
-        crate::platform::paths::recording_dir(&env, configured).map_err(|error| {
-            let what = match configured {
-                Some(dir) => format!("cannot use {}", dir.display()),
-                None => "cannot create the recordings directory".to_string(),
-            };
-            ControlResponse::error_with(ControlErrorCode::RequestFailed, format!("{what}: {error}"))
-        })
-    }
-
     fn mark_recordings(
         &mut self,
         label: &str,
         id: Option<u64>,
         target: Option<PaneId>,
     ) -> ControlResponse {
-        let label: String = tui_lipan::utils::sanitize_display_text(label)
-            .trim()
-            .chars()
-            .take(control::MAX_RECORDING_MARK_CHARS)
-            .collect();
-        if label.is_empty() {
+        let Some(label) = crate::recording::start::mark_label(label) else {
             return ControlResponse::error_with(
                 ControlErrorCode::InvalidArgument,
                 "a mark needs a label",
             );
-        }
+        };
         // A recording that is ending takes no more marks: its writer is finishing the file.
         let candidates: Vec<u64> = match (id, target) {
             (None, None) => self
@@ -817,14 +706,14 @@ pub(super) type Recordings = BTreeMap<u64, ActiveRecording>;
 
 /// `<session>-pane-<id>-<stamp>`, stamped in the server's local time to the second.
 fn recording_stem(session: &str, pane: PaneId, now: chrono::DateTime<chrono::Local>) -> String {
-    format!("{session}-pane-{pane}-{}", now.format("%Y%m%d-%H%M%S"))
+    crate::recording::start::stem(&format!("{session}-pane-{pane}"), now)
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::control::ControlRequest;
-    use crate::recording::{RecordingEnd, Replay, ReplayStep};
+    use crate::recording::{RecorderOptions, RecordingEnd, Replay, ReplayStep};
     use crate::session::server::tests::{add_client, decode_outbox_controls, test_pane};
     use std::path::Path;
 

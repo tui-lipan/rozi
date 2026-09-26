@@ -112,6 +112,11 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     if let Some((label, color)) = collaboration_status(state, theme) {
         trailing.push(TrailingChip::badge(label, chip_fg(color), color));
     }
+    // Last before the configured segments, so a mode chip appearing on its left never moves it.
+    if let Some(label) = ui_recording_label(state) {
+        let color = theme.status.error;
+        trailing.push(TrailingChip::badge(label, chip_fg(color), color));
+    }
     for item in &workbar_cfg.right {
         if let Some(chip) = trailing_chip(ctx, item) {
             trailing.push(chip);
@@ -136,6 +141,22 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
         left_cap_color.unwrap_or(panel_bg),
         right_cap_color,
     )
+}
+
+/// The label of the chip that says this UI is recording itself, while it is: the recording dot and
+/// `REC`, so the chip never relies on its color alone. The dot blinks as a pane's does, by giving way
+/// to blanks of its own width, and holds steady whenever motion is off.
+pub(crate) fn ui_recording_label(state: &crate::state::State) -> Option<String> {
+    if !crate::ops::ui_recording::is_recording(state) {
+        return None;
+    }
+    let icon = state.config.recording_icon();
+    let dot = if super::recording_dot_off_phase(state) {
+        " ".repeat(unicode_width::UnicodeWidthStr::width(icon))
+    } else {
+        icon.to_string()
+    };
+    Some(format!(" {dot} REC "))
 }
 
 fn workbar_fill(ctx: &Context<AppRoot>) -> Color {

@@ -30,8 +30,8 @@ pub use widget_keys::{
     settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
     worktree_form_input_key, worktree_picker_key,
 };
-pub(crate) use workbar::workspace_tab_shows_recording;
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
+pub(crate) use workbar::{ui_recording_label, workspace_tab_shows_recording};
 pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_active_pane_rects};
 
 use tui_lipan::prelude::*;
@@ -334,6 +334,34 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
                 .passthrough(true)
                 .child_at(rect, element)
                 .key("rozi-which-key"),
+        );
+    }
+
+    // Without a workbar to carry it, the UI recording chip takes the top-right corner. Passthrough
+    // like the which-key layer: it is chrome and must not eat a click meant for a pane.
+    if !ctx.state.config.pane.show_workbar
+        && let Some(label) = ui_recording_label(&ctx.state)
+    {
+        let width = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16;
+        let color = theme.status.error;
+        root = root.child(
+            Canvas::new()
+                .height(Length::Flex(1))
+                .passthrough(true)
+                .child_at(
+                    Rect {
+                        x: i16::try_from(viewport.w.saturating_sub(width)).unwrap_or(i16::MAX),
+                        y: 0,
+                        w: width.min(viewport.w),
+                        h: 1,
+                    },
+                    Text::new(label).style(
+                        Style::new()
+                            .fg(crate::ops::theme::chrome_label_fg(theme, color))
+                            .bg(color),
+                    ),
+                )
+                .key("rozi-ui-recording-chip"),
         );
     }
 

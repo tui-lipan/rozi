@@ -1,4 +1,5 @@
-//! `rozi record`: record a pane from its session server, and export or play a recording.
+//! `rozi record`: record a pane from its session server or a running UI as it paints, and export
+//! or play a recording.
 
 use std::path::PathBuf;
 
@@ -23,13 +24,19 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "Recording runs in the session server. Without --session, the running rozi\n    \
-               passes start, stop, list, and mark to the session it is attached to;\n    \
-               pane needs --session <NAME>. export and play read a file here.",
+        note: "A pane recording runs in the session server. Without --session, the running\n    \
+               rozi passes start, stop, list, and mark to the session it is attached to;\n    \
+               pane needs --session <NAME>. A UI recording runs in the rozi --socket\n    \
+               names, or the one this shell runs in, and writes on its host. export and\n    \
+               play read a file here.",
         rows: &[
             row(
                 "start [pane] [--target <PANE>] [--output <FILE>]",
                 "Start recording a pane",
+            ),
+            row(
+                "start ui [--output <FILE>]",
+                "Record the running UI, chrome included",
             ),
             row(
                 "pane --target <PANE> [--output <FILE>]",
@@ -41,6 +48,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Label this moment",
             ),
             row("stop [--id <ID> | --target <PANE>]", "Stop recordings"),
+            row("stop --ui", "Stop the UI recording"),
             row(
                 "export <FILE> --to png-frames <DIR>",
                 "PNG frames and an ffmpeg listing",
@@ -60,7 +68,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row("    --target <PANE>", "The pane to record, stop, or mark"),
             row(
                 "    --output <FILE>",
-                "The file, on the session's host ([recording] dir)",
+                "The file, where it is recorded ([recording] dir)",
             ),
             row(
                 "    --max-fps <N>",
@@ -76,6 +84,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("    --force", "Replace an existing file"),
             row("    --id <ID>", "A recording, from record list"),
+            row("    --ui", "Stop or mark the UI recording"),
             row("    --scale <N>", "PNG frame scale, 1 to 3 (1)"),
             row("    --speed <N>", "Playback speed (1)"),
             row(
@@ -90,7 +99,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
 
 pub(crate) fn print_help() {
     let styles = HelpStyles::detect();
-    let mut out = styles.title_line("rozi record", "record a pane and replay it");
+    let mut out = styles.title_line("rozi record", "record a pane or the UI and replay it");
     append_help_sections(&mut out, HELP_SECTIONS, &styles, true);
     println!("{out}");
 }
@@ -151,7 +160,8 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
             if rest.first().map(String::as_str) == Some("pane") {
                 rest.remove(0);
             } else if rest.first().map(String::as_str) == Some("ui") {
-                return Err("record start ui is not available yet; record a pane".to_string());
+                rest.remove(0);
+                return parse_start_ui(rest);
             }
             parse_start(rest, false)
         }
@@ -178,9 +188,10 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
         }
         "mark" => {
             let mut iter = rest.into_iter();
-            let (mut label, mut id, mut target) = (None, None, None);
+            let (mut label, mut id, mut target, mut ui) = (None, None, None, false);
             while let Some(arg) = iter.next() {
                 match arg.as_str() {
+                    "--ui" => ui = true,
                     "--id" => {
                         id = Some(parse_id(&require_value(
                             &mut iter,
@@ -197,6 +208,14 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
             }
             let label = label.ok_or_else(|| "record mark requires a label".to_string())?;
             one_selector(id, target)?;
+            if ui {
+                no_selector_with_ui(id, target)?;
+                return Ok(RecordArgs::Control {
+                    command: ControlCommand::RecordUiMark { label },
+                    output_format: None,
+                    foreground: false,
+                });
+            }
             Ok(RecordArgs::Control {
                 command: ControlCommand::RecordMark { label, id, target },
                 output_format: None,
@@ -205,9 +224,10 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
         }
         "stop" => {
             let mut iter = rest.into_iter();
-            let (mut id, mut target) = (None, None);
+            let (mut id, mut target, mut ui) = (None, None, false);
             while let Some(arg) = iter.next() {
                 match arg.as_str() {
+                    "--ui" => ui = true,
                     "--id" => {
                         id = Some(parse_id(&require_value(
                             &mut iter,
@@ -221,6 +241,14 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
                 }
             }
             one_selector(id, target)?;
+            if ui {
+                no_selector_with_ui(id, target)?;
+                return Ok(RecordArgs::Control {
+                    command: ControlCommand::RecordUiStop,
+                    output_format: None,
+                    foreground: false,
+                });
+            }
             Ok(RecordArgs::Control {
                 command: ControlCommand::RecordStop { id, target },
                 output_format: None,
@@ -229,11 +257,25 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
         }
         "export" => parse_export(rest).map(RecordArgs::Offline),
         "play" => parse_play(rest).map(RecordArgs::Offline),
-        "ui" => Err("record ui is not available yet; record a pane".to_string()),
+        "ui" => Err(
+            "record ui does not run in the foreground; use `rozi record start ui` and `rozi record stop --ui`"
+                .to_string(),
+        ),
         other => Err(format!(
             "unknown record subcommand `{other}`; expected start, pane, list, mark, stop, export, or play"
         )),
     }
+}
+
+/// What `record start` and `record pane` share: where the file goes and the limits.
+#[derive(Default)]
+struct StartOptions {
+    target: Option<u32>,
+    output: Option<String>,
+    max_fps: Option<u32>,
+    duration_ms: Option<u64>,
+    max_bytes: Option<u64>,
+    force: bool,
 }
 
 fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String> {
@@ -242,37 +284,14 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
     } else {
         "record start"
     };
-    let mut iter = args.into_iter();
-    let (mut target, mut output, mut max_fps, mut duration_ms, mut max_bytes, mut force) =
-        (None, None, None, None, None, false);
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--target" => target = Some(parse_target(&mut iter)?),
-            "--output" | "-o" => {
-                output = Some(require_value(&mut iter, "--output requires a file")?)
-            }
-            "--max-fps" => {
-                let value = require_value(&mut iter, "--max-fps requires a number")?;
-                max_fps = Some(
-                    value
-                        .parse::<u32>()
-                        .ok()
-                        .filter(|fps| (1..=crate::control::MAX_RECORDING_MAX_FPS).contains(fps))
-                        .ok_or_else(|| "--max-fps requires a number from 1 to 120".to_string())?,
-                );
-            }
-            "--duration" => {
-                let value = require_value(&mut iter, "--duration requires a duration such as 8h")?;
-                duration_ms = Some(parse_duration_ms(&value)?);
-            }
-            "--max-bytes" => {
-                let value = require_value(&mut iter, "--max-bytes requires a size such as 512MiB")?;
-                max_bytes = Some(parse_size(&value)?);
-            }
-            "--force" => force = true,
-            other => return Err(format!("unexpected argument `{other}` after {name}")),
-        }
-    }
+    let StartOptions {
+        target,
+        output,
+        max_fps,
+        duration_ms,
+        max_bytes,
+        force,
+    } = parse_start_options(args, name, true)?;
     if force && output.is_none() {
         return Err(format!(
             "{name} --force replaces the file --output names; a file the session names is always new"
@@ -291,6 +310,90 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
         output_format: None,
         foreground,
     })
+}
+
+fn parse_start_ui(args: Vec<String>) -> Result<RecordArgs, String> {
+    let StartOptions {
+        output,
+        max_fps,
+        duration_ms,
+        max_bytes,
+        force,
+        ..
+    } = parse_start_options(args, "record start ui", false)?;
+    if force && output.is_none() {
+        return Err(
+            "record start ui --force replaces the file --output names; a file the UI names is always new"
+                .to_string(),
+        );
+    }
+    Ok(RecordArgs::Control {
+        command: ControlCommand::RecordUiStart {
+            output,
+            max_fps,
+            duration_ms,
+            max_bytes,
+            force,
+        },
+        output_format: None,
+        foreground: false,
+    })
+}
+
+fn parse_start_options(
+    args: Vec<String>,
+    name: &str,
+    takes_target: bool,
+) -> Result<StartOptions, String> {
+    let mut iter = args.into_iter();
+    let mut options = StartOptions::default();
+    let StartOptions {
+        target,
+        output,
+        max_fps,
+        duration_ms,
+        max_bytes,
+        force,
+    } = &mut options;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--target" if takes_target => *target = Some(parse_target(&mut iter)?),
+            "--output" | "-o" => {
+                *output = Some(require_value(&mut iter, "--output requires a file")?)
+            }
+            "--max-fps" => {
+                let value = require_value(&mut iter, "--max-fps requires a number")?;
+                *max_fps = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|fps| (1..=crate::control::MAX_RECORDING_MAX_FPS).contains(fps))
+                        .ok_or_else(|| "--max-fps requires a number from 1 to 120".to_string())?,
+                );
+            }
+            "--duration" => {
+                let value = require_value(&mut iter, "--duration requires a duration such as 8h")?;
+                *duration_ms = Some(parse_duration_ms(&value)?);
+            }
+            "--max-bytes" => {
+                let value = require_value(&mut iter, "--max-bytes requires a size such as 512MiB")?;
+                *max_bytes = Some(parse_size(&value)?);
+            }
+            "--force" => *force = true,
+            other => return Err(format!("unexpected argument `{other}` after {name}")),
+        }
+    }
+    Ok(options)
+}
+
+/// `--ui` names the UI's one recording, so it takes no recording id or pane.
+fn no_selector_with_ui(id: Option<u64>, target: Option<u32>) -> Result<(), String> {
+    if id.is_some() || target.is_some() {
+        return Err(
+            "--ui names the UI recording; --id and --target name pane recordings".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn parse_export(args: Vec<String>) -> Result<RecordCli, String> {
@@ -568,6 +671,66 @@ mod tests {
         ] {
             let both = parse(args).unwrap_err();
             assert!(both.contains("not both"), "{both}");
+        }
+
+        let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) = parse(&[
+            "record",
+            "start",
+            "ui",
+            "--output",
+            "relative.rozirec",
+            "--max-fps",
+            "12",
+        ]) else {
+            panic!("expected a UI recording start");
+        };
+        assert_eq!(control.endpoint, super::super::ControlEndpoint::Ui(None));
+        assert_eq!(
+            control.request.command,
+            ControlCommand::RecordUiStart {
+                output: Some("relative.rozirec".into()),
+                max_fps: Some(12),
+                duration_ms: None,
+                max_bytes: None,
+                force: false,
+            },
+            "a UI records on this machine, so a relative path is resolved here"
+        );
+        for (args, command) in [
+            (
+                &["record", "stop", "--ui"][..],
+                ControlCommand::RecordUiStop,
+            ),
+            (
+                &["record", "mark", "--ui", "built"][..],
+                ControlCommand::RecordUiMark {
+                    label: "built".into(),
+                },
+            ),
+        ] {
+            let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+                parse(args)
+            else {
+                panic!("expected {args:?} to parse");
+            };
+            assert_eq!(control.request.command, command);
+        }
+        for (args, error) in [
+            (
+                &["--session", "dev", "record", "start", "ui"][..],
+                "draws nothing",
+            ),
+            (&["record", "start", "ui", "--target", "3"][..], "--target"),
+            (&["record", "start", "ui", "--force"][..], "--force"),
+            (&["record", "stop", "--ui", "--id", "1"][..], "--ui"),
+            (
+                &["record", "mark", "x", "--ui", "--target", "3"][..],
+                "--ui",
+            ),
+            (&["record", "ui"][..], "record start ui"),
+        ] {
+            let refused = parse(args).unwrap_err();
+            assert!(refused.contains(error), "{args:?}: {refused}");
         }
 
         let Ok(super::super::ParsedCli::Record(export)) = parse(&[

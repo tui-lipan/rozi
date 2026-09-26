@@ -27,7 +27,7 @@ rozi --session dev record stop
 with `--id`, from `record list`. `record mark` labels every running recording unless given `--id`,
 and fails for a recording that is already ending, so a mark it reports was written.
 
-From a shell inside rozi, leave out `--session`. The running rozi passes `start`, `stop`, `list`,
+From a shell in a local session pane, leave out `--session`. The running rozi passes `start`, `stop`, `list`,
 and `mark` to the session your pane belongs to, even after you switch to another session, and
 `start` records the pane you run it in unless you give `--target`, which names a pane of that same
 session. Run from outside rozi, the commands go to the session on screen:
@@ -39,7 +39,8 @@ rozi record stop
 
 The recording still runs in the session server, so it carries on after you detach. A scratch or
 popup pane runs outside the session, so it cannot be recorded, and commands run in one need
-`--session`. A UI attached read-only can list
+`--session`. A pane of a [remote session](remote.md) runs on the other host, where it cannot
+reach your rozi window, so it also uses `--session <NAME>`. A UI attached read-only can list
 recordings but not start, stop, or mark one.
 
 To record only while a command runs in the foreground, use `record pane`, which always needs

@@ -72,69 +72,60 @@ fn title_spans(lead: &str, title: &str) -> Vec<Span> {
     spans
 }
 
-/// The recording marker, the dot then `rec`, while the pane records. A fullscreen pane that covers
-/// another recording says so with `elsewhere`, since nothing else on screen can. `color` is the
-/// marker's colour, from [`crate::ops::theme::recording_marker_color`].
-fn recording_marker_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
-    let dot = recording_dot(ctx, pane, color)?;
-    let own = pane.terminal.recording && !pane.closing;
-    let label = match (own, covers_a_recording(&ctx.state, pane)) {
-        (true, false) => " rec",
-        (false, _) => " rec elsewhere",
-        (true, true) => " rec + elsewhere",
+/// The one recording status a title row ends with: a single dot, which alone blinks, then a steady
+/// label. `● UI REC` while the title carries this UI's recording, `● REC` while the pane records,
+/// and ` · +N pane(s)` for the pane recordings beyond that which a fullscreen pane covers. A
+/// fullscreen pane covering recordings while it has neither says `● REC · N pane(s) elsewhere`,
+/// since nothing else on screen can. `color` is the marker's colour, from
+/// [`crate::ops::theme::recording_marker_color`].
+fn title_recording_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
+    let ui = super::ui_recording_chip(&ctx.state) == Some(super::UiRecordingChip::Title(pane.id));
+    let own = usize::from(pane.terminal.recording && !pane.closing);
+    let covered = covered_recordings(&ctx.state, pane);
+    let panes = |n: usize| {
+        if n == 1 {
+            "1 pane".to_string()
+        } else {
+            format!("{n} panes")
+        }
     };
-    Some(vec![dot, Span::new(label).fg(color)])
-}
-
-/// This UI's `● REC` while `pane`'s title carries it, in the recording marker's `color` but bold and
-/// capitalised: it is the UI's own recording, the stronger of the two statuses a title can show.
-fn ui_recording_title_spans(
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    color: Color,
-) -> Option<Vec<Span>> {
-    if super::ui_recording_chip(&ctx.state) != Some(super::UiRecordingChip::Title(pane.id)) {
-        return None;
+    let (label, extra) = match (ui, own, covered) {
+        (true, own, covered) => (
+            "UI REC",
+            (own + covered > 0).then(|| format!("+{}", panes(own + covered))),
+        ),
+        (false, 1, 0) => ("REC", None),
+        (false, 1, covered) => ("REC", Some(format!("+{}", panes(covered)))),
+        (false, _, 0) => return None,
+        (false, _, covered) => ("REC", Some(format!("{} elsewhere", panes(covered)))),
+    };
+    let mut spans = vec![
+        recording_dot_span(ctx, pane, color),
+        Span::new(format!(" {label}")).style(Style::new().fg(color).bold()),
+    ];
+    if let Some(extra) = extra {
+        spans.push(Span::new(format!(" · {extra}")).fg(color));
     }
-    let style = Style::new().fg(color);
-    let dot = if recording_dot_off_phase(&ctx.state) {
-        style.dim()
-    } else {
-        style
-    };
-    Some(vec![
-        Span::new(ctx.state.config.recording_icon()).style(dot),
-        Span::new(" REC").style(style.bold()),
-    ])
+    Some(spans)
 }
 
-/// Append the status that ends a title row to `spans`, which hold the badge if there is one: this
-/// UI's `● REC` when the title carries it, set off from the badge by ` · `, then the pane's
-/// recording marker two spaces on. With no `● REC`, the marker follows `sep` after a badge, or
-/// `lead` when nothing precedes it, as the title mode lays it out.
+/// Append the recording status to a title row's `spans`, which hold the badge if there is one: set
+/// off from the badge by ` · `, or by `lead` when nothing precedes it, as the title mode lays it
+/// out.
 fn push_title_status(
     ctx: &Context<AppRoot>,
     pane: &Pane,
     color: Color,
     spans: &mut Vec<Span>,
     lead: &'static str,
-    sep: &'static str,
 ) {
-    let rec = ui_recording_title_spans(ctx, pane, color);
-    let carries = rec.is_some();
-    if let Some(rec) = rec {
-        spans.push(Span::new(if spans.is_empty() { lead } else { " · " }));
-        spans.extend(rec);
+    if let Some(status) = title_recording_spans(ctx, pane, color) {
+        let gap = if spans.is_empty() { lead } else { " · " };
+        if !gap.is_empty() {
+            spans.push(Span::new(gap));
+        }
+        spans.extend(status);
     }
-    if let Some(marker) = recording_marker_spans(ctx, pane, color) {
-        spans.push(Span::new(match (carries, spans.is_empty()) {
-            (true, _) => "  ",
-            (false, true) => lead,
-            (false, false) => sep,
-        }));
-        spans.extend(marker);
-    }
-    spans.retain(|span| !span.content.is_empty());
 }
 
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.
@@ -149,7 +140,7 @@ fn title_trailer(
     marker: Color,
 ) -> Option<Element> {
     let mut spans: Vec<Span> = badge.into_iter().map(Span::new).collect();
-    push_title_status(ctx, pane, marker, &mut spans, " ", " ");
+    push_title_status(ctx, pane, marker, &mut spans, " ");
     (!spans.is_empty()).then(|| {
         Text::from_spans(spans)
             .style(style)
@@ -184,6 +175,11 @@ fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Sp
     if !own && !covers_a_recording(&ctx.state, pane) {
         return None;
     }
+    Some(recording_dot_span(ctx, pane, color))
+}
+
+/// The recording dot in `pane`'s chrome, styled for its blink and for a mark just made.
+fn recording_dot_span(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Span {
     let style = Style::new().fg(color);
     let style = if ctx.state.recording_mark_blink.pane == Some(pane.id) {
         style.reverse().bold()
@@ -192,7 +188,7 @@ fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Sp
     } else {
         style
     };
-    Some(Span::new(ctx.state.config.recording_icon()).style(style))
+    Span::new(ctx.state.config.recording_icon()).style(style)
 }
 
 /// Whether the recording dot is in the off half of its blink: the calm pulse phase, while the pulse
@@ -215,14 +211,21 @@ pub(crate) fn pane_chrome_shows_recording(config: &PaneConfig) -> bool {
 /// screen, the workbar's tabs included, so its own chrome is the only place left to mark any other
 /// recording in the session.
 pub(crate) fn covers_a_recording(state: &crate::state::State, pane: &Pane) -> bool {
-    pane.fullscreen
-        && !pane.closing
-        && state
-            .current()
-            .workspaces
-            .iter()
-            .flat_map(|workspace| &workspace.panes)
-            .any(|other| other.id != pane.id && other.terminal.recording && !other.closing)
+    covered_recordings(state, pane) > 0
+}
+
+/// How many other panes' recordings `pane` covers by being fullscreen.
+fn covered_recordings(state: &crate::state::State, pane: &Pane) -> usize {
+    if !pane.fullscreen || pane.closing {
+        return 0;
+    }
+    state
+        .current()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.panes)
+        .filter(|other| other.id != pane.id && other.terminal.recording && !other.closing)
+        .count()
 }
 
 /// The fullscreen pane covering `workspace`, if any.
@@ -1246,7 +1249,7 @@ pub(crate) fn pane_element(
                 // The badge and the recording marker share the right label, which keeps its width
                 // while the title truncates.
                 let mut right: Vec<Span> = badge.map(Span::new).into_iter().collect();
-                push_title_status(ctx, pane, marker, &mut right, "", " · ");
+                push_title_status(ctx, pane, marker, &mut right, "");
                 if !right.is_empty() {
                     labels = labels.right(rich_title(right));
                 }
@@ -2702,7 +2705,7 @@ mod tests {
             let frame = backend.capture_frame();
             let lines = frame.to_fixed_grid_lines();
             let error = backend.state().theme.status.error;
-            let (row, column, dot) = cell_at(&frame, "● rec")
+            let (row, column, dot) = cell_at(&frame, "● REC")
                 .unwrap_or_else(|| panic!("{titlebar:?} draws no marker\n{}", lines.join("\n")));
             let title_at = lines[row].find("short title").unwrap_or_else(|| {
                 panic!(
@@ -2717,14 +2720,14 @@ mod tests {
             );
             let at = |offset: usize| &frame.cells[row * usize::from(frame.width) + column + offset];
             let rec = at(2);
-            assert_eq!(rec.symbol, "r");
+            assert_eq!(rec.symbol, "R");
             // Red where red reads; a focused strip is often too close to it for that.
             let title = &frame.cells
                 [row * usize::from(frame.width) + lines[row][..title_at].chars().count()];
             let expected =
                 crate::ops::theme::recording_marker_color(&backend.state().theme, dot.bg, title.fg);
             assert_eq!(dot.fg, expected, "{titlebar:?}: the dot");
-            assert_eq!(rec.fg, expected, "{titlebar:?}: `rec`");
+            assert_eq!(rec.fg, expected, "{titlebar:?}: `REC`");
             if !titlebar.fills_strip() {
                 assert_eq!(
                     dot.fg, error,
@@ -2744,7 +2747,7 @@ mod tests {
             backend.render();
             let text = backend.capture_frame().plain_text();
             assert!(
-                text.contains("● rec"),
+                text.contains("● REC"),
                 "{titlebar:?}: a long title hides the marker\n{text}"
             );
 
@@ -2754,7 +2757,7 @@ mod tests {
                 .recording = false;
             backend.render();
             assert!(
-                !backend.capture_frame().plain_text().contains("● rec"),
+                !backend.capture_frame().plain_text().contains("● REC"),
                 "{titlebar:?} keeps the marker after the recording ended"
             );
         }
@@ -2815,7 +2818,7 @@ mod tests {
         backend.render();
         let text = backend.capture_frame().plain_text();
         assert!(
-            text.contains("● rec elsewhere"),
+            text.contains("● REC · 1 pane elsewhere"),
             "the fullscreen pane hides the recording\n{text}"
         );
 
@@ -2827,14 +2830,17 @@ mod tests {
         }
         backend.render();
         let text = backend.capture_frame().plain_text();
-        assert!(text.contains("● rec elsewhere"), "{text}");
+        assert!(text.contains("● REC · 1 pane elsewhere"), "{text}");
 
         backend.state_mut().current_mut().workspaces[0].panes[0]
             .terminal
             .recording = true;
         backend.render();
         let text = backend.capture_frame().plain_text();
-        assert!(text.contains("● rec + elsewhere"), "{text}");
+        assert!(
+            text.contains("● REC · +1 pane") && text.matches('●').count() == 1,
+            "one dot, then what else records\n{text}"
+        );
 
         // Its own recording alone reads as usual.
         backend.state_mut().current_mut().workspaces[1]
@@ -2842,10 +2848,7 @@ mod tests {
             .clear();
         backend.render();
         let text = backend.capture_frame().plain_text();
-        assert!(
-            text.contains("● rec") && !text.contains("elsewhere"),
-            "{text}"
-        );
+        assert!(text.contains("● REC") && !text.contains("pane"), "{text}");
     }
 
     #[test]
@@ -2888,11 +2891,11 @@ mod tests {
         let mut backend = recording_backend();
         let dimmed = |backend: &mut tui_lipan::TestBackend<AppRoot>| {
             backend.render();
-            cell_at(&backend.capture_frame(), "● rec")
-                .expect("a marker")
-                .2
-                .modifiers
-                .dim
+            let frame = backend.capture_frame();
+            let (row, column, dot) = cell_at(&frame, "● REC").expect("a marker");
+            let label = &frame.cells[row * usize::from(frame.width) + column + 2];
+            assert!(!label.modifiers.dim, "only the dot blinks, not `REC`");
+            dot.modifiers.dim
         };
         {
             let state = backend.state_mut();

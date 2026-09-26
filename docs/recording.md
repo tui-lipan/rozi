@@ -158,14 +158,16 @@ writable only by you, and never replaces an existing file unless you pass `--for
 
 ## See that a pane is recording
 
-While a pane is recording, every attached UI marks it with a dot and `rec` in the theme's error
-color at the end of its title bar, after any `fullscreen` or `floating` badge. A long title is
-shortened before the marker, so the marker always shows. The dot blinks slowly; with `[animations]
-enabled = false` or `focus_chrome = false` it holds steady. With `[pane] show_titles = false`, the
+While a pane is recording, every attached UI marks it with `● REC` in the theme's error color at
+the end of its title bar, after any `fullscreen` or `floating` badge: `fullscreen · ● REC`. A long
+title is shortened before the marker, so the marker always shows. Only the dot blinks, slowly, and
+the text after it holds still; with `[animations] enabled = false` or `focus_chrome = false` the dot
+holds steady too. With `[pane] show_titles = false`, the
 dot sits in the top-right corner of the pane's border instead. A workspace tab carries a blinking
 dot while its workspace holds a recorded pane you cannot see: one on another workspace, or one with
 neither a title nor a border to show it. A fullscreen pane covers the other panes and the workbar,
-so it shows `rec elsewhere` while another pane records, or `rec + elsewhere` when it records too.
+so its one marker counts the recordings it hides: `● REC · 1 pane elsewhere` while another pane
+records, or `● REC · +1 pane` when it records too. A title never shows two dots.
 The one exception: with `show_titles = false` and a `border_mode` of `"dividers"` or `"none"`, a
 fullscreen pane has no title or border to carry the marker, so a recording shows only in
 `list-panes` and `record list` until the pane leaves fullscreen. The indicator is rozi's own chrome,
@@ -175,8 +177,9 @@ While the UI records itself, the bar shows a `REC` chip with a blinking dot, in 
 color, just before its right-hand segments. The dot holds steady with `[animations] enabled = false`
 or `focus_chrome = false`, and `REC` is always spelled out, so the chip never depends on color
 alone. A fullscreen pane covers the bar, so while one is up its title carries the indicator
-instead, after its badge: `fullscreen · ● REC`, in the error color and bold. It comes before the
-quieter `● rec elsewhere` marker of any recording the pane covers. Only with no bar and no title
+instead, after its badge: `fullscreen · ● UI REC`. It takes the place of the pane marker there,
+with the same single dot, and counts any pane recordings behind it: `fullscreen · ● UI REC · +1
+pane`. Only with no bar and no title
 to carry it (`[pane] show_workbar = false`, or a fullscreen pane with `show_titles = false`) does
 the chip sit over the top-right corner of the screen. Unlike the pane marker, this chip is part of
 the recording.

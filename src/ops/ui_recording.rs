@@ -1427,8 +1427,8 @@ mod tests {
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(
                 top.trim_end()
-                    .ends_with(&format!("fullscreen · {icon} REC")),
-                "the title carries REC after its badge: {top:?}"
+                    .ends_with(&format!("fullscreen · {icon} UI REC")),
+                "the title carries UI REC after its badge: {top:?}"
             );
 
             // A recording the fullscreen pane covers keeps its own, quieter marker after `REC`.
@@ -1442,8 +1442,8 @@ mod tests {
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(
                 top.trim_end()
-                    .ends_with(&format!("fullscreen · {icon} REC  {icon} rec elsewhere")),
-                "{top:?}"
+                    .ends_with(&format!("fullscreen · {icon} UI REC · +1 pane")),
+                "one dot, then what else records: {top:?}"
             );
 
             // With no title either, the chip falls back to the corner.

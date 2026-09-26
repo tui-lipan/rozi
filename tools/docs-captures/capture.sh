@@ -18,7 +18,7 @@ sandbox=/tmp/rzc
 base=/tmp/rzc-base
 only=" $* "
 
-for tool in nvim lazygit btop eza bat bash git magick; do
+for tool in nvim lazygit btop eza bat bash git magick ffmpeg python3 tmux; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -36,7 +36,7 @@ fi
 
 sandbox_env() {
   env -i \
-    PATH="$PATH" LANG=C.UTF-8 TERM=xterm-256color COLORTERM=truecolor \
+    PATH="$sandbox/bin:$PATH" LANG=C.UTF-8 TERM=xterm-256color COLORTERM=truecolor \
     HOME="$sandbox/home" XDG_CONFIG_HOME="$sandbox/config" XDG_STATE_HOME="$sandbox/state" \
     XDG_CACHE_HOME="$sandbox/cache" XDG_DATA_HOME="$sandbox/data" XDG_RUNTIME_DIR="$sandbox/run" \
     "$@"
@@ -54,8 +54,11 @@ stop_sessions() {
 prepare_sandbox() {
   stop_sessions
   rm -rf "$sandbox"
-  mkdir -p "$sandbox"/{config/rozi,state,cache,data,run,home/src}
+  mkdir -p "$sandbox"/{bin,config/rozi,state,cache,data,run,home/src}
   chmod 700 "$sandbox/run"
+  # A `rozi` typed in a pane runs this build, not an installed one.
+  ln -s "$bin" "$sandbox/bin/rozi"
+  cp "$here/sandbox/bin/"* "$sandbox/bin/"
   cp -a "$base" "$sandbox/home/src/rozi"
   cp -r "$here/sandbox/nvim" "$here/sandbox/btop" "$here/sandbox/lazygit" "$sandbox/config/"
   cp -r "$here/sandbox/profiles" "$sandbox/config/rozi/"
@@ -75,8 +78,63 @@ prepare_sandbox() {
 #   SETUP    shell code run before launch; its `rozi` function runs the sandboxed binary
 scene() {
   local name=$1 viewport=$2 settle=$3 script=$4 extra=${5:-}
-  local profile=${PROFILE:-dev} startup=${STARTUP:-profile}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
+  prepare_scene "$extra"
+
+  sandbox_env \
+    TUI_LIPAN_SNAPSHOT="$sandbox/shot.png" \
+    TUI_LIPAN_SNAPSHOT_VIEWPORT="$viewport" \
+    TUI_LIPAN_SNAPSHOT_SETTLE_MS="$settle" \
+    TUI_LIPAN_SNAPSHOT_SCRIPT="$script" \
+    TUI_LIPAN_SNAPSHOT_ADVANCE_MS=1000 \
+    timeout 120 "$bin" >"$sandbox/run.log" 2>&1 || { cat "$sandbox/run.log" >&2; exit 1; }
+  stop_sessions
+
+  magick "$sandbox/shot.png" -resize 1920x -quality 90 -define webp:method=6 "$out/$name.webp"
+  mkdir -p "$preview"
+  cp "$sandbox/shot.png" "$preview/$name.png"
+  echo "captured $name"
+}
+
+# [VAR=value ...] clip NAME VIEWPORT SETTLE_MS STEPS [EXTRA_CONFIG]
+#
+# Runs rozi in a real terminal of VIEWPORT, records the whole UI with `rozi record start ui` while
+# clip.py plays STEPS in real time, and encodes the recording as NAME.mp4 with a NAME-poster.webp.
+# STEPS use clip.py's syntax. The variables are those of `scene`, plus POSTER, the second of the
+# clip shown before it plays (default: its last frame).
+clip() {
+  local name=$1 viewport=$2 settle=$3 steps=$4 extra=${5:-}
+  [[ $only == "  " || $only == *" $name "* ]] || return 0
+  prepare_scene "$extra"
+
+  local rec=$sandbox/clip.rozirec frames=$sandbox/frames
+  sandbox_env timeout 300 python3 "$here/clip.py" "$sandbox/tmux.sock" \
+    "${viewport%x*}" "${viewport#*x}" "$settle" \
+    "run:rozi record start ui --output $rec >/dev/null
+$steps
+run:rozi record stop --ui >/dev/null" -- "$bin" \
+    >"$sandbox/run.log" 2>&1 || { cat "$sandbox/run.log" >&2; exit 1; }
+  stop_sessions
+
+  sandbox_env "$bin" record export "$rec" --to png-frames "$frames" --scale 2 >/dev/null 2>&1
+  ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
+    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -preset veryslow -tune animation -crf 24 \
+    -pix_fmt yuv420p -fps_mode vfr -movflags +faststart "$out/$name.mp4"
+  if [[ -n ${POSTER:-} ]]; then
+    ffmpeg -loglevel error -y -ss "$POSTER" -i "$out/$name.mp4" -frames:v 1 "$sandbox/poster.png"
+  else
+    ffmpeg -loglevel error -y -sseof -0.1 -i "$out/$name.mp4" -frames:v 1 -update 1 "$sandbox/poster.png"
+  fi
+  magick "$sandbox/poster.png" -quality 90 -define webp:method=6 "$out/$name-poster.webp"
+  mkdir -p "$preview"
+  cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"
+  echo "recorded $name"
+}
+
+# Fresh sandbox, the profile, config.toml with EXTRA_CONFIG, and SETUP, for `scene` and `clip`.
+prepare_scene() {
+  local extra=$1
+  local profile=${PROFILE:-dev} startup=${STARTUP:-profile}
   prepare_sandbox
   if [[ -n ${LAYOUT:-} ]]; then
     sed -i "0,/^layout = .*/s//layout = \"$LAYOUT\"/" "$sandbox/config/rozi/profiles/$profile.toml"
@@ -100,20 +158,6 @@ EOF
   if [[ -n ${SETUP:-} ]]; then
     bash -c "$(declare -f sandbox_env); bin=$bin; sandbox=$sandbox; rozi() { sandbox_env \"\$bin\" \"\$@\"; }; $SETUP"
   fi
-
-  sandbox_env \
-    TUI_LIPAN_SNAPSHOT="$sandbox/shot.png" \
-    TUI_LIPAN_SNAPSHOT_VIEWPORT="$viewport" \
-    TUI_LIPAN_SNAPSHOT_SETTLE_MS="$settle" \
-    TUI_LIPAN_SNAPSHOT_SCRIPT="$script" \
-    TUI_LIPAN_SNAPSHOT_ADVANCE_MS=1000 \
-    timeout 120 "$bin" >"$sandbox/run.log" 2>&1 || { cat "$sandbox/run.log" >&2; exit 1; }
-  stop_sessions
-
-  magick "$sandbox/shot.png" -resize 1920x -quality 90 -define webp:method=6 "$out/$name.webp"
-  mkdir -p "$preview"
-  cp "$sandbox/shot.png" "$preview/$name.png"
-  echo "captured $name"
 }
 
 source "$here/scenes.sh"

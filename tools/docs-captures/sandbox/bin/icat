@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""icat FILE [COLS ROWS]: show a PNG with the Kitty graphics protocol, COLS x ROWS cells."""
+import base64
+import sys
+
+path = sys.argv[1]
+size = f",c={sys.argv[2]},r={sys.argv[3]}" if len(sys.argv) >= 4 else ""
+with open(path, "rb") as file:
+    data = base64.standard_b64encode(file.read())
+
+out = sys.stdout.buffer
+chunks = [data[i : i + 4096] for i in range(0, len(data), 4096)]
+for i, chunk in enumerate(chunks):
+    more = int(i < len(chunks) - 1)
+    # q=2: no replies, which would arrive as typed input.
+    head = f"a=T,f=100,q=2{size},m={more}" if i == 0 else f"m={more}"
+    out.write(b"\x1b_G" + head.encode() + b";" + chunk + b"\x1b\\")
+out.write(b"\n")
+out.flush()

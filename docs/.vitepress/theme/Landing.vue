@@ -7,8 +7,8 @@ import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
 import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
 import { highlightToml } from "./toml";
-import captureClip from "../../assets/capture-ui.mp4";
-import capturePoster from "../../assets/capture-ui-poster.webp";
+import captureClip from "../../assets/captures/record-demo.mp4";
+import capturePoster from "../../assets/captures/record-demo-poster.webp";
 import shotWorkspace from "../../assets/captures/workspace.webp";
 import shotTokyoNight from "../../assets/captures/theme-tokyo-night.webp";
 import shotRosePineDawn from "../../assets/captures/theme-rose-pine-dawn.webp";
@@ -216,6 +216,8 @@ const catalog: {
       "capture-pane",
       "capture-ui",
       "PNG and ANSI screenshots",
+      "pane and UI recording",
+      "GIF, video, and cast export",
       `${stats.hookEvents} hook events`,
       "services",
       "user commands",
@@ -702,8 +704,8 @@ restart = "on-failure"`);
 
       <section class="lp-section">
         <header class="lp-head">
-          <h2>Screenshots from the command line</h2>
-          <p class="lp-head-note">For agents, scripts, and bug reports</p>
+          <h2>Screenshots and recordings</h2>
+          <p class="lp-head-note">For agents, scripts, demos, and bug reports</p>
         </header>
         <div class="lp-two lp-capture">
           <div>
@@ -714,26 +716,29 @@ restart = "on-failure"`);
               on a detached session too. Ask for plain text, ANSI, or a PNG, so a
               coding agent can look at what it is working in.
             </p>
-            <div class="lp-code">
-              <pre><code><span class="tk-comment"># the whole window, twice the size</span>
-rozi capture-ui --render png --scale 2 --output ui.png
-<span class="tk-comment"># one pane, as text with its colors</span>
-rozi capture-pane --target 3 --render ansi
-<span class="tk-comment"># a pane in a session with no window open</span>
-rozi --session dev capture-pane --target 3 \
-    --render png --output pane.png</code></pre>
-            </div>
-            <p class="lp-lead lp-capture-note">
-              Captures are fast enough to record from. The clip is one: a
-              capture every frame, put together with the recording recipe.
+            <p class="lp-lead">
+              <code>rozi record</code> keeps a pane's screen over time, change by
+              change. The session records it, so it carries on after you detach:
+              review in the morning what an agent did overnight. Record the whole
+              window instead for a demo, then replay it in a terminal or export a
+              GIF, a video, or an asciinema cast.
             </p>
+            <div class="lp-code">
+              <pre><code><span class="tk-comment"># one pane, as text with its colors</span>
+rozi capture-pane --target 3 --render ansi
+<span class="tk-comment"># record this pane, label a moment, stop</span>
+rozi record start --output ~/demo.rozirec
+rozi record mark "tests started"
+rozi record stop
+<span class="tk-comment"># watch it back, or turn it into frames</span>
+rozi record play ~/demo.rozirec --speed 2
+rozi record export ~/demo.rozirec --to png-frames frames</code></pre>
+            </div>
             <a class="lp-more" :href="withBase('/control#capturing-the-whole-ui')"
               >Capturing the screen →</a
             >
-            <a
-              class="lp-more lp-more-next"
-              :href="withBase('/recipes#record-a-pane-or-the-whole-ui-as-a-gif')"
-              >Recording recipe →</a
+            <a class="lp-more lp-more-next" :href="withBase('/recording')"
+              >Recording →</a
             >
           </div>
           <figure class="lp-shot">
@@ -743,17 +748,14 @@ rozi --session dev capture-pane --target 3 \
               :poster="capturePoster"
               :controls="captureStill"
               width="1920"
-              height="1152"
+              height="1088"
               muted
               loop
               playsinline
               preload="metadata"
-              aria-label="A rozi window with an editor and two shells. In one shell, rozi capture-ui saves a screenshot, and icat shows that screenshot inside the pane."
+              aria-label="A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops."
             ></video>
-            <figcaption>
-              Every frame is a <code>rozi capture-ui</code> PNG, not a screen
-              recording.
-            </figcaption>
+            <figcaption>Recorded by rozi itself.</figcaption>
           </figure>
         </div>
       </section>

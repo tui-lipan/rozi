@@ -352,7 +352,7 @@ export default defineConfig({
           { text: "Scripting quick start", link: "/scripting" },
           { text: "Control CLI", link: "/control" },
           { text: "Control protocol", link: "/control-protocol" },
-          { text: "Record a pane", link: "/recording" },
+          { text: "Record a pane or the UI", link: "/recording" },
           { text: "Hooks", link: "/hooks" },
           { text: "Agent skill", link: "/agent-skill" },
           { text: "Extensions", link: "/extensions" },

@@ -75,6 +75,49 @@ PROFILE=api scene which-key "$focus" 4000 "key:ctrl+a; wait:800"
 PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:600"
 
+# Recording indicators. Animations are off so the blinking dots hold steady; the long wait lets
+# each start's toast expire.
+run_palette() { echo "key:ctrl+a; type:p; wait:500; type:$1; wait:300; key:enter; sleep:1500"; }
+steady='[animations]
+enabled = false'
+start_pane="key:alt+l; wait:300; $(run_palette 'start pane recording')"
+start_ui=$(run_palette 'start ui recording')
+PROFILE=api scene recording-pane "$focus" 4000 "$start_pane; wait:8000" "$steady"
+PROFILE=api scene recording-ui "$focus" 4000 "$start_ui; wait:8000" "$steady"
+PROFILE=api scene recording-fullscreen "$focus" 4000 "$start_pane; $start_ui; key:alt+f; wait:8000" "$steady"
+
+# Inside a recording of the whole UI: a palette screenshot of the editor, an image in the shell,
+# then a pane recording started, marked, and stopped from that shell.
+PROFILE=api POSTER=13.8 clip record-demo "$focus" 5000 "
+sleep:800
+key:C-a
+sleep:150
+type:p
+sleep:600
+type:screenshot pane
+sleep:500
+key:Enter
+sleep:2000
+key:M-l
+sleep:600
+type:icat assets/logo.png 20 9
+sleep:300
+key:Enter
+sleep:1200
+type:rozi record start --output ~/demo.rozirec
+sleep:300
+key:Enter
+sleep:1400
+type:rozi record mark 'logo shown'
+sleep:300
+key:Enter
+sleep:1400
+type:rozi record stop
+sleep:300
+key:Enter
+sleep:2000" '[capture]
+dir = "~/shots"'
+
 sessions_setup='
 for s in api docs infra; do rozi --session "$s" --server >/dev/null 2>&1 & done
 sleep 1.5

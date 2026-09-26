@@ -322,7 +322,7 @@ produce_rows |
 Keep reading stdout for as long as the publisher runs. If unread activations pile up, rozi closes
 the stream and withdraws its rows.
 
-## Record a pane or the whole UI as a GIF
+## Record a pane or the whole UI as a GIF or video
 
 To record one pane, use [`rozi record`](recording.md). It writes every change with its exact time,
 from inside the session server, with or without a UI, and exports frames with an ffmpeg listing:
@@ -334,96 +334,19 @@ ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
   -vf "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" demo.gif
 ```
 
-To record everything rozi draws, bar and borders included, capture the UI in a loop instead. The
-script below captures PNG frames in a loop, stamps each with the time it was taken, and has ffmpeg assemble them, so the result plays in
-real time however fast the captures ran. Save it as `record.py`:
-
-```python
-#!/usr/bin/env python3
-"""record.py OUT SECONDS [--fps N] -- CAPTURE_ARGS...   (OUT ending in .gif, .mp4, .webm, ...)"""
-import argparse
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
-
-# Everything after `--` is the capture command, passed to rozi untouched.
-argv = sys.argv[1:]
-split = argv.index("--") if "--" in argv else len(argv)
-parser = argparse.ArgumentParser()
-parser.add_argument("out")
-parser.add_argument("seconds", type=float)
-parser.add_argument("--fps", type=float, default=0, help="cap on frames a second (0: none)")
-args = parser.parse_args(argv[:split])
-capture = argv[split + 1:]
-
-rozi = [os.environ.get("ROZI_BIN", "rozi")]
-# --socket and --session cannot be combined.
-if (socket_path := os.environ.get("ROZI_SOCKET")) and "--session" not in capture:
-    rozi += ["--socket", socket_path]
-
-workdir = tempfile.mkdtemp(prefix="rozi-record-")
-frames = []
-try:
-    start = time.monotonic()
-    while (now := time.monotonic()) - start < args.seconds:
-        path = os.path.join(workdir, f"{len(frames):05d}.png")
-        subprocess.run([*rozi, *capture, "--output", path], check=True)
-        frames.append((path, now))
-        if args.fps:
-            time.sleep(max(0, now + 1 / args.fps - time.monotonic()))
-    print(f"{len(frames)} frames, {len(frames) / (time.monotonic() - start):.1f} fps")
-
-    # Each frame lasts until the next was taken; the last holds for half a second.
-    listing = os.path.join(workdir, "frames.txt")
-    with open(listing, "w") as out:
-        ends = [taken for _, taken in frames[1:]] + [frames[-1][1] + 0.5]
-        for (path, taken), end in zip(frames, ends):
-            out.write(f"file '{path}'\nduration {end - taken:.4f}\n")
-        out.write(f"file '{frames[-1][0]}'\n")
-
-    if args.out.endswith(".gif"):
-        encode = ["-vf", "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none"]
-    else:
-        encode = ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p"]
-    subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", listing,
-         *encode, "-fps_mode", "vfr", args.out],
-        check=True,
-    )
-finally:
-    shutil.rmtree(workdir, ignore_errors=True)
-```
-
-Pass the output file, the duration in seconds, and, after `--`, a capture command; the script adds
-`--output` itself:
+To record everything rozi draws, bar and borders included, record the UI instead. Run these from
+a shell inside rozi; the file lands in the directory you run them in:
 
 ```sh
-record.py demo.gif 5 -- capture-pane --target 3 --render png
-record.py ui.mp4 10 --fps 30 -- capture-ui --render png --scale 2
-record.py agent.gif 60 --fps 5 -- --session dev capture-pane --target 3 --render png
+rozi record start ui --output ui.rozirec
+rozi record stop --ui                       # when you are done
+rozi record export ui.rozirec --to png-frames frames --scale 2
+ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
+  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -pix_fmt yuv420p -fps_mode vfr ui.mp4
 ```
 
-It needs Python 3.8 or newer and ffmpeg 5.1 or newer, for `-fps_mode`.
-
-Frames are samples, not every paint: a change that appears and disappears between two captures is
-not recorded. Use `--fps` to keep a long recording small.
-
-Each capture is a separate `rozi` process. Starting it and the round trip take about 10 ms, most of
-each frame; encoding the PNG adds 1–3 ms. Measured on a laptop on AC power, with a release build
-and a 120×36 UI running `btop -u 100`:
-
-| Capture | Frames a second |
-| --- | --- |
-| `capture-ui` | 60 |
-| `capture-ui --scale 2` | 50 |
-| `capture-pane` of the btop pane | 80 |
-| `--session capture-pane` of the same pane | 100 |
-| `capture-ui` with two large images also showing | 40 (30 at `--scale 2`) |
-
-A CPU in a power-saving profile records at roughly half these rates.
+Both keep every change with the moment it happened, so the GIF or video plays in real time. See
+[Export frames, a GIF, or a video](recording.md#export-frames-a-gif-or-a-video) for the options.
 
 ## Package a script as an extension
 

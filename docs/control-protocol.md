@@ -285,8 +285,8 @@ straddles a hidden cell is cleared.
 
 A session server answers these. A UI passes `record-start`, `record-stop`, `record-list`, and
 `record-mark` to the session it is attached to and returns the server's answer, which
-`attached-control` in `rozi api describe` advertises. See [Record a pane](recording.md) for what a
-recording holds.
+`attached-control` in `rozi api describe` advertises. See
+[Record a pane or the UI](recording.md) for what a recording holds.
 
 `record-start` fields:
 

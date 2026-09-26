@@ -158,6 +158,12 @@ writable only by you, and never replaces an existing file unless you pass `--for
 
 ## See that a pane is recording
 
+<CaptureGallery title="~/src/rozi — api">
+<img src="./assets/captures/recording-pane.webp" alt="Two panes side by side; the shell pane's title bar ends with a red dot and REC" data-label="Pane" data-caption="The recorded shell pane ends its title with ● REC.">
+<img src="./assets/captures/recording-ui.webp" alt="The bar shows a red REC chip with a dot before the session name" data-label="UI" data-caption="While the UI records itself, the bar shows a REC chip.">
+<img src="./assets/captures/recording-fullscreen.webp" alt="A fullscreen shell pane whose title reads fullscreen, then a red dot and UI + 1 PANE REC" data-label="Fullscreen" data-caption="A fullscreen pane covers the bar, so its title counts both recordings.">
+</CaptureGallery>
+
 While a pane is recording, every attached UI marks it with `● REC` in the theme's error color at
 the end of its title bar, after any `fullscreen` or `floating` badge: `fullscreen · ● REC`. A long
 title is shortened before the marker, so the marker always shows. The dot blinks slowly, vanishing
@@ -256,7 +262,8 @@ rozi record play agent.rozirec --from 1h30m
 `--from` starts at a mark, by its label, or at a time into the recording, on the screen as it was
 at that moment. Playback lasts until the recording ended, holding the last screen for as long as it
 stood still. It uses your terminal's colors, so make the terminal at least as large as the recorded
-pane. Press `Ctrl+C` to stop.
+pane. Images play as the half-block approximations their cells hold; export PNG frames to see
+them as recorded. Press `Ctrl+C` to stop.
 
 ## Export frames, a GIF, or a video
 

@@ -68,8 +68,10 @@ is not attached read-only, and the pane is not a scratch or popup pane. **Mark p
 needs the pane to be recording. When the mark lands, a toast says so and the recording dot flashes,
 unless `[animations] enabled = false` or `focus_chrome = false`.
 
-When a recording starts or stops, a toast shows the path of its file. For a session on another host
-it also names the host, because that is where the file is. A command that fails shows why.
+When a recording starts or stops, the toast shows the file path beneath its status. Right-click it
+to copy the full path. When stopping several recordings, it copies all paths, one per line. For a
+session on another host, the title names that host and the copied paths are on that host. A command
+that fails shows why.
 
 They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`, or
 `toggle-ui-recording` under

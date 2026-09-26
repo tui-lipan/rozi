@@ -209,7 +209,8 @@ Screenshots use the same drawing as `rozi capture-pane --render png` and
 
 To save a pane's raw output to a file, run **Pane logging** from the command palette or bind
 `toggle-pane-logging`. The titlebar shows a `log` badge while logging is on, and every attached
-client sees the same state.
+client sees the same state. When logging starts, a toast shows the log path; right-click it to copy
+the full path. The file is on the session server's host.
 
 Logging stops after a write error or when the file reaches `[logging] max_bytes` (64 MiB by default;
 `0` means no limit). Logs are written to `[logging] dir`, which defaults to `logs` in the state

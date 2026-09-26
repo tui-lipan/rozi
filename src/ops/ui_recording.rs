@@ -27,7 +27,7 @@ use tui_lipan::PaintedFrame;
 use tui_lipan::prelude::*;
 
 use crate::control::{ControlErrorCode, ControlResponse, UiRecordingInfo, UiRecordingStopped};
-use crate::pane::pty_events::{notify_error, notify_info};
+use crate::pane::pty_events::{notify_error, notify_path_info};
 use crate::recording::start::{Limits, Output, frame_interval};
 use crate::recording::{EndReason, RecordingEvent, RecordingMeta, RecordingTarget};
 use crate::state::{
@@ -418,7 +418,7 @@ fn begin(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update {
     }
     if from_action {
         let shown = crate::platform::paths::compress_home(&info.path);
-        notify_info(ctx, format!("UI recording started\n{shown}"));
+        notify_path_info(ctx, "UI recording started", shown, info.path);
         return Update::full();
     }
     Update::none()
@@ -643,7 +643,7 @@ pub(crate) fn finished(
         EndReason::MaxBytes => "reached its size limit",
         _ => "stopped",
     };
-    notify_info(ctx, format!("UI recording {what}\n{shown}"));
+    notify_path_info(ctx, format!("UI recording {what}"), shown, stopped.path);
     Update::full()
 }
 
@@ -1364,12 +1364,27 @@ mod tests {
                 "{name}"
             );
             assert!(toast.ends_with(name.as_str()), "{toast}");
+            let path = dir.path().join(name).display().to_string();
+            assert!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .values()
+                    .any(|toast| { toast.content() == format!("UI recording started\u{0}{path}") })
+            );
 
             backend
                 .dispatch(Msg::RunAction(Action::ToggleUiRecording))
                 .unwrap();
             let toast = wait_for_toast(&mut backend, "UI recording stopped");
             assert!(toast.ends_with(name.as_str()), "{toast}");
+            assert!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .values()
+                    .any(|toast| { toast.content() == format!("UI recording stopped\u{0}{path}") })
+            );
             assert_eq!(
                 replay(&dir.path().join(name)).end.unwrap().reason,
                 EndReason::Stopped

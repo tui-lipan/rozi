@@ -421,15 +421,22 @@ pub(crate) fn pane_logging_changed(
         Some(error) => {
             crate::pane::pty_events::notify_error(ctx, "Logging failed", error);
         }
-        None if enabled => {
-            crate::pane::pty_events::notify_info(
-                ctx,
-                format!(
-                    "Logging pane {pane_id} to {}",
-                    path.as_deref().unwrap_or("log file")
-                ),
-            );
-        }
+        None if enabled => match path {
+            Some(path) => {
+                crate::pane::pty_events::notify_path_info(
+                    ctx,
+                    format!("Logging pane {pane_id}"),
+                    path.clone(),
+                    path,
+                );
+            }
+            None => {
+                crate::pane::pty_events::notify_info(
+                    ctx,
+                    format!("Logging pane {pane_id} to log file"),
+                );
+            }
+        },
         None => {}
     }
     Update::full()

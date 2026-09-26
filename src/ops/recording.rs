@@ -15,7 +15,7 @@ use crate::control::{
 };
 use crate::ops::focus::{request_current_pane_focus, request_recording_mark_focus};
 use crate::pane::lifecycle::{find_pane, pane_is_local};
-use crate::pane::pty_events::{notify_error, notify_info};
+use crate::pane::pty_events::{notify_error, notify_info, notify_path_info};
 use crate::state::{AttachedReply, Mode, PaneId, RecordingAction, RecordingMarkPrompt, State};
 
 /// How long a mark's blink holds the dot highlighted.
@@ -224,9 +224,18 @@ pub(crate) fn answered(
             let path = response
                 .data
                 .and_then(|data| serde_json::from_value::<RecordingInfo>(data).ok())
-                .map(|info| shown(&info.path))
+                .map(|info| info.path)
                 .unwrap_or_default();
-            notify_info(ctx, format!("Recording started{on_host}\n{path}"));
+            if path.is_empty() {
+                notify_info(ctx, format!("Recording started{on_host}"));
+            } else {
+                notify_path_info(
+                    ctx,
+                    format!("Recording started{on_host}"),
+                    shown(&path),
+                    path,
+                );
+            }
         }
         RecordingAction::Stop(_) => {
             let paths = response
@@ -234,13 +243,26 @@ pub(crate) fn answered(
                 .and_then(|data| serde_json::from_value::<RecordingStopList>(data).ok())
                 .map(|list| {
                     list.stopped
-                        .iter()
-                        .map(|stopped| shown(&stopped.path))
+                        .into_iter()
+                        .map(|stopped| stopped.path)
                         .collect::<Vec<_>>()
-                        .join("\n")
                 })
                 .unwrap_or_default();
-            notify_info(ctx, format!("Recording stopped{on_host}\n{paths}"));
+            if paths.is_empty() {
+                notify_info(ctx, format!("Recording stopped{on_host}"));
+            } else {
+                let shown_paths = paths
+                    .iter()
+                    .map(|path| shown(path))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                notify_path_info(
+                    ctx,
+                    format!("Recording stopped{on_host}"),
+                    shown_paths,
+                    paths.join("\n"),
+                );
+            }
         }
         RecordingAction::Mark(pane) => {
             notify_info(ctx, "Recording marked");
@@ -414,6 +436,9 @@ mod tests {
                 "{:?}",
                 toasts(&backend)
             );
+            assert!(backend.state().replaceable_toasts.values().any(|toast| {
+                toast.content() == format!("Recording started on devbox\u{0}{path}")
+            }));
 
             runtime_recording(&mut backend, true);
             backend
@@ -448,6 +473,9 @@ mod tests {
                 "{:?}",
                 toasts(&backend)
             );
+            assert!(backend.state().replaceable_toasts.values().any(|toast| {
+                toast.content() == format!("Recording stopped on devbox\u{0}{path}")
+            }));
         });
     }
 

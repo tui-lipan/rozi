@@ -819,6 +819,24 @@ pub fn session_portal_enabled(animations: WindowAnimationConfig) -> bool {
 /// vanishing, so the portal reads as opening onto somewhere new instead of out of nothing.
 pub const SESSION_PORTAL_RECEDE: f32 = 0.4;
 
+/// How long a screenshot flash takes to ease back from its peak tint.
+pub const SCREENSHOT_FLASH: Duration = Duration::from_millis(220);
+/// How far a screenshot flash tints what it photographed toward the accent at its peak.
+pub const SCREENSHOT_FLASH_PEAK: f32 = 0.35;
+
+/// Whether a screenshot action flashes what it photographed. The flash is chrome feedback, so it
+/// follows the same switches as the focus chrome fades; the toast is shown either way.
+pub fn screenshot_flash_enabled(animations: WindowAnimationConfig) -> bool {
+    animations.enabled && animations.focus_chrome
+}
+
+pub fn screenshot_flash_transition() -> TransitionConfig {
+    TransitionConfig {
+        duration: SCREENSHOT_FLASH,
+        easing: Easing::EaseOutQuad,
+    }
+}
+
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {
         duration: Duration::ZERO,

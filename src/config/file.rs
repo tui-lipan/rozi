@@ -124,6 +124,7 @@ struct FileConfig {
     services: Vec<ServiceFileConfig>,
     extensions: ExtensionsFileConfig,
     logging: LoggingFileConfig,
+    capture: CaptureFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
 
@@ -188,6 +189,14 @@ struct HookFileConfig {
 struct LoggingFileConfig {
     dir: Option<String>,
     max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct CaptureFileConfig {
+    dir: Option<String>,
+    /// Wide enough that an out-of-range number warns instead of rejecting the whole file.
+    scale: Option<i64>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -781,6 +790,18 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(max_bytes) = parsed.logging.max_bytes {
         config.logging.max_bytes = max_bytes;
+    }
+    if let Some(dir) = non_empty(parsed.capture.dir) {
+        config.capture.dir = Some(expand_path(dir));
+    }
+    if let Some(scale) = parsed.capture.scale {
+        let max = crate::control::MAX_CAPTURE_SCALE;
+        match u8::try_from(scale) {
+            Ok(scale @ 1..=crate::control::MAX_CAPTURE_SCALE) => config.capture.scale = scale,
+            _ => warnings.push(format!(
+                "Ignored capture.scale {scale} (expected 1 to {max})"
+            )),
+        }
     }
 
     let mut input = config.input.clone();
@@ -2211,6 +2232,41 @@ mod file_tests {
         let loaded = load_config_from_text("frame_rate = 1000\n", path);
         assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn capture_keys_expand_the_directory_and_refuse_an_out_of_range_scale() {
+        let path = Path::new("test.toml");
+
+        let loaded = load_config_from_text("", path);
+        assert_eq!(loaded.config.capture.dir, None);
+        assert_eq!(loaded.config.capture.scale, 1);
+
+        let loaded = load_config_from_text("[capture]\ndir = \"~/shots\"\nscale = 3\n", path);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.capture.dir, Some(expand_path("~/shots")));
+        assert_ne!(loaded.config.capture.dir, Some(PathBuf::from("~/shots")));
+        assert_eq!(loaded.config.capture.scale, 3);
+
+        for scale in ["0", "4", "-1", "300"] {
+            let loaded = load_config_from_text(&format!("[capture]\nscale = {scale}\n"), path);
+            assert_eq!(loaded.config.capture.scale, 1, "scale {scale}");
+            assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+            assert!(
+                loaded.warnings[0].contains("capture.scale"),
+                "{:?}",
+                loaded.warnings
+            );
+            assert!(!loaded.rejected, "one bad key keeps the rest of the file");
+        }
+
+        let loaded = load_config_from_text("[capture]\nformat = \"jpg\"\n", path);
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        assert!(
+            loaded.warnings[0].contains("capture.format"),
+            "{:?}",
+            loaded.warnings
+        );
     }
 
     #[test]

@@ -417,6 +417,35 @@ fn tighten_own_directory(_dir: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Where the screenshot actions write: `configured` as the user named it, else `captures` in the
+/// state directory.
+///
+/// A directory rozi has to create is created private to its owner. One the user already has, such
+/// as a pictures folder, is used as it is: refusing it for being readable by others would make the
+/// setting useless for exactly the folders people point it at.
+pub fn capture_dir(env: &PlatformEnv, configured: Option<&std::path::Path>) -> io::Result<PathBuf> {
+    let Some(dir) = configured else {
+        let dir = private_state_dir(env)?.join("captures");
+        fs_security::ensure_private_dir(&dir)?;
+        return Ok(dir);
+    };
+    match fs::metadata(dir) {
+        Ok(metadata) if metadata.is_dir() => Ok(dir.to_path_buf()),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} is not a directory", dir.display()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if let Some(parent) = dir.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                fs::create_dir_all(parent)?;
+            }
+            fs_security::ensure_private_dir(dir)?;
+            Ok(dir.to_path_buf())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Directory for temporary scrollback dumps opened in `$EDITOR` (`state_dir/scrollback`).
 pub fn scrollback_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
     let dir = state_dir(env).join("scrollback");

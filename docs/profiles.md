@@ -7,7 +7,7 @@ profiles, the file format, and what capture can and cannot record.
 ## Save and launch a profile
 
 1. Arrange your panes the way you want them.
-2. Press `Ctrl+A`, then `O`, or run **Capture session as profile** from the command palette.
+2. Press `Ctrl+A`, then `O`, or run **Save session as profile** from the command palette.
 3. Enter a name. If a profile with that name exists, press `Enter` again to overwrite it.
 
 The live session is not changed. The profile is saved as a TOML file:

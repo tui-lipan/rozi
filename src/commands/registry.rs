@@ -349,6 +349,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
+        Action::ScreenshotPane => state.focused_pane().is_some(),
         _ => true,
     }
 }
@@ -1306,6 +1307,7 @@ mod tests {
                 "Panes",
                 "Workspace",
                 "App",
+                "Capture",
                 "Profile",
                 "Git",
                 "Session",
@@ -1325,6 +1327,23 @@ mod tests {
         assert_eq!(category(Action::KillWorkspace), Some("Workspace"));
         assert_eq!(category(Action::OpenSettings), Some("App"));
         assert_eq!(category(Action::OpenWorktrees), Some("Git"));
+    }
+
+    #[test]
+    fn screenshot_commands_are_capture_palette_rows_with_no_default_key() {
+        for (id, label) in [
+            ("screenshot-pane", "Screenshot pane"),
+            ("screenshot-ui", "Screenshot UI"),
+        ] {
+            let action = Action::from_id(id).unwrap_or_else(|| panic!("`{id}` parses"));
+            let command = BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.action == action)
+                .unwrap();
+            assert_eq!((command.label, command.category), (label, "Capture"));
+            assert!(command.default_keys.is_empty(), "`{id}` has no default key");
+            assert!(is_palette_eligible(id));
+        }
     }
 
     #[test]

@@ -445,9 +445,9 @@ pub(crate) fn save_profile_overlay(ctx: &Context<AppRoot>) -> Element {
         PromptChrome {
             caption: confirm.as_deref().map(PromptCaption::Armed),
             ..PromptChrome::new(
-                "Capture session as profile",
+                "Save session as profile",
                 "Profile name",
-                &[("capture", "enter")],
+                &[("save", "enter")],
             )
         },
         &prompt.input,

@@ -35,6 +35,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "services",
     "extensions",
     "logging",
+    "capture",
     "keys",
 ];
 
@@ -282,6 +283,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_array_tables(table, "", "commands", COMMAND_KEYS, unknown);
     collect_services(table, unknown);
     collect_named_table(table, "", "logging", &["dir", "max_bytes"], unknown);
+    collect_named_table(table, "", "capture", &["dir", "scale"], unknown);
     collect_keys(table, unknown);
 }
 

@@ -413,6 +413,14 @@ pub enum Msg {
     UserCommandFailed {
         message: String,
     },
+    /// A Screenshot pane or Screenshot UI action wrote `path`, off the UI thread.
+    ScreenshotSaved {
+        target: crate::state::ScreenshotTarget,
+        path: std::path::PathBuf,
+    },
+    ScreenshotFailed {
+        error: String,
+    },
     HoverPane(PaneId, KeyMods),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),

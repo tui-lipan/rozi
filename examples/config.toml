@@ -417,6 +417,14 @@
 # refused whole, so a log never ends mid-escape-sequence.
 #max_bytes = 67108864
 
+[capture]
+# PNGs written by the screenshot-pane and screenshot-ui commands, on this client's machine.
+# A directory rozi creates is mode 0700; each file is 0600 and never replaces another.
+# Defaults under $XDG_STATE_HOME/rozi/captures.
+#dir = "~/.local/state/rozi/captures"
+# Size multiplier, 1 to 3.
+#scale = 1
+
 # Per-alias SSH overrides, matched by a bare `--remote <alias>`. Repeat the table per host.
 [remote.hosts.workbox]
 # SSH hostname when it differs from the alias.

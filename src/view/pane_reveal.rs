@@ -6,14 +6,20 @@ use tui_lipan::prelude::{
 use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, ScanDirection};
 
 /// Apply the optional pane reveal effect while keeping an empty keyed scope mounted at rest.
+///
+/// `flash` is a screenshot flash over the pane: the colour it tints toward and how strongly.
 pub(super) fn pane_reveal_scope(
     pane_tree: Element,
     key: Key,
     spec: PaneAnimationSpec,
     progress: f32,
     seed: u64,
+    flash: Option<(Color, f32)>,
 ) -> Element {
-    let scope = EffectScope::new();
+    let scope = match flash {
+        Some((color, strength)) => EffectScope::new().tint_by(color, strength),
+        None => EffectScope::new(),
+    };
     let scope = match (spec.kind, progress < 1.0) {
         (PaneAnimationStyle::Portal, true) => scope.custom_effect(PaneRevealEffect::with_spec(
             PaneRevealPattern::Portal,

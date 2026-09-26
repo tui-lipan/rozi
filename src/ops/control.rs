@@ -1372,12 +1372,36 @@ fn capture_pane(
 /// checked `image_pixels`.
 type UiCaptureForm = (CaptureRender, u8, bool);
 
-/// `capture-ui` requests that will be answered from the same painted frame.
+/// Something waiting for the next painted frame of the whole client.
+#[derive(Clone)]
+enum UiCaptureWaiter {
+    /// A `capture-ui` request, answered on its control connection.
+    Control(UiCaptureForm, std::sync::mpsc::Sender<ControlResponse>),
+    /// The Screenshot UI action, which writes a file and reports back to the UI.
+    Screenshot(crate::ops::screenshot::ScreenshotJob),
+}
+
+/// `capture-ui` requests and screenshots that will be answered from the same painted frame.
 #[derive(Default)]
 pub(crate) struct UiCaptureBatch {
-    waiters: Vec<(UiCaptureForm, std::sync::mpsc::Sender<ControlResponse>)>,
+    waiters: Vec<UiCaptureWaiter>,
     /// The frame has arrived; a request after this waits for the next one.
     served: bool,
+}
+
+/// Whether a Screenshot UI is still waiting for the frame it will save.
+///
+/// Read from the batch rather than kept as a flag, so it ends the moment that frame is taken: not
+/// when the file is written, and not when an earlier screenshot's write finishes under a later one.
+pub(crate) fn ui_screenshot_waiting(state: &crate::state::State) -> bool {
+    state.pending_ui_capture.as_ref().is_some_and(|batch| {
+        let batch = batch.borrow();
+        !batch.served
+            && batch
+                .waiters
+                .iter()
+                .any(|waiter| matches!(waiter, UiCaptureWaiter::Screenshot(_)))
+    })
 }
 
 /// Answer `capture-ui` with the next frame the client paints.
@@ -1391,16 +1415,29 @@ fn capture_ui(
     form: UiCaptureForm,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) {
+    wait_for_ui_frame(ctx, UiCaptureWaiter::Control(form, reply));
+}
+
+/// Hand the next painted frame to the Screenshot UI action, batched with any `capture-ui`
+/// requests waiting for the same frame.
+pub(crate) fn capture_ui_for_screenshot(
+    ctx: &mut Context<AppRoot>,
+    job: crate::ops::screenshot::ScreenshotJob,
+) {
+    wait_for_ui_frame(ctx, UiCaptureWaiter::Screenshot(job));
+}
+
+fn wait_for_ui_frame(ctx: &mut Context<AppRoot>, waiter: UiCaptureWaiter) {
     if let Some(batch) = &ctx.state.pending_ui_capture {
         let mut batch = batch.borrow_mut();
         if !batch.served {
-            batch.waiters.push((form, reply));
+            batch.waiters.push(waiter);
             return;
         }
     }
 
     let batch = std::rc::Rc::new(std::cell::RefCell::new(UiCaptureBatch {
-        waiters: vec![(form, reply)],
+        waiters: vec![waiter],
         served: false,
     }));
     ctx.state.pending_ui_capture = Some(std::rc::Rc::clone(&batch));
@@ -1416,21 +1453,37 @@ fn capture_ui(
     }));
 }
 
-/// Encode `frame` once per form the waiters asked for, and answer each of them.
+/// Encode `frame` once per form the waiters asked for, and once per scale screenshots asked for,
+/// and answer each of them.
 ///
 /// A PNG of the whole client takes long enough to encode that it would stall the next frame, so
 /// the work runs off the UI thread.
 fn answer_ui_captures(
     frame: tui_lipan::CapturedFrame,
     palette: TerminalColorPalette,
-    waiters: Vec<(UiCaptureForm, std::sync::mpsc::Sender<ControlResponse>)>,
+    waiters: Vec<UiCaptureWaiter>,
 ) {
-    let fallback: Vec<_> = waiters.iter().map(|(_, reply)| reply.clone()).collect();
+    let fallback = waiters.clone();
     let spawned = std::thread::Builder::new()
         .name("rozi-capture-ui".into())
         .spawn(move || {
             let mut encoded: Vec<(UiCaptureForm, ControlResponse)> = Vec::new();
-            for (form, reply) in waiters {
+            let mut pngs: Vec<(u8, std::result::Result<Vec<u8>, String>)> = Vec::new();
+            for waiter in waiters {
+                let (form, reply) = match waiter {
+                    UiCaptureWaiter::Control(form, reply) => (form, reply),
+                    UiCaptureWaiter::Screenshot(job) => {
+                        let index = match pngs.iter().position(|(scale, _)| *scale == job.scale()) {
+                            Some(index) => index,
+                            None => {
+                                pngs.push((job.scale(), job.encode(&frame, palette)));
+                                pngs.len() - 1
+                            }
+                        };
+                        job.save(&pngs[index].1);
+                        continue;
+                    }
+                };
                 let response = match encoded.iter().find(|(done, _)| *done == form) {
                     Some((_, response)) => response.clone(),
                     None => {
@@ -1443,9 +1496,14 @@ fn answer_ui_captures(
             }
         });
     if let Err(error) = spawned {
-        let response = ControlResponse::error(format!("cannot start the capture encoder: {error}"));
-        for reply in fallback {
-            let _ = reply.send(response.clone());
+        let message = format!("cannot start the capture encoder: {error}");
+        for waiter in fallback {
+            match waiter {
+                UiCaptureWaiter::Control(_, reply) => {
+                    let _ = reply.send(ControlResponse::error(message.clone()));
+                }
+                UiCaptureWaiter::Screenshot(job) => job.fail(message.clone()),
+            }
         }
     }
 }

@@ -292,6 +292,56 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
     }
 }
 
+/// The screenshot flash for this frame: what it covers and how strongly it tints, or `None` at rest.
+///
+/// Restarted from its peak on the first frame after each screenshot, the same way
+/// [`session_reveal`] restarts. The key is only read while a flash has ever run, and then on every
+/// frame, so a finished flash rests at 1.0 rather than being recreated at its target.
+pub(crate) fn screenshot_flash(
+    ctx: &Context<AppRoot>,
+) -> Option<(crate::state::ScreenshotTarget, f32)> {
+    const KEY: &str = "rozi-screenshot-flash";
+    let flash = ctx.state.screenshot.flash?;
+    if !anim::screenshot_flash_enabled(ctx.state.config.animations) {
+        return None;
+    }
+    let previous = ctx
+        .state
+        .screenshot
+        .flash_seen
+        .replace(Some(flash.revision));
+    if previous != Some(flash.revision) {
+        ctx.transition(KEY, 0.0, anim::instant_transition());
+    }
+    let progress = ctx.transition(KEY, 1.0, anim::screenshot_flash_transition());
+    (progress < 1.0).then_some((flash.target, anim::SCREENSHOT_FLASH_PEAK * (1.0 - progress)))
+}
+
+/// What a screenshot flash tints toward: the theme accent, else the focused border colour.
+pub(crate) fn screenshot_flash_color(theme: &Theme) -> Color {
+    match theme.accent.fg {
+        Some(Paint::Solid(color) | Paint::Alpha { color, .. }) => color,
+        _ => theme.border_active,
+    }
+}
+
+/// A layer's opacity and the colour it fades toward: the UI screenshot flash's tint, or the dim
+/// toward `backdrop` it would otherwise have.
+///
+/// The flash rides the layer's existing fade rather than an effect scope of its own, because every
+/// level wrapped around the whole view tree is recursion each frame carries. A dimmed layer keeps its
+/// dim: a flash is not worth un-dimming a dialog's backdrop for.
+pub(crate) fn dim_or_flash(
+    opacity: f32,
+    backdrop: Color,
+    flash: Option<(Color, f32)>,
+) -> (f32, Color) {
+    match flash {
+        Some((color, strength)) if opacity >= 1.0 => (1.0 - strength, color),
+        _ => (opacity, backdrop),
+    }
+}
+
 /// How the outgoing session's layer leaves once a switch replaces it.
 ///
 /// It stays painted beneath its successor, so an opaque successor covers it at once. It matters

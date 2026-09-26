@@ -129,6 +129,10 @@ pub enum Action {
     ReloadExtensions,
     EditScrollback,
     CopyLastOutput,
+    /// Save the focused pane's visible screen as a PNG, as `capture-pane --render png` draws it.
+    ScreenshotPane,
+    /// Save the whole client as drawn, without the palette that ran it, as a PNG.
+    ScreenshotUi,
     /// Runs `config.commands[index]`. The stable runtime id lives in config and is registered
     /// explicitly, so this index-bearing action remains `Copy`.
     RunNamedCommand(usize),
@@ -256,6 +260,8 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ReloadExtensions,
     Action::EditScrollback,
     Action::CopyLastOutput,
+    Action::ScreenshotPane,
+    Action::ScreenshotUi,
 ];
 
 impl Action {
@@ -384,6 +390,8 @@ impl Action {
             Action::ReloadExtensions => "reload-extensions",
             Action::EditScrollback => "edit-scrollback",
             Action::CopyLastOutput => "copy-last-output",
+            Action::ScreenshotPane => "screenshot-pane",
+            Action::ScreenshotUi => "screenshot-ui",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)

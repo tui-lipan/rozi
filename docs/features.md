@@ -19,6 +19,7 @@ See [Layouts and panes](layouts-and-panes.md) and [Keybindings](keybindings.md).
 - Select text, use the clipboard, open links, and show terminal images.
 - Forward mouse input to programs that request it.
 - Use shell integration for working directories, prompt boundaries, and the last command's output.
+- Save a PNG screenshot of the focused pane or the whole window from the command palette.
 
 See [Terminal features](terminal.md).
 

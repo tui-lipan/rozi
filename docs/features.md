@@ -8,7 +8,7 @@ This page lists what rozi can do, grouped by the kind of work, and points to the
 - Choose between dwindle, master, grid, columns, rows, scrollable, and monocle layouts.
 - Move, swap, resize, float, or fullscreen panes.
 - Organize panes across nine workspaces.
-- Use the mouse for focus, split resizing, and floating pane movement.
+- Use the mouse for focus, split resizing, floating pane movement, and overlay footer hints.
 
 See [Layouts and panes](layouts-and-panes.md) and [Keybindings](keybindings.md).
 

@@ -645,7 +645,7 @@ pub(crate) fn help_overlay(
             let target = activate_targets.get(event.index)?.as_ref()?;
             target.edit.change_msg()
         }));
-    let hints = overlay_hints(theme, &actions);
+    let hints = overlay_hints(ctx, &actions);
     let body = VStack::new()
         .height(Length::Auto)
         .child(search)
@@ -970,37 +970,53 @@ fn keybinding_conversion_details(
 }
 
 /// The conversion toggle, only when a conversion is offered, so an absent hint leaves no gap.
+///
+/// Each clickable hint here sends what `capture_key_msg` maps its key to for the card's stage.
 fn with_conversion_hint(
+    ctx: &Context<AppRoot>,
     row: Flow,
-    theme: &Theme,
     conversion: Option<crate::state::LiteralConversion>,
 ) -> Flow {
-    match conversion {
-        Some(conversion) if conversion.enabled => row.child(hint_pill(theme, "keep fixed", "tab")),
-        Some(_) => row.child(hint_pill(theme, "convert", "tab")),
-        None => row,
-    }
+    let label = match conversion {
+        Some(conversion) if conversion.enabled => "keep fixed",
+        Some(_) => "convert",
+        None => return row,
+    };
+    row.child(hint_button(
+        ctx,
+        label,
+        "tab",
+        Msg::KeybindingToggleConversion,
+    ))
 }
 
-fn keybinding_change_hints(theme: &Theme, change: &KeybindingChangeView) -> Element {
+fn keybinding_change_hints(ctx: &Context<AppRoot>, change: &KeybindingChangeView) -> Element {
     let row = hint_row();
     let row = match change.mode {
-        KeybindingCaptureMode::Conflict if change.replaceable => {
-            row.child(hint_pill(theme, "replace", "enter"))
-        }
+        KeybindingCaptureMode::Conflict if change.replaceable => row.child(hint_button(
+            ctx,
+            "replace",
+            "enter",
+            Msg::KeybindingResolveConflict(true),
+        )),
         KeybindingCaptureMode::Review => with_conversion_hint(
-            row.child(hint_pill(theme, "save", "enter")),
-            theme,
+            ctx,
+            row.child(hint_button(
+                ctx,
+                "save",
+                "enter",
+                Msg::KeybindingSaveCaptured,
+            )),
             change.conversion,
         ),
         _ => row,
     };
-    let esc = if change.mode == KeybindingCaptureMode::Recording {
-        "cancel"
+    let (esc, msg) = if change.mode == KeybindingCaptureMode::Recording {
+        ("cancel", Msg::KeybindingCancelCapture)
     } else {
-        "record again"
+        ("record again", Msg::KeybindingRetryCapture)
     };
-    row.child(hint_pill(theme, esc, "esc")).into()
+    row.child(hint_button(ctx, esc, "esc", msg)).into()
 }
 
 struct ChangeHeading {
@@ -1132,7 +1148,7 @@ fn keybinding_change_overlay(ctx: &Context<AppRoot>) -> Element {
                 &heading.current,
                 "prefix",
             ))
-            .child(keybinding_change_hints(theme, &change));
+            .child(keybinding_change_hints(ctx, &change));
     nested_action_palette_modal(ctx, heading.title, HELP_MAX_HEIGHT_PERCENT)
         .width(Length::Px(KEYBINDING_CARD_WIDTH))
         .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION))
@@ -1186,13 +1202,23 @@ fn keybinding_modifier_overlay(ctx: &Context<AppRoot>) -> Element {
             Text::from_spans(options).into(),
         ));
     let hints = with_conversion_hint(
+        ctx,
         hint_row()
             .child(hint_pill(theme, "choose", "←/→"))
-            .child(hint_pill(theme, "save", "enter")),
-        theme,
+            .child(hint_button(
+                ctx,
+                "save",
+                "enter",
+                Msg::KeybindingSaveModifier,
+            )),
         conversion,
     )
-    .child(hint_pill(theme, "cancel", "esc"));
+    .child(hint_button(
+        ctx,
+        "cancel",
+        "esc",
+        Msg::KeybindingCancelCapture,
+    ));
     let body = VStack::new()
         .height(Length::Auto)
         .padding((1, 0, 0, 0))

@@ -498,9 +498,9 @@ fn host_form_overlay(ctx: &Context<AppRoot>, form: &crate::state::HostFormState)
     // convention spends a pill saying what every dialog already does.
     body = body.child(
         hint_row()
-            .child(hint_pill(theme, "save", "enter"))
+            .child(hint_button(ctx, "save", "enter", Msg::SubmitHostForm))
             .child(hint_pill(theme, "next field", "tab"))
-            .child(hint_pill(theme, "cancel", "esc")),
+            .child(hint_button(ctx, "cancel", "esc", Msg::CloseHostForm)),
     );
 
     action_palette_modal(ctx, form.title())

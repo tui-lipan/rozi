@@ -269,12 +269,12 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
         );
     }
     let mut hints = hint_row()
-        .child(hint_pill(theme, "create", "enter"))
+        .child(hint_button(ctx, "create", "enter", Msg::WorktreeFormSubmit))
         .child(hint_pill(theme, "next field", "tab"));
     if form.unignored.is_some() && form.pending_exclude.is_none() {
-        hints = hints.child(hint_pill(theme, "exclude", "ctrl+e"));
+        hints = hints.child(hint_button(ctx, "exclude", "ctrl+e", Msg::WorktreeExclude));
     }
-    body = body.child(hints.child(hint_pill(theme, "cancel", "esc")));
+    body = body.child(hints.child(hint_button(ctx, "cancel", "esc", Msg::WorktreeFormClose)));
     action_palette_modal(ctx, "New worktree")
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)

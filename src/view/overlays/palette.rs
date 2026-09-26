@@ -153,12 +153,19 @@ impl OverlayAction {
     }
 }
 
-pub(crate) fn overlay_hints(theme: &Theme, actions: &[OverlayAction]) -> Element {
+/// The footer for `actions`. Each pill is clickable and sends the same message its key does, so a
+/// `confirm` action still arms on the first click and fires on the second.
+pub(crate) fn overlay_hints(ctx: &Context<AppRoot>, actions: &[OverlayAction]) -> Element {
     let mut row = hint_row();
     let mut any = false;
     for action in actions.iter().filter(|action| action.shows_hint()) {
         any = true;
-        row = row.child(hint_pill(theme, &action.label, &action.key.label()));
+        row = row.child(hint_button(
+            ctx,
+            &action.label,
+            &action.key.label(),
+            action.msg.clone(),
+        ));
     }
     if any {
         row.into()
@@ -457,7 +464,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             body = body.child(palette);
         }
         if actions.iter().any(OverlayAction::shows_hint) {
-            body = body.child(overlay_hints(&ctx.state.theme, &actions));
+            body = body.child(overlay_hints(ctx, &actions));
         }
 
         wrap_palette(ctx, title, header_right, key, close, body, width)

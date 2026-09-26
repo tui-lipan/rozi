@@ -36,10 +36,14 @@ pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
 }
 
 fn scrollback_search_hints(ctx: &Context<AppRoot>, search: &ScrollbackSearchState) -> Element {
-    let theme = &ctx.state.theme;
     let mut hints = hint_row();
     if !search.from_copy_mode {
-        hints = hints.child(hint_pill(theme, "change scope", "tab"));
+        hints = hints.child(hint_button(
+            ctx,
+            "change scope",
+            "tab",
+            Msg::SearchCycleScope,
+        ));
     }
     hints.into()
 }

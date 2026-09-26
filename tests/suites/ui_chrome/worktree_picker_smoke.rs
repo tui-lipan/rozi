@@ -5,7 +5,8 @@ use rozi::session::remote::RemoteTarget;
 use rozi::state::WorktreePickerState;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::Rect;
+use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+use tui_lipan::prelude::{KeyMods, Rect};
 
 fn on_large_stack(body: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
@@ -331,5 +332,93 @@ fn worktree_picker_visual_reference() {
             std::fs::write(&path, png).unwrap();
             println!("wrote {}", path.display());
         }
+    });
+}
+
+/// Where the footer hint `label` starts, on the last row that carries it: hints sit below the
+/// rows, so a row that happens to share the word never wins.
+fn hint_at(backend: &mut TestBackend<AppRoot>, label: &str) -> (u16, u16) {
+    backend.render();
+    let lines = backend.capture_frame().to_fixed_grid_lines();
+    let (y, x) = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(y, line)| {
+            let byte = line.find(&format!("{label} "))?;
+            Some((y, line[..byte].chars().count()))
+        })
+        .unwrap_or_else(|| panic!("no `{label}` hint:\n{}", lines.join("\n")));
+    (x as u16, y as u16)
+}
+
+fn mouse(backend: &mut TestBackend<AppRoot>, (x, y): (u16, u16), kinds: &[MouseKind]) {
+    for &kind in kinds {
+        backend
+            .send_mouse(MouseEvent {
+                x,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .expect("mouse event");
+    }
+    backend.render();
+}
+
+fn click_hint(backend: &mut TestBackend<AppRoot>, label: &str) {
+    let at = hint_at(backend, label);
+    mouse(
+        backend,
+        at,
+        &[
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ],
+    );
+}
+
+#[test]
+fn footer_hints_lift_under_the_pointer() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        let at = hint_at(&mut backend, "refresh");
+        let resting = backend.capture_frame().cell(at.0, at.1).bg;
+        mouse(&mut backend, at, &[MouseKind::Moved]);
+        assert_ne!(
+            backend.capture_frame().cell(at.0, at.1).bg,
+            resting,
+            "a hovered hint lifts so it reads as clickable"
+        );
+    });
+}
+
+#[test]
+fn footer_hints_click_through_to_their_key_action() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        click_hint(&mut backend, "new");
+        let form_open = |backend: &TestBackend<AppRoot>| {
+            backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .is_some_and(|picker| picker.form.is_some())
+        };
+        assert!(
+            form_open(&backend),
+            "the picker's `new` hint opens the form"
+        );
+        click_hint(&mut backend, "cancel");
+        assert!(!form_open(&backend), "the form's `cancel` hint closes it");
+        assert!(
+            backend.state().worktree_picker.is_some(),
+            "cancelling the form returns to the picker"
+        );
+        click_hint(&mut backend, "close");
+        assert!(
+            backend.state().worktree_picker.is_none(),
+            "the picker's `close` hint closes it"
+        );
     });
 }

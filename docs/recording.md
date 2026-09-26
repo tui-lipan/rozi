@@ -64,9 +64,21 @@ writable only by you, and never replaces an existing file unless you pass `--for
 
 ## See that a pane is recording
 
-While a pane is recording, every attached UI adds `[rec]` to its title. `list-panes` reports
-`"recording": true` for it, `record list` shows the file and its progress, and `metrics` counts
-recordings in its `recordings` section.
+While a pane is recording, every attached UI marks it with a dot and `rec` in the theme's error
+color at the end of its title bar, after any `fullscreen` or `floating` badge. A long title is
+shortened before the marker, so the marker always shows. The dot blinks slowly; with `[animations]
+enabled = false` or `focus_chrome = false` it holds steady. With `[pane] show_titles = false`, the
+dot sits in the top-right corner of the pane's border instead. A workspace tab carries a blinking
+dot while its workspace holds a recorded pane you cannot see: one on another workspace, or one with
+neither a title nor a border to show it. A fullscreen pane covers the other panes and the workbar,
+so it shows `rec elsewhere` while another pane records, or `rec + elsewhere` when it records too.
+The one exception: with `show_titles = false` and a `border_mode` of `"dividers"` or `"none"`, a
+fullscreen pane has no title or border to carry the marker, so a recording shows only in
+`list-panes` and `record list` until the pane leaves fullscreen. The indicator is rozi's own chrome,
+so it never appears in the recording.
+
+`list-panes` reports `"recording": true` for the pane, `record list` shows the file and its
+progress, and `metrics` counts recordings in its `recordings` section.
 
 ## Where the file goes
 

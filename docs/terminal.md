@@ -190,7 +190,7 @@ To save a PNG of what rozi shows, run one of these from the command palette, or 
 
 **Screenshot UI** leaves out the command palette that ran it. A toast shows where the file went, and
 the pane or window flashes briefly in the theme's accent color. The flash comes after the picture
-is taken, so it never appears in the file. With `[animations] enabled` or `focus_chrome` off, only
+is taken, so it never appears in the file. With `[animations] enabled = false` or `focus_chrome = false`, only
 the toast appears.
 
 Files go into `[capture] dir`, which defaults to `captures` in the state directory, and are named

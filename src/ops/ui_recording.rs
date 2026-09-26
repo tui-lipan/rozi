@@ -1442,7 +1442,7 @@ mod tests {
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(
                 top.trim_end()
-                    .ends_with(&format!("fullscreen · {icon} UI REC · +1 pane")),
+                    .ends_with(&format!("fullscreen · {icon} UI + 1 PANE REC")),
                 "one dot, then what else records: {top:?}"
             );
 

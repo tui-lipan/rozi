@@ -72,41 +72,45 @@ fn title_spans(lead: &str, title: &str) -> Vec<Span> {
     spans
 }
 
-/// The one recording status a title row ends with: a single dot, which alone blinks, then a steady
-/// label. `● UI REC` while the title carries this UI's recording, `● REC` while the pane records,
-/// and ` · +N pane(s)` for the pane recordings beyond that which a fullscreen pane covers. A
-/// fullscreen pane covering recordings while it has neither says `● N PANE(S) REC`, so it never
-/// reads as recording itself. `color` is the marker's colour, from
+/// The one recording status a title row ends with: a single dot, then a steady label naming what
+/// records. `● REC` while the pane records and `● UI REC` while the title carries this UI's
+/// recording; a fullscreen pane also counts the pane recordings it covers, `● REC + 1 PANE` or
+/// `● UI + 1 PANE REC`, and one covering recordings while it has neither says `● 1 PANE REC`, so
+/// it never reads as recording itself. `color` is the marker's colour, from
 /// [`crate::ops::theme::recording_marker_color`].
+///
+/// The dot blinks by giving way to blanks of its own width, so the label never moves, and a mark
+/// just made highlights it.
 fn title_recording_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
     let ui = super::ui_recording_chip(&ctx.state) == Some(super::UiRecordingChip::Title(pane.id));
     let own = usize::from(pane.terminal.recording && !pane.closing);
     let covered = covered_recordings(&ctx.state, pane);
     let panes = |n: usize| {
         if n == 1 {
-            "1 pane".to_string()
+            "1 PANE".to_string()
         } else {
-            format!("{n} panes")
+            format!("{n} PANES")
         }
     };
-    let (label, extra) = match (ui, own, covered) {
-        (true, own, covered) => (
-            "UI REC".to_string(),
-            (own + covered > 0).then(|| format!("+{}", panes(own + covered))),
-        ),
-        (false, 1, 0) => ("REC".to_string(), None),
-        (false, 1, covered) => ("REC".to_string(), Some(format!("+{}", panes(covered)))),
-        (false, _, 0) => return None,
-        (false, _, covered) => (format!("{} REC", panes(covered).to_uppercase()), None),
+    let label = match (ui, own + covered, own, covered) {
+        (true, 0, _, _) => "UI REC".to_string(),
+        (true, others, _, _) => format!("UI + {} REC", panes(others)),
+        (false, _, 1, 0) => "REC".to_string(),
+        (false, _, 1, covered) => format!("REC + {}", panes(covered)),
+        (false, 0, _, _) => return None,
+        (false, _, _, covered) => format!("{} REC", panes(covered)),
     };
-    let mut spans = vec![
-        recording_dot_span(ctx, pane, color),
+    let marked = ctx.state.recording_mark_blink.pane == Some(pane.id);
+    let dot = if recording_dot_off_phase(&ctx.state) && !marked {
+        let icon = ctx.state.config.recording_icon();
+        Span::new(" ".repeat(unicode_width::UnicodeWidthStr::width(icon)))
+    } else {
+        recording_dot_span(ctx, pane, color)
+    };
+    Some(vec![
+        dot,
         Span::new(format!(" {label}")).style(Style::new().fg(color).bold()),
-    ];
-    if let Some(extra) = extra {
-        spans.push(Span::new(format!(" · {extra}")).fg(color));
-    }
-    Some(spans)
+    ])
 }
 
 /// Append the recording status to a title row's `spans`, which hold the badge if there is one: set
@@ -2853,7 +2857,7 @@ mod tests {
         backend.render();
         let text = backend.capture_frame().plain_text();
         assert!(
-            text.contains("● REC · +1 pane") && text.matches('●').count() == 1,
+            text.contains("● REC + 1 PANE") && text.matches('●').count() == 1,
             "one dot, then what else records\n{text}"
         );
 
@@ -2902,15 +2906,23 @@ mod tests {
     }
 
     #[test]
-    fn the_dot_dims_on_the_calm_phase_and_holds_steady_without_motion() {
+    fn the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion() {
         let mut backend = recording_backend();
-        let dimmed = |backend: &mut tui_lipan::TestBackend<AppRoot>| {
+        // Whether the dot is gone, with `REC` where it always is and never dimmed.
+        let gone = |backend: &mut tui_lipan::TestBackend<AppRoot>| {
             backend.render();
             let frame = backend.capture_frame();
-            let (row, column, dot) = cell_at(&frame, "● REC").expect("a marker");
-            let label = &frame.cells[row * usize::from(frame.width) + column + 2];
+            let lines = frame.to_fixed_grid_lines();
+            let (row, line) = lines
+                .iter()
+                .enumerate()
+                .find(|(_, line)| line.contains(" REC"))
+                .expect("a marker");
+            let column = line[..line.find(" REC").unwrap()].chars().count();
+            let label = &frame.cells[row * usize::from(frame.width) + column + 1];
             assert!(!label.modifiers.dim, "only the dot blinks, not `REC`");
-            dot.modifiers.dim
+            let dot = &frame.cells[row * usize::from(frame.width) + column - 1];
+            (dot.symbol == " ", column)
         };
         {
             let state = backend.state_mut();
@@ -2919,11 +2931,14 @@ mod tests {
             state.alert_pulse_armed = true;
             state.alert_pulse_calm_phase = true;
         }
-        assert!(dimmed(&mut backend));
+        let (vanished, dark) = gone(&mut backend);
+        assert!(vanished, "the dot only changes style instead of vanishing");
         backend.state_mut().alert_pulse_calm_phase = false;
-        assert!(!dimmed(&mut backend));
+        let (vanished, lit) = gone(&mut backend);
+        assert!(!vanished);
+        assert_eq!(dark, lit, "`REC` moves as the dot blinks");
         backend.state_mut().alert_pulse_calm_phase = true;
         backend.state_mut().config.animations.enabled = false;
-        assert!(!dimmed(&mut backend), "the dot blinks with motion off");
+        assert!(!gone(&mut backend).0, "the dot blinks with motion off");
     }
 }

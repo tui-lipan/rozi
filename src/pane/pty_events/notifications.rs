@@ -171,6 +171,7 @@ pub(crate) fn notify_screenshot_saved(
 ) -> Notified {
     let title = "Screenshot saved";
     let content = toast_content(Some(title), &shown_path);
+    let copied_path = path.to_string_lossy().into_owned();
     let callback = ctx
         .link()
         .callback(move |_| crate::Msg::OpenScreenshot(path.clone()));
@@ -181,7 +182,7 @@ pub(crate) fn notify_screenshot_saved(
         title,
         shown_path,
     )
-    .copyable(false)
+    .copy_text(copied_path)
     .on_click(callback);
     notify(
         ctx,

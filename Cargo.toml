@@ -1,6 +1,6 @@
 [package]
 name = "rozi"
-version = "0.0.24"
+version = "0.0.25"
 edition = "2024"
 # Set by the dependency tree, not by this crate's own source: terminal-images reaches
 # ratatui-image -> icy_sixel -> quantette, which requires 1.90.
@@ -28,6 +28,11 @@ exclude = [
   # Release-note policy and automation run only in GitHub Actions.
   "/.opencode/",
   "/scripts/",
+  # Developer-only capture and benchmark tooling; keep the crates.io package below its size cap.
+  "/tools/",
+  # Test harnesses and benchmarks are not needed to install the published binary.
+  "/tests/",
+  "/benches/",
   # `.claude/skills` is a symlink onto `.agents/skills`, kept so Claude Code finds the same skills
   # this repository already documents. Cargo follows it and `.gitignore` cannot reach through it,
   # so leaving it in packages every skill a second time and sweeps up whatever build residue

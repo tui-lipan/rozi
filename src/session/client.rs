@@ -24,8 +24,8 @@ const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// How long [`SessionClient::shutdown`] waits for the writer thread to put the request on the wire
-/// before giving up on it. The write itself is small, but a busy machine can leave the writer
-/// thread unscheduled long enough that dropping the client would discard the queued shutdown.
+/// before returning. If it expires, the writer keeps the queued shutdown and finishes it in the
+/// background after the final client handle is dropped.
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Inbound silence after which the client treats the link as dropped. Matches
 /// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Wall-clock time catches a
@@ -82,6 +82,8 @@ struct ClientTransport {
     shutdown_stream: Mutex<Option<crate::platform::ipc::IpcConnection>>,
     shutdown_signal: Arc<AtomicBool>,
     shutdown_flush: Arc<ShutdownFlush>,
+    /// The final client handle must leave the writer alive until it attempts this request.
+    shutdown_requested: AtomicBool,
 }
 
 impl ClientTransport {
@@ -98,7 +100,9 @@ impl ClientTransport {
 
 impl Drop for ClientTransport {
     fn drop(&mut self) {
-        self.disconnect();
+        if !self.shutdown_requested.load(Ordering::Acquire) {
+            self.disconnect();
+        }
     }
 }
 
@@ -440,6 +444,7 @@ impl SessionClient {
             shutdown_stream: Mutex::new(Some(shutdown_stream)),
             shutdown_signal: Arc::clone(&shutdown_signal),
             shutdown_flush: Arc::clone(&shutdown_flush),
+            shutdown_requested: AtomicBool::new(false),
         });
         let client_inbound = inbound.mailbox();
         let writer_outbound = Arc::clone(&outbound);
@@ -451,9 +456,10 @@ impl SessionClient {
                 if writer_shutdown_signal.load(Ordering::Relaxed) {
                     break;
                 }
+                let ends_the_server =
+                    matches!(&message, ClientOutbound::Control(ClientMessage::Shutdown));
                 let result = match message {
                     ClientOutbound::Control(message) => {
-                        let ends_the_server = matches!(message, ClientMessage::Shutdown);
                         let result = protocol::write_frame(&mut stream, &message);
                         if ends_the_server {
                             writer_shutdown_flush.signal();
@@ -479,6 +485,9 @@ impl SessionClient {
                     {
                         inbound.fail("session writer disconnected".to_string());
                     }
+                    break;
+                }
+                if ends_the_server {
                     break;
                 }
             }
@@ -817,16 +826,18 @@ impl SessionClient {
         self.send_control(ClientMessage::Detach);
     }
 
-    /// Ask the server to end the session, and block until the request is actually on the wire.
+    /// Ask the server to end the session, waiting briefly for the request to reach the wire.
     ///
     /// Every caller drops its client immediately afterwards — killing, restarting, discarding a
-    /// parked ephemeral, quitting — and that drop shuts the socket down and stops the writer
-    /// thread. Returning as soon as the frame is queued would therefore lose the race far more
-    /// often than it wins it, leaving the server running and the "killed" session reappearing in
-    /// the picker as soon as the next discovery sweep finds it.
+    /// parked ephemeral, quitting. If the writer has not run by the time this wait expires, the
+    /// final handle leaves the queued request and socket with the writer. The writer closes its
+    /// side after attempting `Shutdown`; the reader closes when the server goes away.
     pub fn shutdown(&self) {
         self.send_control(ClientMessage::Shutdown);
         if let Some(transport) = &self.transport {
+            if !self.transport_failed.load(Ordering::Acquire) {
+                transport.shutdown_requested.store(true, Ordering::Release);
+            }
             transport.shutdown_flush.wait(SHUTDOWN_FLUSH_TIMEOUT);
         }
     }
@@ -1923,5 +1934,30 @@ mod tests {
         // Dropping final clone shuts down the stream
         drop(parked_clone);
         server.join().expect("server thread finished on eof");
+    }
+
+    #[test]
+    fn dropping_final_owner_preserves_a_queued_shutdown_for_the_writer() {
+        let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));
+        outbound
+            .try_push(ClientOutbound::Control(ClientMessage::Shutdown), 0)
+            .expect("queue shutdown");
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
+        let transport = ClientTransport {
+            outbound: Arc::clone(&outbound),
+            shutdown_stream: Mutex::new(None),
+            shutdown_signal: Arc::clone(&shutdown_signal),
+            shutdown_flush: Arc::new(ShutdownFlush::new()),
+            shutdown_requested: AtomicBool::new(true),
+        };
+
+        drop(transport);
+
+        assert!(!shutdown_signal.load(Ordering::Acquire));
+        assert!(!outbound.stats().closed);
+        assert!(matches!(
+            outbound.try_pop(),
+            Some(ClientOutbound::Control(ClientMessage::Shutdown))
+        ));
     }
 }

@@ -430,9 +430,11 @@ pub enum Msg {
     },
     /// The framework painted a frame while this UI records itself.
     UiRecordingFrame(tui_lipan::PaintedFrame),
-    /// The frame-rate ceiling of UI recording `id` allows its waiting frame now.
+    /// The frame-rate ceiling of UI recording `id` allows its waiting frame now, if `revision` is
+    /// still the timer it armed.
     UiRecordingFlush {
         id: u64,
+        revision: u64,
     },
     /// Look at UI recording `id`'s deadline and writer between frames.
     UiRecordingPoll {

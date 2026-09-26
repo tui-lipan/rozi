@@ -71,8 +71,11 @@ pub struct UiRecording {
     /// The newest frame painted but not yet handed to the writer: the ceiling did not allow it
     /// yet, or the writer refused it. Written when the ceiling allows, or before a mark or the end.
     pub pending: Option<UiRecordingPending>,
-    /// A timer will write [`Self::pending`]; later frames only replace it.
-    pub flush_armed: bool,
+    /// The revision of the timer that will write [`Self::pending`]; later frames only replace it.
+    /// Writing a frame any other way disarms it, since the ceiling then counts from that frame.
+    pub armed_flush: Option<u64>,
+    /// The revision of the last flush timer armed. A timer that fires no longer armed does nothing.
+    pub flush_revision: u64,
     /// What the meta events last reported: the state of the last frame the writer took.
     pub seen: UiRecordingSeen,
     /// Started from the palette, so its start is shown as a toast.

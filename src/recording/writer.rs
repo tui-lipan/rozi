@@ -237,8 +237,10 @@ impl Recorder {
 
     /// Hand the writer a frame together with the marks and meta events that happened on it, all
     /// or nothing: either the frame is queued with `events` right after it, or nothing is. Queued
-    /// as [`Self::push_frame`] does, or [`Self::push_last_frame`] when `last`; also refused while
-    /// the events would not fit in [`QUEUE_EVENTS`].
+    /// as [`Self::push_frame`] does, or [`Self::push_last_frame`] when `last`. Refused while the
+    /// events would not fit in [`QUEUE_EVENTS`], except with the last frame: like the frame, its
+    /// events have no later moment, so they are queued past the limit, which the end that follows
+    /// keeps from happening again. The caller keeps that group small.
     #[must_use]
     pub fn push_frame_with(
         &self,
@@ -249,7 +251,8 @@ impl Recorder {
         last: bool,
     ) -> bool {
         let mut queue = self.shared.queue();
-        if queue.closed || queue.jobs.len() - queue.frames + events.len() > QUEUE_EVENTS {
+        let queued_events = queue.jobs.len() - queue.frames;
+        if queue.closed || (!last && queued_events + events.len() > QUEUE_EVENTS) {
             return false;
         }
         if !self.place_frame(

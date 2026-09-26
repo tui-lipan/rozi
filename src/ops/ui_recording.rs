@@ -231,7 +231,8 @@ fn start(
         },
         last_written: None,
         pending: None,
-        flush_armed: false,
+        armed_flush: None,
+        flush_revision: 0,
         seen: UiRecordingSeen::default(),
         from_action,
     });
@@ -281,15 +282,11 @@ pub(crate) fn frame(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update
         recording.pending = Some(pending);
     }
     let mut command = None;
-    if recording.pending.is_some() && !recording.flush_armed {
-        recording.flush_armed = true;
+    if recording.pending.is_some() && recording.armed_flush.is_none() {
         let wait = recording.last_written.map_or(interval, |last| {
             (last + interval).saturating_duration_since(painted_at)
         });
-        let id = recording.id;
-        command = Some(Command::after(wait, move |link: CommandLink<Msg>| {
-            link.send(Msg::UiRecordingFlush { id });
-        }));
+        command = Some(arm_flush(recording, wait));
     }
     if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
@@ -327,7 +324,19 @@ fn commit(
     }
     recording.seen = pending.seen.clone();
     recording.last_written = Some(at);
+    recording.armed_flush = None;
     Some(t)
+}
+
+/// A timer that writes the waiting frame after `wait`, replacing any armed before it.
+fn arm_flush(recording: &mut UiRecording, wait: Duration) -> Command {
+    recording.flush_revision = recording.flush_revision.wrapping_add(1);
+    let revision = recording.flush_revision;
+    recording.armed_flush = Some(revision);
+    let id = recording.id;
+    Command::after(wait, move |link: CommandLink<Msg>| {
+        link.send(Msg::UiRecordingFlush { id, revision });
+    })
 }
 
 fn recorder_closed(recording: &UiRecording) -> bool {
@@ -418,12 +427,17 @@ fn begin(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update {
 /// The ceiling allows the waiting frame now. It is written at the moment the ceiling allowed it,
 /// which is when the terminal was showing it. A frame the writer refused earlier that changed the
 /// meta keeps the moment it was painted, since that is when its events happened.
-pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64) -> Update {
+pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64, revision: u64) -> Update {
     let palette = palette(&ctx.state);
-    let Some(recording) = ctx.state.ui_recording.as_mut().filter(|r| r.id == id) else {
+    let Some(recording) = ctx
+        .state
+        .ui_recording
+        .as_mut()
+        .filter(|r| r.id == id && r.armed_flush == Some(revision))
+    else {
         return Update::none();
     };
-    recording.flush_armed = false;
+    recording.armed_flush = None;
     if !matches!(recording.phase, UiRecordingPhase::Running(_)) {
         return Update::none();
     }
@@ -438,10 +452,7 @@ pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64) -> Update {
     };
     if commit(recording, &pending, at, palette, |_| Vec::new(), false).is_none() {
         recording.pending = Some(pending);
-        recording.flush_armed = true;
-        return Update::command_only(Command::after(interval, move |link: CommandLink<Msg>| {
-            link.send(Msg::UiRecordingFlush { id });
-        }));
+        return Update::command_only(arm_flush(recording, interval));
     }
     if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
@@ -565,15 +576,7 @@ fn close(
 ) -> Option<(UiRecordingFile, u64)> {
     let last_shown = recording.pending.take().and_then(|pending| {
         let at = pending.painted.painted_at;
-        commit(&mut recording, &pending, at, palette, |_| Vec::new(), true).or_else(|| {
-            let UiRecordingPhase::Running(file) = &recording.phase else {
-                return None;
-            };
-            let t = frame_time(file, at);
-            file.recorder
-                .push_last_frame(t, pending.painted.frame, palette)
-                .then_some(t)
-        })
+        commit(&mut recording, &pending, at, palette, |_| Vec::new(), true)
     });
     let UiRecording {
         subscription,
@@ -967,15 +970,17 @@ mod tests {
             let latest = painted(&backend, 20, "latest");
             assert_eq!(backend.update_level(latest).unwrap(), UpdateLevel::None);
             let recording = running(&backend);
-            assert!(recording.flush_armed);
+            let revision = recording.armed_flush.expect("a flush is armed");
             assert_eq!(recording.pending.as_ref().unwrap().painted.sequence, 20);
 
             assert_eq!(
-                backend.update_level(Msg::UiRecordingFlush { id }).unwrap(),
+                backend
+                    .update_level(Msg::UiRecordingFlush { id, revision })
+                    .unwrap(),
                 UpdateLevel::None
             );
             let recording = running(&backend);
-            assert!(recording.pending.is_none() && !recording.flush_armed);
+            assert!(recording.pending.is_none() && recording.armed_flush.is_none());
             assert_eq!(
                 recording.last_written,
                 Some(first_painted(&backend) + Duration::from_millis(100))
@@ -1066,6 +1071,56 @@ mod tests {
     }
 
     #[test]
+    fn a_flush_armed_before_a_mark_wrote_its_frame_does_nothing() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("stale.rozirec");
+            let mut backend = backend();
+            started(&mut backend, &path, Some(1));
+            let id = running(&backend).id;
+            let held = painted(&backend, 900, "held");
+            backend.update_level(held).unwrap();
+            let stale = running(&backend).armed_flush.expect("a flush is armed");
+            let mark = ask(
+                &mut backend,
+                ControlCommand::RecordUiMark {
+                    label: "here".into(),
+                },
+            );
+            assert!(mark.ok, "{:?}", mark.error);
+            let written = Some(first_painted(&backend) + Duration::from_millis(900));
+            assert_eq!(running(&backend).last_written, written);
+            let next = painted(&backend, 960, "next");
+            backend.update_level(next).unwrap();
+
+            backend
+                .dispatch(Msg::UiRecordingFlush {
+                    id,
+                    revision: stale,
+                })
+                .unwrap();
+            let recording = running(&backend);
+            assert_eq!(
+                recording.pending.as_ref().map(|p| p.painted.sequence),
+                Some(960),
+                "the stale timer leaves the waiting frame alone"
+            );
+            assert_eq!(recording.last_written, written);
+            assert_ne!(recording.armed_flush, Some(stale));
+
+            stopped(&mut backend);
+            let replayed = replay(&path);
+            assert!(
+                replayed.frames.contains(&(960, "next".to_string())),
+                "{:?}",
+                replayed.frames
+            );
+            let end = replayed.end.unwrap().t;
+            assert!(end < 1900, "nothing was stamped at the next ceiling: {end}");
+        });
+    }
+
+    #[test]
     fn a_frame_the_writer_refuses_keeps_its_meta_until_it_is_written() {
         on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
@@ -1129,7 +1184,11 @@ mod tests {
             while running(&backend).pending.is_some() {
                 assert!(Instant::now() < deadline, "the frame was never written");
                 std::thread::sleep(Duration::from_millis(5));
-                backend.dispatch(Msg::UiRecordingFlush { id }).unwrap();
+                if let Some(revision) = running(&backend).armed_flush {
+                    backend
+                        .dispatch(Msg::UiRecordingFlush { id, revision })
+                        .unwrap();
+                }
             }
             assert_eq!(running(&backend).seen.overlay, Some("settings"));
             stopped(&mut backend);

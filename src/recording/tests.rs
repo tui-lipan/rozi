@@ -751,6 +751,44 @@ fn a_frame_and_the_events_on_it_are_queued_together_or_not_at_all() {
 }
 
 #[test]
+fn the_last_frame_keeps_its_events_past_a_full_event_queue() {
+    let (_dir, path) = scratch();
+    let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
+    let mut screen = TerminalScreen::new(4, 20, 100);
+    assert!(push(&recorder, 0, &screen));
+    for n in 0..writer::QUEUE_EVENTS as u64 {
+        assert!(recorder.mark(n / 100, format!("mark {n}")));
+    }
+    screen.process_bytes(b"\x1b[1;1Hsettings");
+    let meta = || {
+        vec![RecordingEvent::Meta {
+            t: 50,
+            meta: RecordingMeta::Overlay {
+                overlay: Some("settings".to_string()),
+            },
+        }]
+    };
+    assert!(
+        !recorder.push_frame_with(50, screen.capture_frame(), screen.palette(), meta(), false),
+        "a frame whose events do not fit waits"
+    );
+    assert!(
+        recorder.push_frame_with(50, screen.capture_frame(), screen.palette(), meta(), true),
+        "the last frame takes its events with it"
+    );
+    recorder.resume();
+    finish(recorder, 60, EndReason::Stopped);
+
+    let times = times(&path);
+    assert_eq!(
+        times[times.len() - 3..],
+        [(50, "frame"), (50, "meta"), (60, "end")],
+        "{:?}",
+        &times[times.len() - 5..]
+    );
+}
+
+#[test]
 fn a_queue_of_frames_each_before_an_event_refuses_another_rather_than_growing() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();

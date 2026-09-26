@@ -90,7 +90,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::recording::blink_ended(ctx, revision)
         }
         Msg::UiRecordingFrame(painted) => crate::ops::ui_recording::frame(ctx, painted),
-        Msg::UiRecordingFlush { id } => crate::ops::ui_recording::flush(ctx, id),
+        Msg::UiRecordingFlush { id, revision } => {
+            crate::ops::ui_recording::flush(ctx, id, revision)
+        }
         Msg::UiRecordingPoll { id } => crate::ops::ui_recording::poll(ctx, id),
         Msg::UiRecordingFinished { stopped, notify } => {
             crate::ops::ui_recording::finished(ctx, stopped, notify)

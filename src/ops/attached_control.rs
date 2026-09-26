@@ -2,7 +2,7 @@
 //!
 //! A recording lives in the session server, next to the pane's PTY, so `record-*` sent to a UI's
 //! control socket has nothing to act on here. Rather than refuse and send the caller off to find
-//! `--session <NAME>`, the UI passes the request down its own attachment as an
+//! `--session <NAME>`, the UI passes the request down the attachment it is about as an
 //! [`crate::session::protocol::ClientMessage::AttachedControl`] and relays the server's answer.
 //! The server keeps the decision: what it accepts on this path is its allowlist
 //! ([`crate::session::server::attached_control_refusal`]), not this module's.
@@ -15,35 +15,78 @@ use crate::AppRoot;
 use crate::control::{ControlCommand, ControlErrorCode, ControlRequest, ControlResponse};
 use crate::state::{PendingAttachedControl, State};
 
-/// Forward a `record-*` request to the session this UI is looking at.
+/// Forward a `record-*` request to the session it is about.
 ///
-/// `record-start` is pinned to one pane before it leaves: the explicit target, else the pane the
-/// caller runs in, else the focused one. The server never reads `source_pane` (it cannot tell which
-/// session a bare id came from), so the resolved id always travels as `target`.
+/// A request from a shared pane goes to that pane's own session, found by the
+/// [`crate::session::protocol::SESSION_INSTANCE_ENV`] it carries, whether this UI shows that
+/// session or holds it in the background. A request from outside rozi goes to the session on
+/// screen. A pane that cannot say which session it runs in is refused rather than guessed at.
+///
+/// `record-start` is pinned to one pane of that session before it leaves: the explicit target, else
+/// the calling pane, else the focused one. The server never reads `source_pane` (it cannot tell
+/// which session a bare id came from), so the resolved id always travels as `target`.
 pub(crate) fn forward_recording(
     ctx: &mut Context<AppRoot>,
     mut request: ControlRequest,
     reply: Sender<ControlResponse>,
 ) -> Update {
-    let refusal = if let Some(provenance) = &request.extension {
-        Some(ControlResponse::error(format!(
+    let routed = if let Some(provenance) = &request.extension {
+        Err(ControlResponse::error(format!(
             "a session server cannot check whether extension `{}` is still active, so it does not record on an extension's behalf",
             provenance.id
         )))
     } else {
-        pin_recording_target(&ctx.state, &mut request).err()
+        route(&ctx.state, &request)
+            .and_then(|epoch| pin_recording_target(&ctx.state, epoch, &mut request).map(|()| epoch))
     };
-    if let Some(response) = refusal {
-        let _ = reply.send(response);
-        return Update::none();
+    match routed {
+        Ok(epoch) => {
+            request.source_pane = None;
+            request.source_session = None;
+            send(&mut ctx.state, epoch, request, reply);
+        }
+        Err(response) => {
+            let _ = reply.send(response);
+        }
     }
-    request.source_pane = None;
-    send(&mut ctx.state, request, reply);
     Update::none()
+}
+
+/// The epoch of the attachment `request` is about: the calling pane's session, current or in the
+/// background, or the one on screen for a caller outside every session.
+fn route(state: &State, request: &ControlRequest) -> std::result::Result<u64, ControlResponse> {
+    match (&request.source_session, request.source_pane) {
+        (Some(instance), _) => std::iter::once((state.runtime_epoch, state.current()))
+            .chain(
+                state
+                    .background
+                    .iter()
+                    .map(|(&epoch, attachment)| (epoch, attachment)),
+            )
+            .find(|(_, attachment)| attachment.session_instance.as_ref() == Some(instance))
+            .map(|(epoch, _)| epoch)
+            .ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::SessionNotAttached,
+                    "the calling pane's session is not attached to this rozi; name it with --session <NAME>",
+                )
+            }),
+        // A bare id names a pane in *some* namespace. Which one is exactly what is missing, and
+        // the session on screen is only a guess: the caller may be a scratch or popup pane, or a
+        // pane of a session this UI has since switched away from.
+        (None, Some(id)) => Err(ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            format!(
+                "pane {id} does not say which session it runs in (a scratch or popup pane runs outside every session); name the session with --session <NAME>"
+            ),
+        )),
+        (None, None) => Ok(state.runtime_epoch),
+    }
 }
 
 fn pin_recording_target(
     state: &State,
+    epoch: u64,
     request: &mut ControlRequest,
 ) -> std::result::Result<(), ControlResponse> {
     let source = request.source_pane;
@@ -56,21 +99,37 @@ fn pin_recording_target(
             "foreground recording needs --session <NAME>; a UI cannot hold its caller open until the recording ends",
         ));
     }
-    let Some(id) = target.or(source).or(state.focused_pane()) else {
+    let Some(attachment) = state.attachment_for_epoch(epoch) else {
         return Err(ControlResponse::error_with(
-            ControlErrorCode::TargetRequired,
-            "no target pane and no focused pane",
+            ControlErrorCode::SessionNotAttached,
+            "this rozi is not attached to a session",
         ));
     };
-    if crate::pane::lifecycle::pane_is_local(state, id) {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::Unsupported,
-            format!(
-                "pane {id} is a scratch or popup pane, which runs outside the session and cannot be recorded"
-            ),
-        ));
-    }
-    if crate::pane::lifecycle::find_pane(state, id).is_none_or(|pane| pane.closing) {
+    let id = match target.or(source) {
+        Some(id) => id,
+        // Only a caller outside every session reaches this, and `route` sent it to the session
+        // on screen.
+        None if state.scratch_visible => {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Unsupported,
+                "the focused pane is a scratch pane, which runs outside the session and cannot be recorded",
+            ));
+        }
+        None => attachment.focused_pane.ok_or_else(|| {
+            ControlResponse::error_with(
+                ControlErrorCode::TargetRequired,
+                "no target pane and no focused pane",
+            )
+        })?,
+    };
+    // The session's own panes only. A scratch or popup pane can share this number, and is never
+    // the pane a session recording means.
+    let pane = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == id);
+    if pane.is_none_or(|pane| pane.closing) {
         return Err(ControlResponse::error_with(
             ControlErrorCode::PaneNotFound,
             format!("pane {id} not found"),
@@ -80,10 +139,13 @@ fn pin_recording_target(
     Ok(())
 }
 
-/// Send `request` down the current attachment, holding `reply` until the server answers.
-fn send(state: &mut State, request: ControlRequest, reply: Sender<ControlResponse>) {
+/// Send `request` down attachment `epoch`, holding `reply` until the server answers.
+fn send(state: &mut State, epoch: u64, request: ControlRequest, reply: Sender<ControlResponse>) {
     forget_orphans(state);
-    let Some(client) = state.current().session_client.clone() else {
+    let Some(client) = state
+        .attachment_for_epoch(epoch)
+        .and_then(|attachment| attachment.session_client.clone())
+    else {
         let _ = reply.send(ControlResponse::error_with(
             ControlErrorCode::SessionNotAttached,
             "this rozi is not attached to a session",
@@ -92,13 +154,9 @@ fn send(state: &mut State, request: ControlRequest, reply: Sender<ControlRespons
     };
     let request_id = state.next_attached_control_request_id;
     state.next_attached_control_request_id = request_id.wrapping_add(1).max(1);
-    state.pending_attached_controls.insert(
-        request_id,
-        PendingAttachedControl {
-            epoch: state.runtime_epoch,
-            reply,
-        },
-    );
+    state
+        .pending_attached_controls
+        .insert(request_id, PendingAttachedControl { epoch, reply });
     client.attached_control(request_id, request);
 }
 
@@ -164,7 +222,7 @@ mod tests {
 
     use crate::control::{ControlEnvelope, ControlRequest};
     use crate::session::client::{ClientOutbound, SessionClient};
-    use crate::session::protocol::ClientMessage;
+    use crate::session::protocol::{ClientMessage, SessionInstanceId};
 
     use super::*;
 
@@ -184,18 +242,39 @@ mod tests {
         backend: &mut TestBackend<AppRoot>,
         command: ControlCommand,
     ) -> mpsc::Receiver<ControlResponse> {
+        ask_from(backend, command, None, None)
+    }
+
+    /// Ask as a pane would: `ROZI_PANE` and `ROZI_SESSION_INSTANCE`.
+    fn ask_from(
+        backend: &mut TestBackend<AppRoot>,
+        command: ControlCommand,
+        source_pane: Option<crate::state::PaneId>,
+        source_session: Option<&str>,
+    ) -> mpsc::Receiver<ControlResponse> {
         let (reply, response) = mpsc::channel();
         backend
             .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
                 request: ControlRequest {
                     command,
-                    source_pane: None,
+                    source_pane,
+                    source_session: source_session.map(SessionInstanceId::for_test),
                     extension: None,
                 },
                 reply,
             }))
             .expect("dispatch a record request");
         response
+    }
+
+    fn attach(attachment: &mut crate::state::Attachment, client: SessionClient, instance: &str) {
+        attachment.session_attached = true;
+        attachment.session_client = Some(client);
+        attachment.session_instance = Some(SessionInstanceId::for_test(instance));
+    }
+
+    fn code(response: &mpsc::Receiver<ControlResponse>) -> Option<ControlErrorCode> {
+        response.try_recv().expect("answered at once").code
     }
 
     fn forwarded(outbound: &mpsc::Receiver<ClientOutbound>) -> Vec<(u64, ControlRequest)> {
@@ -305,6 +384,7 @@ mod tests {
                             follow: false,
                         },
                         source_pane: None,
+                        source_session: None,
                         extension: None,
                     },
                     reply,
@@ -313,6 +393,138 @@ mod tests {
             assert_eq!(
                 missing.try_recv().unwrap().code,
                 Some(ControlErrorCode::PaneNotFound)
+            );
+            assert!(forwarded(&outbound).is_empty());
+        });
+    }
+
+    /// Session A's pane 1 keeps running after the UI switches to session B, which has a pane 1 of
+    /// its own. What A's pane asks for is A's business, not whatever is on screen.
+    #[test]
+    fn a_pane_in_a_background_session_is_answered_by_its_own_session() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client_a, outbound_a) = SessionClient::test_channel();
+            let (client_b, outbound_b) = SessionClient::test_channel();
+            let (epoch_a, pane) = {
+                let state = backend.state_mut();
+                let epoch_a = state.runtime_epoch;
+                let pane = state.focused_pane().unwrap();
+                attach(state.current_mut(), client_a, "a");
+                let mut b = crate::state::fresh_default_attachment(&state.config);
+                attach(&mut b, client_b, "b");
+                state.park_current(epoch_a, b);
+                state.runtime_epoch = state.mint_attachment_id();
+                assert_eq!(state.focused_pane(), Some(pane), "B has a pane {pane} too");
+                (epoch_a, pane)
+            };
+
+            let response = ask_from(&mut backend, start(false), Some(pane), Some("a"));
+            assert!(forwarded(&outbound_b).is_empty(), "B is only on screen");
+            let [(request_id, request)] = forwarded(&outbound_a).try_into().unwrap();
+            assert!(
+                matches!(request.command, ControlCommand::RecordStart { target: Some(id), .. } if id == pane)
+            );
+            assert_eq!(request.source_session, None, "the server never reads it");
+            backend
+                .dispatch(crate::Msg::SessionAttachedControlResult {
+                    epoch: epoch_a,
+                    request_id,
+                    response: ControlResponse::empty(),
+                })
+                .unwrap();
+            assert!(response.try_recv().unwrap().ok);
+
+            let _stop = ask_from(
+                &mut backend,
+                ControlCommand::RecordStop { id: None },
+                Some(pane),
+                Some("a"),
+            );
+            assert_eq!(
+                forwarded(&outbound_a).len(),
+                1,
+                "stop follows the caller too"
+            );
+            assert!(forwarded(&outbound_b).is_empty());
+
+            let elsewhere = ask_from(
+                &mut backend,
+                ControlCommand::RecordList,
+                Some(pane),
+                Some("c"),
+            );
+            assert_eq!(code(&elsewhere), Some(ControlErrorCode::SessionNotAttached));
+            let unnamed = ask_from(&mut backend, ControlCommand::RecordList, Some(pane), None);
+            assert_eq!(
+                code(&unnamed),
+                Some(ControlErrorCode::Unsupported),
+                "a bare pane id is not guessed onto the session on screen"
+            );
+            assert!(forwarded(&outbound_a).is_empty() && forwarded(&outbound_b).is_empty());
+
+            let outside = ask(&mut backend, ControlCommand::RecordList);
+            assert!(outside.try_recv().is_err(), "held for B's answer");
+            assert_eq!(
+                forwarded(&outbound_b).len(),
+                1,
+                "no pane asking means the screen"
+            );
+        });
+    }
+
+    #[test]
+    fn a_scratch_pane_with_the_same_number_does_not_hide_the_session_pane() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            let shared = {
+                let state = backend.state_mut();
+                attach(state.current_mut(), client, "a");
+                let shared = state.focused_pane().unwrap();
+                state.scratch.panes.push(crate::state::Pane::new(
+                    shared,
+                    100,
+                    FloatRect::default(),
+                ));
+                shared
+            };
+
+            let (reply, _response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::RecordStart {
+                            target: Some(shared),
+                            output: "/tmp/pane.rozirec".into(),
+                            max_fps: None,
+                            duration_ms: None,
+                            max_bytes: None,
+                            force: false,
+                            follow: false,
+                        },
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                    },
+                    reply,
+                }))
+                .unwrap();
+            let [(_, request)] = forwarded(&outbound).try_into().unwrap();
+            assert!(
+                matches!(request.command, ControlCommand::RecordStart { target: Some(id), .. } if id == shared)
+            );
+
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                state.scratch.focused_pane = Some(shared);
+            }
+            let focused_scratch = ask(&mut backend, start(false));
+            assert_eq!(
+                code(&focused_scratch),
+                Some(ControlErrorCode::Unsupported),
+                "focus on the scratch pane is not focus on session pane {shared}"
             );
             assert!(forwarded(&outbound).is_empty());
         });

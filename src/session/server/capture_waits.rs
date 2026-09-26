@@ -196,6 +196,7 @@ mod tests {
                 }),
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         }
     }

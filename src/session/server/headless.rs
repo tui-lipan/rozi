@@ -424,11 +424,11 @@ impl SessionServer {
         // id looks exactly like an explicit `--target`, so the ambiguity check below never runs and
         // a five-pane session gets typed into silently instead of refusing.
         //
-        // Honouring it would need a session identity beside the pane id. A spawn-time
-        // `ROZI_SESSION` is the obvious shape and is not safe as written: a session can be renamed
-        // (`ClientMessage::Rename`) long after a pane's environment was fixed, and a stale value
-        // could later match a *different* session that took the old name. Until that is designed,
-        // a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
+        // A name would not do as that identity: a session can be renamed (`ClientMessage::Rename`)
+        // long after a pane's environment was fixed, and a stale name could later match a
+        // *different* session. Panes do carry `ROZI_SESSION_INSTANCE`, which a UI uses to route
+        // recording requests, but the CLI drops it for a session endpoint along with `source_pane`,
+        // so a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
             ControlCommand::ListPanes => {
                 ControlResponse::ok(PaneListPayload(self.session_pane_report()))
@@ -1769,6 +1769,7 @@ mod tests {
         ControlRequest {
             command,
             source_pane: None,
+            source_session: None,
             extension: None,
         }
     }
@@ -2986,6 +2987,7 @@ mod tests {
                     scale: None,
                 },
                 source_pane: Some(3),
+                source_session: None,
                 extension: None,
             },
         );
@@ -3108,6 +3110,7 @@ mod tests {
                 ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: Some(crate::config::ExtensionProvenance {
                         id: "git-tools".to_string(),
                         generation: "whatever-the-caller-claims".to_string(),

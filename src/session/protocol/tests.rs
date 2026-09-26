@@ -925,6 +925,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
             image_pixels: false,
         },
         source_pane: None,
+        source_session: None,
         extension: None,
     };
     let msg = ClientMessage::SessionControl {
@@ -983,6 +984,7 @@ fn attached_control_messages_round_trip_with_the_documented_wire_shape() {
         request: crate::control::ControlRequest {
             command: crate::control::ControlCommand::RecordList,
             source_pane: None,
+            source_session: None,
             extension: None,
         },
     };

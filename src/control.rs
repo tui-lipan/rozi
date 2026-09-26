@@ -28,9 +28,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
 /// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
 /// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
-/// 7 with the `spans` render and its `image_pixels`, and version 8 with the `record-*` commands and
-/// the `rozi-recording` file format.
-pub const API_SCHEMA_VERSION: u32 = 8;
+/// 7 with the `spans` render and its `image_pixels`, version 8 with the `record-*` commands and
+/// the `rozi-recording` file format, and version 9 with a request's `source_session`.
+pub const API_SCHEMA_VERSION: u32 = 9;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -107,6 +107,10 @@ pub struct ControlRequest {
     pub command: ControlCommand,
     #[serde(default)]
     pub source_pane: Option<PaneId>,
+    /// The session server `source_pane` belongs to, from the caller's `ROZI_SESSION_INSTANCE`.
+    /// Absent when the caller is not a shared pane of a session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_session: Option<crate::session::protocol::SessionInstanceId>,
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -2525,6 +2529,7 @@ mod tests {
                 action: "toggle-float".to_string(),
             },
             source_pane: Some(3),
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -2541,6 +2546,7 @@ mod tests {
         let request = ControlRequest {
             command: ControlCommand::Metrics,
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         assert_eq!(
@@ -2971,6 +2977,7 @@ mod tests {
                 image_pixels: false,
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3043,6 +3050,7 @@ mod tests {
         let switch = ControlRequest {
             command: ControlCommand::SwitchWorkspace { index: 3 },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
@@ -3054,6 +3062,7 @@ mod tests {
         let move_to = ControlRequest {
             command: ControlCommand::MoveToWorkspace { index: 4 },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
@@ -3075,6 +3084,7 @@ mod tests {
                 keep_open: Some(false),
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3093,6 +3103,7 @@ mod tests {
                 reason: Some("needs approval".into()),
             },
             source_pane: Some(3),
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3125,6 +3136,7 @@ mod tests {
                 tab: None,
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();

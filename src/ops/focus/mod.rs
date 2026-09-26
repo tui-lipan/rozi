@@ -3306,6 +3306,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::Focus { target: 10 },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -3327,6 +3328,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::Focus { target: 11 },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,

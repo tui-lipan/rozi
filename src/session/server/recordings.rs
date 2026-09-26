@@ -712,6 +712,7 @@ mod tests {
                 ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
             )
@@ -901,6 +902,7 @@ mod tests {
             ControlRequest {
                 command,
                 source_pane: None,
+                source_session: None,
                 extension: None,
             },
         );
@@ -1034,6 +1036,7 @@ mod tests {
             ControlRequest {
                 command: start(&path, None, false),
                 source_pane: None,
+                source_session: None,
                 extension: Some(crate::config::ExtensionProvenance {
                     id: "ext".into(),
                     generation: "g".into(),

@@ -2839,6 +2839,41 @@ fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str)
     }
 }
 
+/// A pane's `ROZI_PANE` means nothing without the session it counts in, and only the server can say
+/// which one that is. A local pane shares numbers with the shared panes, so it names none.
+#[test]
+fn a_shared_pane_is_told_its_session_instance_and_a_local_pane_is_told_none() {
+    let mut server = SessionServer::new_named("dev");
+    let (owner, _stream) = attach_client(&mut server);
+    let forged = || {
+        vec![(
+            protocol::SESSION_INSTANCE_ENV.to_string(),
+            "not-this-server".to_string(),
+        )]
+    };
+    for local in [false, true] {
+        let mut message = colliding_spawn(1, local, 1, "true");
+        if let ClientMessage::SpawnPane { env, .. } = &mut message {
+            *env = forged();
+        }
+        server.handle_message(owner, message);
+    }
+    let instance = |env: &[(String, String)]| {
+        env.iter()
+            .filter(|(key, _)| key == protocol::SESSION_INSTANCE_ENV)
+            .map(|(_, value)| value.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        instance(&server.panes[&1].env),
+        [server.instance_id().as_str().to_string()]
+    );
+    assert_eq!(
+        instance(&server.local_panes[&(owner, 1)].env),
+        [String::new()]
+    );
+}
+
 fn drain_pty_events(server: &mut SessionServer) {
     while let Some(event) = server.events.try_pop() {
         if let Some(outbound) = server.handle_event(event) {

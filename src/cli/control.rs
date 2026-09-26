@@ -387,6 +387,7 @@ fn ask_session_endpoint(
     // pane 3 of one session address pane 3 of another, so the field is dropped rather than left
     // for the server to ignore. A pane addressing its own session passes `--target "$ROZI_PANE"`.
     request.source_pane = None;
+    request.source_session = None;
     match crate::session::headless::run_session_control(session, request) {
         Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
         Err(err) => {
@@ -410,6 +411,7 @@ fn ask_remote_endpoint(
     // caller is sitting in, which is not the one being addressed - and here it is not even the
     // same machine.
     request.source_pane = None;
+    request.source_session = None;
     let parsed = match crate::session::remote::parse_remote_target(target) {
         Ok(parsed) => parsed,
         Err(err) => {

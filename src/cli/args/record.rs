@@ -435,18 +435,14 @@ pub(super) fn parse_size(value: &str) -> Result<u64, String> {
 /// Whether a `record` command can go to a UI, which forwards it to the session it is attached to.
 ///
 /// `record pane` cannot: it holds its caller until the recording ends, and a UI answers each
-/// request once. A relative `--output` cannot either, since the file is written on the session's
-/// host and this side cannot tell whether that host is this one.
-pub(super) fn check_ui_endpoint(command: &ControlCommand, foreground: bool) -> Result<(), String> {
+/// request once.
+///
+/// `--output` is not checked here. The file is written on the session's host, which may run
+/// another OS than this one (`C:\rec.rozirec` is relative to a Unix `Path`), so the session server
+/// alone decides whether the path is absolute.
+pub(super) fn check_ui_endpoint(foreground: bool) -> Result<(), String> {
     if foreground {
         return Err("record pane runs in the foreground and needs --session <NAME>".to_string());
-    }
-    if let ControlCommand::RecordStart { output, .. } = command
-        && std::path::Path::new(output).is_relative()
-    {
-        return Err(format!(
-            "`{output}` is relative; the recording is written on the session's host, so give an absolute --output, or use --session <NAME> to resolve it here"
-        ));
     }
     Ok(())
 }
@@ -550,9 +546,19 @@ mod tests {
         assert_eq!(control.endpoint, super::super::ControlEndpoint::Ui(None));
         assert!(parse(&["record", "stop", "--id", "2"]).is_ok());
         assert!(parse(&["record", "mark", "here"]).is_ok());
-        assert!(parse(&["record", "start", "--output", "/tmp/a.rozirec"]).is_ok());
-        let relative = parse(&["record", "start", "--output", "x"]).unwrap_err();
-        assert!(relative.contains("absolute"), "{relative}");
+        // The session's host judges the path, whatever OS this side runs: a Unix path for a Linux
+        // session from a Windows UI, a drive path for the reverse, and a relative one to refuse.
+        for output in ["/tmp/a.rozirec", r"C:\recordings\a.rozirec", "x"] {
+            let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+                parse(&["record", "start", "--output", output])
+            else {
+                panic!("expected {output} to go to the session unjudged");
+            };
+            assert!(
+                matches!(&control.request.command, ControlCommand::RecordStart { output: sent, .. } if sent == output),
+                "{output} is sent as written"
+            );
+        }
         let foreground = parse(&["record", "pane", "--output", "/tmp/a.rozirec"]).unwrap_err();
         assert!(foreground.contains("--session"), "{foreground}");
         assert!(parse(&["--session", "dev", "record", "start", "--target", "3"]).is_err());

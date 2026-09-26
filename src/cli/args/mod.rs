@@ -529,7 +529,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     } => {
                         let endpoint = control_endpoint(&cli, socket, &command)?;
                         if !endpoint.is_session() {
-                            record::check_ui_endpoint(&command, foreground)?;
+                            record::check_ui_endpoint(foreground)?;
                         }
                         Ok(ParsedCli::Record(record::control_cli(
                             endpoint,
@@ -1503,6 +1503,9 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
     control::ControlRequest {
         command,
         source_pane: std::env::var("ROZI_PANE").ok().and_then(|v| v.parse().ok()),
+        source_session: std::env::var(crate::session::protocol::SESSION_INSTANCE_ENV)
+            .ok()
+            .and_then(|v| crate::session::protocol::SessionInstanceId::from_env_value(&v)),
         extension: crate::config::provenance_from_process(),
     }
 }

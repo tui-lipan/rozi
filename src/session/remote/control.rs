@@ -187,6 +187,7 @@ mod tests {
         let request = ControlRequest {
             command: crate::control::ControlCommand::ListPanes,
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         for name in ["../escape", "dev;rm -rf /", "", "dev\npanes"] {

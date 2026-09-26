@@ -23,11 +23,30 @@ impl SessionInstanceId {
         Self(id)
     }
 
+    /// The instance a pane's [`SESSION_INSTANCE_ENV`] names. Empty means the pane is not a shared
+    /// pane of any session: a popup, or a pane of the scratch runtime.
+    pub fn from_env_value(value: &str) -> Option<Self> {
+        (!value.is_empty()).then(|| Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 }
+
+/// Names the session server a shared pane runs in, beside `ROZI_PANE`.
+///
+/// A bare pane id is only meaningful inside one session's shared namespace, and a UI holds several
+/// sessions at once once it parks attachments in the background. The server sets this itself on
+/// every spawn, so it is never stale across a rename and never matches a later server that reused
+/// the name. A pane outside the shared namespace gets it empty, which also hides a value the
+/// server process inherited from wherever it was started.
+pub const SESSION_INSTANCE_ENV: &str = "ROZI_SESSION_INSTANCE";
 
 /// Exact identity of one PTY incarnation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

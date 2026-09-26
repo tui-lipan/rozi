@@ -28,8 +28,9 @@ with `--id`, from `record list`. `record mark` labels every running recording un
 and fails for a recording that is already ending, so a mark it reports was written.
 
 From a shell inside rozi, leave out `--session`. The running rozi passes `start`, `stop`, `list`,
-and `mark` to the session it is attached to, and `start` records the pane you run it in unless you
-give `--target`:
+and `mark` to the session your pane belongs to, even after you switch to another session, and
+`start` records the pane you run it in unless you give `--target`, which names a pane of that same
+session. Run from outside rozi, the commands go to the session on screen:
 
 ```sh
 rozi record start --output ~/agent.rozirec
@@ -37,7 +38,8 @@ rozi record stop
 ```
 
 The recording still runs in the session server, so it carries on after you detach. A scratch or
-popup pane runs outside the session and cannot be recorded. A UI attached read-only can list
+popup pane runs outside the session, so it cannot be recorded, and commands run in one need
+`--session`. A UI attached read-only can list
 recordings but not start, stop, or mark one.
 
 To record only while a command runs in the foreground, use `record pane`, which always needs
@@ -99,8 +101,8 @@ The session server writes the file, so the path is on the session's host. With `
 relative `--output` is resolved against the directory you run `rozi` in. With
 `--remote HOST --session NAME`, the file is written on that host and a relative path is resolved
 against your login directory there, usually your home directory. Without `--session`, `--output`
-must be absolute, because the session rozi is attached to may be on another host. The directory
-must already exist.
+must be absolute on the session's host, which may be another machine and another OS: a Windows
+session takes `C:\…`, a Linux or macOS one `/…`. The directory must already exist.
 
 ## Limits and how a recording ends
 

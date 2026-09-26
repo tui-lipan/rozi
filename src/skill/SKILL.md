@@ -139,7 +139,9 @@ borders, overlays, and every visible pane. It needs a UI; `--session` refuses it
 To watch a pane over time rather than sample it, record it in the session server:
 `rozi --session dev record start --target <PANE_ID> --output /tmp/run.rozirec`, then
 `record mark "<label>"` at interesting moments and `record stop`. From a pane inside rozi, drop
-`--session` and give an absolute `--output`; the UI hands the request to its session. Only record
+`--session` and give an `--output` absolute on the session's host; the UI hands the request to the
+session your pane belongs to (`ROZI_SESSION_INSTANCE`), and `--target` names a pane there. A
+scratch or popup pane still needs `--session`. Only record
 when the user asked: the file holds everything the pane shows, and the pane's title shows `● rec`
 while it records.
 `rozi record export <FILE> --to png-frames <DIR>` or `--to cast <FILE>` turns it into files.

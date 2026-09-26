@@ -260,6 +260,7 @@ mod tests {
                 ControlRequest {
                     command: crate::control::ControlCommand::ListPanes,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
             )
@@ -278,6 +279,7 @@ mod tests {
             ControlRequest {
                 command: crate::control::ControlCommand::ListPanes,
                 source_pane: None,
+                source_session: None,
                 extension: None,
             },
         )

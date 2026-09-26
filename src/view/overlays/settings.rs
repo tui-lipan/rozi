@@ -938,16 +938,27 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
     }
     let body = body.child(
         hint_row()
-            .child(hint_pill(theme, "next / apply", "enter"))
+            // Enter advances from the first field and applies from the second, so the click follows
+            // whichever field has focus, as the key does.
+            .child(hint_button(
+                ctx,
+                "next / apply",
+                "enter",
+                match editor.focus {
+                    crate::state::PanePaddingField::Vertical => Msg::AdvancePanePadding,
+                    crate::state::PanePaddingField::Horizontal => Msg::SubmitPanePadding,
+                },
+            ))
             // Both keys land back in Settings whenever it is the dialog behind this one.
-            .child(hint_pill(
-                theme,
+            .child(hint_button(
+                ctx,
                 if ctx.state.show_settings {
                     "back"
                 } else {
                     "cancel"
                 },
                 "esc",
+                Msg::ClosePanePaddingEditor,
             )),
     );
     nested_action_palette_modal(ctx, "Terminal padding", SETTINGS_MAX_HEIGHT_PERCENT)

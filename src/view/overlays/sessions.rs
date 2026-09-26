@@ -315,7 +315,7 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
                     Text::new(if lost { "session lost" } else { "offline" })
                         .style(Style::new().fg(ctx.state.theme.status.warning)),
                 )
-                .child(overlay_hints(&ctx.state.theme, &actions)),
+                .child(overlay_hints(ctx, &actions)),
         );
     } else {
         modal = modal.child(
@@ -327,7 +327,7 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
                         .style(Style::new().fg(ctx.state.theme.status.warning))
                         .label_style(fg_only(&ctx.state.theme.primary)),
                 )
-                .child(overlay_hints(&ctx.state.theme, &actions)),
+                .child(overlay_hints(ctx, &actions)),
         );
     }
     modal.into()

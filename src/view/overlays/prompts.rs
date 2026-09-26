@@ -11,14 +11,25 @@ pub(super) const BACKDROP_RECESSION: f32 = 0.5;
 /// thing every dialog does, so spelling it out only crowds the hints that carry information.
 /// `submit` names the commit keys, one pill each, so a prompt with two distinct commits (capture
 /// with or without naming the session) spells out what each one does instead of a bare `submit`.
-fn prompt_hints(ctx: &Context<AppRoot>, submit: &[(&str, &str)], cancel: bool) -> Element {
+/// The `enter` pill clicks through to `submit_msg`, the message plain Enter sends; any other commit
+/// key stays a plain hint because the field alone knows what it sends.
+fn prompt_hints(
+    ctx: &Context<AppRoot>,
+    submit: &[(&str, &str)],
+    submit_msg: &Msg,
+    cancel: Option<&Msg>,
+) -> Element {
     let theme = &ctx.state.theme;
     let mut row = hint_row();
     for (label, key) in submit {
-        row = row.child(hint_pill(theme, label, key));
+        row = row.child(if *key == "enter" {
+            hint_button(ctx, label, key, submit_msg.clone())
+        } else {
+            hint_pill(theme, label, key)
+        });
     }
-    if cancel {
-        row = row.child(hint_pill(theme, "cancel", "esc"));
+    if let Some(close) = cancel {
+        row = row.child(hint_button(ctx, "cancel", "esc", close.clone()));
     }
     row.into()
 }
@@ -195,6 +206,7 @@ pub(super) fn prompt_overlay(
         .as_ref()
         .map(|document| document.scroll_down.clone());
     let close_on_key = close.clone();
+    let submit_on_click = submit.clone();
     let input = Input::bound(input_state)
         .placeholder(placeholder)
         .mask(mask)
@@ -275,7 +287,8 @@ pub(super) fn prompt_overlay(
     body = body.child(prompt_hints(
         ctx,
         submit_hints,
-        always_cancel_hint || ctx.state.overlay_return.is_none(),
+        &submit_on_click,
+        (always_cancel_hint || ctx.state.overlay_return.is_none()).then_some(&close),
     ));
 
     let mut modal = match parent_reserve_percent {

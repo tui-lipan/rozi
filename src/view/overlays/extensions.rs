@@ -172,7 +172,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     if let Some(status) = catalog_status(ctx, state) {
         body = body.child(status);
     }
-    body = body.child(overlay_hints(theme, &actions));
+    body = body.child(overlay_hints(ctx, &actions));
     Modal::new()
         .width(Length::Px(EXTENSIONS_WIDTH))
         // Content-sized and capped, with the top edge pinned so filtering shrinks it downward. The
@@ -498,7 +498,7 @@ pub(crate) fn extension_install_progress_overlay(ctx: &Context<AppRoot>) -> Elem
         .height(Length::Auto)
         .child(body)
         .child(Spacer::new().height(Length::Px(1)))
-        .child(overlay_hints(theme, &actions));
+        .child(overlay_hints(ctx, &actions));
     styled_modal(ctx, "Installing extension", EXTENSION_PROGRESS_WIDTH)
         .height(Length::Auto)
         .padding(0)
@@ -563,7 +563,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         .key(extension_detail_key());
     let content = VStack::new()
         .child(document)
-        .child(overlay_hints(&ctx.state.theme, &actions));
+        .child(overlay_hints(ctx, &actions));
     let title = format!("Extensions · {}", entry.display_name());
 
     action_palette_modal_with_width(ctx, &title, EXTENSION_DETAIL_WIDTH)
@@ -621,7 +621,7 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         .key(extension_detail_key());
     let content = VStack::new()
         .child(document)
-        .child(overlay_hints(&ctx.state.theme, &actions));
+        .child(overlay_hints(ctx, &actions));
     let title = if installed {
         format!("Extensions · {}", entry.title)
     } else {

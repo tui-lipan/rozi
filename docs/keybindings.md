@@ -35,6 +35,10 @@ and in the which-key strip.
 
 So `S` after the prefix means `Shift+S`, while `Ctrl+S` never includes `Shift`.
 
+A footer hint is also a button: clicking it does what pressing its key does, including the second
+press a destructive action asks for. Hints for moving between fields, such as `Tab` for the next
+field, are reminders only.
+
 ## Default command keys
 
 ### Panes and focus

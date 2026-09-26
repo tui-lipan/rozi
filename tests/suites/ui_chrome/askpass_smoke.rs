@@ -269,8 +269,12 @@ fn refusing_one_prompt_silences_the_retries_behind_it() {
 fn refusing_a_prompt_gives_up_on_the_host_probe() {
     on_large_stack(|| {
         let mut backend = picker_backend();
+        // `update_level` throughout, not `dispatch`: activating starts a real SSH probe of
+        // `workbox`, and `dispatch` keeps draining replies. Whenever that probe failed fast enough,
+        // its failure ended the probe before the refusal could, and the test passed or failed on
+        // the race. `update_level` never reads the reply, so only the refusal can end it.
         backend
-            .dispatch(rozi::Msg::RemotePickerHostActivate(
+            .update_level(rozi::Msg::RemotePickerHostActivate(
                 rozi::session::remote::RemoteTarget::Alias("workbox".to_string()),
             ))
             .expect("activate the host");
@@ -286,10 +290,10 @@ fn refusing_a_prompt_gives_up_on_the_host_probe() {
         );
 
         backend
-            .dispatch(prompt_msg(7, "ssh-1", "dev@workbox's password: "))
+            .update_level(prompt_msg(7, "ssh-1", "dev@workbox's password: "))
             .expect("dispatch prompt");
         backend
-            .dispatch(rozi::Msg::CancelRemoteAskpass)
+            .update_level(rozi::Msg::CancelRemoteAskpass)
             .expect("refuse");
 
         assert!(

@@ -86,6 +86,57 @@ fn recording_marker_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> 
     Some(vec![dot, Span::new(label).fg(color)])
 }
 
+/// This UI's `● REC` while `pane`'s title carries it, in the recording marker's `color` but bold and
+/// capitalised: it is the UI's own recording, the stronger of the two statuses a title can show.
+fn ui_recording_title_spans(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    color: Color,
+) -> Option<Vec<Span>> {
+    if super::ui_recording_chip(&ctx.state) != Some(super::UiRecordingChip::Title(pane.id)) {
+        return None;
+    }
+    let style = Style::new().fg(color);
+    let dot = if recording_dot_off_phase(&ctx.state) {
+        style.dim()
+    } else {
+        style
+    };
+    Some(vec![
+        Span::new(ctx.state.config.recording_icon()).style(dot),
+        Span::new(" REC").style(style.bold()),
+    ])
+}
+
+/// Append the status that ends a title row to `spans`, which hold the badge if there is one: this
+/// UI's `● REC` when the title carries it, set off from the badge by ` · `, then the pane's
+/// recording marker two spaces on. With no `● REC`, the marker follows `sep` after a badge, or
+/// `lead` when nothing precedes it, as the title mode lays it out.
+fn push_title_status(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    color: Color,
+    spans: &mut Vec<Span>,
+    lead: &'static str,
+    sep: &'static str,
+) {
+    let rec = ui_recording_title_spans(ctx, pane, color);
+    let carries = rec.is_some();
+    if let Some(rec) = rec {
+        spans.push(Span::new(if spans.is_empty() { lead } else { " · " }));
+        spans.extend(rec);
+    }
+    if let Some(marker) = recording_marker_spans(ctx, pane, color) {
+        spans.push(Span::new(match (carries, spans.is_empty()) {
+            (true, _) => "  ",
+            (false, true) => lead,
+            (false, false) => sep,
+        }));
+        spans.extend(marker);
+    }
+    spans.retain(|span| !span.content.is_empty());
+}
+
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.
 ///
 /// Kept apart from the title so the title alone truncates: the marker always shows whole at the end
@@ -98,10 +149,7 @@ fn title_trailer(
     marker: Color,
 ) -> Option<Element> {
     let mut spans: Vec<Span> = badge.into_iter().map(Span::new).collect();
-    if let Some(marker) = recording_marker_spans(ctx, pane, marker) {
-        spans.push(Span::new(" "));
-        spans.extend(marker);
-    }
+    push_title_status(ctx, pane, marker, &mut spans, " ", " ");
     (!spans.is_empty()).then(|| {
         Text::from_spans(spans)
             .style(style)
@@ -1198,12 +1246,7 @@ pub(crate) fn pane_element(
                 // The badge and the recording marker share the right label, which keeps its width
                 // while the title truncates.
                 let mut right: Vec<Span> = badge.map(Span::new).into_iter().collect();
-                if let Some(marker) = recording_marker_spans(ctx, pane, marker) {
-                    if !right.is_empty() {
-                        right.push(Span::new(" · "));
-                    }
-                    right.extend(marker);
-                }
+                push_title_status(ctx, pane, marker, &mut right, "", " · ");
                 if !right.is_empty() {
                     labels = labels.right(rich_title(right));
                 }

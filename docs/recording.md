@@ -174,8 +174,12 @@ so it never appears in the recording.
 While the UI records itself, the bar shows a `REC` chip with a blinking dot, in the theme's error
 color, just before its right-hand segments. The dot holds steady with `[animations] enabled = false`
 or `focus_chrome = false`, and `REC` is always spelled out, so the chip never depends on color
-alone. With `[pane] show_workbar = false`, or while a fullscreen pane covers the bar, the chip sits
-in the top-right corner of the screen. Unlike the pane marker, this chip is part of the recording.
+alone. A fullscreen pane covers the bar, so while one is up its title carries the indicator
+instead, after its badge: `fullscreen · ● REC`, in the error color and bold. It comes before the
+quieter `● rec elsewhere` marker of any recording the pane covers. Only with no bar and no title
+to carry it (`[pane] show_workbar = false`, or a fullscreen pane with `show_titles = false`) does
+the chip sit over the top-right corner of the screen. Unlike the pane marker, this chip is part of
+the recording.
 
 `list-panes` reports `"recording": true` for the pane, `record list` shows the file and its
 progress, and `metrics` counts recordings in its `recordings` section.

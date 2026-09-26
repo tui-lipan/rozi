@@ -1408,7 +1408,7 @@ mod tests {
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(top.trim_end().ends_with("REC"), "{top:?}");
 
-            // A fullscreen pane covers the workbar, and the chip with it, so the chip moves out.
+            // A fullscreen pane covers the workbar, so its title carries `REC` after its badge.
             backend.state_mut().config.pane.show_workbar = true;
             let mut cover = crate::state::Pane::new(9, 100, FloatRect::default());
             cover.opening = false;
@@ -1416,12 +1416,42 @@ mod tests {
             backend.state_mut().current_mut().workspaces[0]
                 .panes
                 .push(cover);
+            assert_eq!(
+                crate::view::ui_recording_chip(backend.state()),
+                Some(crate::view::UiRecordingChip::Title(9))
+            );
             backend.render();
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(
-                top.trim_end().ends_with("REC"),
-                "the fullscreen pane hides the chip: {top:?}"
+                top.trim_end()
+                    .ends_with(&format!("fullscreen · {icon} REC")),
+                "the title carries REC after its badge: {top:?}"
             );
+
+            // A recording the fullscreen pane covers keeps its own, quieter marker after `REC`.
+            let mut recorded = crate::state::Pane::new(10, 100, FloatRect::default());
+            recorded.opening = false;
+            recorded.terminal.recording = true;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .insert(0, recorded);
+            backend.render();
+            let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
+            assert!(
+                top.trim_end()
+                    .ends_with(&format!("fullscreen · {icon} REC  {icon} rec elsewhere")),
+                "{top:?}"
+            );
+
+            // With no title either, the chip falls back to the corner.
+            backend.state_mut().config.pane.show_titles = false;
+            assert_eq!(
+                crate::view::ui_recording_chip(backend.state()),
+                Some(crate::view::UiRecordingChip::Overlay)
+            );
+            backend.render();
+            let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
+            assert!(top.trim_end().ends_with("REC"), "{top:?}");
             stopped(&mut backend);
         });
     }

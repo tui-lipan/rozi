@@ -30,8 +30,10 @@ pub use widget_keys::{
     settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
     worktree_form_input_key, worktree_picker_key,
 };
+pub(crate) use workbar::{
+    UiRecordingChip, ui_recording_chip, ui_recording_label, workspace_tab_shows_recording,
+};
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
-pub(crate) use workbar::{ui_recording_label, workspace_tab_shows_recording};
 pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_active_pane_rects};
 
 use tui_lipan::prelude::*;
@@ -337,11 +339,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         );
     }
 
-    // Without a workbar to carry it, or with a fullscreen pane covering the workbar, the UI
-    // recording chip takes the top-right corner. Passthrough like the which-key layer: it is chrome
-    // and must not eat a click meant for a pane.
-    if (!ctx.state.config.pane.show_workbar
-        || fullscreen_pane(ctx.state.active_workspace_ref()).is_some())
+    // With neither a workbar nor a title to carry it, the UI recording chip takes the top-right
+    // corner. Passthrough like the which-key layer: it is chrome and must not eat a click meant for
+    // a pane.
+    if ui_recording_chip(&ctx.state) == Some(UiRecordingChip::Overlay)
         && let Some(label) = ui_recording_label(&ctx.state)
     {
         let width = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16;

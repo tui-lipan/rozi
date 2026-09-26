@@ -135,10 +135,10 @@ fn pin_recording_target(
             *target = Some(id);
         }
         ControlCommand::RecordStop { id, target }
-        | ControlCommand::RecordMark { id, target, .. } => {
-            if id.is_none() && target.is_none() {
-                *target = source;
-            }
+        | ControlCommand::RecordMark { id, target, .. }
+            if id.is_none() && target.is_none() =>
+        {
+            *target = source;
         }
         _ => {}
     }

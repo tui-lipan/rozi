@@ -1316,11 +1316,14 @@ mod tests {
             let timed = dir.path().join("timed.rozirec");
             started(&mut backend, &timed, None);
             let id = running(&backend).id;
-            let recording = backend.state_mut().ui_recording.as_mut().unwrap();
-            let deadline = Duration::from_millis(recording.duration_ms);
-            if let UiRecordingPhase::Running(file) = &mut recording.phase {
-                file.started -= deadline;
-            }
+            // The deadline comes to the recording rather than the clock going back to it: an
+            // `Instant` may not reach a day before now, as on Windows soon after boot.
+            backend
+                .state_mut()
+                .ui_recording
+                .as_mut()
+                .unwrap()
+                .duration_ms = 0;
             backend.dispatch(Msg::UiRecordingPoll { id }).unwrap();
             assert!(backend.state().ui_recording.is_none());
             let toast = wait_for_toast(&mut backend, "UI recording");

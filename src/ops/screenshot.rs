@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tui_lipan::prelude::*;
 
-use crate::pane::lifecycle::{find_pane_mut, pane_is_local};
+use crate::pane::lifecycle::find_pane_in_namespace_mut;
 use crate::pane::pty_events::{notify_error, notify_info};
 use crate::state::{ScreenshotFlash, ScreenshotTarget};
 use crate::{AppRoot, Msg};
@@ -84,15 +84,15 @@ fn job(ctx: &mut Context<AppRoot>, target: ScreenshotTarget) -> Option<Screensho
 
 /// Save the focused pane's visible screen, from this client's own copy of it.
 pub(crate) fn screenshot_pane(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(id) = ctx.state.focused_pane() else {
+    let Some((id, local)) = ctx.state.focused_pane_target() else {
         notify_error(ctx, "Screenshot failed", "No focused pane");
         return Update::full();
     };
-    let attachment = (!pane_is_local(&ctx.state, id)).then_some(ctx.state.runtime_epoch);
+    let attachment = (!local).then_some(ctx.state.runtime_epoch);
     let Some(job) = job(ctx, ScreenshotTarget::Pane { id, attachment }) else {
         return Update::full();
     };
-    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+    let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, id, local) else {
         notify_error(ctx, "Screenshot failed", format!("Pane {id} not found"));
         return Update::full();
     };
@@ -311,7 +311,17 @@ mod tests {
             let mut backend = backend_writing_to(dir.path());
             backend.state_mut().config.capture.scale = 2;
             let id = backend.state().focused_pane().expect("a focused pane");
-            let pane = find_pane_mut(backend.state_mut(), id).unwrap();
+            // A hidden scratch pane may share the focused shared pane's id; it is not the one
+            // in focus.
+            let decoy = crate::state::Pane::new(id, 100, Default::default());
+            decoy
+                .terminal
+                .with_screen_mut(|screen| screen.process_bytes(b"decoy"));
+            backend.state_mut().scratch.panes.push(decoy);
+            assert!(!backend.state().scratch_visible);
+            let pane =
+                crate::pane::lifecycle::find_pane_in_namespace_mut(backend.state_mut(), id, false)
+                    .unwrap();
             let (frame, palette) = pane.terminal.with_screen_mut(|screen| {
                 screen.process_bytes(b"photographed");
                 (screen.capture_frame(), screen.palette())

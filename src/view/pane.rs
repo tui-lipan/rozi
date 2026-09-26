@@ -1282,11 +1282,6 @@ pub(crate) fn pane_element(
     element.key(pane_window_key(id, pane.pty_generation))
 }
 
-/// Overlays this pane's screen wears this frame: hint labels, or search-match highlights.
-///
-/// Returned separately from the screen so the widget can re-apply them to whatever the screen
-/// reports at paint time. Both sources depend only on hint/search state, and a change in either
-/// already warrants a full frame of its own.
 /// How strongly this frame's screenshot flash tints pane `id`, drawn as `kind`.
 ///
 /// Popup and scratch panes share numeric ids with the attachment's panes, and a session switch
@@ -1306,6 +1301,11 @@ fn pane_screenshot_flash(state: &crate::state::State, id: PaneId, kind: PaneKind
     }
 }
 
+/// Overlays this pane's screen wears this frame: hint labels, or search-match highlights.
+///
+/// Returned separately from the screen so the widget can re-apply them to whatever the screen
+/// reports at paint time. Both sources depend only on hint/search state, and a change in either
+/// already warrants a full frame of its own.
 fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<TerminalDecoration> {
     if let Some(hints) = ctx
         .state

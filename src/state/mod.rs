@@ -888,6 +888,13 @@ impl State {
         }
     }
 
+    /// The focused pane with the namespace it was focused in: `true` for the local scratch
+    /// workspace. Resolve it with `find_pane_in_namespace`, since a hidden scratch pane may share
+    /// the focused shared pane's id.
+    pub fn focused_pane_target(&self) -> Option<(PaneId, bool)> {
+        self.focused_pane().map(|id| (id, self.scratch_visible))
+    }
+
     /// Record the focused pane in whichever workspace is currently active.
     pub fn set_focused_pane(&mut self, id: Option<PaneId>) {
         if self.scratch_visible {

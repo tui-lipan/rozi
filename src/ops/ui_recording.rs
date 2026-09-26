@@ -775,6 +775,7 @@ mod tests {
                 request: ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
                 reply,
@@ -1406,6 +1407,21 @@ mod tests {
             backend.render();
             let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
             assert!(top.trim_end().ends_with("REC"), "{top:?}");
+
+            // A fullscreen pane covers the workbar, and the chip with it, so the chip moves out.
+            backend.state_mut().config.pane.show_workbar = true;
+            let mut cover = crate::state::Pane::new(9, 100, FloatRect::default());
+            cover.opening = false;
+            cover.fullscreen = true;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(cover);
+            backend.render();
+            let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
+            assert!(
+                top.trim_end().ends_with("REC"),
+                "the fullscreen pane hides the chip: {top:?}"
+            );
             stopped(&mut backend);
         });
     }

@@ -337,9 +337,11 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         );
     }
 
-    // Without a workbar to carry it, the UI recording chip takes the top-right corner. Passthrough
-    // like the which-key layer: it is chrome and must not eat a click meant for a pane.
-    if !ctx.state.config.pane.show_workbar
+    // Without a workbar to carry it, or with a fullscreen pane covering the workbar, the UI
+    // recording chip takes the top-right corner. Passthrough like the which-key layer: it is chrome
+    // and must not eat a click meant for a pane.
+    if (!ctx.state.config.pane.show_workbar
+        || fullscreen_pane(ctx.state.active_workspace_ref()).is_some())
         && let Some(label) = ui_recording_label(&ctx.state)
     {
         let width = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16;

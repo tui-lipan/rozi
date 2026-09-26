@@ -66,7 +66,7 @@ recordings but not start, stop, or mark one.
 The pane commands appear only when the focused pane can be recorded: the UI is attached to a session, it
 is not attached read-only, and the pane is not a scratch or popup pane. **Mark pane recording…** also
 needs the pane to be recording. When the mark lands, a toast says so and the recording dot flashes,
-unless `[animations] enabled` or `focus_chrome` is off.
+unless `[animations] enabled = false` or `focus_chrome = false`.
 
 When a recording starts or stops, a toast shows the path of its file. For a session on another host
 it also names the host, because that is where the file is. A command that fails shows why.
@@ -172,10 +172,10 @@ fullscreen pane has no title or border to carry the marker, so a recording shows
 so it never appears in the recording.
 
 While the UI records itself, the bar shows a `REC` chip with a blinking dot, in the theme's error
-color, just before its right-hand segments. The dot holds steady with `[animations] enabled` or
-`focus_chrome` off, and `REC` is always spelled out, so the chip never depends on color alone. With
-`[pane] show_workbar = false`, the chip sits in the top-right corner of the screen. Unlike the pane
-marker, this chip is part of the recording.
+color, just before its right-hand segments. The dot holds steady with `[animations] enabled = false`
+or `focus_chrome = false`, and `REC` is always spelled out, so the chip never depends on color
+alone. With `[pane] show_workbar = false`, or while a fullscreen pane covers the bar, the chip sits
+in the top-right corner of the screen. Unlike the pane marker, this chip is part of the recording.
 
 `list-panes` reports `"recording": true` for the pane, `record list` shows the file and its
 progress, and `metrics` counts recordings in its `recordings` section.

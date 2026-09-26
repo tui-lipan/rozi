@@ -7,7 +7,7 @@ import { repoLinksPlugin } from "./repoLinks";
 const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
 /** What the landing page calls itself, in a tab and when shared. */
-const LANDING_TITLE = "rozi — a tiling terminal multiplexer";
+const LANDING_TITLE = "rozi - Tiling terminal multiplexer";
 
 /**
  * Indent JSON for reading, but keep any object or array that fits within

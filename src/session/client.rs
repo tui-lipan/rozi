@@ -24,9 +24,9 @@ const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// How long [`SessionClient::shutdown`] waits for the writer thread to put the request on the wire
-/// before giving up on it. Reaching this means the socket is wedged, not that the frame is slow: a
-/// local write is microseconds.
-const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+/// before giving up on it. The write itself is small, but a busy machine can leave the writer
+/// thread unscheduled long enough that dropping the client would discard the queued shutdown.
+const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Inbound silence after which the client treats the link as dropped. Matches
 /// `session::server::DEFAULT_HEARTBEAT_TIMEOUT` so both ends agree. Wall-clock time catches a
 /// suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe; monotonic time still fires

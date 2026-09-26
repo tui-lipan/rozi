@@ -421,6 +421,13 @@ pub enum Msg {
     ScreenshotFailed {
         error: String,
     },
+    CloseRecordingMark,
+    RecordingMarkChanged(InputEvent),
+    SubmitRecordingMark,
+    /// A mark's blink on the recording dot is over, unless a later mark restarted it.
+    RecordingMarkBlinkEnded {
+        revision: u64,
+    },
     HoverPane(PaneId, KeyMods),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),

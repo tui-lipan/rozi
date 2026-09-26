@@ -83,6 +83,9 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     match action {
         Action::OpenSearch => request_search_focus(ctx),
         Action::RenamePane => request_rename_focus(ctx),
+        Action::MarkPaneRecording if ctx.state.recording_mark.is_some() => {
+            crate::ops::focus::request_recording_mark_focus(ctx)
+        }
         Action::RenameWorkspace | Action::RenameSession => request_rename_session_focus(ctx),
         Action::OpenSettings
         | Action::OpenExtensions

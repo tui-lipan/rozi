@@ -13,7 +13,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::control::{ControlCommand, ControlErrorCode, ControlRequest, ControlResponse};
-use crate::state::{PendingAttachedControl, State};
+use crate::state::{AttachedReply, PendingAttachedControl, State};
 
 /// Forward a `record-*` request to the session it is about.
 ///
@@ -22,9 +22,9 @@ use crate::state::{PendingAttachedControl, State};
 /// session or holds it in the background. A request from outside rozi goes to the session on
 /// screen. A pane that cannot say which session it runs in is refused rather than guessed at.
 ///
-/// `record-start` is pinned to one pane of that session before it leaves: the explicit target, else
-/// the calling pane, else the focused one. The server never reads `source_pane` (it cannot tell
-/// which session a bare id came from), so the resolved id always travels as `target`.
+/// `record-start` is pinned to the explicit target, the calling pane, or the focused pane of
+/// that session. `record-stop` and `record-mark` without an id or target use the calling pane.
+/// The server never reads `source_pane`, so a resolved pane id travels as `target`.
 pub(crate) fn forward_recording(
     ctx: &mut Context<AppRoot>,
     mut request: ControlRequest,
@@ -43,7 +43,7 @@ pub(crate) fn forward_recording(
         Ok(epoch) => {
             request.source_pane = None;
             request.source_session = None;
-            send(&mut ctx.state, epoch, request, reply);
+            send_to_epoch(ctx, epoch, request, AttachedReply::Control(reply));
         }
         Err(response) => {
             let _ = reply.send(response);
@@ -90,66 +90,89 @@ fn pin_recording_target(
     request: &mut ControlRequest,
 ) -> std::result::Result<(), ControlResponse> {
     let source = request.source_pane;
-    let ControlCommand::RecordStart { target, follow, .. } = &mut request.command else {
-        return Ok(());
-    };
-    if *follow {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::InvalidArgument,
-            "foreground recording needs --session <NAME>; a UI cannot hold its caller open until the recording ends",
-        ));
-    }
-    let Some(attachment) = state.attachment_for_epoch(epoch) else {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::SessionNotAttached,
-            "this rozi is not attached to a session",
-        ));
-    };
-    let id = match target.or(source) {
-        Some(id) => id,
-        // Only a caller outside every session reaches this, and `route` sent it to the session
-        // on screen.
-        None if state.scratch_visible => {
-            return Err(ControlResponse::error_with(
-                ControlErrorCode::Unsupported,
-                "the focused pane is a scratch pane, which runs outside the session and cannot be recorded",
-            ));
+    match &mut request.command {
+        ControlCommand::RecordStart { target, follow, .. } => {
+            if *follow {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    "foreground recording needs --session <NAME>; a UI cannot hold its caller open until the recording ends",
+                ));
+            }
+            let Some(attachment) = state.attachment_for_epoch(epoch) else {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::SessionNotAttached,
+                    "this rozi is not attached to a session",
+                ));
+            };
+            let id = match target.or(source) {
+                Some(id) => id,
+                // A caller outside every session uses the pane focused in this attachment.
+                None if state.scratch_visible => {
+                    return Err(ControlResponse::error_with(
+                        ControlErrorCode::Unsupported,
+                        "the focused pane is a scratch pane, which runs outside the session and cannot be recorded",
+                    ));
+                }
+                None => attachment.focused_pane.ok_or_else(|| {
+                    ControlResponse::error_with(
+                        ControlErrorCode::TargetRequired,
+                        "no target pane and no focused pane",
+                    )
+                })?,
+            };
+            // A session pane can share its number with a scratch or popup pane.
+            let pane = attachment
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.panes.iter())
+                .find(|pane| pane.id == id);
+            if pane.is_none_or(|pane| pane.closing) {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::PaneNotFound,
+                    format!("pane {id} not found"),
+                ));
+            }
+            *target = Some(id);
         }
-        None => attachment.focused_pane.ok_or_else(|| {
-            ControlResponse::error_with(
-                ControlErrorCode::TargetRequired,
-                "no target pane and no focused pane",
-            )
-        })?,
-    };
-    // The session's own panes only. A scratch or popup pane can share this number, and is never
-    // the pane a session recording means.
-    let pane = attachment
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.panes.iter())
-        .find(|pane| pane.id == id);
-    if pane.is_none_or(|pane| pane.closing) {
-        return Err(ControlResponse::error_with(
-            ControlErrorCode::PaneNotFound,
-            format!("pane {id} not found"),
-        ));
+        ControlCommand::RecordStop { id, target }
+        | ControlCommand::RecordMark { id, target, .. } => {
+            if id.is_none() && target.is_none() {
+                *target = source;
+            }
+        }
+        _ => {}
     }
-    *target = Some(id);
     Ok(())
 }
 
-/// Send `request` down attachment `epoch`, holding `reply` until the server answers.
-fn send(state: &mut State, epoch: u64, request: ControlRequest, reply: Sender<ControlResponse>) {
+/// Send a UI action down the current attachment, holding its reply for on-screen feedback.
+pub(crate) fn send(ctx: &mut Context<AppRoot>, request: ControlRequest, reply: AttachedReply) {
+    let epoch = ctx.state.runtime_epoch;
+    send_to_epoch(ctx, epoch, request, reply);
+}
+
+/// Send a request down attachment `epoch`, holding its reply until the server answers.
+fn send_to_epoch(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    request: ControlRequest,
+    reply: AttachedReply,
+) {
+    let state = &mut ctx.state;
     forget_orphans(state);
     let Some(client) = state
         .attachment_for_epoch(epoch)
         .and_then(|attachment| attachment.session_client.clone())
     else {
-        let _ = reply.send(ControlResponse::error_with(
-            ControlErrorCode::SessionNotAttached,
-            "this rozi is not attached to a session",
-        ));
+        answer(
+            ctx,
+            epoch,
+            reply,
+            ControlResponse::error_with(
+                ControlErrorCode::SessionNotAttached,
+                "this rozi is not attached to a session",
+            ),
+        );
         return;
     };
     let request_id = state.next_attached_control_request_id;
@@ -174,12 +197,32 @@ pub(crate) fn result(
         .is_some_and(|pending| pending.epoch == epoch)
         && let Some(pending) = state.pending_attached_controls.remove(&request_id)
     {
-        let _ = pending.reply.send(response);
+        return answer(ctx, epoch, pending.reply, response);
     }
     Update::none()
 }
 
+fn answer(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    reply: AttachedReply,
+    response: ControlResponse,
+) -> Update {
+    match reply {
+        AttachedReply::Control(reply) => {
+            let _ = reply.send(response);
+            Update::none()
+        }
+        AttachedReply::Action(action) => {
+            crate::ops::recording::answered(ctx, epoch, action, response)
+        }
+    }
+}
+
 /// Answer every request still waiting on attachment `epoch`, which will now never reply.
+///
+/// This UI's own recording commands go unanswered: the attachment ending says more on screen than
+/// a toast per command lost with it.
 pub(crate) fn fail_epoch(state: &mut State, epoch: u64, message: &str) {
     let ended = state
         .pending_attached_controls
@@ -187,8 +230,12 @@ pub(crate) fn fail_epoch(state: &mut State, epoch: u64, message: &str) {
         .filter_map(|(&id, pending)| (pending.epoch == epoch).then_some(id))
         .collect::<Vec<_>>();
     for id in ended {
-        if let Some(pending) = state.pending_attached_controls.remove(&id) {
-            let _ = pending.reply.send(ControlResponse::error_with(
+        if let Some(PendingAttachedControl {
+            reply: AttachedReply::Control(reply),
+            ..
+        }) = state.pending_attached_controls.remove(&id)
+        {
+            let _ = reply.send(ControlResponse::error_with(
                 ControlErrorCode::SessionNotConnected,
                 message,
             ));
@@ -229,7 +276,7 @@ mod tests {
     fn start(follow: bool) -> ControlCommand {
         ControlCommand::RecordStart {
             target: None,
-            output: "/tmp/pane.rozirec".into(),
+            output: Some("/tmp/pane.rozirec".into()),
             max_fps: None,
             duration_ms: None,
             max_bytes: None,
@@ -332,7 +379,13 @@ mod tests {
             backend.dispatch(answer(epoch, request_id)).unwrap();
             assert!(response.try_recv().unwrap().ok);
 
-            let stop = ask(&mut backend, ControlCommand::RecordStop { id: None });
+            let stop = ask(
+                &mut backend,
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                },
+            );
             assert_eq!(forwarded(&outbound).len(), 1);
             backend
                 .dispatch(crate::Msg::SessionDisconnected {
@@ -346,6 +399,60 @@ mod tests {
                 "a dropped session answers what it left pending"
             );
             assert!(backend.state().pending_attached_controls.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_stop_or_a_mark_run_inside_a_pane_names_that_pane() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                attach(state.current_mut(), client, "a");
+            }
+            let from_pane = |command| {
+                crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command,
+                        source_pane: Some(7),
+                        source_session: Some(SessionInstanceId::for_test("a")),
+                        extension: None,
+                    },
+                    reply: mpsc::channel().0,
+                })
+            };
+            let commands = [
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                },
+                ControlCommand::RecordMark {
+                    label: "x".into(),
+                    id: None,
+                    target: None,
+                },
+                ControlCommand::RecordStop {
+                    id: Some(3),
+                    target: None,
+                },
+            ];
+            for command in commands {
+                backend.dispatch(from_pane(command)).unwrap();
+            }
+            let targets = forwarded(&outbound)
+                .into_iter()
+                .map(|(_, request)| match request.command {
+                    ControlCommand::RecordStop { id, target }
+                    | ControlCommand::RecordMark { id, target, .. } => (id, target),
+                    other => panic!("unexpected {other:?}"),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                targets,
+                [(None, Some(7)), (None, Some(7)), (Some(3), None)],
+                "a named recording is not narrowed to the caller's pane"
+            );
         });
     }
 
@@ -376,7 +483,7 @@ mod tests {
                     request: ControlRequest {
                         command: ControlCommand::RecordStart {
                             target: Some(999),
-                            output: "/tmp/pane.rozirec".into(),
+                            output: Some("/tmp/pane.rozirec".into()),
                             max_fps: None,
                             duration_ms: None,
                             max_bytes: None,
@@ -437,7 +544,10 @@ mod tests {
 
             let _stop = ask_from(
                 &mut backend,
-                ControlCommand::RecordStop { id: None },
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                },
                 Some(pane),
                 Some("a"),
             );
@@ -496,7 +606,7 @@ mod tests {
                     request: ControlRequest {
                         command: ControlCommand::RecordStart {
                             target: Some(shared),
-                            output: "/tmp/pane.rozirec".into(),
+                            output: Some("/tmp/pane.rozirec".into()),
                             max_fps: None,
                             duration_ms: None,
                             max_bytes: None,

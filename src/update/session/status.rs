@@ -175,12 +175,14 @@ pub(crate) fn pane_runtime_changed(
     let mut title = None;
     let mut reported_status = None;
     let mut finished_rows = Vec::new();
+    let mut recording_changed = false;
     if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
     {
         title = Some(pane.display_title(None));
         pane.agent_refs = agent_refs;
+        recording_changed = pane.terminal.recording != state.recording;
         let applied = apply_pane_runtime_state(pane, state);
         reported_status = applied.current_status.clone();
         finished_rows = applied.finished_rows;
@@ -192,6 +194,10 @@ pub(crate) fn pane_runtime_changed(
                 title.clone().expect("matched pane has a title"),
             ));
         }
+    }
+    if recording_changed {
+        // Start/Stop pane recording reads as the focused pane's flag, and Mark needs it set.
+        ctx.state.commands_dirty = true;
     }
     if let Some((previous, current, _title)) = transition {
         crate::events::emit_with_controller_hooks(

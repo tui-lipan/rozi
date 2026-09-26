@@ -1634,7 +1634,7 @@
           "type": "object"
         },
         {
-          "description": "Start recording a pane's screen to `output`, a file on the session server's host. Served by\na session server only: it records the pane's canonical screen with or without a UI.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes.",
+          "description": "Start recording a pane's screen to a file on the session server's host. Served by a session\nserver, which records the pane's canonical screen with or without a UI; a UI forwards it.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes. Limits left out come from the server's\n`[recording]` config.",
           "properties": {
             "cmd": {
               "const": "record-start",
@@ -1672,8 +1672,11 @@
               ]
             },
             "output": {
-              "description": "An absolute path. The CLI resolves a relative one against its working directory.",
-              "type": "string"
+              "description": "An absolute path. The CLI resolves a relative one against its working directory. Left\nout, the server names a new file in `[recording] dir`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "target": {
               "default": null,
@@ -1686,13 +1689,12 @@
             }
           },
           "required": [
-            "cmd",
-            "output"
+            "cmd"
           ],
           "type": "object"
         },
         {
-          "description": "Stop a recording and answer once its file is complete. `id` may be left out when only one\nrecording is running.",
+          "description": "Stop recordings and answer once every file is complete: recording `id`, or every recording\nof pane `target`, or, with neither, the only recording running.",
           "properties": {
             "cmd": {
               "const": "record-stop",
@@ -1700,6 +1702,14 @@
             },
             "id": {
               "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
               "minimum": 0,
               "type": [
                 "integer",
@@ -1726,7 +1736,7 @@
           "type": "object"
         },
         {
-          "description": "Add a labelled mark to a recording, or to every running recording when `id` is left out.",
+          "description": "Add a labelled mark to recording `id`, or to every recording of pane `target`, or, with\nneither, to every running recording.",
           "properties": {
             "cmd": {
               "const": "record-mark",
@@ -1742,6 +1752,14 @@
             },
             "label": {
               "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2843,7 +2861,7 @@
           "type": "object"
         },
         {
-          "description": "Start recording a pane's screen to `output`, a file on the session server's host. Served by\na session server only: it records the pane's canonical screen with or without a UI.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes.",
+          "description": "Start recording a pane's screen to a file on the session server's host. Served by a session\nserver, which records the pane's canonical screen with or without a UI; a UI forwards it.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes. Limits left out come from the server's\n`[recording]` config.",
           "properties": {
             "cmd": {
               "const": "record-start",
@@ -2881,8 +2899,11 @@
               ]
             },
             "output": {
-              "description": "An absolute path. The CLI resolves a relative one against its working directory.",
-              "type": "string"
+              "description": "An absolute path. The CLI resolves a relative one against its working directory. Left\nout, the server names a new file in `[recording] dir`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "target": {
               "default": null,
@@ -2895,13 +2916,12 @@
             }
           },
           "required": [
-            "cmd",
-            "output"
+            "cmd"
           ],
           "type": "object"
         },
         {
-          "description": "Stop a recording and answer once its file is complete. `id` may be left out when only one\nrecording is running.",
+          "description": "Stop recordings and answer once every file is complete: recording `id`, or every recording\nof pane `target`, or, with neither, the only recording running.",
           "properties": {
             "cmd": {
               "const": "record-stop",
@@ -2909,6 +2929,14 @@
             },
             "id": {
               "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "format": "uint32",
               "minimum": 0,
               "type": [
                 "integer",
@@ -2935,7 +2963,7 @@
           "type": "object"
         },
         {
-          "description": "Add a labelled mark to a recording, or to every running recording when `id` is left out.",
+          "description": "Add a labelled mark to recording `id`, or to every recording of pane `target`, or, with\nneither, to every running recording.",
           "properties": {
             "cmd": {
               "const": "record-mark",
@@ -2951,6 +2979,14 @@
             },
             "label": {
               "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "required": [
@@ -4669,6 +4705,21 @@
       ],
       "type": "object"
     },
+    "RecordingStopList": {
+      "description": "What `record-stop` answers with: every recording it stopped, in id order.",
+      "properties": {
+        "stopped": {
+          "items": {
+            "$ref": "#/$defs/RecordingStopped"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "stopped"
+      ],
+      "type": "object"
+    },
     "RecordingStopped": {
       "description": "A finished recording, as `record-stop` and a followed `record-start` report it.",
       "properties": {
@@ -5507,5 +5558,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 9
+  "x-rozi-schema-version": 10
 }

@@ -1242,6 +1242,7 @@ pub struct Config {
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
     pub logging: LoggingConfig,
     pub capture: CaptureConfig,
+    pub recording: RecordingConfig,
     pub workbar: WorkbarConfig,
     /// `[keys]` action and named-command entries as written. The source of truth for anything that
     /// edits bindings; see [`crate::config::BindingExpr`].
@@ -1340,6 +1341,28 @@ impl Default for CaptureConfig {
         Self {
             dir: None,
             scale: 1,
+        }
+    }
+}
+
+/// `[recording]`: what a pane recording uses when its request leaves something out. Read by the
+/// session server that records, on its own host, when each recording starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordingConfig {
+    /// `None` writes into `recordings` in the state directory.
+    pub dir: Option<PathBuf>,
+    pub max_fps: u32,
+    pub duration_ms: u64,
+    pub max_bytes: u64,
+}
+
+impl Default for RecordingConfig {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            max_fps: crate::control::DEFAULT_RECORDING_MAX_FPS,
+            duration_ms: crate::control::DEFAULT_RECORDING_DURATION_MS,
+            max_bytes: crate::control::DEFAULT_RECORDING_MAX_BYTES,
         }
     }
 }
@@ -1929,6 +1952,7 @@ impl Default for Config {
             extension_runtime: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             capture: CaptureConfig::default(),
+            recording: RecordingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_sources: HashMap::new(),
             key_overrides: HashMap::new(),

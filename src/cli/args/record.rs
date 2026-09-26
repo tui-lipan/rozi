@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::control::ControlCommand;
 use crate::recording::export::CONCAT_LISTING;
 use crate::recording::play::Seek;
+use crate::recording::units::{parse_duration_ms, parse_size};
 
 use super::{ControlCli, ListFormat, control_request, parse_list_format, require_value};
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
@@ -27,16 +28,19 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                pane needs --session <NAME>. export and play read a file here.",
         rows: &[
             row(
-                "start [pane] --target <PANE> --output <FILE>",
+                "start [pane] [--target <PANE>] [--output <FILE>]",
                 "Start recording a pane",
             ),
             row(
-                "pane --target <PANE> --output <FILE>",
+                "pane --target <PANE> [--output <FILE>]",
                 "Record until Ctrl-C",
             ),
             row("list [--format text|json]", "List running recordings"),
-            row("mark <TEXT> [--id <ID>]", "Label this moment"),
-            row("stop [--id <ID>]", "Stop a recording"),
+            row(
+                "mark <TEXT> [--id <ID> | --target <PANE>]",
+                "Label this moment",
+            ),
+            row("stop [--id <ID> | --target <PANE>]", "Stop recordings"),
             row(
                 "export <FILE> --to png-frames <DIR>",
                 "PNG frames and an ffmpeg listing",
@@ -53,19 +57,22 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("    --target <PANE>", "The pane to record"),
+            row("    --target <PANE>", "The pane to record, stop, or mark"),
             row(
                 "    --output <FILE>",
-                "Where to write, on the session's host",
+                "The file, on the session's host ([recording] dir)",
             ),
-            row("    --max-fps <N>", "Frame-rate ceiling, 1 to 120 (30)"),
+            row(
+                "    --max-fps <N>",
+                "Frame-rate cap, 1 to 120 ([recording] max_fps)",
+            ),
             row(
                 "    --duration <DUR>",
-                "Stop after this long, such as 8h (24h)",
+                "Stop after this long ([recording] duration)",
             ),
             row(
                 "    --max-bytes <SIZE>",
-                "Stop at this size, such as 512MiB (1GiB)",
+                "Stop at this size ([recording] max_bytes)",
             ),
             row("    --force", "Replace an existing file"),
             row("    --id <ID>", "A recording, from record list"),
@@ -171,7 +178,7 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
         }
         "mark" => {
             let mut iter = rest.into_iter();
-            let (mut label, mut id) = (None, None);
+            let (mut label, mut id, mut target) = (None, None, None);
             while let Some(arg) = iter.next() {
                 match arg.as_str() {
                     "--id" => {
@@ -180,6 +187,7 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
                             "--id requires a recording id",
                         )?)?)
                     }
+                    "--target" => target = Some(parse_target(&mut iter)?),
                     "--" => label = iter.next(),
                     _ if label.is_none() && !arg.starts_with("--") => label = Some(arg),
                     other => {
@@ -188,15 +196,16 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
                 }
             }
             let label = label.ok_or_else(|| "record mark requires a label".to_string())?;
+            one_selector(id, target)?;
             Ok(RecordArgs::Control {
-                command: ControlCommand::RecordMark { label, id },
+                command: ControlCommand::RecordMark { label, id, target },
                 output_format: None,
                 foreground: false,
             })
         }
         "stop" => {
             let mut iter = rest.into_iter();
-            let mut id = None;
+            let (mut id, mut target) = (None, None);
             while let Some(arg) = iter.next() {
                 match arg.as_str() {
                     "--id" => {
@@ -205,13 +214,15 @@ pub(super) fn parse(args: Vec<String>) -> Result<RecordArgs, String> {
                             "--id requires a recording id",
                         )?)?)
                     }
+                    "--target" => target = Some(parse_target(&mut iter)?),
                     other => {
                         return Err(format!("unexpected argument `{other}` after record stop"));
                     }
                 }
             }
+            one_selector(id, target)?;
             Ok(RecordArgs::Control {
-                command: ControlCommand::RecordStop { id },
+                command: ControlCommand::RecordStop { id, target },
                 output_format: None,
                 foreground: false,
             })
@@ -236,14 +247,7 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
         (None, None, None, None, None, false);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--target" => {
-                let value = require_value(&mut iter, "--target requires a pane id")?;
-                target = Some(
-                    value
-                        .parse()
-                        .map_err(|_| "--target requires a numeric pane id".to_string())?,
-                );
-            }
+            "--target" => target = Some(parse_target(&mut iter)?),
             "--output" | "-o" => {
                 output = Some(require_value(&mut iter, "--output requires a file")?)
             }
@@ -259,7 +263,7 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
             }
             "--duration" => {
                 let value = require_value(&mut iter, "--duration requires a duration such as 8h")?;
-                duration_ms = Some(parse_long_duration(&value)?);
+                duration_ms = Some(parse_duration_ms(&value)?);
             }
             "--max-bytes" => {
                 let value = require_value(&mut iter, "--max-bytes requires a size such as 512MiB")?;
@@ -269,7 +273,11 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
             other => return Err(format!("unexpected argument `{other}` after {name}")),
         }
     }
-    let output = output.ok_or_else(|| format!("{name} requires --output <FILE>"))?;
+    if force && output.is_none() {
+        return Err(format!(
+            "{name} --force replaces the file --output names; a file the session names is always new"
+        ));
+    }
     Ok(RecordArgs::Control {
         command: ControlCommand::RecordStart {
             target,
@@ -350,7 +358,7 @@ fn parse_play(args: Vec<String>) -> Result<RecordCli, String> {
             "--from" => {
                 let value =
                     require_value(&mut iter, "--from requires a mark or a time such as 1m30s")?;
-                from = Some(match parse_long_duration(&value) {
+                from = Some(match parse_duration_ms(&value) {
                     Ok(ms) => Seek::Time(ms),
                     Err(_) => Seek::Mark(value),
                 });
@@ -366,70 +374,23 @@ fn parse_play(args: Vec<String>) -> Result<RecordCli, String> {
     })
 }
 
+fn parse_target(iter: &mut impl Iterator<Item = String>) -> Result<u32, String> {
+    require_value(iter, "--target requires a pane id")?
+        .parse()
+        .map_err(|_| "--target requires a numeric pane id".to_string())
+}
+
+fn one_selector(id: Option<u64>, target: Option<u32>) -> Result<(), String> {
+    if id.is_some() && target.is_some() {
+        return Err("name a recording with --id or a pane with --target, not both".to_string());
+    }
+    Ok(())
+}
+
 fn parse_id(value: &str) -> Result<u64, String> {
     value
         .parse()
         .map_err(|_| "--id requires a numeric recording id".to_string())
-}
-
-/// A duration such as `90s`, `30m`, `8h`, `1h30m`, or `2d`, in milliseconds. A bare number is
-/// seconds.
-pub(super) fn parse_long_duration(value: &str) -> Result<u64, String> {
-    let invalid = || format!("`{value}` is not a duration such as 30s, 8h, or 1h30m");
-    if let Ok(seconds) = value.parse::<u64>() {
-        return seconds.checked_mul(1_000).ok_or_else(invalid);
-    }
-    let mut total: u64 = 0;
-    let mut rest = value;
-    if rest.is_empty() {
-        return Err(invalid());
-    }
-    while !rest.is_empty() {
-        let digits = rest
-            .find(|c: char| !c.is_ascii_digit())
-            .ok_or_else(invalid)?;
-        if digits == 0 {
-            return Err(invalid());
-        }
-        let number: u64 = rest[..digits].parse().map_err(|_| invalid())?;
-        rest = &rest[digits..];
-        let (unit, multiplier) = [
-            ("ms", 1),
-            ("s", 1_000),
-            ("m", 60_000),
-            ("h", 3_600_000),
-            ("d", 86_400_000),
-        ]
-        .into_iter()
-        .find(|(unit, _)| rest.starts_with(unit) && !(*unit == "m" && rest.starts_with("ms")))
-        .ok_or_else(invalid)?;
-        rest = &rest[unit.len()..];
-        total = number
-            .checked_mul(multiplier)
-            .and_then(|ms| total.checked_add(ms))
-            .ok_or_else(invalid)?;
-    }
-    Ok(total)
-}
-
-/// A size such as `512MiB`, `1GiB`, `100MB`, or a byte count. `K`, `M`, and `G` alone are binary.
-pub(super) fn parse_size(value: &str) -> Result<u64, String> {
-    let invalid = || format!("`{value}` is not a size such as 512MiB or 1GiB");
-    let digits = value
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(value.len());
-    let number: u64 = value[..digits].parse().map_err(|_| invalid())?;
-    let multiplier: u64 = match value[digits..].trim() {
-        "" | "B" => 1,
-        "K" | "KiB" => 1 << 10,
-        "M" | "MiB" => 1 << 20,
-        "G" | "GiB" => 1 << 30,
-        "KB" => 1_000,
-        "MB" => 1_000_000,
-        "GB" => 1_000_000_000,
-        _ => return Err(invalid()),
-    };
-    number.checked_mul(multiplier).ok_or_else(invalid)
 }
 
 /// Whether a `record` command can go to a UI, which forwards it to the session it is attached to.
@@ -508,7 +469,7 @@ mod tests {
             control.request.command,
             ControlCommand::RecordStart {
                 target: Some(3),
-                output: "a.rozirec".into(),
+                output: Some("a.rozirec".into()),
                 max_fps: Some(10),
                 duration_ms: Some(8 * 3_600_000),
                 max_bytes: Some(512 << 20),
@@ -555,13 +516,54 @@ mod tests {
                 panic!("expected {output} to go to the session unjudged");
             };
             assert!(
-                matches!(&control.request.command, ControlCommand::RecordStart { output: sent, .. } if sent == output),
+                matches!(&control.request.command, ControlCommand::RecordStart { output: sent, .. } if sent.as_deref() == Some(output)),
                 "{output} is sent as written"
             );
         }
         let foreground = parse(&["record", "pane", "--output", "/tmp/a.rozirec"]).unwrap_err();
         assert!(foreground.contains("--session"), "{foreground}");
-        assert!(parse(&["--session", "dev", "record", "start", "--target", "3"]).is_err());
+        let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+            parse(&["--session", "dev", "record", "start", "--target", "3"])
+        else {
+            panic!("expected a start the session names a file for");
+        };
+        assert!(matches!(
+            control.request.command,
+            ControlCommand::RecordStart { output: None, .. }
+        ));
+        assert!(parse(&["--session", "dev", "record", "start", "--force"]).is_err());
+
+        for (args, command) in [
+            (
+                &["record", "stop", "--target", "3"][..],
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: Some(3),
+                },
+            ),
+            (
+                &["record", "mark", "built", "--target", "3"][..],
+                ControlCommand::RecordMark {
+                    label: "built".into(),
+                    id: None,
+                    target: Some(3),
+                },
+            ),
+        ] {
+            let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+                parse(args)
+            else {
+                panic!("expected {args:?} to parse");
+            };
+            assert_eq!(control.request.command, command);
+        }
+        for args in [
+            &["record", "stop", "--id", "1", "--target", "3"][..],
+            &["record", "mark", "x", "--target", "3", "--id", "1"][..],
+        ] {
+            let both = parse(args).unwrap_err();
+            assert!(both.contains("not both"), "{both}");
+        }
 
         let Ok(super::super::ParsedCli::Record(export)) = parse(&[
             "record",
@@ -617,22 +619,5 @@ mod tests {
                 from: Some(Seek::Mark("tests started".into())),
             }
         );
-    }
-
-    #[test]
-    fn durations_and_sizes_read_the_way_people_write_them() {
-        assert_eq!(parse_long_duration("8h"), Ok(8 * 3_600_000));
-        assert_eq!(parse_long_duration("1h30m"), Ok(90 * 60_000));
-        assert_eq!(parse_long_duration("500ms"), Ok(500));
-        assert_eq!(parse_long_duration("2d"), Ok(2 * 86_400_000));
-        assert_eq!(parse_long_duration("90"), Ok(90_000));
-        for bad in ["", "h", "8x", "1.5h", "-1s"] {
-            assert!(parse_long_duration(bad).is_err(), "{bad}");
-        }
-        assert_eq!(parse_size("512MiB"), Ok(512 << 20));
-        assert_eq!(parse_size("1GiB"), Ok(1 << 30));
-        assert_eq!(parse_size("100MB"), Ok(100_000_000));
-        assert_eq!(parse_size("4096"), Ok(4096));
-        assert!(parse_size("1TB").is_err() && parse_size("MiB").is_err());
     }
 }

@@ -29,8 +29,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
 /// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
 /// 7 with the `spans` render and its `image_pixels`, version 8 with the `record-*` commands and
-/// the `rozi-recording` file format, and version 9 with a request's `source_session`.
-pub const API_SCHEMA_VERSION: u32 = 9;
+/// the `rozi-recording` file format, version 9 with a request's `source_session`, and version 10
+/// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
+/// `record-stop`'s list reply.
+pub const API_SCHEMA_VERSION: u32 = 10;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -591,16 +593,19 @@ pub enum ControlCommand {
         #[serde(default)]
         level: NotifyLevel,
     },
-    /// Start recording a pane's screen to `output`, a file on the session server's host. Served by
-    /// a session server only: it records the pane's canonical screen with or without a UI.
+    /// Start recording a pane's screen to a file on the session server's host. Served by a session
+    /// server, which records the pane's canonical screen with or without a UI; a UI forwards it.
     /// Every change is written, at most `max_fps` times a second, until `record-stop`, the pane
     /// exiting, the session ending, or a limit. `follow` holds the reply until the recording ends
-    /// and stops it when the request's connection closes.
+    /// and stops it when the request's connection closes. Limits left out come from the server's
+    /// `[recording]` config.
     RecordStart {
         #[serde(default)]
         target: Option<PaneId>,
-        /// An absolute path. The CLI resolves a relative one against its working directory.
-        output: String,
+        /// An absolute path. The CLI resolves a relative one against its working directory. Left
+        /// out, the server names a new file in `[recording] dir`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_fps: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -613,19 +618,24 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         follow: bool,
     },
-    /// Stop a recording and answer once its file is complete. `id` may be left out when only one
-    /// recording is running.
+    /// Stop recordings and answer once every file is complete: recording `id`, or every recording
+    /// of pane `target`, or, with neither, the only recording running.
     RecordStop {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<PaneId>,
     },
     /// List the recordings running in the session.
     RecordList,
-    /// Add a labelled mark to a recording, or to every running recording when `id` is left out.
+    /// Add a labelled mark to recording `id`, or to every recording of pane `target`, or, with
+    /// neither, to every running recording.
     RecordMark {
         label: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<PaneId>,
     },
     Pick {
         #[serde(default)]
@@ -656,7 +666,11 @@ impl ControlCommand {
     /// session server takes only absolute paths, since its own working directory means nothing to
     /// the caller.
     pub fn resolve_output_against(&mut self, base: &Path) {
-        if let Self::RecordStart { output, .. } = self {
+        if let Self::RecordStart {
+            output: Some(output),
+            ..
+        } = self
+        {
             let path = Path::new(output.as_str());
             if path.is_relative() {
                 *output = base.join(path).display().to_string();
@@ -1663,6 +1677,13 @@ pub struct RecordingStopped {
     pub error: Option<String>,
     #[serde(flatten)]
     pub totals: crate::recording::RecordingTotals,
+}
+
+/// What `record-stop` answers with: every recording it stopped, in id order.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RecordingStopList {
+    pub stopped: Vec<RecordingStopped>,
 }
 
 /// What `record-list` answers with.

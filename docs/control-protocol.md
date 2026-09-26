@@ -275,10 +275,11 @@ straddles a hidden cell is cleared.
 ### Pane recordings
 
 ```json
+{"cmd":"record-start","target":3}
 {"cmd":"record-start","target":3,"output":"/home/me/agent.rozirec","max_fps":30,"duration_ms":28800000}
 {"cmd":"record-start","target":3,"output":"/home/me/demo.rozirec","follow":true}
 {"cmd":"record-list"}
-{"cmd":"record-mark","label":"tests started"}
+{"cmd":"record-mark","label":"tests started","target":3}
 {"cmd":"record-stop","id":1}
 ```
 
@@ -292,23 +293,34 @@ recording holds.
 - `target` is the pane. With one pane in the session it may be left out.
 - `output` is an absolute path on the session server's host. A relative path fails with
   `invalid-argument`; the CLI makes one absolute first. An existing path fails with `conflict`
-  unless `force` is `true`, which replaces a regular file only.
-- `max_fps` (1–120, default 30), `duration_ms` (up to 7 days, default 24 hours), and `max_bytes`
-  (at least 64 KiB, default 1 GiB) bound the recording.
+  unless `force` is `true`, which replaces a regular file only. Without `output`, the server names
+  a new file in its [recordings directory](recording.md#where-the-file-goes) and `force` has no
+  effect.
+- `max_fps` (1–120), `duration_ms` (up to 7 days), and `max_bytes` (at least 64 KiB) bound the
+  recording. Each one left out takes the server's `[recording]` setting, by default 30, 24 hours,
+  and 1 GiB.
 - `follow`, when `true`, holds the reply until the recording ends and stops the recording when the
-  connection closes. The reply is then the same as `record-stop`'s.
+  connection closes. The reply is then one stopped recording, as described for `record-stop`.
 
 Without `follow`, `record-start` answers at once with a recording: `id`, `session`, `pane`, `path`,
 `started_at_unix_ms`, `elapsed_ms`, `max_fps`, `duration_ms`, `max_bytes`, `follow`, and the
 running totals `frames`, `keyframes`, `deltas`, `images`, `marks`, `dropped`, and `bytes`.
 `record-list` answers with an array of them.
 
-`record-stop` takes `id`, which may be left out when one recording is running, and answers once the
-file is complete with `id`, `pane`, `path`, `reason`, `elapsed_ms`, the final totals, and `error`
-when writing failed. `record-mark` takes a `label` of up to 256 characters and an optional `id`,
-marks every running recording without one, and answers with the `ids` it marked. A recording that
-is ending, or whose writer is too far behind, cannot take a mark: naming it fails with
-`unavailable`, and a request without `id` fails when no running recording took the mark.
+`record-stop` takes `id`, or `target` to stop every recording of that pane; with neither, it stops
+the one recording running. Naming both fails with `invalid-argument`, as does a `target` that is not
+being recorded. It answers once every file is complete, with `stopped`: an array in `id` order, each
+with `id`, `pane`, `path`, `reason`, `elapsed_ms`, the final totals, and `error` when writing
+failed.
+
+```json
+{"ok":true,"data":{"stopped":[{"id":1,"pane":3,"path":"/home/me/agent.rozirec","reason":"stopped","elapsed_ms":61250,"frames":212,"keyframes":3,"deltas":209,"images":0,"marks":1,"dropped":0,"bytes":88213}]}}
+```
+
+`record-mark` takes a `label` of up to 256 characters and an optional `id` or `target`, marks every
+running recording without either, and answers with the `ids` it marked. A recording that is
+ending, or whose writer is too far behind, cannot take a mark: naming it fails with `unavailable`,
+and a request without `id` fails when no running recording took the mark.
 
 Sent to a UI, these requests differ in a few ways:
 
@@ -320,6 +332,8 @@ Sent to a UI, these requests differ in a few ways:
 - `record-start` without `target` records `source_pane`, then the focused pane, and the UI names
   that pane to the server. `target` names a session pane even when a scratch or popup pane has the
   same number. The focused pane fails with `unsupported` while the scratchpad has focus.
+- `record-stop` and `record-mark` with neither `id` nor `target` act on `source_pane` when there is
+  one.
 - `output` is sent as written. The session server requires a path that is absolute on its own
   host, so a Windows session takes `C:\…` and a Linux one `/…`, whatever the caller runs on.
 - `follow: true` fails with `invalid-argument`; a foreground recording needs the session transport.
@@ -537,12 +551,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":18,"min_protocol_version":18,
+{"type":"session-control","session":"dev","protocol_version":19,"min_protocol_version":19,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":18,
+{"type":"session-control-result","effective_protocol":19,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 

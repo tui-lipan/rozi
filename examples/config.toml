@@ -425,6 +425,18 @@
 # Size multiplier, 1 to 3.
 #scale = 1
 
+[recording]
+# Defaults for `rozi record start` and the Start pane recording command. The session server reads
+# them from its own host's config when a recording starts, so a remote session uses that host's.
+# Where a recording started without --output goes. Defaults under $XDG_STATE_HOME/rozi/recordings.
+#dir = "~/.local/state/rozi/recordings"
+# The most frames a second, 1 to 120.
+#max_fps = 30
+# Stop after this long, at most 7d.
+#duration = "24h"
+# Stop before the file grows past this, at least 64KiB.
+#max_bytes = "1GiB"
+
 # Per-alias SSH overrides, matched by a bare `--remote <alias>`. Repeat the table per host.
 [remote.hosts.workbox]
 # SSH hostname when it differs from the alias.

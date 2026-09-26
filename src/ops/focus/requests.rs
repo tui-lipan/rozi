@@ -39,6 +39,10 @@ pub(crate) fn request_rename_session_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::rename_session_input_key());
 }
 
+pub(crate) fn request_recording_mark_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::recording_mark_input_key());
+}
+
 pub(crate) fn request_save_profile_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::save_profile_key());
 }

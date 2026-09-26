@@ -368,6 +368,21 @@ pub(crate) fn rename_overlay(ctx: &Context<AppRoot>) -> Element {
     )
 }
 
+pub(crate) fn recording_mark_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(prompt) = ctx.state.recording_mark.as_ref() else {
+        return Text::new("").into();
+    };
+    prompt_overlay(
+        ctx,
+        PromptChrome::new("Mark pane recording", "Label", &[("mark", "enter")]),
+        &prompt.input,
+        recording_mark_input_key(),
+        Msg::RecordingMarkChanged,
+        Msg::CloseRecordingMark,
+        Msg::SubmitRecordingMark,
+    )
+}
+
 pub(crate) fn rename_session_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(rename) = ctx.state.rename_session.as_ref() else {
         return Text::new("").into();

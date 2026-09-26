@@ -142,6 +142,8 @@ These actions are available in the command palette, and you can bind them under 
 - `copy-last-output`
 - `screenshot-pane` (listed only when a pane has focus)
 - `screenshot-ui`
+- `toggle-pane-recording` (listed when the focused pane can be recorded)
+- `mark-pane-recording` (listed while the focused pane records)
 
 Appearance actions live in **Settings** and can also be bound by their action ids.
 

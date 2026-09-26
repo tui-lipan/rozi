@@ -155,6 +155,8 @@ pub struct SessionServer {
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     /// Pane recordings running now, by id.
     recordings: recordings::Recordings,
+    /// `record-stop` requests waiting for the files of the recordings they stopped.
+    recording_stops: Vec<recordings::PendingStop>,
     next_recording_id: u64,
     /// Counts from recordings this server has started and finished, for `metrics`.
     recording_totals: crate::runtime_metrics::RecordingMetrics,
@@ -264,6 +266,9 @@ pub struct ServerSettings {
     /// `[worktrees] directory`, expanded on this host: where a new checkout goes when a client
     /// names no path.
     pub worktree_directory: Option<PathBuf>,
+    /// `[recording]`: what a recording uses when its request leaves something out. Re-read when
+    /// each recording starts; see [`SessionServer::reload_recording_defaults`].
+    pub recording: crate::config::RecordingConfig,
 }
 
 impl Default for ServerSettings {
@@ -285,6 +290,7 @@ impl Default for ServerSettings {
             rules: Vec::new(),
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
             worktree_directory: None,
+            recording: crate::config::RecordingConfig::default(),
         }
     }
 }
@@ -1365,6 +1371,7 @@ impl SessionServer {
             agent_waits: HashMap::new(),
             capture_waits: HashMap::new(),
             recordings: recordings::Recordings::new(),
+            recording_stops: Vec::new(),
             next_recording_id: 0,
             recording_totals: crate::runtime_metrics::RecordingMetrics::default(),
             next_client_id: 1,
@@ -1908,6 +1915,7 @@ pub fn run_named_session_mode_with_nonce(
                 .worktrees
                 .directory
                 .map(crate::config::expand_path),
+            recording: loaded.config.recording,
             ..ServerSettings::default()
         },
     );

@@ -167,6 +167,13 @@ pub(crate) fn clear_pane_local_state(state: &mut State, id: PaneId) {
         state.rename = None;
     }
     if state
+        .recording_mark
+        .as_ref()
+        .is_some_and(|prompt| prompt.target == id)
+    {
+        state.recording_mark = None;
+    }
+    if state
         .copy_feedback_target
         .is_some_and(|(epoch, target)| epoch == state.runtime_epoch && target == id)
     {

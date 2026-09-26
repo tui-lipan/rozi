@@ -419,13 +419,31 @@ fn tighten_own_directory(_dir: &std::path::Path) -> io::Result<()> {
 
 /// Where the screenshot actions write: `configured` as the user named it, else `captures` in the
 /// state directory.
+pub fn capture_dir(env: &PlatformEnv, configured: Option<&std::path::Path>) -> io::Result<PathBuf> {
+    output_dir(env, configured, "captures")
+}
+
+/// Where a session server writes a recording it names itself: `configured` as the user named it,
+/// else `recordings` in the state directory.
+pub fn recording_dir(
+    env: &PlatformEnv,
+    configured: Option<&std::path::Path>,
+) -> io::Result<PathBuf> {
+    output_dir(env, configured, "recordings")
+}
+
+/// `configured`, else `leaf` in the state directory.
 ///
 /// A directory rozi has to create is created private to its owner. One the user already has, such
 /// as a pictures folder, is used as it is: refusing it for being readable by others would make the
 /// setting useless for exactly the folders people point it at.
-pub fn capture_dir(env: &PlatformEnv, configured: Option<&std::path::Path>) -> io::Result<PathBuf> {
+fn output_dir(
+    env: &PlatformEnv,
+    configured: Option<&std::path::Path>,
+    leaf: &str,
+) -> io::Result<PathBuf> {
     let Some(dir) = configured else {
-        let dir = private_state_dir(env)?.join("captures");
+        let dir = private_state_dir(env)?.join(leaf);
         fs_security::ensure_private_dir(&dir)?;
         return Ok(dir);
     };

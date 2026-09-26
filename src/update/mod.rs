@@ -74,6 +74,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::screenshot::screenshot_saved(ctx, target, path)
         }
         Msg::ScreenshotFailed { error } => crate::ops::screenshot::screenshot_failed(ctx, error),
+        Msg::CloseRecordingMark => crate::ops::recording::close_mark_prompt(ctx),
+        Msg::RecordingMarkChanged(event) => crate::ops::recording::mark_prompt_changed(ctx, event),
+        Msg::SubmitRecordingMark => crate::ops::recording::submit_mark_prompt(ctx),
+        Msg::RecordingMarkBlinkEnded { revision } => {
+            crate::ops::recording::blink_ended(ctx, revision)
+        }
         Msg::CommandLinkReady(link) => overlays::command_link_ready(ctx, link),
         Msg::UpdateAvailable { update, announce } => {
             overlays::update_available(ctx, update, announce)

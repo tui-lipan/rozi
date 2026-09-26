@@ -23,6 +23,7 @@ fn request(command: ControlCommand) -> ControlRequest {
     ControlRequest {
         command,
         source_pane: None,
+        source_session: None,
         extension: None,
     }
 }
@@ -646,6 +647,7 @@ fn an_extension_cannot_use_a_session_endpoint_to_escape_its_own_generation_fence
         ControlRequest {
             command: ControlCommand::ListPanes,
             source_pane: None,
+            source_session: None,
             extension: Some(ExtensionProvenance {
                 id: "git-tools".to_string(),
                 generation: "a-token-only-a-client-could-mint".to_string(),
@@ -708,6 +710,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
                 scale: None,
             },
             source_pane: Some(first),
+            source_session: None,
             extension: None,
         },
     )

@@ -33,7 +33,7 @@ const WAIT_REPLY_SLACK: Duration = REQUEST_TIMEOUT;
 
 /// How long `record stop` may take to answer: the writer finishes what it has queued and syncs
 /// the file first, which a slow disk can stretch past an ordinary request's budget.
-const RECORDING_STOP_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const RECORDING_STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Why a headless control request did not produce an answer.
 #[derive(Debug)]
@@ -260,6 +260,7 @@ mod tests {
                 ControlRequest {
                     command: crate::control::ControlCommand::ListPanes,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
             )
@@ -278,6 +279,7 @@ mod tests {
             ControlRequest {
                 command: crate::control::ControlCommand::ListPanes,
                 source_pane: None,
+                source_session: None,
                 extension: None,
             },
         )

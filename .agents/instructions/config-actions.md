@@ -27,6 +27,10 @@ instead of adding an unlinked snippet.
 
 - `ROZI_CONFIG` and `--config <PATH>` select config for every command that loads it.
 - `ROZI_SOCKET` points control commands at a live UI.
+- The session server stamps `ROZI_SESSION_INSTANCE` (its `SessionInstanceId`) into every shared
+  pane on spawn, and blanks it for local panes. The CLI sends it as `source_session`; a UI routes
+  pane-originated recording requests by it rather than by the session on screen, and refuses a
+  bare `source_pane` without it.
 - Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SOCKET`, and `ROZI_BIN`. Remote panes suppress
   local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
   `rozi --session <NAME> split`, which has no UI to name.

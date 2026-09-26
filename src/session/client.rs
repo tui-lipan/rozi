@@ -713,6 +713,15 @@ impl SessionClient {
         });
     }
 
+    /// Ask the session server to run a session-owned control command for this client, answered
+    /// by a [`ServerMessage::AttachedControlResult`] carrying `request_id`.
+    pub fn attached_control(&self, request_id: u64, request: crate::control::ControlRequest) {
+        self.send_control(ClientMessage::AttachedControl {
+            request_id,
+            request,
+        });
+    }
+
     /// Ask the session server to re-read its agent definitions after a config reload.
     ///
     /// Detection is server-side, so a reload that changed `[[agents]]` or an extension's agents

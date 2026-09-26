@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::headless::session_control_reply;
+use super::headless::ReplyTo;
 use super::*;
 use crate::control::{
     ControlCommand, ControlErrorCode, ControlResponse, RecordingInfo, RecordingListPayload,
@@ -33,8 +33,7 @@ fn frame_interval(max_fps: u32) -> Duration {
 /// A reply held until a recording's file is complete.
 pub(super) struct RecordingReply {
     client_id: ClientId,
-    capabilities: protocol::Capabilities,
-    effective_protocol: u32,
+    to: ReplyTo,
 }
 
 pub(super) struct ActiveRecording {
@@ -219,14 +218,9 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
         command: ControlCommand,
-        capabilities: protocol::Capabilities,
-        effective_protocol: u32,
+        to: ReplyTo,
     ) -> Option<ControlResponse> {
-        let reply = RecordingReply {
-            client_id,
-            capabilities,
-            effective_protocol,
-        };
+        let reply = RecordingReply { client_id, to };
         match command {
             ControlCommand::RecordStart {
                 target,
@@ -591,13 +585,11 @@ impl SessionServer {
                 totals: outcome.totals,
             };
             for reply in recording.follower.into_iter().chain(recording.stoppers) {
-                let response = ControlResponse::ok(stopped.clone());
-                self.enqueue(
+                self.answer_held(
                     reply.client_id,
-                    Target::Sender,
-                    session_control_reply(reply.capabilities, reply.effective_protocol, response),
+                    &reply.to,
+                    ControlResponse::ok(stopped.clone()),
                 );
-                self.set_close_after_flush(reply.client_id);
             }
             self.sync_recording_flag(recording.pane_id);
         }
@@ -720,6 +712,7 @@ mod tests {
                 ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
             )
@@ -894,6 +887,198 @@ mod tests {
         assert_eq!(marks, ["built"]);
         assert_eq!(end.reason, EndReason::Stopped);
         assert_eq!(server.recording_metrics().finished, 1);
+    }
+
+    fn tunnel(
+        server: &mut SessionServer,
+        client: ClientId,
+        request_id: u64,
+        command: ControlCommand,
+    ) {
+        tunnel_request(
+            server,
+            client,
+            request_id,
+            ControlRequest {
+                command,
+                source_pane: None,
+                source_session: None,
+                extension: None,
+            },
+        );
+    }
+
+    fn tunnel_request(
+        server: &mut SessionServer,
+        client: ClientId,
+        request_id: u64,
+        request: ControlRequest,
+    ) {
+        server.process_client_frame(
+            client,
+            protocol::Frame::Control(ClientMessage::AttachedControl {
+                request_id,
+                request,
+            }),
+        );
+    }
+
+    fn tunnelled(server: &SessionServer, client: ClientId) -> Vec<(u64, ControlResponse)> {
+        outbox(server, client)
+            .into_iter()
+            .filter_map(|message| match message {
+                ServerMessage::AttachedControlResult {
+                    request_id,
+                    response,
+                } => Some((request_id, response)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn closing(server: &SessionServer, client: ClientId) -> bool {
+        server
+            .clients
+            .iter()
+            .find(|conn| conn.id == client)
+            .is_some_and(|conn| conn.close_after_flush)
+    }
+
+    #[test]
+    fn an_attached_client_records_over_its_open_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pane.rozirec");
+        let mut server = server();
+        let client = attached(&mut server);
+        print(&mut server, b"$ ");
+
+        tunnel(&mut server, client, 41, start(&path, None, false));
+        tunnel(&mut server, client, 42, ControlCommand::RecordList);
+        tunnel(
+            &mut server,
+            client,
+            43,
+            ControlCommand::RecordMark {
+                label: "here".into(),
+                id: None,
+            },
+        );
+        let answers = tunnelled(&server, client);
+        assert_eq!(
+            answers.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [41, 42, 43],
+            "each answer carries the id it was asked with"
+        );
+        assert!(
+            answers.iter().all(|(_, response)| response.ok),
+            "{answers:?}"
+        );
+        assert!(server.panes[&3].runtime.recording);
+
+        tunnel(
+            &mut server,
+            client,
+            44,
+            ControlCommand::RecordStop { id: None },
+        );
+        assert_eq!(
+            tunnelled(&server, client).len(),
+            3,
+            "stop is held until the file is done"
+        );
+        pump_until_finished(&mut server);
+        let (id, stopped) = tunnelled(&server, client).pop().unwrap();
+        assert_eq!(id, 44);
+        let stopped: RecordingStopped = serde_json::from_value(stopped.data.unwrap()).unwrap();
+        assert_eq!(
+            (stopped.reason, stopped.totals.marks),
+            (EndReason::Stopped, 1)
+        );
+        assert!(
+            answered(&server, client).is_empty(),
+            "nothing is answered as a headless reply"
+        );
+        assert!(
+            !closing(&server, client),
+            "the attachment stays open throughout"
+        );
+        assert!(server.client_attached(client));
+    }
+
+    #[test]
+    fn an_attached_client_is_refused_everything_off_the_recording_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pane.rozirec");
+        let mut server = server();
+        let client = attached(&mut server);
+        let refusal = |server: &SessionServer, id| {
+            tunnelled(server, client)
+                .into_iter()
+                .find(|(request_id, _)| *request_id == id)
+                .map(|(_, response)| (response.ok, response.code))
+                .unwrap()
+        };
+
+        tunnel(&mut server, client, 1, ControlCommand::ListPanes);
+        assert_eq!(
+            refusal(&server, 1),
+            (false, Some(ControlErrorCode::Unsupported))
+        );
+        tunnel(&mut server, client, 2, start(&path, None, true));
+        assert_eq!(
+            refusal(&server, 2),
+            (false, Some(ControlErrorCode::InvalidArgument))
+        );
+        tunnel_request(
+            &mut server,
+            client,
+            3,
+            ControlRequest {
+                command: start(&path, None, false),
+                source_pane: None,
+                source_session: None,
+                extension: Some(crate::config::ExtensionProvenance {
+                    id: "ext".into(),
+                    generation: "g".into(),
+                }),
+            },
+        );
+        assert!(!refusal(&server, 3).0);
+        assert!(server.recordings.is_empty(), "nothing was started");
+        assert!(!closing(&server, client));
+
+        server
+            .clients
+            .iter_mut()
+            .find(|conn| conn.id == client)
+            .unwrap()
+            .read_only = true;
+        tunnel(&mut server, client, 4, start(&path, None, false));
+        assert_eq!(
+            refusal(&server, 4),
+            (false, Some(ControlErrorCode::ReadOnly))
+        );
+        tunnel(
+            &mut server,
+            client,
+            5,
+            ControlCommand::RecordStop { id: None },
+        );
+        assert_eq!(
+            refusal(&server, 5),
+            (false, Some(ControlErrorCode::ReadOnly))
+        );
+        tunnel(&mut server, client, 6, ControlCommand::RecordList);
+        assert_eq!(refusal(&server, 6), (true, None), "a viewer may look");
+
+        let (stranger, _stream) = add_client(&mut server);
+        tunnel(&mut server, stranger, 7, ControlCommand::RecordList);
+        assert!(tunnelled(&server, stranger).is_empty());
+        assert!(outbox(&server, stranger).iter().any(|message| matches!(
+            message,
+            ServerMessage::Error { code, .. } if code == "attach-required"
+        )));
+        assert!(closing(&server, stranger), "a connection must attach first");
     }
 
     #[test]

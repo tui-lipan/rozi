@@ -149,6 +149,10 @@ impl SessionServer {
         if let Some(seed) = seed {
             recover_restored_screen(&mut screen, seed);
         }
+        stamp_session_instance(
+            &mut request.env,
+            owner.is_none().then_some(&self.instance_id),
+        );
         let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
         // Built per attempt rather than once, because a native agent resume that cannot start gets
         // a second one - the interactive shell - from the same directory and environment.
@@ -990,6 +994,20 @@ fn default_log_dir() -> Option<PathBuf> {
         &crate::platform::paths::PlatformEnv::from_process(),
     )
     .map(|dir| dir.join("logs"))
+}
+
+/// Set [`protocol::SESSION_INSTANCE_ENV`] to this server for a shared pane, and blank for a local
+/// one, replacing whatever the client sent. A local pane shares numeric ids with the shared
+/// namespace, so naming this server beside its `ROZI_PANE` would point at someone else's pane.
+fn stamp_session_instance(
+    env: &mut Vec<(String, String)>,
+    shared: Option<&protocol::SessionInstanceId>,
+) {
+    env.retain(|(key, _)| key != protocol::SESSION_INSTANCE_ENV);
+    env.push((
+        protocol::SESSION_INSTANCE_ENV.to_string(),
+        shared.map(|id| id.as_str().to_string()).unwrap_or_default(),
+    ));
 }
 
 /// The directory a pane's child actually starts in, set explicitly so it is *known* (and can be

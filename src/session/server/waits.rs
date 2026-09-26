@@ -1,3 +1,4 @@
+use super::headless::ReplyTo;
 use super::*;
 use crate::control::{
     AgentTarget, AgentWaitCondition, AgentWaitResult, ControlErrorCode, ControlResponse,
@@ -9,8 +10,7 @@ pub(super) struct PendingAgentWait {
     deadline: Option<Instant>,
     require_transition: bool,
     armed: bool,
-    capabilities: protocol::Capabilities,
-    effective_protocol: u32,
+    reply: ReplyTo,
 }
 
 enum WaitEvaluation {
@@ -26,8 +26,7 @@ impl SessionServer {
         target: AgentTarget,
         until: AgentWaitCondition,
         timeout_ms: Option<u64>,
-        capabilities: protocol::Capabilities,
-        effective_protocol: u32,
+        reply: ReplyTo,
     ) -> Option<ControlResponse> {
         let reference = match target {
             AgentTarget::Ref(reference) if until == AgentWaitCondition::Gone => {
@@ -63,8 +62,7 @@ impl SessionServer {
                             .and_then(|duration| Instant::now().checked_add(duration)),
                         require_transition: false,
                         armed: true,
-                        capabilities,
-                        effective_protocol,
+                        reply,
                     },
                 );
                 None
@@ -144,16 +142,7 @@ impl SessionServer {
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
             };
-            self.enqueue(
-                client_id,
-                Target::Sender,
-                ServerMessage::SessionControlResult {
-                    capabilities: Some(wait.capabilities),
-                    effective_protocol: wait.effective_protocol,
-                    response,
-                },
-            );
-            self.set_close_after_flush(client_id);
+            self.answer_held(client_id, &wait.reply, response);
         }
     }
 
@@ -167,8 +156,7 @@ impl SessionServer {
         reference: protocol::AgentRef,
         until: AgentWaitCondition,
         timeout_ms: Option<u64>,
-        capabilities: protocol::Capabilities,
-        effective_protocol: u32,
+        reply: ReplyTo,
     ) -> std::result::Result<(), ControlResponse> {
         let evaluation = self.evaluate_agent_wait(&reference, until);
         let armed = match evaluation {
@@ -188,8 +176,7 @@ impl SessionServer {
                     .and_then(|duration| Instant::now().checked_add(duration)),
                 require_transition: true,
                 armed,
-                capabilities,
-                effective_protocol,
+                reply,
             },
         );
         Ok(())
@@ -376,8 +363,10 @@ mod tests {
                 AgentTarget::Pane(3),
                 AgentWaitCondition::Idle,
                 None,
-                protocol::Capabilities::default(),
-                PROTOCOL_VERSION,
+                ReplyTo::Headless {
+                    capabilities: protocol::Capabilities::default(),
+                    effective_protocol: PROTOCOL_VERSION,
+                },
             )
             .expect("idle agent should resolve immediately");
 
@@ -419,8 +408,10 @@ mod tests {
                 AgentTarget::Ref(reference),
                 AgentWaitCondition::Gone,
                 None,
-                protocol::Capabilities::default(),
-                PROTOCOL_VERSION,
+                ReplyTo::Headless {
+                    capabilities: protocol::Capabilities::default(),
+                    effective_protocol: PROTOCOL_VERSION,
+                },
             )
             .expect("already-gone wait should complete");
         assert!(response.ok);
@@ -439,8 +430,10 @@ mod tests {
                 reference,
                 AgentWaitCondition::Idle,
                 None,
-                protocol::Capabilities::default(),
-                PROTOCOL_VERSION,
+                ReplyTo::Headless {
+                    capabilities: protocol::Capabilities::default(),
+                    effective_protocol: PROTOCOL_VERSION,
+                },
             )
             .unwrap();
         assert!(!server.agent_waits[&1].armed);

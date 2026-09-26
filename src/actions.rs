@@ -1268,6 +1268,7 @@ mod tests {
                                 action: "command-palette".into(),
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,

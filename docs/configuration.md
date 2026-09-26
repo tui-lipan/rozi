@@ -154,7 +154,8 @@ explorer search prefix, and `round` and `arrow` caps. With it off, those badges 
 `⋈`, directory chevrons use `▶` and `▼`, the explorer prefix uses `⌕`, and pane titles drop the
 icon. File icons also need a sidebar tree tab with `icons = true`.
 
-New local panes receive `ROZI=1`, `ROZI_PANE`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
+New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, and, when available,
+`ROZI_SOCKET` and `ROZI_BIN`.
 See [Scripting](scripting.md) and [Control CLI](control.md).
 
 <a id="shell-integration-settings"></a>

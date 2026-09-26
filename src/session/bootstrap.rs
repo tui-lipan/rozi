@@ -756,6 +756,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 request_id,
                 response,
             },
+            ServerMessage::AttachedControlResult {
+                request_id,
+                response,
+            } => Msg::SessionAttachedControlResult {
+                epoch,
+                request_id,
+                response,
+            },
             ServerMessage::SessionOriginSet { origin } => Msg::SessionOriginSet { epoch, origin },
             ServerMessage::LayoutCommitted {
                 rev,

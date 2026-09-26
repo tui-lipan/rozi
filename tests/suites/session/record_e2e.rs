@@ -15,16 +15,17 @@ use rozi::recording::export;
 use rozi::recording::{EndReason, RecordingMeta, ReplayStep};
 use rozi::session::headless::run_session_control;
 use rozi::session::protocol::{
-    Capabilities, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION,
+    Capabilities, ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
 };
 use rozi::session::server::ServerSettings;
 
-use crate::common::{TestConnection, io_timeout, spawn_listener};
+use crate::common::{TestConnection, attach_client, io_timeout, read_until, spawn_listener};
 
 fn request(command: ControlCommand) -> ControlRequest {
     ControlRequest {
         command,
         source_pane: None,
+        source_session: None,
         extension: None,
     }
 }
@@ -280,4 +281,66 @@ fn a_foreground_recording_stops_when_its_caller_goes_away() {
         recordings(&session).is_empty()
     });
     assert_eq!(play(&path).end, EndReason::Stopped);
+}
+
+/// Send `command` over an attached client's own connection and read the answer to it.
+fn tunnel(
+    client: &mut TestConnection,
+    request_id: u64,
+    command: ControlCommand,
+) -> ControlResponse {
+    client.write_control(&ClientMessage::AttachedControl {
+        request_id,
+        request: request(command),
+    });
+    let mut answer = None;
+    read_until(client, |frame| match frame {
+        Frame::Control(ServerMessage::AttachedControlResult {
+            request_id: id,
+            response,
+        }) if *id == request_id => {
+            answer = Some(response.clone());
+            true
+        }
+        _ => false,
+    });
+    answer.expect("read_until matched without an answer")
+}
+
+#[test]
+fn an_attached_client_records_through_its_own_connection_and_keeps_it() {
+    let server = spawn_listener(settings());
+    let session = server.session().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("attached.rozirec");
+    let pane = spawn(&session, "echo ready; sleep 60");
+    let (mut client, _) = attach_client(server.endpoint(), &session, "ui");
+
+    let started = tunnel(&mut client, 7, start(pane, &path));
+    assert!(started.ok, "{:?}", started.error);
+    assert!(pane_recording(&session, pane));
+    wait_until("the first frame written", || {
+        recordings(&session)[0].totals.frames >= 1
+    });
+    let marked = tunnel(
+        &mut client,
+        8,
+        ControlCommand::RecordMark {
+            label: "from the ui".into(),
+            id: None,
+        },
+    );
+    assert!(marked.ok, "{:?}", marked.error);
+    let refused = tunnel(&mut client, 9, ControlCommand::ListPanes);
+    assert!(!refused.ok, "the tunnel carries recording commands only");
+
+    let stopped = tunnel(&mut client, 10, ControlCommand::RecordStop { id: None });
+    let stopped: RecordingStopped = serde_json::from_value(stopped.data.unwrap()).unwrap();
+    assert_eq!(stopped.reason, EndReason::Stopped);
+    assert_eq!(play(&path).marks, ["from the ui"]);
+
+    // Still attached: the same connection takes another request.
+    let listed = tunnel(&mut client, 11, ControlCommand::RecordList);
+    assert_eq!(listed.data, Some(serde_json::json!([])));
+    client.write_control(&ClientMessage::Detach);
 }

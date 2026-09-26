@@ -45,6 +45,11 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
                 ));
         }
     }
+    crate::ops::attached_control::fail_epoch(
+        &mut ctx.state,
+        epoch,
+        "session disconnected before answering",
+    );
     if epoch != ctx.state.runtime_epoch {
         let disconnected = ctx
             .state

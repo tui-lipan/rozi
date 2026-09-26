@@ -15,15 +15,16 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("rozi --session <NAME> record <COMMAND> [OPTIONS]", ""),
+            row("rozi [--session <NAME>] record <COMMAND> [OPTIONS]", ""),
             row("rozi record export|play <FILE> [OPTIONS]", ""),
         ],
     },
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "Recording runs in the session server and needs --session <NAME>;\n    \
-               export and play read a file and need no session.",
+        note: "Recording runs in the session server. Without --session, the running rozi\n    \
+               passes start, stop, list, and mark to the session it is attached to;\n    \
+               pane needs --session <NAME>. export and play read a file here.",
         rows: &[
             row(
                 "start [pane] --target <PANE> --output <FILE>",
@@ -431,6 +432,21 @@ pub(super) fn parse_size(value: &str) -> Result<u64, String> {
     number.checked_mul(multiplier).ok_or_else(invalid)
 }
 
+/// Whether a `record` command can go to a UI, which forwards it to the session it is attached to.
+///
+/// `record pane` cannot: it holds its caller until the recording ends, and a UI answers each
+/// request once.
+///
+/// `--output` is not checked here. The file is written on the session's host, which may run
+/// another OS than this one (`C:\rec.rozirec` is relative to a Unix `Path`), so the session server
+/// alone decides whether the path is absolute.
+pub(super) fn check_ui_endpoint(foreground: bool) -> Result<(), String> {
+    if foreground {
+        return Err("record pane runs in the foreground and needs --session <NAME>".to_string());
+    }
+    Ok(())
+}
+
 /// Build the control half of a `record` command once its endpoint is known.
 pub(super) fn control_cli(
     endpoint: super::ControlEndpoint,
@@ -522,9 +538,29 @@ mod tests {
             ControlCommand::RecordStart { follow: true, .. }
         ));
 
-        let refused = parse(&["record", "list"]).unwrap_err();
-        assert!(refused.contains("--session"), "{refused}");
-        assert!(parse(&["record", "start", "--output", "x"]).is_err());
+        let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+            parse(&["record", "list"])
+        else {
+            panic!("expected a record list for the running rozi");
+        };
+        assert_eq!(control.endpoint, super::super::ControlEndpoint::Ui(None));
+        assert!(parse(&["record", "stop", "--id", "2"]).is_ok());
+        assert!(parse(&["record", "mark", "here"]).is_ok());
+        // The session's host judges the path, whatever OS this side runs: a Unix path for a Linux
+        // session from a Windows UI, a drive path for the reverse, and a relative one to refuse.
+        for output in ["/tmp/a.rozirec", r"C:\recordings\a.rozirec", "x"] {
+            let Ok(super::super::ParsedCli::Record(RecordCli::Control { control, .. })) =
+                parse(&["record", "start", "--output", output])
+            else {
+                panic!("expected {output} to go to the session unjudged");
+            };
+            assert!(
+                matches!(&control.request.command, ControlCommand::RecordStart { output: sent, .. } if sent == output),
+                "{output} is sent as written"
+            );
+        }
+        let foreground = parse(&["record", "pane", "--output", "/tmp/a.rozirec"]).unwrap_err();
+        assert!(foreground.contains("--session"), "{foreground}");
         assert!(parse(&["--session", "dev", "record", "start", "--target", "3"]).is_err());
 
         let Ok(super::super::ParsedCli::Record(export)) = parse(&[

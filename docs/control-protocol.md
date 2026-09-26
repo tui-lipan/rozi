@@ -65,6 +65,7 @@ Every request has `cmd`. Any request may also carry these fields:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `source_pane` | integer or null | Calling pane, used as the default target where a command supports it. A session endpoint ignores it; see [Session transport](#session-transport). |
+| `source_session` | string | The session server `source_pane` belongs to, from the caller's `ROZI_SESSION_INSTANCE`. Only the recording requests sent to a UI read it; see [Pane recordings](#pane-recordings). |
 | `extension` | object | Extension ownership, with `id` and an opaque `generation`. The CLI adds it from the extension environment. |
 
 Do not synthesize extension provenance. A request with a retired generation is rejected.
@@ -281,8 +282,10 @@ straddles a hidden cell is cleared.
 {"cmd":"record-stop","id":1}
 ```
 
-Only a session server answers these; a UI refuses them with `unsupported`. See
-[Record a pane](recording.md) for what a recording holds.
+A session server answers these. A UI passes `record-start`, `record-stop`, `record-list`, and
+`record-mark` to the session it is attached to and returns the server's answer, which
+`attached-control` in `rozi api describe` advertises. See [Record a pane](recording.md) for what a
+recording holds.
 
 `record-start` fields:
 
@@ -306,6 +309,26 @@ when writing failed. `record-mark` takes a `label` of up to 256 characters and a
 marks every running recording without one, and answers with the `ids` it marked. A recording that
 is ending, or whose writer is too far behind, cannot take a mark: naming it fails with
 `unavailable`, and a request without `id` fails when no running recording took the mark.
+
+Sent to a UI, these requests differ in a few ways:
+
+- A request with `source_session` goes to that session, even while the UI shows another one and
+  keeps it in the background. Its pane numbers apply to `target`. A `source_session` the
+  UI is not attached to fails with `session-not-attached`, and a `source_pane` without one fails
+  with `unsupported`, since a pane number alone does not say whose pane it is. A request with
+  neither goes to the session on screen.
+- `record-start` without `target` records `source_pane`, then the focused pane, and the UI names
+  that pane to the server. `target` names a session pane even when a scratch or popup pane has the
+  same number. The focused pane fails with `unsupported` while the scratchpad has focus.
+- `output` is sent as written. The session server requires a path that is absolute on its own
+  host, so a Windows session takes `C:\…` and a Linux one `/…`, whatever the caller runs on.
+- `follow: true` fails with `invalid-argument`; a foreground recording needs the session transport.
+- A UI with no session fails with `session-not-attached`, and one whose session disconnects before
+  answering fails with `session-not-connected`.
+- A UI attached read-only may send `record-list` only. The others fail with `read-only`. The
+  session's input lock does not apply, because a recording reads a pane rather than typing into it.
+- A request with `extension` provenance fails, as it does on the session transport.
+- The UI waits up to 60 seconds for `record-stop`, then fails with `request-timeout`.
 
 ### Recording format
 
@@ -514,12 +537,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":17,"min_protocol_version":17,
+{"type":"session-control","session":"dev","protocol_version":18,"min_protocol_version":18,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":17,
+{"type":"session-control-result","effective_protocol":18,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 

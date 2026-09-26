@@ -281,10 +281,13 @@ pub(crate) fn handle_control_request(
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
-        | ControlCommand::RecordMark { .. } => ControlResponse::error_with(
-            ControlErrorCode::Unsupported,
-            "pane recording is server-owned; select a named session with --session",
-        ),
+        | ControlCommand::RecordMark { .. } => {
+            return crate::ops::attached_control::forward_recording(
+                ctx,
+                envelope.request,
+                envelope.reply,
+            );
+        }
         ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
             ControlErrorCode::Unsupported,
             "agent prompt is server-owned; select a named session with --session",
@@ -1891,6 +1894,7 @@ mod tests {
                     image_pixels,
                 },
                 source_pane: None,
+                source_session: None,
                 extension: None,
             },
             reply,
@@ -2117,6 +2121,7 @@ mod tests {
                                 level: crate::control::NotifyLevel::Info,
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: Some(crate::config::ExtensionProvenance {
                                 id: "tools".to_string(),
                                 generation: "retired".to_string(),
@@ -2152,6 +2157,7 @@ mod tests {
                                 action: "git-tools.branches".to_string(),
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2253,6 +2259,7 @@ mod tests {
                                 reason: Some("waiting".into()),
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2287,6 +2294,7 @@ mod tests {
                                 reason: None,
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2348,6 +2356,7 @@ mod tests {
                         workspace: None,
                     },
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
                 reply,
@@ -2460,6 +2469,7 @@ mod tests {
                                         level: crate::control::NotifyLevel::Info,
                                     },
                                     source_pane: None,
+                                    source_session: None,
                                     extension: None,
                                 },
                                 reply: tx,
@@ -2482,6 +2492,7 @@ mod tests {
                                     level: crate::control::NotifyLevel::Info,
                                 },
                                 source_pane: None,
+                                source_session: None,
                                 extension: None,
                             },
                             reply: tx,
@@ -2561,6 +2572,7 @@ mod tests {
                                 scale: None,
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2623,6 +2635,7 @@ mod tests {
                                 scale: None,
                             },
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2661,6 +2674,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::ListPanes,
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -2696,6 +2710,7 @@ mod tests {
                             request: ControlRequest {
                                 command: ControlCommand::LayoutGet { workspace },
                                 source_pane: None,
+                                source_session: None,
                                 extension: None,
                             },
                             reply,
@@ -2777,6 +2792,7 @@ mod tests {
                 request: ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
                 reply,
@@ -3393,6 +3409,7 @@ mod tests {
                         request: ControlRequest {
                             command: ControlCommand::Metrics,
                             source_pane: None,
+                            source_session: None,
                             extension: None,
                         },
                         reply,
@@ -3455,6 +3472,7 @@ mod tests {
                 request: ControlRequest {
                     command,
                     source_pane: None,
+                    source_session: None,
                     extension: None,
                 },
                 reply,

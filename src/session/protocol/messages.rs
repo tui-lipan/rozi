@@ -191,6 +191,17 @@ pub enum ClientMessage {
         native_session: Option<String>,
         seq: u64,
     },
+    /// Run one session-owned [`crate::control::ControlCommand`] on behalf of this attached
+    /// client, answered by [`ServerMessage::AttachedControlResult`] with the same `request_id`.
+    ///
+    /// The attached counterpart of [`Self::SessionControl`]: the connection stays open and the
+    /// answer may arrive after unrelated traffic, so the client matches it by `request_id`. Only
+    /// the commands a UI has no way to serve itself are accepted (see
+    /// [`crate::session::server::attached_control_refusal`]).
+    AttachedControl {
+        request_id: u64,
+        request: crate::control::ControlRequest,
+    },
     /// Replace the pane's published rows. An empty list withdraws them, and the pane falls
     /// back to screen detection.
     ReportPaneRows {
@@ -498,6 +509,11 @@ pub enum ServerMessage {
     },
     /// Acknowledges an integration report sent over an attached client connection.
     AgentReportResult {
+        request_id: u64,
+        response: crate::control::ControlResponse,
+    },
+    /// Reply to a [`ClientMessage::AttachedControl`] request, carrying its `request_id`.
+    AttachedControlResult {
         request_id: u64,
         response: crate::control::ControlResponse,
     },

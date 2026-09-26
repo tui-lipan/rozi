@@ -289,6 +289,7 @@ mod tests {
                     image_pixels: false,
                 },
                 source_pane: None,
+                source_session: None,
                 extension: None,
             },
             reply,

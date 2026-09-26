@@ -28,9 +28,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
 /// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
 /// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
-/// 7 with the `spans` render and its `image_pixels`, and version 8 with the `record-*` commands and
-/// the `rozi-recording` file format.
-pub const API_SCHEMA_VERSION: u32 = 8;
+/// 7 with the `spans` render and its `image_pixels`, version 8 with the `record-*` commands and
+/// the `rozi-recording` file format, and version 9 with a request's `source_session`.
+pub const API_SCHEMA_VERSION: u32 = 9;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -59,6 +59,9 @@ pub const CAPTURE_SPANS_CAPABILITY: &str = "capture-spans";
 /// A session server records a pane with `record-start`, `record-stop`, `record-list`, and
 /// `record-mark`, and `list-panes` and `metrics` report recordings.
 pub const RECORD_PANE_CAPABILITY: &str = "record-pane";
+/// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
+/// forwarding them to the session server it is attached to.
+pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -80,6 +83,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_WAITS_CAPABILITY,
+                ATTACHED_CONTROL_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
                 CAPTURE_SPANS_CAPABILITY,
@@ -103,6 +107,10 @@ pub struct ControlRequest {
     pub command: ControlCommand,
     #[serde(default)]
     pub source_pane: Option<PaneId>,
+    /// The session server `source_pane` belongs to, from the caller's `ROZI_SESSION_INSTANCE`.
+    /// Absent when the caller is not a shared pane of a session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_session: Option<crate::session::protocol::SessionInstanceId>,
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -2346,9 +2354,13 @@ impl<R: io::Read> Iterator for ControlLines<R> {
 /// An ordinary request is answered on the app's next update, so ten seconds is a wedged UI. A pane
 /// wait is answered when its condition resolves or its own deadline passes, and the UI enforces
 /// that deadline itself, so the connection outlasts it by the same margin rather than cutting
-/// every wait off at ten seconds.
+/// every wait off at ten seconds. A `record-stop` is answered once the session server has finished
+/// the file, so it gets the budget a session caller gets.
 fn control_reply_timeout(command: &ControlCommand) -> Duration {
     const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+    if matches!(command, ControlCommand::RecordStop { .. }) {
+        return crate::session::headless::RECORDING_STOP_TIMEOUT;
+    }
     command.pane_wait().map_or(REPLY_TIMEOUT, |wait| {
         Duration::from_millis(wait.timeout_ms).saturating_add(REPLY_TIMEOUT)
     })
@@ -2517,6 +2529,7 @@ mod tests {
                 action: "toggle-float".to_string(),
             },
             source_pane: Some(3),
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -2533,6 +2546,7 @@ mod tests {
         let request = ControlRequest {
             command: ControlCommand::Metrics,
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         assert_eq!(
@@ -2963,6 +2977,7 @@ mod tests {
                 image_pixels: false,
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3035,6 +3050,7 @@ mod tests {
         let switch = ControlRequest {
             command: ControlCommand::SwitchWorkspace { index: 3 },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
@@ -3046,6 +3062,7 @@ mod tests {
         let move_to = ControlRequest {
             command: ControlCommand::MoveToWorkspace { index: 4 },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
@@ -3067,6 +3084,7 @@ mod tests {
                 keep_open: Some(false),
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3085,6 +3103,7 @@ mod tests {
                 reason: Some("needs approval".into()),
             },
             source_pane: Some(3),
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3117,6 +3136,7 @@ mod tests {
                 tab: None,
             },
             source_pane: None,
+            source_session: None,
             extension: None,
         };
         let json = serde_json::to_string(&request).unwrap();

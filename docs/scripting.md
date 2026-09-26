@@ -17,6 +17,7 @@ variables:
 | `ROZI_BIN` | The path of the running `rozi` executable. |
 | `ROZI_SOCKET` | How to reach the rozi window this pane belongs to. The CLI reads it for you. |
 | `ROZI_PANE` | The id of the pane the script runs in, when there is one. |
+| `ROZI_SESSION_INSTANCE` | Which running session the pane belongs to, as an opaque id. The CLI reads it for you. Empty in a scratch or popup pane. |
 
 Prefer `ROZI_BIN` so the script uses the same version of rozi that is running:
 

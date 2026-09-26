@@ -244,6 +244,10 @@ impl SessionServer {
                     request,
                 )
             }
+            ClientMessage::AttachedControl {
+                request_id,
+                request,
+            } => self.handle_attached_control(client_id, request_id, request),
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,

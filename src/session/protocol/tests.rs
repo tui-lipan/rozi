@@ -925,6 +925,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
             image_pixels: false,
         },
         source_pane: None,
+        source_session: None,
         extension: None,
     };
     let msg = ClientMessage::SessionControl {
@@ -973,6 +974,49 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
     assert_eq!(
         encoded["response"],
         serde_json::json!({"ok": true, "data": {"id": 3}})
+    );
+}
+
+#[test]
+fn attached_control_messages_round_trip_with_the_documented_wire_shape() {
+    let msg = ClientMessage::AttachedControl {
+        request_id: 12,
+        request: crate::control::ControlRequest {
+            command: crate::control::ControlCommand::RecordList,
+            source_pane: None,
+            source_session: None,
+            extension: None,
+        },
+    };
+    let mut buf = Vec::new();
+    write_frame(&mut buf, &msg).unwrap();
+    assert_eq!(read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(), msg);
+    assert_eq!(
+        serde_json::to_value(&msg).unwrap(),
+        serde_json::json!({
+            "type": "attached-control",
+            "request_id": 12,
+            "request": {"cmd": "record-list", "source_pane": null}
+        })
+    );
+
+    let reply = ServerMessage::AttachedControlResult {
+        request_id: 12,
+        response: crate::control::ControlResponse::ok(serde_json::json!([])),
+    };
+    let mut buf = Vec::new();
+    write_frame(&mut buf, &reply).unwrap();
+    assert_eq!(
+        read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
+        reply
+    );
+    assert_eq!(
+        serde_json::to_value(&reply).unwrap(),
+        serde_json::json!({
+            "type": "attached-control-result",
+            "request_id": 12,
+            "response": {"ok": true, "data": []}
+        })
     );
 }
 

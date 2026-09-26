@@ -166,8 +166,8 @@ holds steady too. With `[pane] show_titles = false`, the
 dot sits in the top-right corner of the pane's border instead. A workspace tab carries a blinking
 dot while its workspace holds a recorded pane you cannot see: one on another workspace, or one with
 neither a title nor a border to show it. A fullscreen pane covers the other panes and the workbar,
-so its one marker counts the recordings it hides: `● REC · 1 pane elsewhere` while another pane
-records, or `● REC · +1 pane` when it records too. A title never shows two dots.
+so its one marker counts the recordings it hides: `● 1 PANE REC` while another pane records, or
+`● REC · +1 pane` when it records too. A title never shows two dots.
 The one exception: with `show_titles = false` and a `border_mode` of `"dividers"` or `"none"`, a
 fullscreen pane has no title or border to carry the marker, so a recording shows only in
 `list-panes` and `record list` until the pane leaves fullscreen. The indicator is rozi's own chrome,

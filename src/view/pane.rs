@@ -75,8 +75,8 @@ fn title_spans(lead: &str, title: &str) -> Vec<Span> {
 /// The one recording status a title row ends with: a single dot, which alone blinks, then a steady
 /// label. `● UI REC` while the title carries this UI's recording, `● REC` while the pane records,
 /// and ` · +N pane(s)` for the pane recordings beyond that which a fullscreen pane covers. A
-/// fullscreen pane covering recordings while it has neither says `● REC · N pane(s) elsewhere`,
-/// since nothing else on screen can. `color` is the marker's colour, from
+/// fullscreen pane covering recordings while it has neither says `● N PANE(S) REC`, so it never
+/// reads as recording itself. `color` is the marker's colour, from
 /// [`crate::ops::theme::recording_marker_color`].
 fn title_recording_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
     let ui = super::ui_recording_chip(&ctx.state) == Some(super::UiRecordingChip::Title(pane.id));
@@ -91,13 +91,13 @@ fn title_recording_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> O
     };
     let (label, extra) = match (ui, own, covered) {
         (true, own, covered) => (
-            "UI REC",
+            "UI REC".to_string(),
             (own + covered > 0).then(|| format!("+{}", panes(own + covered))),
         ),
-        (false, 1, 0) => ("REC", None),
-        (false, 1, covered) => ("REC", Some(format!("+{}", panes(covered)))),
+        (false, 1, 0) => ("REC".to_string(), None),
+        (false, 1, covered) => ("REC".to_string(), Some(format!("+{}", panes(covered)))),
         (false, _, 0) => return None,
-        (false, _, covered) => ("REC", Some(format!("{} elsewhere", panes(covered)))),
+        (false, _, covered) => (format!("{} REC", panes(covered).to_uppercase()), None),
     };
     let mut spans = vec![
         recording_dot_span(ctx, pane, color),
@@ -2818,7 +2818,7 @@ mod tests {
         backend.render();
         let text = backend.capture_frame().plain_text();
         assert!(
-            text.contains("● REC · 1 pane elsewhere"),
+            text.contains("● 1 PANE REC"),
             "the fullscreen pane hides the recording\n{text}"
         );
 
@@ -2830,7 +2830,22 @@ mod tests {
         }
         backend.render();
         let text = backend.capture_frame().plain_text();
-        assert!(text.contains("● REC · 1 pane elsewhere"), "{text}");
+        assert!(text.contains("● 1 PANE REC"), "{text}");
+
+        // More than one counts them, still with one dot.
+        {
+            let state = backend.state_mut();
+            let mut another = Pane::new(11, 100, FloatRect::default());
+            another.terminal.recording = true;
+            state.current_mut().workspaces[1].panes.push(another);
+        }
+        backend.render();
+        let text = backend.capture_frame().plain_text();
+        assert!(
+            text.contains("● 2 PANES REC") && text.matches('●').count() == 1,
+            "{text}"
+        );
+        backend.state_mut().current_mut().workspaces[1].panes.pop();
 
         backend.state_mut().current_mut().workspaces[0].panes[0]
             .terminal

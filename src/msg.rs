@@ -418,6 +418,7 @@ pub enum Msg {
         target: crate::state::ScreenshotTarget,
         path: std::path::PathBuf,
     },
+    OpenScreenshot(std::path::PathBuf),
     ScreenshotFailed {
         error: String,
     },

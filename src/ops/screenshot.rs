@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use tui_lipan::prelude::*;
 
 use crate::pane::lifecycle::find_pane_in_namespace_mut;
-use crate::pane::pty_events::{notify_error, notify_info};
+use crate::pane::pty_events::{notify_error, notify_screenshot_saved};
 use crate::state::{ScreenshotFlash, ScreenshotTarget};
 use crate::{AppRoot, Msg};
 
@@ -134,8 +134,18 @@ pub(crate) fn screenshot_saved(
         ctx.state.screenshot.flash = Some(ScreenshotFlash { target, revision });
     }
     let shown = crate::platform::paths::compress_home(&path.to_string_lossy());
-    notify_info(ctx, format!("Screenshot saved\n{shown}"));
+    notify_screenshot_saved(ctx, shown, path);
     Update::full()
+}
+
+pub(crate) fn open_screenshot(ctx: &mut Context<AppRoot>, path: PathBuf) -> Update {
+    match crate::platform::open_file(&path) {
+        Ok(()) => Update::none(),
+        Err(error) => {
+            notify_error(ctx, "Could not open screenshot", error.to_string());
+            Update::full()
+        }
+    }
 }
 
 pub(crate) fn screenshot_failed(ctx: &mut Context<AppRoot>, error: String) -> Update {
@@ -339,6 +349,17 @@ mod tests {
             assert!(name.starts_with(&format!("rozi-pane-{id}-")), "{name}");
             assert!(toast.starts_with("Screenshot saved"), "{toast}");
             assert!(toast.contains(&name), "the toast names the file: {toast}");
+            let expected = format!(
+                "Screenshot saved\0{}",
+                crate::platform::paths::compress_home(&files[0].to_string_lossy())
+            );
+            assert!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .values()
+                    .any(|tracked| tracked.content() == expected)
+            );
             let saved = std::fs::read(&files[0]).unwrap();
             assert!(saved.starts_with(PNG_SIGNATURE));
             assert_eq!(

@@ -671,9 +671,11 @@ pub(crate) fn apply_result(
                     let known = discovered_sessions(ctx, target.as_ref());
                     return enter_checkout(ctx, worktree, target, checkouts, known);
                 }
-                crate::pane::pty_events::notify_info(
+                crate::pane::pty_events::notify_path_info(
                     ctx,
-                    format!("Created worktree {}", worktree.path),
+                    "Created worktree",
+                    worktree.path.clone(),
+                    worktree.path,
                 );
             }
             (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path }) => {

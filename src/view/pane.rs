@@ -72,11 +72,18 @@ fn title_spans(lead: &str, title: &str) -> Vec<Span> {
     spans
 }
 
-/// The recording marker, the dot then `rec`, while the pane records. `color` is the marker's
-/// colour, from [`crate::ops::theme::recording_marker_color`].
+/// The recording marker, the dot then `rec`, while the pane records. A fullscreen pane that covers
+/// another recording says so with `elsewhere`, since nothing else on screen can. `color` is the
+/// marker's colour, from [`crate::ops::theme::recording_marker_color`].
 fn recording_marker_spans(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Vec<Span>> {
     let dot = recording_dot(ctx, pane, color)?;
-    Some(vec![dot, Span::new(" rec").fg(color)])
+    let own = pane.terminal.recording && !pane.closing;
+    let label = match (own, covers_a_recording(&ctx.state, pane)) {
+        (true, false) => " rec",
+        (false, _) => " rec elsewhere",
+        (true, true) => " rec + elsewhere",
+    };
+    Some(vec![dot, Span::new(label).fg(color)])
 }
 
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.
@@ -121,10 +128,12 @@ fn rich_title(spans: Vec<Span>) -> RichText {
     spans.into_iter().fold(RichText::new(), RichText::span)
 }
 
-/// The dot that marks a recorded pane, in `color`. It blinks on the calm pulse phase while the
-/// pulse chain runs, and holds steady whenever motion is off.
+/// The dot that marks a recorded pane, or a fullscreen pane covering a recording, in `color`. It
+/// blinks on the calm pulse phase while the pulse chain runs, and holds steady whenever motion is
+/// off.
 fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Span> {
-    if !pane.terminal.recording || pane.closing {
+    let own = pane.terminal.recording && !pane.closing;
+    if !own && !covers_a_recording(&ctx.state, pane) {
         return None;
     }
     let style = Style::new().fg(color);
@@ -146,10 +155,32 @@ pub(crate) fn recording_dot_off_phase(state: &crate::state::State) -> bool {
         && animations.focus_chrome
 }
 
-/// Whether a pane's own chrome can carry its recording dot: in its title, or in the top-left corner
+/// Whether a pane's own chrome can carry its recording dot: in its title, or in the top-right corner
 /// of its border when titles are hidden. Without either, only its workspace tab can show it.
 pub(crate) fn pane_chrome_shows_recording(config: &PaneConfig) -> bool {
     config.show_titles || config.border_mode.draws_frames()
+}
+
+/// Whether `pane` is fullscreen over another pane's recording. A fullscreen pane covers the whole
+/// screen, the workbar's tabs included, so its own chrome is the only place left to mark any other
+/// recording in the session.
+pub(crate) fn covers_a_recording(state: &crate::state::State, pane: &Pane) -> bool {
+    pane.fullscreen
+        && !pane.closing
+        && state
+            .current()
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.panes)
+            .any(|other| other.id != pane.id && other.terminal.recording && !other.closing)
+}
+
+/// The fullscreen pane covering `workspace`, if any.
+pub(crate) fn fullscreen_pane(workspace: &Workspace) -> Option<&Pane> {
+    workspace
+        .panes
+        .iter()
+        .find(|pane| pane.fullscreen && !pane.closing)
 }
 
 fn title_cap_style(ctx: &Context<AppRoot>) -> CapStyle {
@@ -2722,6 +2753,53 @@ mod tests {
         assert!(
             !text.contains("● 1"),
             "the workspace in view marks its pane's title instead\n{text}"
+        );
+    }
+
+    #[test]
+    fn a_fullscreen_pane_marks_the_recordings_it_covers() {
+        let mut backend = recording_backend();
+        {
+            let state = backend.state_mut();
+            let mut pane = Pane::new(9, 100, FloatRect::default());
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.fullscreen = true;
+            state.current_mut().workspaces[0].panes.push(pane);
+        }
+        backend.render();
+        let text = backend.capture_frame().plain_text();
+        assert!(
+            text.contains("● rec elsewhere"),
+            "the fullscreen pane hides the recording\n{text}"
+        );
+
+        // It covers the workbar too, so a recording on another workspace needs the same marker.
+        {
+            let state = backend.state_mut();
+            let recorded = state.current_mut().workspaces[0].panes.remove(0);
+            state.current_mut().workspaces[1].panes.push(recorded);
+        }
+        backend.render();
+        let text = backend.capture_frame().plain_text();
+        assert!(text.contains("● rec elsewhere"), "{text}");
+
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .terminal
+            .recording = true;
+        backend.render();
+        let text = backend.capture_frame().plain_text();
+        assert!(text.contains("● rec + elsewhere"), "{text}");
+
+        // Its own recording alone reads as usual.
+        backend.state_mut().current_mut().workspaces[1]
+            .panes
+            .clear();
+        backend.render();
+        let text = backend.capture_frame().plain_text();
+        assert!(
+            text.contains("● rec") && !text.contains("elsewhere"),
+            "{text}"
         );
     }
 

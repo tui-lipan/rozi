@@ -13,8 +13,8 @@ mod workbar;
 mod workspace;
 
 pub(crate) use pane::{
-    PaneKind, PaneMerge, has_pane_alert, pane_alert, pane_chrome_shows_recording, pane_element,
-    recording_dot_off_phase,
+    PaneKind, PaneMerge, covers_a_recording, fullscreen_pane, has_pane_alert, pane_alert,
+    pane_chrome_shows_recording, pane_element, recording_dot_off_phase,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]

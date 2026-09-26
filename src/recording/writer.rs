@@ -235,6 +235,40 @@ impl Recorder {
         self.push(t, frame.into(), palette, true)
     }
 
+    /// Hand the writer a frame together with the marks and meta events that happened on it, all
+    /// or nothing: either the frame is queued with `events` right after it, or nothing is. Queued
+    /// as [`Self::push_frame`] does, or [`Self::push_last_frame`] when `last`; also refused while
+    /// the events would not fit in [`QUEUE_EVENTS`].
+    #[must_use]
+    pub fn push_frame_with(
+        &self,
+        t: u64,
+        frame: impl Into<Arc<CapturedFrame>>,
+        palette: TerminalColorPalette,
+        events: Vec<RecordingEvent>,
+        last: bool,
+    ) -> bool {
+        let mut queue = self.shared.queue();
+        if queue.closed || queue.jobs.len() - queue.frames + events.len() > QUEUE_EVENTS {
+            return false;
+        }
+        if !self.place_frame(
+            &mut queue,
+            Job::Frame {
+                t,
+                frame: frame.into(),
+                palette,
+            },
+            last,
+        ) {
+            return false;
+        }
+        queue.jobs.extend(events.into_iter().map(Job::Event));
+        drop(queue);
+        self.shared.ready.notify_one();
+        true
+    }
+
     fn push(
         &self,
         t: u64,
@@ -246,7 +280,15 @@ impl Recorder {
         if queue.closed {
             return false;
         }
-        let job = Job::Frame { t, frame, palette };
+        if !self.place_frame(&mut queue, Job::Frame { t, frame, palette }, last) {
+            return false;
+        }
+        drop(queue);
+        self.shared.ready.notify_one();
+        true
+    }
+
+    fn place_frame(&self, queue: &mut Queue, job: Job, last: bool) -> bool {
         if queue.frames < QUEUE_FRAMES {
             queue.jobs.push_back(job);
             queue.frames += 1;
@@ -266,8 +308,6 @@ impl Recorder {
         } else {
             return false;
         }
-        drop(queue);
-        self.shared.ready.notify_one();
         true
     }
 

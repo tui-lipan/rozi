@@ -68,11 +68,12 @@ pub struct UiRecording {
     pub phase: UiRecordingPhase,
     /// When the last frame handed to the writer was painted. The `max_fps` ceiling counts from it.
     pub last_written: Option<Instant>,
-    /// The newest frame painted before the ceiling allowed another, written when it does.
-    pub pending: Option<tui_lipan::PaintedFrame>,
+    /// The newest frame painted but not yet handed to the writer: the ceiling did not allow it
+    /// yet, or the writer refused it. Written when the ceiling allows, or before a mark or the end.
+    pub pending: Option<UiRecordingPending>,
     /// A timer will write [`Self::pending`]; later frames only replace it.
     pub flush_armed: bool,
-    /// What the meta events last reported.
+    /// What the meta events last reported: the state of the last frame the writer took.
     pub seen: UiRecordingSeen,
     /// Started from the palette, so its start is shown as a toast.
     pub from_action: bool,
@@ -101,6 +102,13 @@ pub struct UiRecordingFile {
     /// When the first frame arrived, by this machine's clock: what the duration limit counts from.
     pub started: Instant,
     pub started_at_unix_ms: u64,
+}
+
+/// A painted frame waiting for the writer, with the UI state it showed. Its meta events are
+/// queued with it, never before it.
+pub struct UiRecordingPending {
+    pub painted: tui_lipan::PaintedFrame,
+    pub seen: UiRecordingSeen,
 }
 
 /// The UI state a recording reports as meta events when it changes.

@@ -380,7 +380,7 @@ The header has:
 | --- | --- |
 | `format`, `version` | `"rozi-recording"` and the format's version, currently `1`. |
 | `rozi` | The version of rozi that wrote the file. |
-| `target` | What was recorded: `{"kind":"pane","session":…,"pane":…}`, or a whole UI, `{"kind":"ui","session":…}`, where `session` is the one it showed when the recording started and is absent without one. A reader shows a `kind` it does not know as an unknown target. |
+| `target` | What was recorded: `{"kind":"pane","session":…,"pane":…}`, or a whole UI, `{"kind":"ui","session":…}`, where `session` is the one it showed when the recording started and is absent without one. A reader from this version on shows a `kind` it does not know as an unknown target; a rozi from before UI recordings refuses a `ui` file. |
 | `width`, `height` | The screen's size in cells when the recording started. |
 | `started_at_unix_ms` | When it started. |
 | `max_fps`, `keyframe_interval_ms` | The frame-rate ceiling, and the longest gap between keyframes. |

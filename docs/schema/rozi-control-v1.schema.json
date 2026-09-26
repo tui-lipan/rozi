@@ -5079,7 +5079,7 @@
           "type": "object"
         },
         {
-          "description": "A target this version does not know.",
+          "description": "A target this version does not know. Readers without this variant, from before UI\nrecordings, refuse any target but a pane.",
           "properties": {
             "kind": {
               "const": "unknown",

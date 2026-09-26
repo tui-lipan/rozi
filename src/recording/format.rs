@@ -65,7 +65,8 @@ pub enum RecordingTarget {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<String>,
     },
-    /// A target this version does not know.
+    /// A target this version does not know. Readers without this variant, from before UI
+    /// recordings, refuse any target but a pane.
     #[serde(other)]
     Unknown,
 }

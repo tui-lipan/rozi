@@ -6,8 +6,11 @@
 //! recording pays nothing. The `max_fps` ceiling is applied here. A frame painted sooner than the
 //! ceiling allows waits, replaced by any newer one, until a timer writes it at the moment the
 //! ceiling allows; that is the screen the terminal showed then. A frame that changes what the meta
-//! events report is written at once, so the event lands on the screen it describes. Turning frames
-//! into spans, diffing, and the disk all happen on the writer thread.
+//! events report is written at once, so the event lands on the screen it describes. A frame and
+//! the events that happened on it reach the writer together or not at all: a mark first writes
+//! the frame still waiting, and a frame the writer refuses keeps its meta events for the next try.
+//! The last frame is written when it was painted, so the recording ends when it stopped. Turning
+//! frames into spans, diffing, and the disk all happen on the writer thread.
 //!
 //! The file is written on this client's machine, like a screenshot, even when the session it
 //! shows is remote, and with this client's `[recording]` settings.
@@ -17,18 +20,19 @@
 //! of every frame, which would then no longer be the frame that was painted.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
+use tui_lipan::PaintedFrame;
 use tui_lipan::prelude::*;
-use tui_lipan::{CapturedFrame, PaintedFrame};
 
 use crate::control::{ControlErrorCode, ControlResponse, UiRecordingInfo, UiRecordingStopped};
 use crate::pane::pty_events::{notify_error, notify_info};
 use crate::recording::start::{Limits, Output, frame_interval};
-use crate::recording::{EndReason, RecordingMeta, RecordingTarget};
-use crate::state::{State, UiRecording, UiRecordingFile, UiRecordingPhase, UiRecordingSeen};
+use crate::recording::{EndReason, RecordingEvent, RecordingMeta, RecordingTarget};
+use crate::state::{
+    State, UiRecording, UiRecordingFile, UiRecordingPending, UiRecordingPhase, UiRecordingSeen,
+};
 use crate::{AppRoot, Msg};
 
 /// How often a recording looks at its deadline and its writer while nothing paints.
@@ -86,7 +90,8 @@ pub(crate) fn mark_command(ctx: &mut Context<AppRoot>, label: &str) -> ControlRe
             "a mark needs a label",
         );
     };
-    let Some(recording) = ctx.state.ui_recording.as_ref() else {
+    let palette = palette(&ctx.state);
+    let Some(recording) = ctx.state.ui_recording.as_mut() else {
         return not_recording();
     };
     let UiRecordingPhase::Running(file) = &recording.phase else {
@@ -95,7 +100,29 @@ pub(crate) fn mark_command(ctx: &mut Context<AppRoot>, label: &str) -> ControlRe
             "the UI recording is still starting",
         );
     };
-    if file.recorder.mark(elapsed_ms(file), label) {
+    let now = elapsed_ms(file);
+    // A mark belongs on the screen shown when it was made, so a frame still waiting goes first.
+    let queued = match recording.pending.take() {
+        Some(pending) => {
+            let at = pending.painted.painted_at;
+            let mark = |t: u64| {
+                vec![RecordingEvent::Mark {
+                    t: now.max(t),
+                    label,
+                }]
+            };
+            let queued = commit(recording, &pending, at, palette, mark, false).is_some();
+            if !queued {
+                recording.pending = Some(pending);
+            }
+            queued
+        }
+        None => {
+            let shown = recording.last_written.map_or(0, |at| frame_time(file, at));
+            file.recorder.mark(now.max(shown), label)
+        }
+    };
+    if queued {
         ControlResponse::empty()
     } else {
         ControlResponse::error_with(
@@ -225,56 +252,86 @@ pub(crate) fn frame(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update
     if matches!(recording.phase, UiRecordingPhase::Starting { .. }) {
         return begin(ctx, painted);
     }
-    let now_seen = seen(&ctx.state);
+    let pending = UiRecordingPending {
+        painted,
+        seen: seen(&ctx.state),
+    };
     let palette = palette(&ctx.state);
     let Some(recording) = ctx.state.ui_recording.as_mut() else {
         return Update::none();
     };
-    let UiRecordingPhase::Running(file) = &recording.phase else {
-        return Update::none();
-    };
-    let changes = meta_changes(&recording.seen, &now_seen);
-    recording.seen = now_seen;
     let interval = frame_interval(recording.max_fps);
-    let due = !changes.is_empty()
+    let painted_at = pending.painted.painted_at;
+    let due = recording.seen != pending.seen
         || recording
             .last_written
-            .is_none_or(|last| painted.painted_at.saturating_duration_since(last) >= interval);
-    let mut command = None;
-    if due {
-        recording.pending = None;
-        if push(
-            file,
-            painted.painted_at,
-            painted.frame.clone(),
+            .is_none_or(|last| painted_at.saturating_duration_since(last) >= interval);
+    recording.pending = None;
+    if !due
+        || commit(
+            recording,
+            &pending,
+            painted_at,
             palette,
+            |_| Vec::new(),
             false,
-        ) {
-            recording.last_written = Some(painted.painted_at);
-        } else {
-            recording.pending = Some(painted.clone());
-        }
-    } else {
-        recording.pending = Some(painted.clone());
+        )
+        .is_none()
+    {
+        recording.pending = Some(pending);
     }
+    let mut command = None;
     if recording.pending.is_some() && !recording.flush_armed {
         recording.flush_armed = true;
         let wait = recording.last_written.map_or(interval, |last| {
-            (last + interval).saturating_duration_since(painted.painted_at)
+            (last + interval).saturating_duration_since(painted_at)
         });
         let id = recording.id;
         command = Some(Command::after(wait, move |link: CommandLink<Msg>| {
             link.send(Msg::UiRecordingFlush { id });
         }));
     }
-    let t = frame_time(file, painted.painted_at);
-    for meta in changes {
-        file.recorder.meta(t, meta);
-    }
-    if file.recorder.closed() {
+    if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
     }
     command.map_or_else(Update::none, Update::command_only)
+}
+
+/// Hand the writer `pending`'s frame at `at`, with the meta events for what its screen changed
+/// and then the events `after` makes from the frame's time, all or nothing. Only a frame the
+/// writer took moves what the recording last reported to its state, so a refused one keeps its
+/// meta for the next try. Returns the frame's time in the file.
+fn commit(
+    recording: &mut UiRecording,
+    pending: &UiRecordingPending,
+    at: Instant,
+    palette: TerminalColorPalette,
+    after: impl FnOnce(u64) -> Vec<RecordingEvent>,
+    last: bool,
+) -> Option<u64> {
+    let UiRecordingPhase::Running(file) = &recording.phase else {
+        return None;
+    };
+    let t = frame_time(file, at);
+    let mut events: Vec<_> = meta_changes(&recording.seen, &pending.seen)
+        .into_iter()
+        .map(|meta| RecordingEvent::Meta { t, meta })
+        .collect();
+    events.extend(after(t));
+    let frame = pending.painted.frame.clone();
+    if !file
+        .recorder
+        .push_frame_with(t, frame, palette, events, last)
+    {
+        return None;
+    }
+    recording.seen = pending.seen.clone();
+    recording.last_written = Some(at);
+    Some(t)
+}
+
+fn recorder_closed(recording: &UiRecording) -> bool {
+    matches!(&recording.phase, UiRecordingPhase::Running(file) if file.recorder.closed())
 }
 
 /// The first frame: create the file from its size and colors, and answer the start.
@@ -324,11 +381,12 @@ fn begin(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update {
             return Update::full();
         }
     };
-    let queued = recorder.push_frame(0, painted.frame.clone(), palette);
+    let events = initial_meta(&now_seen)
+        .into_iter()
+        .map(|meta| RecordingEvent::Meta { t: 0, meta })
+        .collect();
+    let queued = recorder.push_frame_with(0, painted.frame.clone(), palette, events, false);
     debug_assert!(queued, "an empty queue takes the first frame");
-    for meta in initial_meta(&now_seen) {
-        recorder.meta(0, meta);
-    }
     let info = UiRecordingInfo {
         path: path.display().to_string(),
         started_at_unix_ms,
@@ -358,33 +416,34 @@ fn begin(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update {
 }
 
 /// The ceiling allows the waiting frame now. It is written at the moment the ceiling allowed it,
-/// which is when the terminal was showing it.
+/// which is when the terminal was showing it. A frame the writer refused earlier that changed the
+/// meta keeps the moment it was painted, since that is when its events happened.
 pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64) -> Update {
     let palette = palette(&ctx.state);
     let Some(recording) = ctx.state.ui_recording.as_mut().filter(|r| r.id == id) else {
         return Update::none();
     };
     recording.flush_armed = false;
-    let UiRecordingPhase::Running(file) = &recording.phase else {
+    if !matches!(recording.phase, UiRecordingPhase::Running(_)) {
         return Update::none();
-    };
+    }
     let Some(pending) = recording.pending.take() else {
         return Update::none();
     };
     let interval = frame_interval(recording.max_fps);
-    let at = recording.last_written.map_or(pending.painted_at, |last| {
-        (last + interval).max(pending.painted_at)
-    });
-    if push(file, at, pending.frame.clone(), palette, false) {
-        recording.last_written = Some(at);
-    } else {
+    let painted_at = pending.painted.painted_at;
+    let at = match recording.last_written {
+        Some(last) if recording.seen == pending.seen => (last + interval).max(painted_at),
+        _ => painted_at,
+    };
+    if commit(recording, &pending, at, palette, |_| Vec::new(), false).is_none() {
         recording.pending = Some(pending);
         recording.flush_armed = true;
         return Update::command_only(Command::after(interval, move |link: CommandLink<Msg>| {
             link.send(Msg::UiRecordingFlush { id });
         }));
     }
-    if file.recorder.closed() {
+    if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
     }
     Update::none()
@@ -496,17 +555,29 @@ fn end(
 
 /// Write the waiting frame and end the file with `reason`. `None` for a recording that never
 /// opened one, whose start is refused.
+///
+/// The waiting frame is the last screen, so it is written at the moment it was painted rather
+/// than when the ceiling would have allowed it, which would stretch the recording past its end.
 fn close(
-    recording: UiRecording,
+    mut recording: UiRecording,
     reason: EndReason,
     palette: TerminalColorPalette,
 ) -> Option<(UiRecordingFile, u64)> {
+    let last_shown = recording.pending.take().and_then(|pending| {
+        let at = pending.painted.painted_at;
+        commit(&mut recording, &pending, at, palette, |_| Vec::new(), true).or_else(|| {
+            let UiRecordingPhase::Running(file) = &recording.phase else {
+                return None;
+            };
+            let t = frame_time(file, at);
+            file.recorder
+                .push_last_frame(t, pending.painted.frame, palette)
+                .then_some(t)
+        })
+    });
     let UiRecording {
         subscription,
         phase,
-        pending,
-        last_written,
-        max_fps,
         ..
     } = recording;
     subscription.unsubscribe();
@@ -522,13 +593,7 @@ fn close(
             return None;
         }
     };
-    if let Some(pending) = pending {
-        let at = last_written.map_or(pending.painted_at, |last| {
-            (last + frame_interval(max_fps)).max(pending.painted_at)
-        });
-        let _ = push(&file, at, pending.frame, palette, true);
-    }
-    let elapsed = elapsed_ms(&file);
+    let elapsed = elapsed_ms(&file).max(last_shown.unwrap_or(0));
     file.recorder.finish(elapsed, reason);
     Some((file, elapsed))
 }
@@ -598,22 +663,6 @@ pub(crate) fn finish_for_exit(state: &mut State) {
     }
 }
 
-/// Hand the writer a frame the terminal showed at `at`.
-fn push(
-    file: &UiRecordingFile,
-    at: Instant,
-    frame: Arc<CapturedFrame>,
-    palette: TerminalColorPalette,
-    last: bool,
-) -> bool {
-    let t = frame_time(file, at);
-    if last {
-        file.recorder.push_last_frame(t, frame, palette)
-    } else {
-        file.recorder.push_frame(t, frame, palette)
-    }
-}
-
 fn frame_time(file: &UiRecordingFile, at: Instant) -> u64 {
     at.saturating_duration_since(file.first_painted).as_millis() as u64
 }
@@ -680,14 +729,14 @@ fn meta_changes(before: &UiRecordingSeen, now: &UiRecordingSeen) -> Vec<Recordin
 mod tests {
     use std::io::BufReader;
     use std::path::Path;
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
 
     use tui_lipan::TestBackend;
 
     use super::*;
     use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
     use crate::input::Action;
-    use crate::recording::{RecordingEnd, Replay, ReplayStep};
+    use crate::recording::{RecorderOptions, RecordingEnd, Replay, ReplayStep};
 
     fn on_large_stack(body: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
@@ -785,6 +834,8 @@ mod tests {
         meta: Vec<RecordingMeta>,
         marks: Vec<String>,
         end: Option<RecordingEnd>,
+        /// Every frame, mark, and meta event, in file order.
+        steps: Vec<String>,
     }
 
     fn replay(path: &Path) -> Replayed {
@@ -807,10 +858,17 @@ mod tests {
                         .join("\n")
                         .trim_end()
                         .to_string();
+                    out.steps.push(format!("frame {text}"));
                     out.frames.push((t, text));
                 }
-                ReplayStep::Mark { label, .. } => out.marks.push(label),
-                ReplayStep::Meta { meta, .. } => out.meta.push(meta),
+                ReplayStep::Mark { label, .. } => {
+                    out.steps.push(format!("mark {label}"));
+                    out.marks.push(label);
+                }
+                ReplayStep::Meta { meta, .. } => {
+                    out.steps.push(format!("meta {meta:?}"));
+                    out.meta.push(meta);
+                }
                 ReplayStep::End(end) => out.end = Some(end),
             }
         }
@@ -910,7 +968,7 @@ mod tests {
             assert_eq!(backend.update_level(latest).unwrap(), UpdateLevel::None);
             let recording = running(&backend);
             assert!(recording.flush_armed);
-            assert_eq!(recording.pending.as_ref().unwrap().sequence, 20);
+            assert_eq!(recording.pending.as_ref().unwrap().painted.sequence, 20);
 
             assert_eq!(
                 backend.update_level(Msg::UiRecordingFlush { id }).unwrap(),
@@ -964,6 +1022,170 @@ mod tests {
                     overlay: Some("settings".into())
                 })
             );
+        });
+    }
+
+    /// The step right after the frame showing `text`.
+    fn after_frame<'a>(replayed: &'a Replayed, text: &str) -> Option<&'a str> {
+        let at = replayed
+            .steps
+            .iter()
+            .position(|step| *step == format!("frame {text}"))?;
+        replayed.steps.get(at + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn a_mark_lands_on_the_frame_still_waiting_for_the_ceiling() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mark.rozirec");
+            let mut backend = backend();
+            started(&mut backend, &path, Some(1));
+            let waiting = painted(&backend, 10, "waiting");
+            backend.update_level(waiting).unwrap();
+            assert!(running(&backend).pending.is_some());
+
+            let mark = ask(
+                &mut backend,
+                ControlCommand::RecordUiMark {
+                    label: "here".into(),
+                },
+            );
+            assert!(mark.ok, "{:?}", mark.error);
+            stopped(&mut backend);
+
+            let replayed = replay(&path);
+            assert!(replayed.frames.contains(&(10, "waiting".to_string())));
+            assert_eq!(
+                after_frame(&replayed, "waiting"),
+                Some("mark here"),
+                "{:#?}",
+                replayed.steps
+            );
+        });
+    }
+
+    #[test]
+    fn a_frame_the_writer_refuses_keeps_its_meta_until_it_is_written() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut backend = backend();
+            started(&mut backend, &dir.path().join("first.rozirec"), Some(1));
+            let path = dir.path().join("stalled.rozirec");
+            let palette = palette(backend.state());
+            let Msg::UiRecordingFrame(filler) = painted(&backend, 0, "filler") else {
+                unreachable!()
+            };
+            let recording = backend.state_mut().ui_recording.as_mut().unwrap();
+            let UiRecordingPhase::Running(file) = &mut recording.phase else {
+                panic!("still starting");
+            };
+            let first = crate::pane::spans::span_frame(&filler.frame, palette, false).unwrap();
+            let header = crate::recording::start::header(
+                RecordingTarget::Ui { session: None },
+                &first,
+                1,
+                0,
+            );
+            file.recorder = crate::recording::Recorder::start_paused(RecorderOptions {
+                path: path.clone(),
+                overwrite: false,
+                header,
+                max_bytes: u64::MAX,
+            })
+            .unwrap();
+            for t in 0..crate::recording::writer::QUEUE_FRAMES as u64 {
+                let mark = vec![RecordingEvent::Mark {
+                    t,
+                    label: format!("filler {t}"),
+                }];
+                let frame = filler.frame.clone();
+                assert!(
+                    file.recorder
+                        .push_frame_with(t, frame, palette, mark, false)
+                );
+            }
+
+            backend.state_mut().show_settings = true;
+            let settings = painted(&backend, 20, "settings");
+            backend.update_level(settings).unwrap();
+            let recording = running(&backend);
+            assert_eq!(
+                recording
+                    .pending
+                    .as_ref()
+                    .map(|pending| pending.seen.overlay),
+                Some(Some("settings")),
+                "the refused frame waits with the state it showed"
+            );
+            assert_eq!(recording.seen.overlay, None, "its meta is not reported yet");
+
+            let id = recording.id;
+            let recording = backend.state_mut().ui_recording.as_mut().unwrap();
+            if let UiRecordingPhase::Running(file) = &mut recording.phase {
+                file.recorder.resume();
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while running(&backend).pending.is_some() {
+                assert!(Instant::now() < deadline, "the frame was never written");
+                std::thread::sleep(Duration::from_millis(5));
+                backend.dispatch(Msg::UiRecordingFlush { id }).unwrap();
+            }
+            assert_eq!(running(&backend).seen.overlay, Some("settings"));
+            stopped(&mut backend);
+
+            let replayed = replay(&path);
+            let overlay = format!(
+                "meta {:?}",
+                RecordingMeta::Overlay {
+                    overlay: Some("settings".into())
+                }
+            );
+            assert_eq!(
+                after_frame(&replayed, "settings"),
+                Some(overlay.as_str()),
+                "{:#?}",
+                replayed.steps
+            );
+            assert_eq!(
+                replayed
+                    .steps
+                    .iter()
+                    .filter(|step| **step == overlay)
+                    .count(),
+                1,
+                "{:#?}",
+                replayed.steps
+            );
+        });
+    }
+
+    #[test]
+    fn stopping_writes_the_waiting_frame_when_it_was_painted() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("stop.rozirec");
+            let mut backend = backend();
+            started(&mut backend, &path, Some(1));
+            let last = painted(&backend, 10, "last");
+            backend.update_level(last).unwrap();
+            assert!(running(&backend).pending.is_some());
+
+            let stopped = stopped(&mut backend);
+            assert!(stopped.elapsed_ms < 1000, "{}", stopped.elapsed_ms);
+            let replayed = replay(&path);
+            assert!(
+                replayed.frames.contains(&(10, "last".to_string())),
+                "the last frame keeps its moment, not the ceiling's: {:?}",
+                replayed.frames
+            );
+            let end = replayed.end.unwrap();
+            assert!(
+                end.t < 1000,
+                "the end is not pushed past the stop: {}",
+                end.t
+            );
+            assert_eq!(end.t, stopped.elapsed_ms);
         });
     }
 

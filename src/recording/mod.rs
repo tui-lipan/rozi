@@ -12,6 +12,7 @@ pub mod frame;
 pub mod play;
 pub mod read;
 mod rows;
+pub mod units;
 pub mod writer;
 
 #[cfg(test)]

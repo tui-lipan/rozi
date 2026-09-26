@@ -412,6 +412,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::TogglePaneRecording,
+        label: "Start pane recording",
+        category: "Capture",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::MarkPaneRecording,
+        label: "Mark pane recording…",
+        category: "Capture",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenProfilePicker,
         label: "Profiles…",
         category: "Profile",

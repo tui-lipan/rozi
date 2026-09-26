@@ -141,6 +141,9 @@ pub struct State {
     /// whatever the outgoing session's same-numbered panes and tabs were showing.
     pub session_view_changed: Cell<bool>,
     pub screenshot: ScreenshotState,
+    /// The Mark pane recording prompt, while it is open.
+    pub recording_mark: Option<RecordingMarkPrompt>,
+    pub recording_mark_blink: RecordingMarkBlink,
     /// Grace period of the attach in flight, during which the previous session's picture stays on
     /// screen instead of the Connecting scene.
     pub connect_hold: Option<ConnectHold>,
@@ -354,6 +357,8 @@ pub struct State {
     /// Keyed by the request id the server echoes back.
     pub pending_attached_controls: HashMap<u64, PendingAttachedControl>,
     pub next_attached_control_request_id: u64,
+    /// Start/Stop toggles awaiting the runtime flag or Stop completion, by attachment and pane.
+    pub pending_recording_toggles: HashMap<(u64, PaneId), bool>,
     /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
     /// answer states readiness instead of mere acceptance. Keyed by
     /// `(epoch, local, pane id, generation)` so a client-local pane and a shared pane that share a
@@ -407,7 +412,15 @@ pub struct PendingAgentReportReply {
 pub struct PendingAttachedControl {
     /// The attachment the request went out on. An answer arriving on any other is not this one's.
     pub epoch: u64,
-    pub reply: std::sync::mpsc::Sender<crate::control::ControlResponse>,
+    pub reply: AttachedReply,
+}
+
+/// Who is waiting on a request forwarded to a session server.
+pub enum AttachedReply {
+    /// A control-socket caller.
+    Control(std::sync::mpsc::Sender<crate::control::ControlResponse>),
+    /// One of this UI's own recording commands, answered on screen.
+    Action(RecordingAction),
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed
@@ -495,6 +508,8 @@ impl State {
             session_reveal_seen: Cell::new(None),
             session_view_changed: Cell::new(false),
             screenshot: ScreenshotState::default(),
+            recording_mark: None,
+            recording_mark_blink: RecordingMarkBlink::default(),
             connect_hold: None,
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
@@ -592,6 +607,7 @@ impl State {
             next_agent_report_request_id: 1,
             pending_attached_controls: HashMap::new(),
             next_attached_control_request_id: 1,
+            pending_recording_toggles: HashMap::new(),
             pending_spawn_replies: HashMap::new(),
             pending_control_input: HashMap::new(),
             capture_waits: Default::default(),
@@ -1019,6 +1035,7 @@ impl State {
             || self.rename.is_some()
             || self.rename_session.is_some()
             || self.save_profile_prompt.is_some()
+            || self.recording_mark.is_some()
             || self.show_profile_picker
             || self.worktree_picker.is_some()
             || self.show_session_picker

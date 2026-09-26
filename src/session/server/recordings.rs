@@ -7,13 +7,13 @@
 //! image hashing, the disk - happens there.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::headless::ReplyTo;
 use super::*;
 use crate::control::{
     ControlCommand, ControlErrorCode, ControlResponse, RecordingInfo, RecordingListPayload,
-    RecordingMarked, RecordingStopped,
+    RecordingMarked, RecordingStopList, RecordingStopped,
 };
 use crate::recording::{
     EndReason, RECORDING_FORMAT, RECORDING_VERSION, Recorder, RecorderOptions, RecordingHeader,
@@ -24,6 +24,8 @@ use crate::recording::{
 pub(super) const MAX_RECORDINGS: usize = 16;
 /// How long a server that is shutting down waits for each recording's file to be finished.
 const SHUTDOWN_FINISH: Duration = Duration::from_secs(5);
+/// Names a server tries for a recording it names itself before giving up on the directory.
+const MAX_NAME_ATTEMPTS: u32 = 1000;
 
 /// The shortest gap between two frames at `max_fps`, rounded up so the ceiling is never exceeded.
 fn frame_interval(max_fps: u32) -> Duration {
@@ -34,6 +36,13 @@ fn frame_interval(max_fps: u32) -> Duration {
 pub(super) struct RecordingReply {
     client_id: ClientId,
     to: ReplyTo,
+}
+
+/// A `record-stop` held until every recording it stopped has finished its file.
+pub(super) struct PendingStop {
+    reply: RecordingReply,
+    waiting: Vec<u64>,
+    stopped: Vec<RecordingStopped>,
 }
 
 pub(super) struct ActiveRecording {
@@ -60,8 +69,6 @@ pub(super) struct ActiveRecording {
     meta_seen: (u64, u64),
     /// The foreground `record pane` holding this recording, answered when it ends.
     follower: Option<RecordingReply>,
-    /// `record stop` callers waiting for the file to be complete.
-    stoppers: Vec<RecordingReply>,
 }
 
 impl ActiveRecording {
@@ -201,10 +208,19 @@ impl MetaSeen {
     }
 }
 
+/// Where a recording is written.
+enum PlannedOutput {
+    /// The file the request named.
+    File(PathBuf),
+    /// A new file the server names: `<stem>.rozirec` in `dir`, or `<stem>-2.rozirec`, … when that
+    /// is taken.
+    Named { dir: PathBuf, stem: String },
+}
+
 /// What a `record-start` asked for, checked.
 struct RecordingPlan {
     pane_id: PaneId,
-    path: PathBuf,
+    output: PlannedOutput,
     max_fps: u32,
     duration_ms: u64,
     max_bytes: u64,
@@ -233,7 +249,7 @@ impl SessionServer {
             } => {
                 let plan = match self.plan_recording(
                     target,
-                    &output,
+                    output.as_deref(),
                     max_fps,
                     duration_ms,
                     max_bytes,
@@ -255,14 +271,19 @@ impl SessionServer {
                     Err(response) => Some(response),
                 }
             }
-            ControlCommand::RecordStop { id } => {
-                let id = match self.recording_id(id) {
-                    Ok(id) => id,
+            ControlCommand::RecordStop { id, target } => {
+                let ids = match self.selected_recordings(id, target) {
+                    Ok(ids) => ids,
                     Err(response) => return Some(response),
                 };
-                let recording = self.recordings.get_mut(&id)?;
-                recording.end(EndReason::Stopped);
-                recording.stoppers.push(reply);
+                for id in &ids {
+                    self.recordings[id].end(EndReason::Stopped);
+                }
+                self.recording_stops.push(PendingStop {
+                    reply,
+                    waiting: ids,
+                    stopped: Vec::new(),
+                });
                 None
             }
             ControlCommand::RecordList => Some(ControlResponse::ok(RecordingListPayload(
@@ -271,7 +292,9 @@ impl SessionServer {
                     .map(|recording| recording.info(&self.session_name))
                     .collect(),
             ))),
-            ControlCommand::RecordMark { label, id } => Some(self.mark_recordings(&label, id)),
+            ControlCommand::RecordMark { label, id, target } => {
+                Some(self.mark_recordings(&label, id, target))
+            }
             _ => Some(ControlResponse::error("not a record command")),
         }
     }
@@ -279,7 +302,7 @@ impl SessionServer {
     fn plan_recording(
         &self,
         target: Option<PaneId>,
-        output: &str,
+        output: Option<&str>,
         max_fps: Option<u32>,
         duration_ms: Option<u64>,
         max_bytes: Option<u64>,
@@ -288,24 +311,27 @@ impl SessionServer {
         let invalid = |message: String| {
             ControlResponse::error_with(ControlErrorCode::InvalidArgument, message)
         };
-        let path = PathBuf::from(output);
-        if !path.is_absolute() {
+        let path = output.map(PathBuf::from);
+        if let (Some(path), Some(output)) = (&path, output)
+            && !path.is_absolute()
+        {
             return Err(invalid(format!(
                 "the recording path must be absolute on the session's host, not {output:?}"
             )));
         }
-        let max_fps = max_fps.unwrap_or(control::DEFAULT_RECORDING_MAX_FPS);
+        let defaults = &self.settings.recording;
+        let max_fps = max_fps.unwrap_or(defaults.max_fps);
         if !(1..=control::MAX_RECORDING_MAX_FPS).contains(&max_fps) {
             return Err(invalid(format!(
                 "max fps must be from 1 to {}",
                 control::MAX_RECORDING_MAX_FPS
             )));
         }
-        let duration_ms = duration_ms.unwrap_or(control::DEFAULT_RECORDING_DURATION_MS);
+        let duration_ms = duration_ms.unwrap_or(defaults.duration_ms);
         if !(1..=control::MAX_RECORDING_DURATION_MS).contains(&duration_ms) {
             return Err(invalid("a recording lasts from 1ms to 7 days".to_string()));
         }
-        let max_bytes = max_bytes.unwrap_or(control::DEFAULT_RECORDING_MAX_BYTES);
+        let max_bytes = max_bytes.unwrap_or(defaults.max_bytes);
         if max_bytes < crate::recording::writer::MIN_MAX_BYTES {
             return Err(invalid(format!(
                 "max bytes must be at least {} KiB",
@@ -318,18 +344,21 @@ impl SessionServer {
                 format!("this session already runs {MAX_RECORDINGS} recordings"),
             ));
         }
-        // Compared as the file each path names, not as spelled: `--force` on another spelling of a
-        // file being recorded would unlink it from under its writer.
-        let resolved = crate::platform::persist::resolved_file_path(&path)
-            .map_err(|error| invalid(format!("cannot record to {output}: {error}")))?;
-        if self.recordings.values().any(|recording| {
-            recording.resolved == resolved
-                || crate::platform::persist::same_file(&path, &recording.path)
-        }) {
-            return Err(ControlResponse::error_with(
-                ControlErrorCode::Conflict,
-                format!("{output} is already being recorded to"),
-            ));
+        if let Some(path) = &path {
+            // Compared as the file each path names, not as spelled: `--force` on another spelling
+            // of a file being recorded would unlink it from under its writer.
+            let shown = path.display();
+            let resolved = crate::platform::persist::resolved_file_path(path)
+                .map_err(|error| invalid(format!("cannot record to {shown}: {error}")))?;
+            if self.recordings.values().any(|recording| {
+                recording.resolved == resolved
+                    || crate::platform::persist::same_file(path, &recording.path)
+            }) {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::Conflict,
+                    format!("{shown} is already being recorded to"),
+                ));
+            }
         }
         let pane_id = self.session_target_pane(target)?;
         let pane = self.panes.get(&pane_id).ok_or_else(|| {
@@ -344,9 +373,16 @@ impl SessionServer {
                 format!("pane {pane_id} has exited"),
             ));
         }
+        let output = match path {
+            Some(path) => PlannedOutput::File(path),
+            None => PlannedOutput::Named {
+                dir: self.recording_dir()?,
+                stem: recording_stem(&self.session_name, pane_id, chrono::Local::now()),
+            },
+        };
         Ok(RecordingPlan {
             pane_id,
-            path,
+            output,
             max_fps,
             duration_ms,
             max_bytes,
@@ -383,26 +419,59 @@ impl SessionServer {
             palette: first.palette,
             compression: None,
         };
-        let recorder = Recorder::start(RecorderOptions {
-            path: plan.path.clone(),
-            overwrite: plan.force,
-            header,
-            max_bytes: plan.max_bytes,
-        })
-        .map_err(|error| {
-            let path = plan.path.display();
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                ControlResponse::error_with(
-                    ControlErrorCode::Conflict,
-                    format!("{path} already exists; pass --force to replace it"),
-                )
-            } else {
-                ControlResponse::error_with(
-                    ControlErrorCode::RequestFailed,
-                    format!("cannot create {path}: {error}"),
-                )
+        let start = |path: &Path, overwrite: bool| {
+            Recorder::start(RecorderOptions {
+                path: path.to_path_buf(),
+                overwrite,
+                header: header.clone(),
+                max_bytes: plan.max_bytes,
+            })
+        };
+        let cannot_create = |path: &Path, error: io::Error| {
+            ControlResponse::error_with(
+                ControlErrorCode::RequestFailed,
+                format!("cannot create {}: {error}", path.display()),
+            )
+        };
+        let (path, recorder) = match plan.output {
+            PlannedOutput::File(path) => match start(&path, plan.force) {
+                Ok(recorder) => (path, recorder),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(ControlResponse::error_with(
+                        ControlErrorCode::Conflict,
+                        format!(
+                            "{} already exists; pass --force to replace it",
+                            path.display()
+                        ),
+                    ));
+                }
+                Err(error) => return Err(cannot_create(&path, error)),
+            },
+            PlannedOutput::Named { dir, stem } => {
+                let mut started = None;
+                for attempt in 1..=MAX_NAME_ATTEMPTS {
+                    let path = if attempt == 1 {
+                        dir.join(format!("{stem}.rozirec"))
+                    } else {
+                        dir.join(format!("{stem}-{attempt}.rozirec"))
+                    };
+                    match start(&path, false) {
+                        Ok(recorder) => {
+                            started = Some((path, recorder));
+                            break;
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(error) => return Err(cannot_create(&path, error)),
+                    }
+                }
+                started.ok_or_else(|| {
+                    ControlResponse::error_with(
+                        ControlErrorCode::Conflict,
+                        format!("no free file name for {stem}.rozirec in {}", dir.display()),
+                    )
+                })?
             }
-        })?;
+        };
         let started = Instant::now();
         let queued = recorder.push_frame(0, frame, palette);
         debug_assert!(queued, "an empty queue takes the first frame");
@@ -418,9 +487,9 @@ impl SessionServer {
                 id,
                 pane_id: plan.pane_id,
                 generation: pane.generation,
-                resolved: crate::platform::persist::resolved_file_path(&plan.path)
-                    .unwrap_or_else(|_| plan.path.clone()),
-                path: plan.path,
+                resolved: crate::platform::persist::resolved_file_path(&path)
+                    .unwrap_or_else(|_| path.clone()),
+                path,
                 started,
                 started_unix_ms,
                 max_fps: plan.max_fps,
@@ -434,7 +503,6 @@ impl SessionServer {
                 meta,
                 meta_seen: (pane.content_generation, pane.runtime.sequence),
                 follower: None,
-                stoppers: Vec::new(),
             },
         );
         self.recording_totals.started += 1;
@@ -467,7 +535,57 @@ impl SessionServer {
         }
     }
 
-    fn mark_recordings(&mut self, label: &str, id: Option<u64>) -> ControlResponse {
+    /// The recordings a stop or a mark names: recording `id`, every recording of pane `target`, or
+    /// with neither, the only one running.
+    fn selected_recordings(
+        &self,
+        id: Option<u64>,
+        target: Option<PaneId>,
+    ) -> std::result::Result<Vec<u64>, ControlResponse> {
+        match (id, target) {
+            (Some(_), Some(_)) => Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "name a recording with --id or a pane with --target, not both",
+            )),
+            (None, Some(pane)) => {
+                let ids: Vec<u64> = self
+                    .recordings
+                    .iter()
+                    .filter(|(_, recording)| recording.pane_id == pane)
+                    .map(|(&id, _)| id)
+                    .collect();
+                if ids.is_empty() {
+                    Err(ControlResponse::error_with(
+                        ControlErrorCode::InvalidArgument,
+                        format!("pane {pane} is not being recorded"),
+                    ))
+                } else {
+                    Ok(ids)
+                }
+            }
+            (id, None) => self.recording_id(id).map(|id| vec![id]),
+        }
+    }
+
+    /// The directory a recording the server names goes in, created private when rozi makes it.
+    fn recording_dir(&self) -> std::result::Result<PathBuf, ControlResponse> {
+        let configured = self.settings.recording.dir.as_deref();
+        let env = crate::platform::paths::PlatformEnv::from_process();
+        crate::platform::paths::recording_dir(&env, configured).map_err(|error| {
+            let what = match configured {
+                Some(dir) => format!("cannot use {}", dir.display()),
+                None => "cannot create the recordings directory".to_string(),
+            };
+            ControlResponse::error_with(ControlErrorCode::RequestFailed, format!("{what}: {error}"))
+        })
+    }
+
+    fn mark_recordings(
+        &mut self,
+        label: &str,
+        id: Option<u64>,
+        target: Option<PaneId>,
+    ) -> ControlResponse {
         let label: String = tui_lipan::utils::sanitize_display_text(label)
             .trim()
             .chars()
@@ -480,17 +598,21 @@ impl SessionServer {
             );
         }
         // A recording that is ending takes no more marks: its writer is finishing the file.
-        let candidates: Vec<u64> = match id {
-            Some(id) => match self.recording_id(Some(id)) {
-                Ok(id) => vec![id],
-                Err(response) => return response,
-            },
-            None => self
+        let candidates: Vec<u64> = match (id, target) {
+            (None, None) => self
                 .recordings
                 .iter()
                 .filter(|(_, recording)| !recording.recorder.closed())
                 .map(|(&id, _)| id)
                 .collect(),
+            (id, target) => match self.selected_recordings(id, target) {
+                Ok(ids) if id.is_some() => ids,
+                Ok(ids) => ids
+                    .into_iter()
+                    .filter(|id| !self.recordings[id].recorder.closed())
+                    .collect(),
+                Err(response) => return response,
+            },
         };
         if candidates.is_empty() {
             return ControlResponse::error_with(
@@ -584,34 +706,56 @@ impl SessionServer {
                 error: outcome.error.clone(),
                 totals: outcome.totals,
             };
-            for reply in recording.follower.into_iter().chain(recording.stoppers) {
+            if let Some(reply) = recording.follower {
                 self.answer_held(
                     reply.client_id,
                     &reply.to,
                     ControlResponse::ok(stopped.clone()),
                 );
             }
+            for stop in &mut self.recording_stops {
+                if let Some(index) = stop.waiting.iter().position(|&waiting| waiting == id) {
+                    stop.waiting.swap_remove(index);
+                    stop.stopped.push(stopped.clone());
+                }
+            }
             self.sync_recording_flag(recording.pane_id);
+        }
+        let (done, waiting) = std::mem::take(&mut self.recording_stops)
+            .into_iter()
+            .partition(|stop| stop.waiting.is_empty());
+        self.recording_stops = waiting;
+        for PendingStop {
+            reply, mut stopped, ..
+        } in done
+        {
+            stopped.sort_by_key(|stopped| stopped.id);
+            self.answer_held(
+                reply.client_id,
+                &reply.to,
+                ControlResponse::ok(RecordingStopList { stopped }),
+            );
         }
     }
 
     /// Whether `client_id` is waiting on a recording, so its connection must stay open.
     pub(super) fn holds_recording_reply(&self, client_id: ClientId) -> bool {
-        self.recordings.values().any(|recording| {
-            recording
-                .follower
-                .iter()
-                .chain(&recording.stoppers)
-                .any(|reply| reply.client_id == client_id)
-        })
+        self.recording_stops
+            .iter()
+            .any(|stop| stop.reply.client_id == client_id)
+            || self.recordings.values().any(|recording| {
+                recording
+                    .follower
+                    .as_ref()
+                    .is_some_and(|reply| reply.client_id == client_id)
+            })
     }
 
     /// A departed client stops the recording it followed, and waits for nothing.
     pub(super) fn release_recording_replies(&mut self, client_id: ClientId) {
+        self.recording_stops
+            .retain(|stop| stop.reply.client_id != client_id);
         for recording in self.recordings.values_mut() {
-            recording
-                .stoppers
-                .retain(|reply| reply.client_id != client_id);
             if recording
                 .follower
                 .as_ref()
@@ -671,6 +815,11 @@ impl SessionServer {
 
 pub(super) type Recordings = BTreeMap<u64, ActiveRecording>;
 
+/// `<session>-pane-<id>-<stamp>`, stamped in the server's local time to the second.
+fn recording_stem(session: &str, pane: PaneId, now: chrono::DateTime<chrono::Local>) -> String {
+    format!("{session}-pane-{pane}-{}", now.format("%Y%m%d-%H%M%S"))
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -688,7 +837,7 @@ mod tests {
     fn start(output: &Path, max_fps: Option<u32>, follow: bool) -> ControlCommand {
         ControlCommand::RecordStart {
             target: Some(3),
-            output: output.display().to_string(),
+            output: Some(output.display().to_string()),
             max_fps,
             duration_ms: None,
             max_bytes: None,
@@ -741,6 +890,14 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The recordings a `record-stop` answer says it stopped.
+    fn stopped_by(response: ControlResponse) -> Vec<RecordingStopped> {
+        assert!(response.ok, "{:?}", response.error);
+        serde_json::from_value::<RecordingStopList>(response.data.unwrap())
+            .unwrap()
+            .stopped
     }
 
     fn print(server: &mut SessionServer, bytes: &[u8]) {
@@ -855,7 +1012,8 @@ mod tests {
                 marker,
                 ControlCommand::RecordMark {
                     label: "built".into(),
-                    id: None
+                    id: None,
+                    target: None,
                 }
             )[0]
             .ok
@@ -866,7 +1024,10 @@ mod tests {
             ask(
                 &mut server,
                 stopper,
-                ControlCommand::RecordStop { id: None }
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                }
             )
             .is_empty(),
             "held"
@@ -874,8 +1035,9 @@ mod tests {
         assert!(server.holds_recording_reply(stopper));
         pump_until_finished(&mut server);
 
-        let stopped: RecordingStopped =
-            serde_json::from_value(answered(&server, stopper)[0].data.clone().unwrap()).unwrap();
+        let [stopped] = stopped_by(answered(&server, stopper).remove(0))
+            .try_into()
+            .unwrap();
         assert_eq!(stopped.reason, EndReason::Stopped);
         assert_eq!(stopped.totals.frames, 3);
         assert_eq!(stopped.totals.marks, 1);
@@ -887,6 +1049,163 @@ mod tests {
         assert_eq!(marks, ["built"]);
         assert_eq!(end.reason, EndReason::Stopped);
         assert_eq!(server.recording_metrics().finished, 1);
+    }
+
+    fn unnamed(target: PaneId) -> ControlCommand {
+        start_with(target, None, None)
+    }
+
+    fn start_with(target: PaneId, output: Option<&Path>, max_fps: Option<u32>) -> ControlCommand {
+        ControlCommand::RecordStart {
+            target: Some(target),
+            output: output.map(|path| path.display().to_string()),
+            max_fps,
+            duration_ms: None,
+            max_bytes: None,
+            force: false,
+            follow: false,
+        }
+    }
+
+    fn started_info(response: &ControlResponse) -> RecordingInfo {
+        assert!(response.ok, "{:?}", response.error);
+        serde_json::from_value(response.data.clone().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_recording_without_a_path_is_named_by_the_server_in_its_configured_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let configured = dir.path().join("made-by-rozi");
+        let mut server = server();
+        server.settings.recording = crate::config::RecordingConfig {
+            dir: Some(configured.clone()),
+            max_fps: 7,
+            duration_ms: 90_000,
+            max_bytes: 2 * 1024 * 1024,
+        };
+        let (client, _stream) = add_client(&mut server);
+
+        let first = started_info(&ask(&mut server, client, unnamed(3))[0]);
+        let second = started_info(&ask(&mut server, client, unnamed(3))[0]);
+        assert_eq!(
+            (first.max_fps, first.duration_ms, first.max_bytes),
+            (7, 90_000, 2 * 1024 * 1024),
+            "the configured defaults fill what the request leaves out"
+        );
+        let (first, second) = (PathBuf::from(first.path), PathBuf::from(second.path));
+        assert_eq!(first.parent(), Some(configured.as_path()));
+        let stem = first.file_stem().unwrap().to_str().unwrap().to_string();
+        assert!(stem.starts_with("dev-pane-3-"), "{stem}");
+        let second_stem = second.file_stem().unwrap().to_str().unwrap();
+        assert!(
+            second_stem == format!("{stem}-2") || !second_stem.starts_with(&stem),
+            "a second recording in the same second takes the next free name, not {second_stem}"
+        );
+        assert!(second.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&first).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "a recording is private");
+        }
+
+        let overridden = ask(&mut server, client, start_with(3, None, Some(30)));
+        assert_eq!(started_info(&overridden[0]).max_fps, 30);
+    }
+
+    #[test]
+    fn a_recording_without_a_path_or_a_directory_goes_in_the_state_directory() {
+        let mut server = server();
+        let (client, _stream) = add_client(&mut server);
+
+        let path = PathBuf::from(started_info(&ask(&mut server, client, unnamed(3))[0]).path);
+        let env = crate::platform::paths::PlatformEnv::from_process();
+        let expected = crate::platform::paths::recording_dir(&env, None).unwrap();
+        assert_eq!(path.parent(), Some(expected.as_path()));
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn a_pane_target_stops_and_marks_every_recording_of_that_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = server();
+        server.panes.insert(4, test_pane(2));
+        let (client, _stream) = add_client(&mut server);
+        for (pane, name) in [(3, "a"), (3, "b"), (4, "other")] {
+            let command = start_with(pane, Some(&dir.path().join(name)), None);
+            started_info(&ask(&mut server, client, command)[0]);
+        }
+
+        let both = ask(
+            &mut server,
+            client,
+            ControlCommand::RecordStop {
+                id: Some(1),
+                target: Some(3),
+            },
+        );
+        assert_eq!(both[0].code, Some(ControlErrorCode::InvalidArgument));
+        let idle = ask(
+            &mut server,
+            client,
+            ControlCommand::RecordMark {
+                label: "x".into(),
+                id: None,
+                target: Some(9),
+            },
+        );
+        assert!(
+            idle[0].error.as_ref().unwrap().contains("pane 9"),
+            "{:?}",
+            idle[0].error
+        );
+
+        let marked = ask(
+            &mut server,
+            client,
+            ControlCommand::RecordMark {
+                label: "here".into(),
+                id: None,
+                target: Some(3),
+            },
+        );
+        assert!(marked[0].ok, "{:?}", marked[0].error);
+        let (stopper, _stop_stream) = add_client(&mut server);
+        assert!(
+            ask(
+                &mut server,
+                stopper,
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: Some(3),
+                },
+            )
+            .is_empty()
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while server.recordings.len() > 1 {
+            assert!(
+                Instant::now() < deadline,
+                "the pane's recordings never finished"
+            );
+            server.pump_recordings();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let stopped = stopped_by(answered(&server, stopper).remove(0));
+        assert_eq!(
+            stopped
+                .iter()
+                .map(|one| (one.id, one.totals.marks))
+                .collect::<Vec<_>>(),
+            [(1, 1), (2, 1)],
+            "one answer lists both, in order, each carrying the mark"
+        );
+        assert_eq!(server.recordings.keys().copied().collect::<Vec<_>>(), [3]);
+        assert!(!server.panes[&3].runtime.recording);
+        assert!(server.panes[&4].runtime.recording);
+        for name in ["a", "b"] {
+            assert_eq!(replay(&dir.path().join(name)).2, ["here"]);
+        }
     }
 
     fn tunnel(
@@ -961,6 +1280,7 @@ mod tests {
             ControlCommand::RecordMark {
                 label: "here".into(),
                 id: None,
+                target: None,
             },
         );
         let answers = tunnelled(&server, client);
@@ -979,7 +1299,10 @@ mod tests {
             &mut server,
             client,
             44,
-            ControlCommand::RecordStop { id: None },
+            ControlCommand::RecordStop {
+                id: None,
+                target: None,
+            },
         );
         assert_eq!(
             tunnelled(&server, client).len(),
@@ -989,7 +1312,7 @@ mod tests {
         pump_until_finished(&mut server);
         let (id, stopped) = tunnelled(&server, client).pop().unwrap();
         assert_eq!(id, 44);
-        let stopped: RecordingStopped = serde_json::from_value(stopped.data.unwrap()).unwrap();
+        let [stopped] = stopped_by(stopped).try_into().unwrap();
         assert_eq!(
             (stopped.reason, stopped.totals.marks),
             (EndReason::Stopped, 1)
@@ -1062,7 +1385,10 @@ mod tests {
             &mut server,
             client,
             5,
-            ControlCommand::RecordStop { id: None },
+            ControlCommand::RecordStop {
+                id: None,
+                target: None,
+            },
         );
         assert_eq!(
             refusal(&server, 5),
@@ -1099,7 +1425,10 @@ mod tests {
         ask(
             &mut server,
             stopper,
-            ControlCommand::RecordStop { id: None },
+            ControlCommand::RecordStop {
+                id: None,
+                target: None,
+            },
         );
         pump_until_finished(&mut server);
 
@@ -1282,7 +1611,10 @@ mod tests {
         ask(
             &mut server,
             stopper,
-            ControlCommand::RecordStop { id: None },
+            ControlCommand::RecordStop {
+                id: None,
+                target: None,
+            },
         );
         pump_until_finished(&mut server);
 
@@ -1313,7 +1645,10 @@ mod tests {
             ask(
                 &mut server,
                 stopper,
-                ControlCommand::RecordStop { id: None }
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                }
             )
             .is_empty()
         );
@@ -1326,6 +1661,7 @@ mod tests {
             ControlCommand::RecordMark {
                 label: "late".into(),
                 id: Some(1),
+                target: None,
             },
         );
         assert!(!named[0].ok);
@@ -1336,6 +1672,7 @@ mod tests {
             ControlCommand::RecordMark {
                 label: "late".into(),
                 id: None,
+                target: None,
             },
         );
         assert!(!any[0].ok, "{any:?}");
@@ -1420,7 +1757,13 @@ mod tests {
             Some(ControlErrorCode::InvalidArgument)
         );
         assert_eq!(
-            refused(&mut server, ControlCommand::RecordStop { id: None }),
+            refused(
+                &mut server,
+                ControlCommand::RecordStop {
+                    id: None,
+                    target: None,
+                }
+            ),
             Some(ControlErrorCode::InvalidArgument)
         );
         assert_eq!(
@@ -1428,7 +1771,8 @@ mod tests {
                 &mut server,
                 ControlCommand::RecordMark {
                     label: "x".into(),
-                    id: None
+                    id: None,
+                    target: None,
                 }
             ),
             Some(ControlErrorCode::InvalidArgument)

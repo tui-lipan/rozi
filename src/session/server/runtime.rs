@@ -634,6 +634,17 @@ impl SessionServer {
         self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
     }
 
+    /// Re-read `[recording]` for the recording about to start, for the reason
+    /// [`Self::reload_spawn_policy`] re-reads spawn policy: a detached server's startup config can
+    /// be days old.
+    pub(super) fn reload_recording_defaults(&mut self) {
+        let loaded = crate::config::load_config();
+        crate::config::log_config_warnings(&loaded.warnings);
+        if !loaded.rejected {
+            self.settings.recording = loaded.config.recording;
+        }
+    }
+
     /// Adopt resolved spawn policy.
     ///
     /// Split from the config read for the same reason

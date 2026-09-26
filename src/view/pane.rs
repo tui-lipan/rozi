@@ -130,14 +130,16 @@ fn rich_title(spans: Vec<Span>) -> RichText {
 
 /// The dot that marks a recorded pane, or a fullscreen pane covering a recording, in `color`. It
 /// blinks on the calm pulse phase while the pulse chain runs, and holds steady whenever motion is
-/// off.
+/// off. A mark just made highlights it for a moment.
 fn recording_dot(ctx: &Context<AppRoot>, pane: &Pane, color: Color) -> Option<Span> {
     let own = pane.terminal.recording && !pane.closing;
     if !own && !covers_a_recording(&ctx.state, pane) {
         return None;
     }
     let style = Style::new().fg(color);
-    let style = if recording_dot_off_phase(&ctx.state) {
+    let style = if ctx.state.recording_mark_blink.pane == Some(pane.id) {
+        style.reverse().bold()
+    } else if recording_dot_off_phase(&ctx.state) {
         style.dim()
     } else {
         style

@@ -8,7 +8,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use rozi::control::{
-    ControlCommand, ControlRequest, ControlResponse, RecordingInfo, RecordingStopped,
+    ControlCommand, ControlRequest, ControlResponse, RecordingInfo, RecordingStopList,
+    RecordingStopped,
 };
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::recording::export;
@@ -66,13 +67,21 @@ fn spawn(session: &str, script: &str) -> u32 {
 fn start(pane: u32, path: &Path) -> ControlCommand {
     ControlCommand::RecordStart {
         target: Some(pane),
-        output: path.display().to_string(),
+        output: Some(path.display().to_string()),
         max_fps: None,
         duration_ms: None,
         max_bytes: None,
         force: false,
         follow: false,
     }
+}
+
+/// The one recording a `record-stop` answer says it stopped.
+#[track_caller]
+fn only_stopped(data: serde_json::Value) -> RecordingStopped {
+    let list: RecordingStopList = serde_json::from_value(data).unwrap();
+    let [stopped] = list.stopped.try_into().unwrap();
+    stopped
 }
 
 fn recordings(session: &str) -> Vec<RecordingInfo> {
@@ -171,11 +180,16 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
         ControlCommand::RecordMark {
             label: "ticked".into(),
             id: None,
+            target: None,
         },
     );
-    let stopped: RecordingStopped =
-        serde_json::from_value(expect_ok(&session, ControlCommand::RecordStop { id: None }))
-            .unwrap();
+    let stopped = only_stopped(expect_ok(
+        &session,
+        ControlCommand::RecordStop {
+            id: None,
+            target: None,
+        },
+    ));
     assert_eq!(stopped.reason, EndReason::Stopped);
     assert_eq!(stopped.totals.dropped, 0);
     assert!(recordings(&session).is_empty());
@@ -328,14 +342,22 @@ fn an_attached_client_records_through_its_own_connection_and_keeps_it() {
         ControlCommand::RecordMark {
             label: "from the ui".into(),
             id: None,
+            target: None,
         },
     );
     assert!(marked.ok, "{:?}", marked.error);
     let refused = tunnel(&mut client, 9, ControlCommand::ListPanes);
     assert!(!refused.ok, "the tunnel carries recording commands only");
 
-    let stopped = tunnel(&mut client, 10, ControlCommand::RecordStop { id: None });
-    let stopped: RecordingStopped = serde_json::from_value(stopped.data.unwrap()).unwrap();
+    let stopped = tunnel(
+        &mut client,
+        10,
+        ControlCommand::RecordStop {
+            id: None,
+            target: None,
+        },
+    );
+    let stopped = only_stopped(stopped.data.unwrap());
     assert_eq!(stopped.reason, EndReason::Stopped);
     assert_eq!(play(&path).marks, ["from the ui"]);
 

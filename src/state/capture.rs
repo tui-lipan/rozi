@@ -1,5 +1,7 @@
 use std::cell::Cell;
 
+use tui_lipan::prelude::TextInput;
+
 use super::{AttachmentId, PaneId};
 
 /// What a screenshot action photographed, and so what its flash covers.
@@ -32,5 +34,28 @@ pub struct ScreenshotState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScreenshotFlash {
     pub target: ScreenshotTarget,
+    pub revision: u64,
+}
+
+/// A recording command this UI sent its session server, and so how it shows the answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingAction {
+    Start(PaneId),
+    Stop(PaneId),
+    /// A mark on the recordings of this pane, whose dot blinks once it lands.
+    Mark(PaneId),
+}
+
+/// The Mark pane recording prompt: the label for the recordings of `target`.
+pub struct RecordingMarkPrompt {
+    pub target: PaneId,
+    pub input: TextInput,
+}
+
+/// The blink that confirms a mark landed.
+#[derive(Debug, Default)]
+pub struct RecordingMarkBlink {
+    /// The pane whose dot is blinking, until the blink `revision` names ends.
+    pub pane: Option<PaneId>,
     pub revision: u64,
 }

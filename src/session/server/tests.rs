@@ -3505,7 +3505,10 @@ fn an_attached_kill_reaches_the_server_before_the_client_is_torn_down() {
         false,
     )
     .expect("attach to the session server");
+    let shutdown_started = Instant::now();
     client.shutdown();
+    let shutdown_elapsed = shutdown_started.elapsed();
+    let queued_after_shutdown = client.runtime_stats().outbound.queued_items;
     // Exactly what `kill_current_session` does next: the attachment is replaced, so the last handle
     // goes away immediately.
     drop(client);
@@ -3514,7 +3517,7 @@ fn an_attached_kill_reaches_the_server_before_the_client_is_torn_down() {
     while endpoint.is_live() {
         assert!(
             Instant::now() < deadline,
-            "kill was dropped on the floor: the server outlived it"
+            "kill was dropped on the floor: the server outlived it (shutdown waited {shutdown_elapsed:?}, {queued_after_shutdown} outbound frames queued)"
         );
         std::thread::sleep(Duration::from_millis(10));
     }

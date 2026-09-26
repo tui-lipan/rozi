@@ -821,8 +821,19 @@ pub(super) fn format_control_text(
         control::ControlCommand::RecordStart { follow: false, .. } => {
             format_recording_started_text(data, styles)
         }
-        control::ControlCommand::RecordStart { follow: true, .. }
-        | control::ControlCommand::RecordStop { .. } => format_recording_stopped_text(data, styles),
+        control::ControlCommand::RecordStart { follow: true, .. } => {
+            format_recording_stopped_text(data, styles)
+        }
+        control::ControlCommand::RecordStop { .. } => data
+            .and_then(|data| data.get("stopped"))
+            .and_then(serde_json::Value::as_array)
+            .map(|stopped| {
+                stopped
+                    .iter()
+                    .map(|one| format_recording_stopped_text(Some(one), styles))
+                    .collect()
+            })
+            .unwrap_or_else(|| format_recording_stopped_text(None, styles)),
         control::ControlCommand::RecordList => format_recordings_text(data, styles),
         control::ControlCommand::RecordMark { .. } => {
             let ids = data

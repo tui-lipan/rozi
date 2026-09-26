@@ -133,6 +133,10 @@ pub enum Action {
     ScreenshotPane,
     /// Save the whole client as drawn, without the palette that ran it, as a PNG.
     ScreenshotUi,
+    /// Start recording the focused pane in its session server, or stop its recordings.
+    TogglePaneRecording,
+    /// Add a labelled mark to the focused pane's recordings.
+    MarkPaneRecording,
     /// Runs `config.commands[index]`. The stable runtime id lives in config and is registered
     /// explicitly, so this index-bearing action remains `Copy`.
     RunNamedCommand(usize),
@@ -262,6 +266,8 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::CopyLastOutput,
     Action::ScreenshotPane,
     Action::ScreenshotUi,
+    Action::TogglePaneRecording,
+    Action::MarkPaneRecording,
 ];
 
 impl Action {
@@ -392,6 +398,8 @@ impl Action {
             Action::CopyLastOutput => "copy-last-output",
             Action::ScreenshotPane => "screenshot-pane",
             Action::ScreenshotUi => "screenshot-ui",
+            Action::TogglePaneRecording => "toggle-pane-recording",
+            Action::MarkPaneRecording => "mark-pane-recording",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)

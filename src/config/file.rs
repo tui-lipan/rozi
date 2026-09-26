@@ -125,6 +125,7 @@ struct FileConfig {
     extensions: ExtensionsFileConfig,
     logging: LoggingFileConfig,
     capture: CaptureFileConfig,
+    recording: RecordingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
 
@@ -197,6 +198,16 @@ struct CaptureFileConfig {
     dir: Option<String>,
     /// Wide enough that an out-of-range number warns instead of rejecting the whole file.
     scale: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct RecordingFileConfig {
+    dir: Option<String>,
+    /// Wide enough that an out-of-range number warns instead of rejecting the whole file.
+    max_fps: Option<i64>,
+    duration: Option<String>,
+    max_bytes: Option<String>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -710,6 +721,49 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     )
 }
 
+/// Out-of-range values warn and keep the built-in default, like `capture.scale`: one bad key must
+/// not take the rest of the file with it.
+fn apply_recording_config(
+    parsed: RecordingFileConfig,
+    config: &mut RecordingConfig,
+    warnings: &mut Vec<String>,
+) {
+    use crate::control::{MAX_RECORDING_DURATION_MS, MAX_RECORDING_MAX_FPS};
+    use crate::recording::units::{parse_duration_ms, parse_size};
+    use crate::recording::writer::MIN_MAX_BYTES;
+
+    if let Some(dir) = non_empty(parsed.dir) {
+        config.dir = Some(expand_path(dir));
+    }
+    if let Some(max_fps) = parsed.max_fps {
+        match u32::try_from(max_fps) {
+            Ok(fps @ 1..=MAX_RECORDING_MAX_FPS) => config.max_fps = fps,
+            _ => warnings.push(format!(
+                "Ignored recording.max_fps {max_fps} (expected 1 to {MAX_RECORDING_MAX_FPS})"
+            )),
+        }
+    }
+    if let Some(duration) = parsed.duration {
+        match parse_duration_ms(duration.trim()) {
+            Ok(ms @ 1..=MAX_RECORDING_DURATION_MS) => config.duration_ms = ms,
+            Ok(_) => warnings.push(format!(
+                "Ignored recording.duration {duration:?} (expected at most 7d)"
+            )),
+            Err(error) => warnings.push(format!("Ignored recording.duration: {error}")),
+        }
+    }
+    if let Some(max_bytes) = parsed.max_bytes {
+        match parse_size(max_bytes.trim()) {
+            Ok(bytes) if bytes >= MIN_MAX_BYTES => config.max_bytes = bytes,
+            Ok(_) => warnings.push(format!(
+                "Ignored recording.max_bytes {max_bytes:?} (expected at least {}KiB)",
+                MIN_MAX_BYTES / 1024
+            )),
+            Err(error) => warnings.push(format!("Ignored recording.max_bytes: {error}")),
+        }
+    }
+}
+
 fn load_config_from_text_with_extensions(
     text: &str,
     path: &Path,
@@ -803,6 +857,7 @@ fn load_config_from_text_with_extensions(
             )),
         }
     }
+    apply_recording_config(parsed.recording, &mut config.recording, &mut warnings);
 
     let mut input = config.input.clone();
     apply_input_config(
@@ -2267,6 +2322,52 @@ mod file_tests {
             "{:?}",
             loaded.warnings
         );
+    }
+
+    #[test]
+    fn recording_keys_read_durations_and_sizes_and_refuse_out_of_range_values() {
+        let path = Path::new("test.toml");
+
+        let loaded = load_config_from_text("", path);
+        assert_eq!(loaded.config.recording, RecordingConfig::default());
+
+        let loaded = load_config_from_text(
+            "[recording]\ndir = \"~/recs\"\nmax_fps = 10\nduration = \"8h\"\nmax_bytes = \"512MiB\"\n",
+            path,
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.recording,
+            RecordingConfig {
+                dir: Some(expand_path("~/recs")),
+                max_fps: 10,
+                duration_ms: 8 * 3_600_000,
+                max_bytes: 512 << 20,
+            }
+        );
+
+        for (key, value) in [
+            ("max_fps", "0"),
+            ("max_fps", "121"),
+            ("duration", "\"8d\""),
+            ("duration", "\"soon\""),
+            ("max_bytes", "\"1KiB\""),
+            ("max_bytes", "\"lots\""),
+        ] {
+            let loaded = load_config_from_text(&format!("[recording]\n{key} = {value}\n"), path);
+            assert_eq!(
+                loaded.config.recording,
+                RecordingConfig::default(),
+                "{key} = {value}"
+            );
+            assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+            assert!(
+                loaded.warnings[0].contains(&format!("recording.{key}")),
+                "{:?}",
+                loaded.warnings
+            );
+            assert!(!loaded.rejected, "one bad key keeps the rest of the file");
+        }
     }
 
     #[test]

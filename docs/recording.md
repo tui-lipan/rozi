@@ -7,15 +7,20 @@ agent did overnight in the morning.
 
 ## Record a pane
 
-Name the session, the pane, and the file:
+In rozi, open the command palette and run **Start pane recording**. It records the focused pane and
+a toast says where the file is. Run **Mark pane recording…** to label the current moment, and
+**Stop pane recording** to finish. The same commands work from the shell.
+
+Name the session and the pane:
 
 ```sh
-rozi --session dev record start pane --target 3 --output agent.rozirec
+rozi --session dev record start pane --target 3
 ```
 
-The command returns at once and the recording runs in the session server until you stop it. Find
-pane ids with `rozi --session dev list-panes`. Add a label to the current moment, see what is
-running, and stop:
+The command returns at once and the recording runs in the session server until you stop it. It
+prints the file it writes to, which the server names; see [Where the file goes](#where-the-file-goes).
+Pass `--output agent.rozirec` to name it yourself. Find pane ids with
+`rozi --session dev list-panes`. Add a label to the current moment, see what is running, and stop:
 
 ```sh
 rozi --session dev record mark "tests started"
@@ -24,16 +29,18 @@ rozi --session dev record stop
 ```
 
 `record stop` answers once the file is complete. With more than one recording running, name one
-with `--id`, from `record list`. `record mark` labels every running recording unless given `--id`,
-and fails for a recording that is already ending, so a mark it reports was written.
+with `--id`, from `record list`, or a pane with `--target`, which stops every recording of that
+pane. `record mark` labels every running recording unless given `--id` or `--target`, and fails for
+a recording that is already ending, so a mark it reports was written.
 
-From a shell in a local session pane, leave out `--session`. The running rozi passes `start`, `stop`, `list`,
-and `mark` to the session your pane belongs to, even after you switch to another session, and
-`start` records the pane you run it in unless you give `--target`, which names a pane of that same
-session. Run from outside rozi, the commands go to the session on screen:
+From a shell in a local session pane, leave out `--session`. The running rozi passes `start`,
+`stop`, `list`, and `mark` to the session your pane belongs to, even after you switch to another
+session. They act on the pane you run them in unless you give `--target` or `--id`. From outside
+rozi, the commands go to the session on screen:
 
 ```sh
-rozi record start --output ~/agent.rozirec
+rozi record start
+rozi record mark "tests started"
 rozi record stop
 ```
 
@@ -42,6 +49,30 @@ popup pane runs outside the session, so it cannot be recorded, and commands run 
 `--session`. A pane of a [remote session](remote.md) runs on the other host, where it cannot
 reach your rozi window, so it also uses `--session <NAME>`. A UI attached read-only can list
 recordings but not start, stop, or mark one.
+
+## Record from the command palette
+
+| Command | What it does |
+| --- | --- |
+| **Start pane recording** | Starts recording the focused pane, with the file named by the server. |
+| **Stop pane recording** | Shown instead while the focused pane records. Stops every recording of it. |
+| **Mark pane recording…** | Asks for a label and marks the focused pane's recordings with it. |
+
+The commands appear only when the focused pane can be recorded: the UI is attached to a session, it
+is not attached read-only, and the pane is not a scratch or popup pane. **Mark pane recording…** also
+needs the pane to be recording. When the mark lands, a toast says so and the recording dot flashes,
+unless `[animations] enabled` or `focus_chrome` is off.
+
+When a recording starts or stops, a toast shows the path of its file. For a session on another host
+it also names the host, because that is where the file is. A command that fails shows why.
+
+They have no default keys. Bind `toggle-pane-recording` or `mark-pane-recording` under
+[`[keys]`](keybindings.md#rebind-a-command), for example to `Ctrl+A`, then `Shift+R`:
+
+```toml
+[keys]
+toggle-pane-recording = "shift-r"
+```
 
 To record only while a command runs in the foreground, use `record pane`, which always needs
 `--session`. It records until you press `Ctrl+C`. If the recording ends on its own first, such as when the pane's program exits, it prints
@@ -98,12 +129,19 @@ progress, and `metrics` counts recordings in its `recordings` section.
 
 ## Where the file goes
 
-The session server writes the file, so the path is on the session's host. With `--session`, a
-relative `--output` is resolved against the directory you run `rozi` in. With
-`--remote HOST --session NAME`, the file is written on that host and a relative path is resolved
-against your login directory there, usually your home directory. Without `--session`, `--output`
-must be absolute on the session's host, which may be another machine and another OS: a Windows
-session takes `C:\…`, a Linux or macOS one `/…`. The directory must already exist.
+The session server writes the file, so the path is on the session's host.
+
+Without `--output`, the server names the file `<session>-pane-<id>-<date>-<time>.rozirec`, such as
+`dev-pane-3-20260925-141503.rozirec`, and adds `-2`, `-3`, and so on rather than replace one that
+exists. It writes into `[recording] dir` from the configuration on the session's host, or
+`recordings` in the state directory there: on Linux, `~/.local/state/rozi/recordings`. A directory
+rozi creates is readable only by you.
+
+With `--output`, the directory must already exist. With `--session`, a relative `--output` is
+resolved against the directory you run `rozi` in. With `--remote HOST --session NAME`, the file is
+written on that host and a relative path is resolved against your login directory there, usually
+your home directory. Without `--session`, `--output` must be absolute on the session's host, which
+may run a different OS: a Windows session takes `C:\…`, a Linux or macOS one `/…`.
 
 ## Limits and how a recording ends
 
@@ -112,7 +150,22 @@ session takes `C:\…`, a Linux or macOS one `/…`. The directory must already 
 | `--max-fps N` | `30` | The most frames a second, from 1 to 120. |
 | `--duration DUR` | `24h` | Stop after this long, such as `90s`, `8h`, or `1h30m`; at most `7d`. |
 | `--max-bytes SIZE` | `1GiB` | Stop before the file grows past this size, such as `512MiB`; at least `64KiB`. |
-| `--force` | off | Replace an existing file at `--output`. |
+| `--force` | off | Replace an existing file at `--output`. Needs `--output`. |
+
+Change the defaults under `[recording]` in the configuration on the session's host. The session
+server reads it each time a recording starts, so an edit applies to the next recording without a
+restart. The palette commands always use these defaults.
+
+```toml
+[recording]
+dir = "~/recordings"
+max_fps = 15
+duration = "8h"
+max_bytes = "256MiB"
+```
+
+A value out of range is ignored with a warning, and the built-in default applies. See
+[`[recording]`](configuration.md#recording).
 
 A recording ends when you stop it, when it reaches its duration or size, when the pane's program
 exits or the pane closes, or when the session is killed or its server stops. Its last event says

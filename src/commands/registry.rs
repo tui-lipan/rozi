@@ -350,6 +350,11 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
         Action::ScreenshotPane => state.focused_pane().is_some(),
+        Action::TogglePaneRecording => {
+            crate::ops::recording::recording_command_target(state).is_some()
+                && !crate::ops::recording::target_toggle_pending(state)
+        }
+        Action::MarkPaneRecording => crate::ops::recording::target_is_recording(state),
         _ => true,
     }
 }
@@ -617,6 +622,12 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
 
 fn toggle_command_label(action: Action, state: &State) -> Option<String> {
     Some(match action {
+        Action::TogglePaneRecording => if crate::ops::recording::target_is_recording(state) {
+            "Stop pane recording"
+        } else {
+            "Start pane recording"
+        }
+        .to_string(),
         Action::ToggleFloat => {
             let enabled = focused_pane(state).is_some_and(|pane| pane.floating);
             enable_disable_label("floating", enabled)
@@ -1330,10 +1341,12 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_commands_are_capture_palette_rows_with_no_default_key() {
+    fn capture_commands_are_capture_palette_rows_with_no_default_key() {
         for (id, label) in [
             ("screenshot-pane", "Screenshot pane"),
             ("screenshot-ui", "Screenshot UI"),
+            ("toggle-pane-recording", "Start pane recording"),
+            ("mark-pane-recording", "Mark pane recording…"),
         ] {
             let action = Action::from_id(id).unwrap_or_else(|| panic!("`{id}` parses"));
             let command = BUILTIN_COMMANDS
@@ -1613,6 +1626,43 @@ mod tests {
 
         state.current_mut().focused_pane = None;
         assert!(!command_available(Action::RespawnPane, &state));
+    }
+
+    #[test]
+    fn recording_commands_need_a_writable_session_and_follow_the_focused_pane() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let available = |state: &State| {
+            (
+                command_available(Action::TogglePaneRecording, state),
+                command_available(Action::MarkPaneRecording, state),
+            )
+        };
+        let label = |state: &State| {
+            resolved_label(Action::TogglePaneRecording, "Start pane recording", state)
+        };
+        assert_eq!(available(&state), (false, false), "no session to record in");
+
+        let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+        state.current_mut().session_client = Some(client);
+        assert_eq!(available(&state), (true, false), "nothing to mark yet");
+        assert_eq!(label(&state), "Start pane recording");
+
+        let focused = state.focused_pane().unwrap();
+        crate::pane::lifecycle::find_pane_mut(&mut state, focused)
+            .unwrap()
+            .terminal
+            .recording = true;
+        assert_eq!(available(&state), (true, true));
+        assert_eq!(label(&state), "Stop pane recording");
+
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.read_only = true;
+        state.current_mut().shared = Some(shared);
+        assert_eq!(
+            available(&state),
+            (false, false),
+            "a read-only client watches"
+        );
     }
 
     #[test]

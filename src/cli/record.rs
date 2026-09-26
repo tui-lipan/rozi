@@ -28,7 +28,12 @@ pub(crate) fn run_record_cli(command: RecordCli) -> Result<()> {
                     &control.request.command
             {
                 let pane = target.map_or_else(|| "the pane".to_string(), |id| format!("pane {id}"));
-                eprintln!("Recording {pane} to {output}; press Ctrl-C to stop.");
+                match output {
+                    Some(output) => {
+                        eprintln!("Recording {pane} to {output}; press Ctrl-C to stop.")
+                    }
+                    None => eprintln!("Recording {pane}; press Ctrl-C to stop."),
+                }
             }
             return super::run_control_cli(*control);
         }

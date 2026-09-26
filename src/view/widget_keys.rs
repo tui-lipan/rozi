@@ -26,6 +26,10 @@ pub fn rename_input_key() -> &'static str {
     "rozi-rename-input"
 }
 
+pub fn recording_mark_input_key() -> &'static str {
+    "rozi-recording-mark-input"
+}
+
 pub fn rename_session_input_key() -> &'static str {
     "rozi-rename-session-input"
 }

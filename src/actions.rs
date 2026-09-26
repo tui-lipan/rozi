@@ -511,6 +511,8 @@ fn execute_action_inner(
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
         Action::ScreenshotPane => crate::ops::screenshot::screenshot_pane(ctx),
         Action::ScreenshotUi => crate::ops::screenshot::screenshot_ui(ctx),
+        Action::TogglePaneRecording => crate::ops::recording::toggle_pane_recording(ctx),
+        Action::MarkPaneRecording => crate::ops::recording::open_mark_prompt(ctx),
         Action::TogglePaneSynchronization => {
             // No toast: synchronization is a persistent mode that silently multiplies every
             // keystroke across panes, so it needs a permanent `SYNC` chip in the workbar rather
@@ -535,6 +537,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::RenameWorkspace
             | Action::RenameSession
             | Action::SaveProfile
+            | Action::MarkPaneRecording
             | Action::OpenProfilePicker
             | Action::OpenWorktrees
             | Action::ApplyProfile
@@ -579,6 +582,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.rename = None;
     ctx.state.rename_session = None;
     ctx.state.save_profile_prompt = None;
+    ctx.state.recording_mark = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     ctx.state.worktree_picker = None;

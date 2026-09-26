@@ -51,6 +51,7 @@ pub fn bundle() -> Value {
     add::<crate::control::RecordingInfo>(&mut generator, &mut roots);
     add::<crate::control::RecordingListPayload>(&mut generator, &mut roots);
     add::<crate::control::RecordingStopped>(&mut generator, &mut roots);
+    add::<crate::control::RecordingStopList>(&mut generator, &mut roots);
     add::<crate::control::RecordingMarked>(&mut generator, &mut roots);
     add::<crate::runtime_metrics::RuntimeMetrics>(&mut generator, &mut roots);
 

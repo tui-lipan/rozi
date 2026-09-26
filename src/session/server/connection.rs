@@ -160,6 +160,19 @@ impl SessionServer {
         }
     }
 
+    /// Spawn policy describes the *next* pane and `[recording]` the next recording, so a request
+    /// that opens one re-reads its part of the config rather than using whatever this server
+    /// started with - which for a session nobody has attached to in a week is config from a week
+    /// ago. Only those requests pay the read; a polling `list-panes` must not stat the config file
+    /// every few seconds. See [`SessionServer::reload_spawn_policy`].
+    fn reload_config_for(&mut self, command: &control::ControlCommand) {
+        match command {
+            control::ControlCommand::NewPane { .. } => self.reload_spawn_policy(),
+            control::ControlCommand::RecordStart { .. } => self.reload_recording_defaults(),
+            _ => {}
+        }
+    }
+
     pub(super) fn handle_message(
         &mut self,
         client_id: ClientId,
@@ -227,14 +240,7 @@ impl SessionServer {
                 min_protocol_version,
                 request,
             } => {
-                // Spawn policy describes the *next* pane, so a request that opens one re-reads it
-                // rather than using whatever config this server started with - which for a session
-                // nobody has attached to in a week is config from a week ago. Only spawns pay the
-                // read; a polling `list-panes` must not stat the config file every few seconds.
-                // See [`SessionServer::reload_spawn_policy`].
-                if matches!(request.command, control::ControlCommand::NewPane { .. }) {
-                    self.reload_spawn_policy();
-                }
+                self.reload_config_for(&request.command);
                 self.handle_session_control(
                     client_id,
                     session,
@@ -247,7 +253,10 @@ impl SessionServer {
             ClientMessage::AttachedControl {
                 request_id,
                 request,
-            } => self.handle_attached_control(client_id, request_id, request),
+            } => {
+                self.reload_config_for(&request.command);
+                self.handle_attached_control(client_id, request_id, request)
+            }
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,

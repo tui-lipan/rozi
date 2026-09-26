@@ -188,9 +188,11 @@ To save a PNG of what rozi shows, run one of these from the command palette, or 
 | **Screenshot pane** | `screenshot-pane` | The focused pane's visible screen, without its border or title. |
 | **Screenshot UI** | `screenshot-ui` | The whole window as drawn: bar, sidebar, borders, titles, and every visible pane. |
 
-**Screenshot UI** leaves out the command palette that ran it. A toast shows where the file went, and
-the pane or window flashes briefly in the theme's accent color. The flash comes after the picture
-is taken, so it never appears in the file. With `[animations] enabled = false` or `focus_chrome = false`, only
+**Screenshot UI** leaves out the command palette that ran it. The **Screenshot saved** toast shows
+the file path beneath its title. Left-click to open the PNG in your default image viewer, or
+right-click to copy its full path. The pane or window flashes briefly in the theme's accent color.
+The flash comes after the picture is taken,
+so it never appears in the file. With `[animations] enabled = false` or `focus_chrome = false`, only
 the toast appears.
 
 Files go into `[capture] dir`, which defaults to `captures` in the state directory, and are named
@@ -207,7 +209,8 @@ Screenshots use the same drawing as `rozi capture-pane --render png` and
 
 To save a pane's raw output to a file, run **Pane logging** from the command palette or bind
 `toggle-pane-logging`. The titlebar shows a `log` badge while logging is on, and every attached
-client sees the same state.
+client sees the same state. When logging starts, a toast shows the log path; right-click it to copy
+the full path. The file is on the session server's host.
 
 Logging stops after a write error or when the file reaches `[logging] max_bytes` (64 MiB by default;
 `0` means no limit). Logs are written to `[logging] dir`, which defaults to `logs` in the state

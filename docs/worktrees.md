@@ -93,7 +93,8 @@ Select a linked checkout and press `Ctrl+K`. Removal follows these rules:
   removal. Forcing affects only that Git check.
 
 A create or remove that has started finishes even if you close the picker, and rozi reports the
-result.
+result. If a created checkout is reported in a toast, right-click it to copy the checkout path on
+the session host.
 
 ## Use worktrees from the command line
 

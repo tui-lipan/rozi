@@ -51,6 +51,7 @@ tui-lipan = { version = "0.16.4", features = [
   # `capture-pane --render png`.
   "ui-snapshot-png",
 ] }
+open = "5.4.1"
 # Registry rather than a path dep so Cargo.lock pins the exact engine a signed release was built
 # against. A 0.0.x requirement resolves to that version alone, so an upgrade is always deliberate.
 relswap = "0.0.10"

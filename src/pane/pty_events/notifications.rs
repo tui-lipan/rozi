@@ -163,6 +163,61 @@ pub(crate) fn notify_info(ctx: &mut Context<AppRoot>, message: impl Into<String>
     )
 }
 
+/// Show a path as the body while copying the exact path (or newline-separated paths) supplied by
+/// the producer. The displayed path may shorten the local home directory.
+pub(crate) fn notify_path_info(
+    ctx: &mut Context<AppRoot>,
+    title: impl Into<String>,
+    shown_paths: impl Into<String>,
+    copy_paths: impl Into<String>,
+) -> Notified {
+    let (title, shown_paths, copy_paths) = (title.into(), shown_paths.into(), copy_paths.into());
+    let content = toast_content(Some(&title), &shown_paths);
+    let toast = titled_toast(
+        &ctx.state.theme,
+        ctx.state.theme.status.info,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        shown_paths,
+    )
+    .copy_text(copy_paths);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
+/// A saved local screenshot opens in the default application when clicked.
+pub(crate) fn notify_screenshot_saved(
+    ctx: &mut Context<AppRoot>,
+    shown_path: String,
+    path: std::path::PathBuf,
+) -> Notified {
+    let title = "Screenshot saved";
+    let content = toast_content(Some(title), &shown_path);
+    let copied_path = path.to_string_lossy().into_owned();
+    let callback = ctx
+        .link()
+        .callback(move |_| crate::Msg::OpenScreenshot(path.clone()));
+    let toast = titled_toast(
+        &ctx.state.theme,
+        ctx.state.theme.status.info,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        shown_path,
+    )
+    .copy_text(copied_path)
+    .on_click(callback);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
 /// Report a failure. Identical repeats renew, which matters most for errors a loop can retry.
 pub(crate) fn notify_error(
     ctx: &mut Context<AppRoot>,

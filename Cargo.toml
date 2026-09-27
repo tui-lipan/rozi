@@ -47,7 +47,8 @@ exclude = [
 # 0.16.2: cast recordings write resize and marker events (`rozi record export --to cast`).
 # 0.16.4: preserve pixel mouse coordinates when motion tracking changes.
 # 0.16.5: toast click callbacks and explicit copy text.
-tui-lipan = { version = "0.16.5", features = [
+# 0.16.6: answer DA1 as a VT220, so `kitten icat` stops timing out in a pane.
+tui-lipan = { version = "0.16.6", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

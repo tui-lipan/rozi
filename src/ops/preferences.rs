@@ -203,13 +203,6 @@ pub(crate) fn cycle_alert_border(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-pub(crate) fn cycle_alert_paint(ctx: &mut Context<AppRoot>) -> Update {
-    let next = ctx.state.config.pane.alert_paint.next();
-    ctx.state.config.pane.alert_paint = next;
-    persist_pane_string_or_toast(ctx, "alert_paint", next.id());
-    Update::full()
-}
-
 pub(crate) fn cycle_workbar_alert(ctx: &mut Context<AppRoot>) -> Update {
     let next = ctx.state.config.workbar.alert.mode.next();
     ctx.state.config.workbar.alert.mode = next;

@@ -775,13 +775,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::CycleAlertPaint,
-        label: "Cycle alert paint",
-        category: "Settings",
-        default_keys: &[],
-        palette: false,
-    },
-    BuiltinCommand {
         action: Action::CycleWorkbarAlert,
         label: "Cycle workspace tab alert",
         category: "Settings",

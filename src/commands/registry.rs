@@ -751,9 +751,6 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
                 )
             )
         }
-        Action::CycleAlertPaint => {
-            format!("Alert paint: {}", state.config.pane.alert_paint.label())
-        }
         Action::CycleWorkbarAlert => {
             format!(
                 "Workspace tab alert: {}",

@@ -627,7 +627,7 @@ pub enum WorktreeTabItem {
     Creating {
         branch: String,
     },
-    /// Loading, a Git error, or why there is no repository to list.
+    /// Loading, or a Git error listed under the repository heading.
     Message(String),
     /// The "New worktree" action.
     New,
@@ -652,12 +652,8 @@ impl crate::state::State {
     pub fn worktree_tab_items(&self) -> Vec<WorktreeTabItem> {
         let listing = &self.sidebar.worktrees;
         let Some((target, cwd)) = listing.source.as_ref() else {
-            return vec![WorktreeTabItem::Message(
-                listing
-                    .unavailable
-                    .clone()
-                    .unwrap_or_else(|| "Not in a Git repository".to_string()),
-            )];
+            // No repository: the tab is empty, and the view shows the reason as a placeholder.
+            return Vec::new();
         };
         let primary = listing
             .entries

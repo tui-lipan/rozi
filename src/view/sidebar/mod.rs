@@ -311,13 +311,19 @@ fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Sideba
 
 /// The message a tab shows in place of rows. Distinct from "loading" for command tabs, where an
 /// absent entry means the first poll has not landed yet.
-fn empty_text(ctx: &Context<AppRoot>, tab: &SidebarTab) -> &'static str {
+fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
     match tab {
         SidebarTab::Panes => "No panes",
         SidebarTab::Activity => "No activity",
         SidebarTab::Sessions => "No sessions discovered",
-        // Never empty: it always has at least its "New worktree" row or a reason.
-        SidebarTab::Worktrees => "",
+        // No repository to list: same one-cell inset `placeholder` uses on every other empty tab.
+        SidebarTab::Worktrees => ctx
+            .state
+            .sidebar
+            .worktrees
+            .unavailable
+            .as_deref()
+            .unwrap_or("Not in a Git repository"),
         SidebarTab::Launcher { .. } => "No launcher entries",
         SidebarTab::Command { name, .. } => {
             if ctx.state.fresh_command_output(name).is_some() {

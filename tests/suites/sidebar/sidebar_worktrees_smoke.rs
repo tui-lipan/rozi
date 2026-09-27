@@ -165,11 +165,17 @@ fn a_pane_outside_any_repository_says_so() {
             listing.unavailable = Some("Not in a Git repository".into());
         }
         let lines = sidebar_lines(&mut backend, 32);
+        let line = lines
+            .iter()
+            .find(|line| line.contains("Not in a Git repository"))
+            .unwrap_or_else(|| panic!("empty message missing:\n{lines:#?}"));
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("Not in a Git repository")),
-            "{lines:#?}"
+            line.starts_with(" Not in a Git repository"),
+            "one-cell inset, matching other empty tabs:\n{line:?}"
+        );
+        assert!(
+            !line.starts_with("  Not in a Git repository"),
+            "not the two-cell row gutter:\n{line:?}"
         );
         assert!(
             !lines.iter().any(|line| line.contains("New worktree")),

@@ -82,7 +82,8 @@ You return to the same live panes and scrollback.
 
 ## 7. Find commands and keys
 
-Open the command palette with `Ctrl+A`, then `p`. Open the keybinding help with `Ctrl+A`, then `?`.
+Open the command palette with `Ctrl+A`, then `p`, or by clicking the `rozi` badge. Open the
+keybinding help with `Ctrl+A`, then `?`.
 Both show your active configuration, including any rebinding.
 
 If you pause after pressing `Ctrl+A`, rozi shows the keys you can press next.

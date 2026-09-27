@@ -198,7 +198,8 @@ background_follows_terminal = true
 
 ## Arrange the workbar and sidebar
 
-The workbar is the strip that shows your workspaces, location, and session. Move it, space it, and
+The workbar is the strip that shows your workspaces, location, and session. Click the `rozi` badge
+to open the command palette, or the session badge to open Sessions. Move the bar, space it, and
 choose what it shows:
 
 ```toml

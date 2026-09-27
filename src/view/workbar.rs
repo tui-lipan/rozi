@@ -238,7 +238,7 @@ enum TrailingChip {
         label: String,
         text_fg: Color,
         bg: Color,
-        opens_sessions: bool,
+        on_click: Option<Action>,
     },
     Flex(Box<Element>),
 }
@@ -249,16 +249,16 @@ impl TrailingChip {
             label: label.into(),
             text_fg,
             bg,
-            opens_sessions: false,
+            on_click: None,
         }
     }
 
-    fn sessions_badge(label: impl Into<String>, text_fg: Color, bg: Color) -> Self {
+    fn click_badge(label: impl Into<String>, text_fg: Color, bg: Color, action: Action) -> Self {
         Self::Badge {
             label: label.into(),
             text_fg,
             bg,
-            opens_sessions: true,
+            on_click: Some(action),
         }
     }
 
@@ -283,14 +283,10 @@ fn trailing_chip(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<TrailingC
         _ => {
             let label = segment_label(ctx, &item.segment)?;
             let (bg, fg) = item_colors(ctx, item);
-            if matches!(
-                item.segment,
-                WorkbarSegment::Location | WorkbarSegment::Session
-            ) {
-                Some(TrailingChip::sessions_badge(label, fg, bg))
-            } else {
-                Some(TrailingChip::badge(label, fg, bg))
-            }
+            Some(match badge_action(&item.segment) {
+                Some(action) => TrailingChip::click_badge(label, fg, bg, action),
+                None => TrailingChip::badge(label, fg, bg),
+            })
         }
     }
 }
@@ -326,7 +322,7 @@ fn trailing_cluster(
                 label,
                 text_fg,
                 bg,
-                opens_sessions,
+                on_click,
             } => {
                 let (cap_sides, same_color) = if powerline && prev_was_badge && prev_bg == bg {
                     (CapSides::Left, true)
@@ -338,16 +334,9 @@ fn trailing_cluster(
                 let badge = workbar_badge(
                     &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color,
                 );
-                let badge = if opens_sessions {
-                    MouseRegion::new()
-                        .on_click(
-                            ctx.link()
-                                .callback(|_| Msg::RunAction(Action::OpenSessionPicker)),
-                        )
-                        .child(badge)
-                        .into()
-                } else {
-                    badge
+                let badge = match on_click {
+                    Some(action) => pointer_badge(ctx, badge, action),
+                    None => badge,
                 };
                 cluster = cluster.child(badge);
                 prev_bg = if powerline { bg } else { panel_bg };
@@ -677,22 +666,31 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
         CapSides::Right,
         false,
     );
-    if matches!(
-        item.segment,
-        WorkbarSegment::Location | WorkbarSegment::Session
-    ) {
-        Some(
-            MouseRegion::new()
-                .on_click(
-                    ctx.link()
-                        .callback(|_| Msg::RunAction(Action::OpenSessionPicker)),
-                )
-                .child(badge)
-                .into(),
-        )
-    } else {
-        Some(badge)
+    Some(match badge_action(&item.segment) {
+        Some(action) => pointer_badge(ctx, badge, action),
+        None => badge,
+    })
+}
+
+/// What a workbar badge does when clicked, if it answers to the pointer at all.
+fn badge_action(segment: &WorkbarSegment) -> Option<Action> {
+    match segment {
+        WorkbarSegment::Title => Some(Action::TogglePalette),
+        WorkbarSegment::Location | WorkbarSegment::Session => Some(Action::OpenSessionPicker),
+        _ => None,
     }
+}
+
+/// A badge that opens `action` on click and lifts under the pointer.
+///
+/// The lift is a background transform, the same one workspace tabs use. The badge paints its own
+/// fill, so an underlay hover style would sit behind that fill and never show.
+fn pointer_badge(ctx: &Context<AppRoot>, badge: Element, action: Action) -> Element {
+    MouseRegion::new()
+        .on_click(ctx.link().callback(move |_| Msg::RunAction(action)))
+        .hover_effect(VisualEffect::transform_bg(crate::view::hover_lift()))
+        .child(badge)
+        .into()
 }
 
 fn substitute_placeholders(ctx: &Context<AppRoot>, literal: &str) -> String {
@@ -1179,7 +1177,7 @@ mod tests {
     };
     use crate::config::{BadgeColor, WorkbarAlertConfig, WorkbarSegment};
     use crate::state::{AlertMode, Pane, Workspace};
-    use tui_lipan::prelude::{FloatRect, Theme};
+    use tui_lipan::prelude::{Color, FloatRect, Theme};
 
     #[test]
     fn curated_color_assigns_distinct_roles() {
@@ -1426,5 +1424,161 @@ mod tests {
             collaboration_status(&state, &theme).unwrap().0,
             " READ ONLY "
         );
+    }
+
+    #[test]
+    fn title_badge_opens_the_palette_and_session_badge_opens_sessions() {
+        on_large_stack(|| {
+            let mut backend = attached_backend();
+            let (width, cells) = frame_cells(&mut backend);
+            let (title_x, title_y) = find_run(&cells, width, "rozi").expect("title badge");
+            click(&mut backend, title_x, title_y);
+            assert!(backend.state().show_palette);
+            assert!(!backend.state().show_session_picker);
+
+            let mut backend = attached_backend();
+            let (width, cells) = frame_cells(&mut backend);
+            let (session_x, session_y) = find_run(&cells, width, "dev").expect("session badge");
+            click(&mut backend, session_x, session_y);
+            assert!(backend.state().show_session_picker);
+            assert!(!backend.state().show_palette);
+        });
+    }
+
+    #[test]
+    fn hovering_title_and_session_badges_lifts_like_a_workspace_tab() {
+        on_large_stack(|| {
+            let mut backend = attached_backend();
+            let (width, resting) = frame_cells(&mut backend);
+            let (title_x, title_y) = find_run(&resting, width, "rozi").expect("title badge");
+            let (session_x, session_y) = find_run(&resting, width, "dev").expect("session badge");
+            let (clock_x, clock_y) = find_run(&resting, width, ":").expect("clock badge");
+
+            let title = cell_bg(&resting, width, title_x, title_y);
+            let session = cell_bg(&resting, width, session_x, session_y);
+            let clock = cell_bg(&resting, width, clock_x, clock_y);
+            let lift = crate::view::HOVER_LIFT;
+
+            hover(&mut backend, title_x, title_y);
+            let hovered = frame_cells(&mut backend).1;
+            assert_eq!(
+                cell_bg(&hovered, width, title_x, title_y),
+                title.elevate_by(lift),
+                "title badge hover should elevate its own fill"
+            );
+
+            hover(&mut backend, session_x, session_y);
+            let hovered = frame_cells(&mut backend).1;
+            assert_eq!(
+                cell_bg(&hovered, width, session_x, session_y),
+                session.elevate_by(lift),
+                "session badge hover should elevate its own fill"
+            );
+            assert_eq!(
+                cell_bg(&hovered, width, clock_x, clock_y),
+                clock,
+                "a plain badge must not lift just because the pointer is on the bar"
+            );
+        });
+    }
+
+    fn attached_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 12,
+        });
+        let state = backend.state_mut();
+        state.config.sidebar.visible = false;
+        state.sidebar_visible = false;
+        state.config.workbar.right = vec![
+            crate::config::WorkbarItem {
+                segment: crate::config::WorkbarSegment::Clock,
+                color: None,
+            },
+            crate::config::WorkbarItem {
+                segment: crate::config::WorkbarSegment::Session,
+                color: None,
+            },
+        ];
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_attached = true;
+        backend
+    }
+
+    fn frame_cells(
+        backend: &mut tui_lipan::TestBackend<crate::AppRoot>,
+    ) -> (u16, Vec<tui_lipan::CapturedCell>) {
+        backend.render();
+        let frame = backend.capture_frame();
+        (frame.width, frame.cells)
+    }
+
+    fn find_run(cells: &[tui_lipan::CapturedCell], width: u16, needle: &str) -> Option<(u16, u16)> {
+        let chars: Vec<char> = needle.chars().collect();
+        let width = width as usize;
+        if width == 0 || chars.is_empty() || cells.len() < width {
+            return None;
+        }
+        let height = cells.len() / width;
+        for y in 0..height {
+            let row = &cells[y * width..(y + 1) * width];
+            let last = row.len().saturating_sub(chars.len());
+            for x in 0..=last {
+                if chars
+                    .iter()
+                    .enumerate()
+                    .all(|(i, ch)| row[x + i].symbol == ch.to_string())
+                {
+                    return Some((x as u16, y as u16));
+                }
+            }
+        }
+        None
+    }
+
+    fn cell_bg(cells: &[tui_lipan::CapturedCell], width: u16, x: u16, y: u16) -> Color {
+        cells[y as usize * width as usize + x as usize].bg
+    }
+
+    fn hover(backend: &mut tui_lipan::TestBackend<crate::AppRoot>, x: u16, y: u16) {
+        backend
+            .send_mouse(mouse(x, y, tui_lipan::core::event::MouseKind::Moved))
+            .expect("hover");
+    }
+
+    fn click(backend: &mut tui_lipan::TestBackend<crate::AppRoot>, x: u16, y: u16) {
+        use tui_lipan::core::event::{MouseButton, MouseKind};
+        backend
+            .send_mouse(mouse(x, y, MouseKind::Down(MouseButton::Left)))
+            .expect("mouse down");
+        backend
+            .send_mouse(mouse(x, y, MouseKind::Up(MouseButton::Left)))
+            .expect("mouse up");
+    }
+
+    fn mouse(
+        x: u16,
+        y: u16,
+        kind: tui_lipan::core::event::MouseKind,
+    ) -> tui_lipan::core::event::MouseEvent {
+        tui_lipan::core::event::MouseEvent {
+            x,
+            y,
+            kind,
+            mods: tui_lipan::prelude::KeyMods::NONE,
+        }
+    }
+
+    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn workbar badge thread")
+            .join()
+            .expect("workbar badge test");
     }
 }

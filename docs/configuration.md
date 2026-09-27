@@ -649,6 +649,9 @@ A segment is a name string or a table `{ segment = "…", color = "…" }`. Colo
 | `command:<shell command>` | The command's output, refreshed every 60 seconds. |
 | `command:<interval seconds>:<shell command>` | The command's output, refreshed at the given interval (minimum 1 second). |
 
+Click `title` to open the command palette. Click `location` or `session` to open Sessions. Those
+badges lift under the pointer, the same way a workspace tab does.
+
 A command segment times out after 5 seconds and keeps at most 64 KiB from each output stream.
 
 ### `[workbar.alert]`

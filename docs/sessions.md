@@ -57,7 +57,7 @@ Remote hosts use the same session commands. See [Remote sessions](remote.md).
 
 ## Use the session picker
 
-Press `Ctrl+A`, then `s` to open **Sessions**.
+Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the workbar.
 
 <CaptureGallery title="rozi">
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">

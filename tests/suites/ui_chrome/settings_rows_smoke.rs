@@ -2,7 +2,7 @@
 
 use rozi::AppRoot;
 use rozi::config::{CopyOnSelect, MiddleClickPaste, RightClickClipboardAction};
-use rozi::state::{AlertMode, PaneBorderMode, SettingsAction, SettingsTab};
+use rozi::state::{AlertMode, PaneAlertPaint, PaneBorderMode, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
 
@@ -118,7 +118,7 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
         // Distinct modes per surface: one shared status string would pass even if both rows read
         // the same config key.
         assert!(
-            setting_row(&frame, "Pane border").contains("Static"),
+            setting_row(&frame, "Pane effect").contains("Static"),
             "pane alert row is misbound:\n{frame}"
         );
         assert!(
@@ -156,9 +156,11 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
             !highlight.contains('…'),
             "a two-option cycle stays unmarked:\n{highlight}"
         );
+        // Without borders only a border-only paint loses its surface; content tints need none.
         backend.state_mut().config.pane.border_mode = PaneBorderMode::None;
+        backend.state_mut().config.pane.alert_paint = PaneAlertPaint::Border;
         let disabled = rendered_rows(&mut backend);
-        let effect = setting_row(&disabled, "Pane border");
+        let effect = setting_row(&disabled, "Pane effect");
         assert!(
             effect.contains("Needs pane borders") && !effect.contains('…'),
             "disabled reasons stay unmarked:\n{effect}"
@@ -174,13 +176,14 @@ fn settings_rows_report_their_disabled_reasons() {
             let state = backend.state_mut();
             state.config.pane.border_mode = PaneBorderMode::None;
             state.config.pane.alert_border = AlertMode::Pulse;
+            state.config.pane.alert_paint = PaneAlertPaint::Border;
         }
         backend.render();
         let capture = backend.capture_frame();
         let lines = capture.to_fixed_grid_lines();
         let frame = lines.join("\n");
         assert!(
-            setting_row(&frame, "Pane border").contains("Needs pane borders"),
+            setting_row(&frame, "Pane effect").contains("Needs pane borders"),
             "{frame}"
         );
         let search = lines
@@ -192,15 +195,15 @@ fn settings_rows_report_their_disabled_reasons() {
         let divider_fg = capture.cell(rule as u16, (search + 1) as u16).fg;
         let row = lines
             .iter()
-            .position(|line| setting_label_matches(line, "Pane border"))
+            .position(|line| setting_label_matches(line, "Pane effect"))
             .expect("disabled settings row");
-        let label = lines[row].find("Pane border").expect("disabled label");
+        let label = lines[row].find("Pane effect").expect("disabled label");
         let reason = lines[row]
             .find("Needs pane borders")
             .expect("disabled reason");
         assert_eq!(capture.cell(label as u16, row as u16).fg, divider_fg);
         assert_eq!(capture.cell(reason as u16, row as u16).fg, divider_fg);
-        type_query(&mut backend, "pane border");
+        type_query(&mut backend, "pane effect");
         backend
             .dispatch(rozi::Msg::SettingsSelect(SettingsAction::CycleAlertBorder))
             .unwrap();
@@ -223,7 +226,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
             frame.contains("Alerts › Highlights"),
             "Highlights group missing:\n{frame}"
         );
-        setting_row(&frame, "Pane border");
+        setting_row(&frame, "Pane effect");
         setting_row(&frame, "Workspace tab");
     });
 }
@@ -264,7 +267,8 @@ fn settings_all_keeps_every_control_available() {
             "Fullscreen",
             "Tab strip",
             "Bell urgency",
-            "Pane border",
+            "Pane effect",
+            "Pane paint",
             "Workspace tab",
             "Workspace tab paint",
             "Working",
@@ -1137,7 +1141,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::General, 16, "Pane open/close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
-            (SettingsTab::Alerts, 19, "Bell urgency"),
+            (SettingsTab::Alerts, 20, "Bell urgency"),
             (SettingsTab::Sessions, 4, "Startup mode"),
         ] {
             backend

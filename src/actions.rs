@@ -480,6 +480,7 @@ fn execute_action_inner(
         }
         Action::CycleBorderMode => crate::ops::preferences::cycle_border_mode(ctx),
         Action::CycleAlertBorder => crate::ops::preferences::cycle_alert_border(ctx),
+        Action::CycleAlertPaint => crate::ops::preferences::cycle_alert_paint(ctx),
         Action::CycleWorkbarAlert => crate::ops::preferences::cycle_workbar_alert(ctx),
         Action::CycleWorkbarAlertPaint => crate::ops::preferences::cycle_workbar_alert_paint(ctx),
         Action::ToggleBackgroundFollowsTerminal => {

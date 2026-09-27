@@ -4,6 +4,7 @@ pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
 mod pane;
+mod pane_alert_tint;
 mod pane_reveal;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
@@ -14,8 +15,10 @@ mod workspace;
 
 pub(crate) use pane::{
     PaneKind, PaneMerge, covers_a_recording, fullscreen_pane, has_pane_alert, pane_alert,
-    pane_chrome_shows_recording, pane_element, recording_dot_off_phase,
+    pane_chrome_shows_recording, pane_content_alert_can_tint, pane_element,
+    recording_dot_off_phase,
 };
+pub(crate) use pane_alert_tint::AlertTint;
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
 pub use widget_keys::pane_window_key;

@@ -5,8 +5,8 @@ use tui_lipan::prelude::*;
 
 use crate::layout::anim::WindowAnimationConfig;
 use crate::state::{
-    AlertMode, AlertPaint, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderMode, PaneBorderStyle,
-    PaneTitlebarMode, ThemePreset,
+    AlertMode, AlertPaint, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneAlertPaint, PaneBorderMode,
+    PaneBorderStyle, PaneTitlebarMode, ThemePreset,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -588,8 +588,11 @@ pub struct PaneConfig {
     pub titlebar: PaneTitlebarMode,
     /// Whether panes use separate frames, merged frames, no borders, or internal dividers.
     pub border_mode: PaneBorderMode,
-    /// Whether configured pane alert colors are drawn on pane borders.
+    /// Whether configured pane alert colors are drawn, and whether they hold still or breathe.
+    /// Named for the border it first drove; it sets the beat for the content tint too.
     pub alert_border: AlertMode,
+    /// What a pane alert colors: the frame, a faint wash over the terminal content, or both.
+    pub alert_paint: PaneAlertPaint,
     /// Per-state theme roles for pane-alert borders. `None` disables that state.
     pub alert_colors: PaneAlertColors,
     /// Keep frames around floating panes, popups, and the scratchpad when the selected
@@ -672,6 +675,7 @@ impl Default for PaneConfig {
             titlebar: PaneTitlebarMode::Bar,
             border_mode: PaneBorderMode::Separate,
             alert_border: AlertMode::Pulse,
+            alert_paint: PaneAlertPaint::Both,
             alert_colors: PaneAlertColors::default(),
             keep_special_borders: true,
             background_follows_terminal: false,

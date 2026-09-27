@@ -296,7 +296,7 @@ pub(crate) fn pane_frame_chrome(
     };
     let alert = border_mode
         .draws_frames()
-        .then(|| pane_alert(pane, focused, &ctx.state.config.pane))
+        .then(|| pane_border_alert(pane, focused, &ctx.state.config.pane))
         .flatten();
     let alert_pulses = alert.is_some_and(|(_, color)| {
         pane_alert_pulses(
@@ -426,24 +426,95 @@ pub(crate) fn pane_alert(
     .find_map(|(alert, active, color)| Some((alert, active.then_some(color).flatten()?)))
 }
 
-/// Whether a visible pane frame has an alert that can breathe. Other workspaces are represented by
-/// tab markers, and divider-only/none modes have no per-pane frame to animate.
+/// The alert a pane draws on its border: [`pane_alert`], unless the configured paint leaves the
+/// border out.
+pub(crate) fn pane_border_alert(
+    pane: &Pane,
+    focused: bool,
+    config: &PaneConfig,
+) -> Option<(crate::state::PaneAlert, BadgeColor)> {
+    if !config.alert_paint.paints_border() {
+        return None;
+    }
+    pane_alert(pane, focused, config)
+}
+
+/// Whether a visible pane shows an alert that can breathe: on a frame it draws, or as a tint over
+/// its content. Other workspaces are represented by tab markers, and divider-only/none modes have
+/// no per-pane frame to animate, though the content tint still has the terminal to cover.
 pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
-    state.config.pane.border_mode.draws_frames()
-        && state.current().workspaces[state.current().active_workspace]
-            .panes
-            .iter()
-            .any(|pane| {
-                pane_alert(
-                    pane,
-                    state.current().workspaces[state.current().active_workspace]
-                        .focused_pane
-                        .or(state.current().focused_pane)
-                        == Some(pane.id),
-                    &state.config.pane,
-                )
-                .is_some()
-            })
+    let config = &state.config.pane;
+    let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
+    if !frames && !config.alert_paint.paints_content() {
+        return false;
+    }
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let focused = workspace.focused_pane.or(state.current().focused_pane);
+    workspace
+        .panes
+        .iter()
+        .any(|pane| pane_alert(pane, focused == Some(pane.id), config).is_some())
+}
+
+/// Whether `color` can wash over pane content. Only truecolor can: a palette colour would have to
+/// be blended through a stand-in RGB value, repainting the pane in colours that are not the user's.
+pub(crate) fn pane_content_alert_can_tint(theme: &Theme, color: BadgeColor) -> bool {
+    crate::ops::theme::chrome_color_animates(crate::ops::theme::pane_frame_alert_foreground(
+        theme, color,
+    ))
+}
+
+/// The tint this pane's alert lays over its content this frame, if the configured paint covers the
+/// content at all.
+///
+/// A breathing tint fades between nothing and [`ALERT_CONTENT_TINT`] on the border's own beat: the
+/// same phase, the same half period, the same easing, starting from the tick that turned it.
+/// A static alert, or a pulse that cannot run, holds at the peak.
+///
+/// [`ALERT_CONTENT_TINT`]: crate::layout::anim::ALERT_CONTENT_TINT
+fn pane_content_alert_tint(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    focused: bool,
+) -> Option<crate::view::AlertTint> {
+    use crate::layout::anim;
+    let config = &ctx.state.config.pane;
+    if !config.alert_paint.paints_content() {
+        return None;
+    }
+    let (alert, color) = pane_alert(pane, focused, config)?;
+    let target = crate::ops::theme::pane_frame_alert_foreground(&ctx.state.theme, color);
+    let peak = anim::ALERT_CONTENT_TINT;
+    let animations = ctx.state.config.animations;
+    let pulses = config.alert_border == AlertMode::Pulse
+        && ctx.state.alert_pulse_armed
+        && animations.enabled
+        && animations.focus_chrome;
+    if !pulses {
+        return crate::view::AlertTint::still(target, peak);
+    }
+    let (trough, turned_at, duration) = if alert.is_calm() {
+        (
+            ctx.state.alert_pulse_calm_phase,
+            ctx.state.alert_pulse_calm_turned_at,
+            anim::alert_pulse_calm_half_period(animations),
+        )
+    } else {
+        (
+            ctx.state.alert_pulse_phase,
+            ctx.state.alert_pulse_turned_at,
+            anim::alert_pulse_half_period(animations),
+        )
+    };
+    let (from, to) = if trough { (peak, 0.0) } else { (0.0, peak) };
+    crate::view::AlertTint::fading(
+        target,
+        from,
+        to,
+        turned_at,
+        duration,
+        anim::alert_pulse_frame_interval(),
+    )
 }
 
 fn pane_alert_pulses(
@@ -1216,6 +1287,13 @@ pub(crate) fn pane_element(
     }
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane.keys.terminal.clone());
+    // Always wrapped, tinted or not, so an alert coming and going never changes the terminal's
+    // place in the tree.
+    let tint = pane_content_alert_tint(ctx, pane, focused);
+    let terminal: Element = EffectScope::new()
+        .effects(super::pane_alert_tint::alert_tint_effect(pane, tint))
+        .child(terminal)
+        .into();
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
     // later frame draws in Replace mode, so only panes in the settled merged layer may merge

@@ -316,17 +316,22 @@ pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.alert_pulse_armed = false;
         ctx.state.alert_pulse_phase = false;
         ctx.state.alert_pulse_calm_phase = false;
+        ctx.state.alert_pulse_turned_at = None;
+        ctx.state.alert_pulse_calm_turned_at = None;
         return if changed {
             Update::full()
         } else {
             Update::none()
         };
     }
+    let now = std::time::Instant::now();
     ctx.state.alert_pulse_phase = !ctx.state.alert_pulse_phase;
+    ctx.state.alert_pulse_turned_at = Some(now);
     // One chain drives both rates: the calm phase turns over once per full urgent cycle, which is
     // why it needs no timer of its own and can never drift out of step with the urgent one.
     if !ctx.state.alert_pulse_phase {
         ctx.state.alert_pulse_calm_phase = !ctx.state.alert_pulse_calm_phase;
+        ctx.state.alert_pulse_calm_turned_at = Some(now);
     }
     Update::with_command(schedule_alert_pulse_tick(
         crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
@@ -388,10 +393,14 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     }
     let workspace = state.active_workspace_ref();
     let focused = workspace.focused_pane.or(state.current().focused_pane);
+    let config = &state.config.pane;
+    let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
     workspace.panes.iter().any(|pane| {
-        crate::view::pane_alert(pane, focused == Some(pane.id), &state.config.pane).is_some_and(
-            |(_, color)| crate::ops::theme::pane_frame_alert_can_pulse(&state.theme, color),
-        )
+        crate::view::pane_alert(pane, focused == Some(pane.id), config).is_some_and(|(_, color)| {
+            (frames && crate::ops::theme::pane_frame_alert_can_pulse(&state.theme, color))
+                || (config.alert_paint.paints_content()
+                    && crate::view::pane_content_alert_can_tint(&state.theme, color))
+        })
     })
 }
 
@@ -432,7 +441,7 @@ fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{Pane, PaneBorderMode};
+    use crate::state::{Pane, PaneAlertPaint, PaneBorderMode};
     use tui_lipan::prelude::{Color, Style};
 
     fn blocked_pane(id: PaneId) -> Pane {
@@ -463,7 +472,11 @@ mod tests {
             .push(blocked_pane(2));
         assert!(alert_pulse_should_run(&state));
 
+        // Dividers draw no per-pane frame, so a border-only paint has nothing to breathe; the
+        // content tint still does.
         state.config.pane.border_mode = PaneBorderMode::Dividers;
+        assert!(alert_pulse_should_run(&state));
+        state.config.pane.alert_paint = PaneAlertPaint::Border;
         assert!(!alert_pulse_should_run(&state));
         state.config.pane.border_mode = PaneBorderMode::Separate;
         state.config.animations.focus_chrome = false;
@@ -705,13 +718,18 @@ mod tests {
     fn equal_or_palette_alert_endpoints_do_not_arm_a_pane_pulse() {
         let mut state = State::new(Config::default(), Theme::default());
         state.config.pane.alert_border = AlertMode::Pulse;
+        state.config.pane.alert_paint = PaneAlertPaint::Border;
         state.current_mut().workspaces[0]
             .panes
             .push(blocked_pane(2));
         state.theme.status.error = Color::rgb(255, 0, 1);
         state.theme.border = Style::new().fg(state.theme.status.error);
         assert!(!alert_pulse_should_run(&state));
+        // A border with nowhere to fade still leaves a truecolor tint to breathe over the content.
+        state.config.pane.alert_paint = PaneAlertPaint::Both;
+        assert!(alert_pulse_should_run(&state));
 
+        // A palette colour neither fades on the border nor tints the content.
         state.theme.border = Style::default();
         state.theme.status.error = Color::Red;
         state.theme.status.warning = Color::Yellow;

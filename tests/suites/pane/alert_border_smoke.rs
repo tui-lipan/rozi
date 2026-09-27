@@ -227,3 +227,69 @@ fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
         );
     });
 }
+
+/// `alert_paint` splits the alert between two surfaces: the frame, and a faint wash over the
+/// terminal. Animations are off here, so a tint holds at its peak and the frame is deterministic.
+#[test]
+fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let alert = Color::rgb(255, 0, 1);
+        let render = |mode: PaneBorderMode, paint: PaneAlertPaint| {
+            let mut backend = backend(mode);
+            backend.state_mut().theme.status.error = alert;
+            backend.state_mut().config.pane.highlight_focused_border = false;
+            backend.state_mut().config.pane.alert_paint = paint;
+            block_second(&mut backend);
+            backend.render();
+            backend.capture_frame()
+        };
+        // Interior cells of the calm left pane and the blocked right one.
+        let interiors = |frame: &tui_lipan::CapturedFrame| {
+            let at = |x: u16, y: u16| frame.cells[usize::from(y) * 30 + usize::from(x)].clone();
+            (at(7, 5), at(22, 5))
+        };
+
+        let frame = render(PaneBorderMode::Separate, PaneAlertPaint::Border);
+        let (calm, blocked) = interiors(&frame);
+        assert!(frame.cells.iter().any(|cell| cell.fg == alert));
+        assert_eq!(
+            calm.bg, blocked.bg,
+            "a border-only alert leaves content alone"
+        );
+
+        for mode in [PaneBorderMode::Separate, PaneBorderMode::None] {
+            let frame = render(mode, PaneAlertPaint::Content);
+            let (calm, blocked) = interiors(&frame);
+            assert!(
+                !frame.cells.iter().any(|cell| cell.fg == alert),
+                "{mode:?}: a content-only alert leaves the frame alone"
+            );
+            let (Color::Rgb(cr, cg, cb), Color::Rgb(br, bg, bb)) = (calm.bg, blocked.bg) else {
+                panic!("{mode:?}: expected truecolor pane backgrounds: {calm:?} {blocked:?}");
+            };
+            assert!(br > cr, "{mode:?}: the blocked pane warms toward red");
+            assert!(bg <= cg && bb <= cb);
+            // Faint, not a lighthouse: well short of the alert colour itself.
+            assert!(
+                u16::from(br - cr) < 40,
+                "{mode:?}: tint too strong: {calm:?} -> {blocked:?}"
+            );
+        }
+
+        let frame = render(PaneBorderMode::Separate, PaneAlertPaint::Both);
+        let (calm, blocked) = interiors(&frame);
+        // The wash reaches the frame on every side, not just the grid the shell has drawn on.
+        let at = |x: u16, y: u16| frame.cells[usize::from(y) * 30 + usize::from(x)].clone();
+        for (x, y) in [(19, 1), (28, 1), (19, 8), (28, 8)] {
+            assert_eq!(
+                at(x, y).bg,
+                blocked.bg,
+                "untinted interior cell at ({x}, {y})"
+            );
+        }
+        assert!(frame.cells.iter().any(|cell| cell.fg == alert));
+        assert_ne!(calm.bg, blocked.bg);
+    });
+}

@@ -17,6 +17,11 @@ const ALERT_PULSE_MIN_HALF_MS: u64 = 400;
 pub const ALERT_PULSE_FRAME_RATE: u16 = 10;
 /// Alert borders remain recognizably alert-colored at the bottom of their breathe.
 pub const ALERT_PULSE_BLEND: f32 = 0.55;
+/// How far a pane's content — text and background alike — is tinted toward its alert color at the
+/// peak of the breathe. Deliberately faint: the border already says *which* pane, so the content
+/// only needs to warm enough to register at the edge of vision, never enough to cost the text its
+/// contrast. The trough is no tint at all, so the pane breathes out to exactly what it shows at rest.
+pub const ALERT_CONTENT_TINT: f32 = 0.08;
 
 /// How much longer a "calm" alert breathes than an urgent one. A finished agent is good news you
 /// have not read yet, not a request for an answer, so it should not compete with a blocked pane for
@@ -701,6 +706,11 @@ fn reverse_curve(curve: Easing) -> Easing {
 }
 
 /// Half the configured breathe period, floored to prevent alert colors becoming a strobe.
+/// Repaint cadence for a breathing alert, as an interval.
+pub fn alert_pulse_frame_interval() -> Duration {
+    Duration::from_millis(1000 / u64::from(ALERT_PULSE_FRAME_RATE))
+}
+
 pub fn alert_pulse_half_period(animations: WindowAnimationConfig) -> Duration {
     (animations.alert_pulse_duration / 2).max(Duration::from_millis(ALERT_PULSE_MIN_HALF_MS))
 }

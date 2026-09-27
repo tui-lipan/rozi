@@ -177,6 +177,11 @@ pub struct State {
     pub alert_pulse_calm_phase: bool,
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
+    /// When [`Self::alert_pulse_phase`] last turned, so the content tint can run its fade off the
+    /// clock and stay on the beat the border's transition starts from. `None` before the first turn.
+    pub alert_pulse_turned_at: Option<std::time::Instant>,
+    /// When [`Self::alert_pulse_calm_phase`] last turned.
+    pub alert_pulse_calm_turned_at: Option<std::time::Instant>,
     pub sidebar_visible: bool,
     /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
     /// view each frame, because the transition driving it lives there.
@@ -534,6 +539,8 @@ impl State {
             alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
+            alert_pulse_turned_at: None,
+            alert_pulse_calm_turned_at: None,
             sidebar_visible,
             sidebar_slide: Cell::new(if sidebar_visible { 1.0 } else { 0.0 }),
             sidebar,

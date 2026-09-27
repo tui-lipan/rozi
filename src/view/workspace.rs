@@ -14,7 +14,7 @@ use super::animation;
 use super::canvas_rect_to_root;
 use super::pane::pane_title_bg;
 use super::pane::{
-    PaneFrameChrome, PaneKind, PaneMerge, divider_title_element, pane_alert, pane_element,
+    PaneFrameChrome, PaneKind, PaneMerge, divider_title_element, pane_border_alert, pane_element,
     pane_frame_chrome, pane_has_tile_above, seam_title_element, tiled_resize_strips,
 };
 
@@ -216,7 +216,7 @@ pub(crate) fn render_workspace_panes(
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
     let mut fullscreen_panes: Vec<(FloatRect, Element)> = Vec::new();
     for pane in ordered_panes(workspace, focused_pane, |pane| {
-        pane_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
+        pane_border_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
     }) {
         // Floating geometry is stored in canvas-origin coordinates; translate it by the (possibly
         // negative) letterbox origin so a follower's floats sit inside the centered canvas. This is
@@ -352,7 +352,7 @@ pub(crate) fn render_workspace_panes(
         if divider_mode && !pane.floating && !pane.fullscreen && !pane.closing && moving.is_none() {
             divider_panes.push(pane.id);
             if let Some((_, color)) =
-                pane_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane)
+                pane_border_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane)
             {
                 divider_alerts.push((pane.id, color));
             }

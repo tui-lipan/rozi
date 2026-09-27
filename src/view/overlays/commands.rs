@@ -251,6 +251,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         CycleSidebarTabStyle => alias_list(&["caps"]),
         ToggleBellUrgency => alias_list(&["urgent", "terminal"]),
         CycleAlertBorder => alias_list(&["attention", "pulse", "agent"]),
+        CycleAlertPaint => alias_list(&["tint", "content", "attention", "breathe"]),
         CycleWorkbarAlert => alias_list(&["attention", "pulse", "marker"]),
         CycleWorkbarAlertPaint => alias_list(&["fill", "color", "colour"]),
         ToggleMarkBell => alias_list(&["marker"]),

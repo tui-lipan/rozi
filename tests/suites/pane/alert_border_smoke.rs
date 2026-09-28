@@ -294,26 +294,35 @@ fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
     });
 }
 
-/// A two-pane split with the right pane blocked, breathing its alert with motion on, its pulse
-/// chain armed at the backend's start.
+/// Motion on, and the alert colors pinned, for a backend whose panes are about to breathe.
+fn breathing_config(backend: &mut TestBackend<AppRoot>, paint: rozi::state::PaneAlertPaint) {
+    let state = backend.state_mut();
+    state.config.animations.enabled = true;
+    state.config.animations.pane_style = rozi::layout::anim::PaneAnimationStyle::Off;
+    state.theme.status.error = Color::rgb(255, 0, 1);
+    state.config.pane.highlight_focused_border = false;
+    state.config.pane.alert_paint = paint;
+}
+
+/// What arming the pulse chain does, at `now` on the backend's clock. Arming also sends the first
+/// tick through the app's command link, which a test backend never gets, so `first_turn` delivers
+/// that one; the chain then schedules every later tick itself.
+fn arm(backend: &mut TestBackend<AppRoot>, now: std::time::Duration) {
+    let state = backend.state_mut();
+    state.alert_pulse_armed = true;
+    state.alert_pulse_armed_at = now;
+    state.alert_pulse_half = rozi::layout::anim::alert_pulse_half_period(state.config.animations);
+}
+
+/// A two-pane split whose right pane starts breathing an alert, with motion on. The panes are on
+/// screen, calm, before the alert begins, as they are in the app: every border already has the
+/// colour it had before alerting. The chain arms at the backend's start.
 fn breathing_backend(paint: rozi::state::PaneAlertPaint) -> TestBackend<AppRoot> {
     let mut backend = backend(PaneBorderMode::Separate);
-    {
-        let state = backend.state_mut();
-        state.config.animations.enabled = true;
-        state.config.animations.pane_style = rozi::layout::anim::PaneAnimationStyle::Off;
-        state.theme.status.error = Color::rgb(255, 0, 1);
-        state.config.pane.highlight_focused_border = false;
-        state.config.pane.alert_paint = paint;
-        // What arming the chain does. Arming also sends the first tick through the app's command
-        // link, which a test backend never gets, so `first_turn` delivers that one; the chain then
-        // schedules every later tick itself.
-        state.alert_pulse_armed = true;
-        state.alert_pulse_armed_at = std::time::Duration::ZERO;
-        state.alert_pulse_half =
-            rozi::layout::anim::alert_pulse_half_period(state.config.animations);
-    }
+    breathing_config(&mut backend, paint);
+    backend.render();
     block_second(&mut backend);
+    arm(&mut backend, std::time::Duration::ZERO);
     backend
 }
 
@@ -522,19 +531,200 @@ fn a_long_stall_catches_the_border_up_with_the_tint() {
         blocked_surfaces(&mut backend);
         assert_eq!(backend.state().alert_pulse_turns, 2);
 
-        // Nothing is handled for 2.5 half periods; the one tick waiting is picked up after.
-        backend.advance(half * 2 + half / 2);
-        blocked_surfaces(&mut backend);
+        // Nothing is handled for 2.5 half periods; the one tick waiting is picked up after. On the
+        // very frame the loop resumes, both surfaces are where the clock says, half way back up.
+        assert_surfaces_breathe_together(
+            &mut backend,
+            &ends,
+            &[(half * 2 + half / 2, "on the frame the loop resumes")],
+        );
         assert_eq!(
             backend.state().alert_pulse_turns,
             4,
             "the chain lands on the turn the clock is on"
         );
-        // Four turns in is a fade down, as the tint is; the border caught up at the next turn.
+        let (frame_fg, _) = blocked_surfaces(&mut backend);
+        let at = travelled(frame_fg, ends.border.0, ends.border.1);
+        assert!(
+            (at - 0.5).abs() < 0.05,
+            "half way back up, not at a stale point: {at:.2}"
+        );
+        assert_surfaces_breathe_together(
+            &mut backend,
+            &ends,
+            &[
+                (half / 4, "a quarter period after resuming"),
+                (half / 4, "back at the peak"),
+                (half / 4, "a quarter of the way down again"),
+            ],
+        );
+    });
+}
+
+/// An alert beginning on a pane already on screen starts both surfaces together: the border arrives
+/// at its peak with the tint, rather than fading in from its ordinary colour for half a period while
+/// the tint holds at its peak, and both then breathe as one.
+#[test]
+fn an_alert_beginning_on_a_calm_pane_starts_both_surfaces_together() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let ends = breathe_ends();
+        let mut backend = backend(PaneBorderMode::Separate);
+        breathing_config(&mut backend, PaneAlertPaint::Both);
+        let calm_border = blocked_surfaces(&mut backend).0;
+        assert_ne!(
+            calm_border, ends.border.0,
+            "an ordinary border to begin from"
+        );
+        let start = std::time::Duration::from_millis(300);
+        backend.advance(start);
+
+        block_second(&mut backend);
+        arm(&mut backend, start);
+        assert_eq!(
+            blocked_surfaces(&mut backend),
+            (ends.border.0, ends.tint.0),
+            "both at their peak on the frame the alert begins"
+        );
+        let half = half_period(&backend);
         backend.advance(half / 2);
+        assert_eq!(
+            blocked_surfaces(&mut backend),
+            (ends.border.0, ends.tint.0),
+            "and both held there until the first turn"
+        );
+        backend.advance(half / 2);
+        backend.dispatch(rozi::Msg::AlertPulseTick).unwrap();
+        assert_eq!(backend.state().alert_pulse_turns, 1);
         blocked_surfaces(&mut backend);
-        assert_eq!(backend.state().alert_pulse_turns, 5);
         assert_surfaces_breathe_together(&mut backend, &ends, &a_fade_down(half / 4));
+    });
+}
+
+/// Three panes: a calm focused one on the left, two on the right.
+fn three_pane_backend() -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 60,
+        h: 20,
+    });
+    let state = backend.state_mut();
+    state.config.pane.show_workbar = false;
+    state.config.pane.show_titles = false;
+    state.config.pane.border_mode = PaneBorderMode::Separate;
+    let workspace = &mut state.current_mut().workspaces[0];
+    workspace.start_axis = SplitAxis::Horizontal;
+    workspace.panes.clear();
+    let ids = [10, 11, 12];
+    for id in ids {
+        let mut pane = Pane::new(
+            id,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 60.0,
+                h: 20.0,
+            },
+        );
+        pane.opening = false;
+        pane.terminal_active = true;
+        workspace.panes.push(pane);
+    }
+    workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
+    workspace.focused_pane = Some(10);
+    state.current_mut().focused_pane = Some(10);
+    backend
+}
+
+fn block(backend: &mut TestBackend<AppRoot>, index: usize) {
+    backend.state_mut().current_mut().workspaces[0].panes[index]
+        .terminal
+        .reported_status = Some(rozi::session::protocol::PaneStatus {
+        value: "blocked".into(),
+        reason: None,
+        set_at: 0,
+    });
+}
+
+/// Pane `id`'s top border colour and interior background, this frame, after delivering any tick of
+/// the chain that has come due.
+fn surfaces_of(backend: &mut TestBackend<AppRoot>, id: u32) -> (Color, Color) {
+    backend.pump().expect("deliver due ticks");
+    backend.render();
+    let key = format!("rozi-terminal-{id}");
+    let rect = backend
+        .capture_ui_snapshot()
+        .widgets
+        .iter()
+        .find(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
+        .map(|widget| widget.rect)
+        .expect("the pane's terminal is on screen");
+    let frame = backend.capture_frame();
+    let cell = |x: i16, y: i16| frame.cells[y as usize * 60 + x as usize].clone();
+    (
+        cell(rect.x + 2, rect.y - 1).fg,
+        cell(rect.x + 2, rect.y + 2).bg,
+    )
+}
+
+/// A second pane that starts alerting while the first keeps the chain breathing joins the breath
+/// where it is, border and tint alike: halfway down the fade, it starts halfway down, in step with
+/// the pane already breathing.
+#[test]
+fn a_pane_that_starts_alerting_mid_breath_joins_it_where_it_is() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let ends = breathe_ends();
+        let mut backend = three_pane_backend();
+        breathing_config(&mut backend, PaneAlertPaint::Both);
+        backend.render();
+        block(&mut backend, 1);
+        arm(&mut backend, std::time::Duration::ZERO);
+        surfaces_of(&mut backend, 11);
+        first_turn(&mut backend);
+        surfaces_of(&mut backend, 11);
+        let half = half_period(&backend);
+        backend.advance(half / 2);
+        surfaces_of(&mut backend, 11);
+
+        block(&mut backend, 2);
+        let fraction = |(frame_fg, content_bg): (Color, Color)| {
+            (
+                travelled(frame_fg, ends.border.0, ends.border.1),
+                travelled(content_bg, ends.tint.0, ends.tint.1),
+            )
+        };
+        for (step, when) in [
+            (std::time::Duration::ZERO, "on the frame it starts alerting"),
+            (half / 4, "three quarters down"),
+            (half / 4, "at the trough"),
+            (half / 2, "halfway back up"),
+        ] {
+            backend.advance(step);
+            let breathing = fraction(surfaces_of(&mut backend, 11));
+            let joined = fraction(surfaces_of(&mut backend, 12));
+            for (surface, a, b) in [
+                ("border", breathing.0, joined.0),
+                ("tint", breathing.1, joined.1),
+            ] {
+                assert!(
+                    (a - b).abs() < 0.05,
+                    "{when}: the joining pane's {surface} is {b:.2} of the way down, the breathing \
+                     pane's {a:.2}"
+                );
+            }
+            assert!(
+                (joined.0 - joined.1).abs() < 0.05,
+                "{when}: the joining pane's border ({:.2}) and tint ({:.2}) move as one",
+                joined.0,
+                joined.1
+            );
+        }
     });
 }
 

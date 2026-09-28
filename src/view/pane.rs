@@ -265,7 +265,9 @@ impl PaneKind {
 pub(crate) struct PaneFrameChrome {
     pub show_border: bool,
     pub border_style: BorderStyle,
-    pub frame_fg: Paint,
+    /// The border glyphs' colour: `frame_fg` with any breathing alert's transform on it. Anything
+    /// that draws in the border's colour should use this rather than `frame_fg` alone.
+    pub frame_fg_style: Style,
     pub frame_bg: Paint,
     pub frame_style: Style,
 }
@@ -319,27 +321,44 @@ pub(crate) fn pane_frame_chrome(
             .current()
             .remote_drag
             .is_some_and(|drag| drag.pane_id == pane.id);
+    // A breathing border is drawn at its peak colour and moved toward its trough by a pulse
+    // anchored where the chain's beat is, so its colour is a function of the clock, as the content
+    // tint's is. The chain's turns never retarget it, so it cannot lag them, fall out of step with
+    // the tint, or depart from whatever colour it happened to hold when it started alerting.
+    let breath = alert.filter(|_| alert_pulses).and_then(|(_, color)| {
+        animation::alert_border_pulse(ctx, alert_calm).map(|amount| {
+            ColorTransform::tint(
+                crate::ops::theme::pane_frame_alert_trough(theme, color),
+                amount,
+            )
+        })
+    });
     let frame_fg_target = pane_frame_foreground_target(
         theme,
         alert,
-        alert_pulses,
+        alert_pulses && breath.is_none(),
         alert_phase,
         carried_by_other_client,
         focused,
         ctx.state.config.pane.highlight_focused_border,
     );
-    let frame_fg = animation::chrome_color_with_frame_rate(
+    // Arriving at the peak is instant, as the tint's is; leaving it when the alert clears keeps the
+    // usual focus-chrome fade, since `breath` is gone by then.
+    let frame_fg = animation::chrome_color_with(
         ctx,
         pane,
         ChromeSlot::FrameFg,
         frame_fg_target,
-        if alert_pulses && ctx.state.alert_pulse_armed {
-            animation::alert_pulse_transition_config(ctx, alert_calm)
+        if breath.is_some() {
+            crate::layout::anim::instant_transition()
         } else {
             animation::focus_chrome_transition_config(ctx)
         },
-        alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
     );
+    let frame_fg_style = match breath {
+        Some(breath) => Style::new().fg(frame_fg).transform_fg(breath),
+        None => Style::new().fg(frame_fg),
+    };
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,
         focused,
@@ -347,14 +366,14 @@ pub(crate) fn pane_frame_chrome(
     );
     let frame_bg = animation::chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
     let frame_style = if matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)) {
-        Style::new().fg(frame_fg).bg(frame_bg).dim()
+        frame_fg_style.bg(frame_bg).dim()
     } else {
-        Style::new().fg(frame_fg).bg(frame_bg)
+        frame_fg_style.bg(frame_bg)
     };
     PaneFrameChrome {
         show_border,
         border_style,
-        frame_fg,
+        frame_fg_style,
         frame_bg,
         frame_style,
     }
@@ -994,14 +1013,18 @@ pub(crate) fn pane_element(
     let PaneFrameChrome {
         show_border,
         border_style,
-        frame_fg,
+        frame_fg_style,
         frame_bg,
         frame_style,
     } = chrome;
     // Scale keeps the frame's geometry (and therefore the terminal's settled allocation) but paints
     // its own border glyphs with the frame background; the centred overlay owns the visible border.
+    // The breath goes with the colour, or it would tint the background toward the alert's trough.
     let frame_style = if hide_frame_border {
-        frame_style.fg(frame_bg)
+        Style {
+            fg_transform: None,
+            ..frame_style.fg(frame_bg)
+        }
     } else {
         frame_style
     };
@@ -1224,9 +1247,9 @@ pub(crate) fn pane_element(
         .scrollbar_config({
             integrated_scrollbar_config()
                 .variant(pane_scrollbar_variant(border_mode))
-                .thumb_style(Style::new().fg(frame_fg))
-                .thumb_focus_style(Style::new().fg(frame_fg))
-                .track_style(Style::new().fg(frame_fg).bg(frame_bg))
+                .thumb_style(frame_fg_style)
+                .thumb_focus_style(frame_fg_style)
+                .track_style(frame_fg_style.bg(frame_bg))
         })
         .scroll_wheel(terminal_ready && !hinting)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {

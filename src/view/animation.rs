@@ -175,41 +175,62 @@ pub(crate) fn alert_pulse_transition_config(
     }
 }
 
-/// The content alert tint's strength, as a pulse the animation registry owns, for an alert breathing
-/// at the calm rate or the urgent one. `None` while the pulse chain is not running.
+/// One breath of a pane alert, from `peak` to `trough` and back, as a pulse the animation registry
+/// owns. `None` while the pulse chain is not running. `calm` picks the slower rate.
 ///
-/// The border breathes by retargeting a colour fade on each turn of the chain: it holds at its peak
-/// until the first turn (the second, at the calm rate), then eases to its trough over one half
-/// period and back over the next. The chain lays its turns on fixed deadlines from the instant it
-/// armed, so this pulse is anchored to the same instant: it holds at the peak until the turn the
-/// border starts fading on, then traces the same curve with the same easing. Both are functions of
-/// the clock, so the two surfaces breathe as one however late a tick is handled, and a pane that
-/// starts alerting or showing the tint part way through joins mid-breath rather than starting
-/// over.
+/// Every surface that breathes with a pane alert - the border and the content tint - reads a pulse
+/// from here, and each is anchored where the chain's beat is: the instant it armed, plus the turn
+/// that surface starts fading on (the first, or the second at the calm rate). Before that turn it
+/// holds at `peak`; from there it eases to `trough` over one beat and back over the next. Its value
+/// is therefore a function of the clock alone. However late the chain's ticks are handled, however
+/// long the loop stalls, and whenever a pane starts alerting or a surface starts being drawn, every
+/// surface sits at the point of the breath the clock says, in step with the others.
 ///
-/// Every pane asks for the same key, so every alerting pane at a rate reads one shared pulse.
-pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+/// Each `key` is shared by every pane, so every pane alerting at a rate reads one pulse.
+fn alert_pulse(
+    ctx: &Context<AppRoot>,
+    key: &'static str,
+    calm: bool,
+    peak: f32,
+    trough: f32,
+) -> Option<EffectAmount> {
     let state = &ctx.state;
     if !state.alert_pulse_armed {
         return None;
     }
-    let half = state.alert_pulse_half;
-    let (key, first_turn) = if calm {
-        ("rozi-alert-tint-calm", 2)
-    } else {
-        ("rozi-alert-tint", 1)
-    };
-    let beat = half * first_turn;
+    let beat = state.alert_pulse_half * if calm { 2 } else { 1 };
     Some(
         ctx.pulsing_amount(
             key,
-            EffectPulse::new(anim::ALERT_CONTENT_TINT, 0.0)
+            EffectPulse::new(peak, trough)
                 .period(beat * 2)
                 .easing(Easing::EaseInOutCubic)
                 .frame_rate(anim::ALERT_PULSE_FRAME_RATE)
                 .starting_at(state.alert_pulse_armed_at + beat),
         ),
     )
+}
+
+/// How strongly the content alert tint covers a pane's text and background: from
+/// [`anim::ALERT_CONTENT_TINT`] at the peak of the breath to nothing at its trough.
+pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+    let key = if calm {
+        "rozi-alert-tint-calm"
+    } else {
+        "rozi-alert-tint"
+    };
+    alert_pulse(ctx, key, calm, anim::ALERT_CONTENT_TINT, 0.0)
+}
+
+/// How far an alerting pane border has moved from its peak colour toward its trough: nothing at
+/// the peak of the breath, all the way at its trough.
+pub(crate) fn alert_border_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+    let key = if calm {
+        "rozi-alert-border-calm"
+    } else {
+        "rozi-alert-border"
+    };
+    alert_pulse(ctx, key, calm, 0.0, 1.0)
 }
 
 /// A pane chrome colour, as a paint the renderer resolves while drawing.

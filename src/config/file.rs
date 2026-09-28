@@ -3138,8 +3138,22 @@ mod file_tests {
     /// pane takes when it starts opening, and out the other side as something the renderer actually
     /// did. Each half of this is unit tested elsewhere; nothing else joins them, so settings that
     /// parse perfectly and reach no pixel would pass every other test.
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test completes");
+    }
+
     #[test]
     fn animation_settings_from_config_text_reach_the_rendered_pane() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(animation_settings_from_config_text_reach_the_rendered_pane_body);
+    }
+
+    fn animation_settings_from_config_text_reach_the_rendered_pane_body() {
         use crate::AppRoot;
         use crate::layout::anim::PaneAnimationStyle;
         use tui_lipan::TestBackend;
@@ -3276,6 +3290,11 @@ mod file_tests {
     /// vanishes mid-animation, which is the failure this pins.
     #[test]
     fn animation_settings_drive_a_close_through_to_the_prune() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(animation_settings_drive_a_close_through_to_the_prune_body);
+    }
+
+    fn animation_settings_drive_a_close_through_to_the_prune_body() {
         use crate::AppRoot;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
@@ -3386,6 +3405,13 @@ mod file_tests {
     /// Scale's own.
     #[test]
     fn a_floating_pane_falls_back_from_slide_to_scale_and_picks_up_scales_settings() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(
+            a_floating_pane_falls_back_from_slide_to_scale_and_picks_up_scales_settings_body,
+        );
+    }
+
+    fn a_floating_pane_falls_back_from_slide_to_scale_and_picks_up_scales_settings_body() {
         use crate::AppRoot;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;

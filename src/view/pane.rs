@@ -1474,26 +1474,43 @@ pub(crate) fn pane_element(
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
-    let flash = pane_screenshot_flash(&ctx.state, id, kind)
-        .map(|strength| (animation::screenshot_flash_color(theme), strength));
     let pane_tree = pane_reveal_scope(
         pane_tree,
         pane.keys.effect_scope.clone(),
         crate::layout::anim::pane_animation_for_pane(animations, pane),
         reveal_progress,
         u64::from(id),
-        flash,
     );
-    let animated = Animated::new(pane_tree)
-        .height(Length::Flex(1))
-        .opacity(opacity)
-        .transition(animation::window_opacity_config(ctx, pane));
+    // A screenshot flash rides the pane's own fade, handed over once like a backdrop dim (see
+    // `animation::LayerFade`), so the images in the pane encode once rather than every frame.
+    let flash = pane_screenshot_flash(&ctx.state, id, kind)
+        .filter(|_| pane_lifecycle_settled(pane, opacity));
+    let animated = match flash {
+        Some(strength) => animation::LayerFade::new(
+            animation::Fade::flash(strength, ctx.state.screenshot.flash_stage.get()),
+            animation::screenshot_flash_color(theme),
+        )
+        .apply(Animated::new(pane_tree)),
+        None => Animated::new(pane_tree)
+            .opacity(opacity)
+            .transition(animation::window_opacity_config(ctx, pane)),
+    }
+    .height(Length::Flex(1));
     // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree
     // and can only clip it, while Scale's surrounding PanView supplies the centred clip window.
     // `prune_closed_pane` drops the state once a closing pane's clip finishes.
     let element: Element = animated.into();
 
     element.key(pane_window_key(id, pane.pty_generation))
+}
+
+/// Whether the pane's open or close animation is over, so a screenshot flash may take its
+/// `Animated`. Conservative for styles that do not fade, such as Slide: the flash waits for them too.
+///
+/// `opacity` is only where the pane's fade is heading: an opening pane heads for 1.0 as soon as
+/// `opening` clears, while its opening animation is still running.
+fn pane_lifecycle_settled(pane: &Pane, opacity: f32) -> bool {
+    opacity >= 1.0 && !crate::layout::anim::pane_opening_transition(pane) && !pane.closing
 }
 
 /// How strongly this frame's screenshot flash tints pane `id`, drawn as `kind`.
@@ -2168,6 +2185,30 @@ mod tests {
     }
 
     #[test]
+    fn a_screenshot_flash_waits_for_the_pane_lifecycle_to_settle() {
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = false;
+        pane.opening_animation = None;
+        assert!(pane_lifecycle_settled(&pane, 1.0));
+        assert!(!pane_lifecycle_settled(&pane, 0.0), "a hidden pane");
+
+        pane.opening_animation = Some(crate::layout::anim::PaneAnimationSnapshot {
+            spec: crate::layout::anim::builtin_animation(
+                crate::layout::anim::PaneAnimationStyle::Scale,
+            ),
+            active: true,
+        });
+        assert!(
+            !pane_lifecycle_settled(&pane, 1.0),
+            "an opening pane heads for 1.0 while it still fades in"
+        );
+
+        pane.opening_animation = None;
+        pane.closing = true;
+        assert!(!pane_lifecycle_settled(&pane, 1.0), "a closing pane");
+    }
+
+    #[test]
     fn a_pane_screenshot_flash_covers_only_the_pane_in_its_namespace() {
         use crate::state::ScreenshotTarget;
         let mut state =
@@ -2697,6 +2738,13 @@ mod tests {
 
     #[test]
     fn a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(
+            a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout_body,
+        );
+    }
+
+    fn a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout_body() {
         for &titlebar in PaneTitlebarMode::all() {
             let mut backend = recording_backend();
             backend.state_mut().config.pane.titlebar = titlebar;
@@ -2769,6 +2817,11 @@ mod tests {
 
     #[test]
     fn with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab_body);
+    }
+
+    fn with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab_body() {
         let mut backend = recording_backend();
         backend.state_mut().config.pane.show_titles = false;
         backend.render();
@@ -2792,6 +2845,11 @@ mod tests {
 
     #[test]
     fn a_recording_on_another_workspace_marks_that_workspace_tab() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_recording_on_another_workspace_marks_that_workspace_tab_body);
+    }
+
+    fn a_recording_on_another_workspace_marks_that_workspace_tab_body() {
         let mut backend = recording_backend();
         {
             let state = backend.state_mut();
@@ -2808,8 +2866,22 @@ mod tests {
         );
     }
 
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test completes");
+    }
+
     #[test]
     fn a_fullscreen_pane_marks_the_recordings_it_covers() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_fullscreen_pane_marks_the_recordings_it_covers_body);
+    }
+
+    fn a_fullscreen_pane_marks_the_recordings_it_covers_body() {
         let mut backend = recording_backend();
         {
             let state = backend.state_mut();
@@ -2872,6 +2944,11 @@ mod tests {
 
     #[test]
     fn a_workspace_tab_dot_blinks_without_the_tab_changing_width() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_workspace_tab_dot_blinks_without_the_tab_changing_width_body);
+    }
+
+    fn a_workspace_tab_dot_blinks_without_the_tab_changing_width_body() {
         let mut backend = recording_backend();
         {
             let state = backend.state_mut();
@@ -2907,6 +2984,13 @@ mod tests {
 
     #[test]
     fn the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(
+            the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion_body,
+        );
+    }
+
+    fn the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion_body() {
         let mut backend = recording_backend();
         // Whether the dot is gone, with `REC` where it always is and never dimmed.
         let gone = |backend: &mut tui_lipan::TestBackend<AppRoot>| {

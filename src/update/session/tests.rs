@@ -1272,6 +1272,11 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
 
 #[test]
 fn losing_control_discards_only_shared_drag_resizes() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(losing_control_discards_only_shared_drag_resizes_body);
+}
+
+fn losing_control_discards_only_shared_drag_resizes_body() {
     let mut backend = follower_backend();
     {
         let state = backend.state_mut();
@@ -1316,6 +1321,11 @@ fn losing_control_discards_only_shared_drag_resizes() {
 
 #[test]
 fn settled_resize_survives_a_later_drag_control_loss() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(settled_resize_survives_a_later_drag_control_loss_body);
+}
+
+fn settled_resize_survives_a_later_drag_control_loss_body() {
     let mut backend = follower_backend();
     let (client, _rx) = SessionClient::test_channel();
     {
@@ -1386,6 +1396,11 @@ fn settled_resize_survives_a_later_drag_control_loss() {
 
 #[test]
 fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body);
+}
+
+fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
     let mut backend = follower_backend();
     let (old_client, _old_rx) = SessionClient::test_channel();
     {
@@ -2744,6 +2759,11 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
 
 #[test]
 fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body);
+}
+
+fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body() {
     let mut backend = TestBackend::new(crate::AppRoot::default());
     let (reply, response) = std::sync::mpsc::channel();
     backend.state_mut().pending_agent_report_replies.insert(
@@ -2767,8 +2787,22 @@ fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
     assert!(backend.state().pending_agent_report_replies.is_empty());
 }
 
+fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn test thread")
+        .join()
+        .expect("test completes");
+}
+
 #[test]
 fn attached_agent_acknowledgement_rejects_another_epoch() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(attached_agent_acknowledgement_rejects_another_epoch_body);
+}
+
+fn attached_agent_acknowledgement_rejects_another_epoch_body() {
     let mut backend = TestBackend::new(crate::AppRoot::default());
     let (reply, response) = std::sync::mpsc::channel();
     backend.state_mut().pending_agent_report_replies.insert(

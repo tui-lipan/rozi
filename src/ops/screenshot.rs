@@ -377,6 +377,47 @@ mod tests {
         });
     }
 
+    /// The flash rides the pane's own fade: the pane is tinted on the frame after the shot, and
+    /// the tint is gone once the fade has run.
+    #[test]
+    fn a_pane_screenshot_flashes_the_pane_and_then_settles() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut backend = backend_writing_to(dir.path());
+            {
+                let state = backend.state_mut();
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal
+                    .with_screen_mut(|screen| screen.process_bytes(b"photographed"));
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(1);
+                state.current_mut().shared = Some(shared);
+            }
+            backend.advance(Duration::from_secs(1));
+            let pane_row = |backend: &TestBackend<AppRoot>| {
+                let ansi = backend.capture_frame().to_ansi_text();
+                ansi.lines()
+                    .find(|line| line.contains("photographed"))
+                    .expect("the pane's text is on screen")
+                    .to_owned()
+            };
+            let at_rest = pane_row(&backend);
+
+            backend
+                .dispatch(Msg::RunAction(Action::ScreenshotPane))
+                .unwrap();
+            screenshot_toast(&mut backend);
+            backend.render();
+            assert!(backend.state().screenshot.flash_frame.get().is_some());
+            assert_ne!(pane_row(&backend), at_rest, "the flash tints the pane");
+
+            backend.advance(Duration::from_secs(1));
+            assert_eq!(backend.state().screenshot.flash_frame.get(), None);
+            assert_eq!(pane_row(&backend), at_rest, "the tint is gone");
+        });
+    }
+
     /// The palette that ran the action is gone from the frame, and so is the dim it cast, which
     /// would otherwise still be fading out when the next frame paints.
     #[test]

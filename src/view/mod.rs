@@ -177,19 +177,40 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let show_offline = offline && !picker_dialog_open;
     let show_reconnecting = reconnecting && !picker_dialog_open;
     let dialog_open = show_reconnecting || show_offline || picker_dialog_open;
+    let dim_transition = if crate::ops::control::ui_screenshot_waiting(&ctx.state) {
+        crate::layout::anim::instant_transition()
+    } else {
+        animation::scratch_transition_config(ctx)
+    };
     let dialog_dim_progress = ctx.transition::<f32>(
         "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
-        if crate::ops::control::ui_screenshot_waiting(&ctx.state) {
-            crate::layout::anim::instant_transition()
-        } else {
-            animation::scratch_transition_config(ctx)
-        },
+        dim_transition,
     );
     // The workspace layer dims for whichever focused layer is most deployed; the dims never
     // compound.
-    let workspace_dim =
-        crate::scratchpad::backdrop_dim(scratch_backdrop_progress.max(dialog_dim_progress));
+    let workspace_dimmed = dialog_open || crate::scratchpad::backdrop_shown(&ctx.state);
+    let (was_workspace_dimmed, was_dialog_open) = ctx
+        .state
+        .dim_targets
+        .replace((workspace_dimmed, dialog_open));
+    let dim = |progress: f32, dimmed: bool, was_dimmed: bool| animation::Fade {
+        current: crate::scratchpad::backdrop_dim(progress),
+        target: crate::scratchpad::backdrop_dim(if dimmed { 1.0 } else { 0.0 }),
+        transition: dim_transition,
+        // A dim eases from wherever it is, so it never restarts; it is only handed over.
+        stage: if dimmed == was_dimmed {
+            crate::layout::anim::FadeStage::Running
+        } else {
+            crate::layout::anim::FadeStage::Handoff
+        },
+    };
+    let workspace_dim = dim(
+        scratch_backdrop_progress.max(dialog_dim_progress),
+        workspace_dimmed,
+        was_workspace_dimmed,
+    );
+    let dialog_dim = dim(dialog_dim_progress, dialog_open, was_dialog_open);
     // A session switch resolves the workbar and panes in place over the backdrop. The sidebar is
     // composed outside this layer and stays put: it navigates between sessions, so it is the
     // anchor while the thing it navigates changes. Sampled before the workbar, panes, and sidebar
@@ -199,37 +220,63 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let flash = animation::screenshot_flash(ctx);
     ctx.state.screenshot.flash_frame.set(flash);
     let ui_flash = match flash {
-        Some((crate::state::ScreenshotTarget::Ui, strength)) => {
-            Some((animation::screenshot_flash_color(theme), strength))
-        }
+        Some((crate::state::ScreenshotTarget::Ui, strength)) => Some((
+            animation::screenshot_flash_color(theme),
+            animation::Fade::flash(strength, ctx.state.screenshot.flash_stage.get()),
+        )),
         _ => None,
     };
-    let (workspace_opacity, workspace_fade) = animation::dim_or_flash(
-        workspace_dim * reveal.opacity,
-        theme.surface.backdrop,
-        ui_flash,
-    );
     // Keyed by attachment so a switch replaces the whole layer, and the outgoing one is retained
     // frozen beneath its successor (see `animation::session_layer_exit`). A fresh attach still in
     // its grace period draws nothing, so the previous session's last picture stands in for it.
     let holding = crate::ops::session::holding_previous_view(&ctx.state);
+    // The dim layer around the session content is new on a switch, and when a hold gives way to
+    // the content: a new `Animated` takes the opacity it is given at once, so it starts where the
+    // dim is and is handed where the dim ends on the next frame. Switching from the picker is the
+    // usual case, and its backdrop is still undimming.
+    let content_dim = {
+        let shown = (!holding).then_some(ctx.state.runtime_epoch);
+        let (previous, previous_stage) = ctx.state.session_dim_layer.get();
+        let mounted = shown.is_some() && previous != shown;
+        let stage = match crate::layout::anim::FadeStage::next(mounted, previous_stage) {
+            crate::layout::anim::FadeStage::Running => workspace_dim.stage,
+            stage => stage,
+        };
+        ctx.state.session_dim_layer.set((shown, stage));
+        animation::Fade {
+            stage,
+            ..workspace_dim
+        }
+    };
+    // The flash waits for the reveal, as it waits for a dim.
+    let content_fade = animation::layer_fade(
+        content_dim,
+        theme.surface.backdrop,
+        ui_flash.filter(|_| reveal.opacity.current >= 1.0),
+    );
     let animations = ctx.state.config.animations;
     let exit = animation::session_layer_exit(animations);
     let empty = || -> Element { Canvas::new().height(Length::Flex(1)).into() };
+    // The session content, dimmed for any dialog or the scratchpad.
+    // No height of its own: it fills whatever holds it. Directly inside the reveal's `Animated`, a
+    // `Flex` height would be measured as the content's natural height rather than filled.
+    let dimmed_content = || -> Animated {
+        content_fade.apply(Animated::new(session_content(
+            ctx,
+            content_viewport,
+            viewport_changed,
+        )))
+    };
+    // The dim and the reveal each take a layer: they run on their own timelines, the picker's
+    // backdrop undimming well before the session it opened has resolved in, and one `Animated`
+    // runs one transition. The retained outgoing layer carries its own dim inside it, so it is not
+    // dimmed twice. Every level is recursion the whole view tree carries, so these two are all.
     let session_layer: Element = if crate::layout::anim::session_portal_enabled(animations) {
-        // The portal composites the session's content, already dimmed for any dialog, over the
-        // retained outgoing layer, which carries its own dim and must not be dimmed twice. That
-        // takes a dimming layer inside the portal and a retained one around it; only the portal
-        // pays for the two levels, since every level is recursion the whole view tree carries.
+        // The portal composites the dimmed content over the retained outgoing layer.
         let content = if holding {
             empty()
         } else {
-            Animated::new(session_content(ctx, content_viewport, viewport_changed))
-                .height(Length::Flex(1))
-                .opacity(workspace_opacity)
-                .opacity_target(workspace_fade)
-                .transition(crate::layout::anim::instant_transition())
-                .into()
+            dimmed_content().height(Length::Flex(1)).into()
         };
         Animated::new(pane_reveal::session_portal_scope(
             content,
@@ -242,17 +289,12 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         .into()
     } else {
         let layer = if holding {
-            Animated::new(empty())
+            Animated::new(empty()).transition(crate::layout::anim::instant_transition())
         } else {
-            Animated::new(session_content(ctx, content_viewport, viewport_changed))
-                .opacity(workspace_opacity)
-                .opacity_target(workspace_fade)
+            animation::LayerFade::new(reveal.opacity, theme.surface.backdrop)
+                .apply(Animated::new(dimmed_content()))
         };
-        layer
-            .height(Length::Flex(1))
-            .transition(crate::layout::anim::instant_transition())
-            .auto_exit(exit)
-            .into()
+        layer.height(Length::Flex(1)).auto_exit(exit).into()
     };
     // Alone in its own stack so a retained layer has no live sibling to be ordered against and
     // lands beneath the live one; in the root stack it would sit above it, over the new session.
@@ -300,15 +342,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
-        let mut scratch_layer: Element = scratch_canvas.into();
-        let scratch_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);
-        if scratch_dim < 1.0 {
-            scratch_layer = Animated::new(scratch_layer)
-                .opacity(scratch_dim)
-                .opacity_target(theme.surface.backdrop)
-                .transition(crate::layout::anim::instant_transition())
-                .into();
-        }
+        // Always wrapped, so the dim's own `Animated` is there to run the fade when a dialog opens.
+        let scratch_layer = animation::LayerFade::new(dialog_dim, theme.surface.backdrop)
+            .apply(Animated::new(scratch_canvas));
         root = root.child(scratch_layer);
     }
 
@@ -511,11 +547,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // always mounted so the sidebar's keyed splitter/tab state keeps the same parent as the
         // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
         // never covers the sidebar.
-        let (sidebar_dim, sidebar_fade) = animation::dim_or_flash(
-            crate::scratchpad::backdrop_dim(dialog_dim_progress),
-            theme.surface.backdrop,
-            ui_flash,
-        );
+        let sidebar_fade = animation::layer_fade(dialog_dim, theme.surface.backdrop, ui_flash);
         // The splitter spends one column on its own handle, so both the panel's settled width and
         // the window currently clipping it are one short of their reservations.
         let panel_width = ctx.state.sidebar_slide_width(viewport).saturating_sub(1);
@@ -543,11 +575,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             .key("rozi-sidebar-clip");
         // The dim wraps the clip rather than the panel, so it applies to the sidebar column as it is
         // seen and leaves the panel's own allocation at its settled width.
-        let sidebar: Element = Animated::new(sidebar)
+        let sidebar: Element = sidebar_fade
+            .apply(Animated::new(sidebar))
             .height(Length::Flex(1))
-            .opacity(sidebar_dim)
-            .opacity_target(sidebar_fade)
-            .transition(crate::layout::anim::instant_transition())
             .into();
         // Whatever the sidebar has not reserved. It shrinks as the panel arrives, which is what
         // keeps the pane column's far edge pinned to the far edge of the screen while its near edge
@@ -557,7 +587,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // by hand to keep the seam from staying lit between two dimmed panes.
         let divider_bg =
             sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_canvas)
-                .blend_toward(sidebar_fade, 1.0 - sidebar_dim);
+                .blend_toward(sidebar_fade.color, 1.0 - sidebar_fade.shown);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         // The same window `set_width` clamps to, handed to the splitter so the drag stops there
         // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,
@@ -1060,8 +1090,22 @@ mod pane_layer_tests {
     /// shrinking frame floats over space the neighbour has already taken. Both read as artifacts.
     /// Underneath, the neighbour paints what it has claimed and the leaving pane shows through the
     /// rest, which is what going away looks like.
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test completes");
+    }
+
     #[test]
     fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body);
+    }
+
+    fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body() {
         for style in [
             PaneAnimationStyle::Scale,
             PaneAnimationStyle::Slide,
@@ -1123,6 +1167,11 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body);
+    }
+
+    fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body() {
         // The narrow first pane is clipped just left of the follower. With the canonical origin
         // snapped to -28, pane 2's left frame lands exactly on local column zero.
         let mut backend = smaller_follower_backend(
@@ -1160,6 +1209,11 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_equal_gaps_between_visible_columns() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_smaller_follower_keeps_equal_gaps_between_visible_columns_body);
+    }
+
+    fn a_smaller_follower_keeps_equal_gaps_between_visible_columns_body() {
         let mut backend = smaller_follower_backend(3, LayoutKind::Columns, None, (135, 25));
 
         backend.render();
@@ -1180,6 +1234,13 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(
+            a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges_body,
+        );
+    }
+
+    fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges_body() {
         let mut backend = smaller_follower_backend(
             3,
             LayoutKind::Dwindle,

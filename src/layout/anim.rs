@@ -837,6 +837,30 @@ pub fn screenshot_flash_transition() -> TransitionConfig {
     }
 }
 
+/// Where a fade stands on this frame, for a layer whose `Animated` runs the fade itself once the
+/// view hands it over. See `view::animation::LayerFade`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FadeStage {
+    /// The fade starts over: the layer snaps to where it begins.
+    Restart,
+    /// The layer is given where the fade ends, with its timing, and runs it from there.
+    Handoff,
+    /// The layer is running the fade, or it has settled.
+    #[default]
+    Running,
+}
+
+impl FadeStage {
+    /// This frame's stage, from whether the fade restarts now and last frame's stage.
+    pub fn next(restarted: bool, previous: FadeStage) -> Self {
+        match (restarted, previous) {
+            (true, _) => Self::Restart,
+            (false, Self::Restart) => Self::Handoff,
+            (false, _) => Self::Running,
+        }
+    }
+}
+
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {
         duration: Duration::ZERO,

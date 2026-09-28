@@ -96,15 +96,16 @@ pub(crate) fn scratch_progress(ctx: &Context<AppRoot>) -> f32 {
     )
 }
 
+/// Whether the scratch overlay is up, so [`backdrop_progress`] is heading for `1.0`.
+pub(crate) fn backdrop_shown(state: &crate::state::State) -> bool {
+    state.scratch_visible && !state.scratch.panes.is_empty()
+}
+
 /// Visibility progress for the scratch overlay itself, independent of whether it currently has a
 /// docked surface. Floating-only presentation still dims the workspace and keeps its outside-click
 /// catcher while the dock progress remains at zero.
 pub(crate) fn backdrop_progress(ctx: &Context<AppRoot>) -> f32 {
-    let target = if ctx.state.scratch_visible && !ctx.state.scratch.panes.is_empty() {
-        1.0
-    } else {
-        0.0
-    };
+    let target = if backdrop_shown(&ctx.state) { 1.0 } else { 0.0 };
     ctx.transition::<f32>(
         "rozi-scratch-backdrop-progress",
         target,

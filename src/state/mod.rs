@@ -177,6 +177,18 @@ pub struct State {
     pub alert_pulse_calm_phase: bool,
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
+    /// Where the chain's beat is anchored, on the runtime clock ([`Context::elapsed`]): the instant
+    /// it armed, less any re-anchoring for a changed half period. Turn `n` falls due at
+    /// `alert_pulse_armed_at + n * alert_pulse_half`, so the phase is a function of the clock and
+    /// never of how promptly earlier ticks were handled.
+    ///
+    /// [`Context::elapsed`]: tui_lipan::prelude::Context::elapsed
+    pub alert_pulse_armed_at: std::time::Duration,
+    /// The half period the chain's deadlines are laid out on.
+    pub alert_pulse_half: std::time::Duration,
+    /// How many half periods have passed since [`Self::alert_pulse_armed_at`], as of the latest
+    /// tick. The phases follow from it.
+    pub alert_pulse_turns: u32,
     pub sidebar_visible: bool,
     /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
     /// view each frame, because the transition driving it lives there.
@@ -534,6 +546,9 @@ impl State {
             alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
+            alert_pulse_armed_at: std::time::Duration::ZERO,
+            alert_pulse_half: std::time::Duration::ZERO,
+            alert_pulse_turns: 0,
             sidebar_visible,
             sidebar_slide: Cell::new(if sidebar_visible { 1.0 } else { 0.0 }),
             sidebar,

@@ -269,10 +269,15 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             "Highlights",
             vec![
                 (
-                    "Pane border",
+                    "Pane effect",
                     pane.alert_border
                         .status_label(animations.enabled, animations.focus_chrome),
                     CycleAlertBorder,
+                ),
+                (
+                    "Pane paint",
+                    pane.alert_paint.label().to_string(),
+                    CycleAlertPaint,
                 ),
                 (
                     "Workspace tab",

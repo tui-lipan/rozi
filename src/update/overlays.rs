@@ -377,6 +377,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CyclePickerTabStyle
         | CyclePickerSelectionStyle
         | CycleAlertBorder
+        | CycleAlertPaint
         | CycleWorkbarAlert
         | CycleStartupMode
         | CycleResurrectForeground => {
@@ -831,6 +832,9 @@ fn persist_applied_settings_choice(
             "alert_border",
             ctx.state.config.pane.alert_border.id(),
         ),
+        CycleAlertPaint => {
+            persist_pane_string_or_toast(ctx, "alert_paint", ctx.state.config.pane.alert_paint.id())
+        }
         CycleWorkbarAlert => {
             if let Err(err) = crate::config::persist_workbar_alert_string(
                 "mode",

@@ -238,6 +238,67 @@ impl AlertPaint {
     }
 }
 
+/// What a pane alert colors. Orthogonal to [`AlertMode`], which says whether that color holds still
+/// or breathes: the border and the content share one beat.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaneAlertPaint {
+    /// Color the pane frame only.
+    Border,
+    /// Wash the terminal content with a faint tint of the alert color, leaving the frame alone.
+    /// Works in every border mode, `none` included.
+    Content,
+    /// The frame and the content together.
+    #[default]
+    Both,
+}
+
+impl PaneAlertPaint {
+    pub fn all() -> &'static [Self] {
+        &[Self::Border, Self::Content, Self::Both]
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Border => "border",
+            Self::Content => "content",
+            Self::Both => "both",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Border => "Border",
+            Self::Content => "Content",
+            Self::Both => "Border + content",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "border" | "frame" => Some(Self::Border),
+            "content" | "terminal" => Some(Self::Content),
+            "both" | "all" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    pub const fn paints_border(self) -> bool {
+        matches!(self, Self::Border | Self::Both)
+    }
+
+    pub const fn paints_content(self) -> bool {
+        matches!(self, Self::Content | Self::Both)
+    }
+
+    pub fn next(self) -> Self {
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
+    }
+}
+
 /// How a surface draws configured alert colors. Shared by pane borders (`[pane] alert_border`) and
 /// workspace tab markers (`[workbar.alert] mode`) so the two read and behave identically.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -876,6 +937,25 @@ mod tests {
         assert_eq!(AlertMode::Pulse.next(), AlertMode::Off);
         assert_eq!(AlertMode::Off.prev(), AlertMode::Pulse);
         assert_eq!(AlertMode::Pulse.prev(), AlertMode::Static);
+    }
+
+    #[test]
+    fn pane_alert_paint_round_trips_cycles_and_splits_into_surfaces() {
+        assert_eq!(PaneAlertPaint::default(), PaneAlertPaint::Both);
+        for paint in PaneAlertPaint::all() {
+            assert_eq!(PaneAlertPaint::parse(paint.id()), Some(*paint));
+            assert_eq!(paint.prev().next(), *paint);
+        }
+        assert_eq!(
+            PaneAlertPaint::parse(" Terminal "),
+            Some(PaneAlertPaint::Content)
+        );
+        assert_eq!(PaneAlertPaint::parse("glow"), None);
+        assert!(PaneAlertPaint::Border.paints_border() && !PaneAlertPaint::Border.paints_content());
+        assert!(
+            !PaneAlertPaint::Content.paints_border() && PaneAlertPaint::Content.paints_content()
+        );
+        assert!(PaneAlertPaint::Both.paints_border() && PaneAlertPaint::Both.paints_content());
     }
 
     #[test]

@@ -112,6 +112,7 @@ const PANE_KEYS: &[&str] = &[
     "show_titles",
     "border_mode",
     "alert_border",
+    "alert_paint",
     "alert",
     "keep_special_borders",
     "background_follows_terminal",

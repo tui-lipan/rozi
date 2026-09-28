@@ -7,7 +7,8 @@ use crate::config::{
 use crate::layout::anim::PaneAnimationStyle;
 
 use super::{
-    AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, badge_cap_styles, cap_style_label,
+    AlertMode, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, badge_cap_styles,
+    cap_style_label,
 };
 
 /// Browsing category. Search always spans every category.
@@ -134,6 +135,7 @@ pub enum SettingsAction {
     CycleSidebarTabStyle,
     ToggleBellUrgency,
     CycleAlertBorder,
+    CycleAlertPaint,
     CycleWorkbarAlert,
     CycleWorkbarAlertPaint,
     ToggleMarkBell,
@@ -216,6 +218,7 @@ impl SettingsAction {
             Self::ToggleBellUrgency,
             // Highlights
             Self::CycleAlertBorder,
+            Self::CycleAlertPaint,
             Self::CycleWorkbarAlert,
             Self::CycleWorkbarAlertPaint,
             // Marks
@@ -365,10 +368,16 @@ impl SettingsAction {
                 cap_style_label,
             )),
             Self::CycleAlertBorder => Some(choice_ring(
-                "Pane border effect",
+                "Pane alert effect",
                 AlertMode::all(),
                 pane.alert_border,
                 AlertMode::label,
+            )),
+            Self::CycleAlertPaint => Some(choice_ring(
+                "Pane alert paint",
+                PaneAlertPaint::all(),
+                pane.alert_paint,
+                PaneAlertPaint::label,
             )),
             Self::CycleWorkbarAlert => Some(choice_ring(
                 "Workspace tab effect",
@@ -492,6 +501,9 @@ impl SettingsAction {
             Self::CycleAlertBorder => {
                 assign_choice(AlertMode::all(), index, &mut config.pane.alert_border)
             }
+            Self::CycleAlertPaint => {
+                assign_choice(PaneAlertPaint::all(), index, &mut config.pane.alert_paint)
+            }
             Self::CycleWorkbarAlert => {
                 assign_choice(AlertMode::all(), index, &mut config.workbar.alert.mode)
             }
@@ -515,8 +527,13 @@ impl SettingsAction {
             Self::CycleTitleStyle if !pane.titlebar.fills_strip() => {
                 Some("Unsupported in this layout")
             }
-            Self::ToggleHighlightFocusedBorder | Self::CycleAlertBorder
-                if pane.border_mode == PaneBorderMode::None =>
+            Self::ToggleHighlightFocusedBorder if pane.border_mode == PaneBorderMode::None => {
+                Some("Needs pane borders")
+            }
+            // The content tint needs no frame, so only a border-only paint loses its surface.
+            Self::CycleAlertBorder
+                if pane.border_mode == PaneBorderMode::None
+                    && !pane.alert_paint.paints_content() =>
             {
                 Some("Needs pane borders")
             }
@@ -905,6 +922,12 @@ mod tests {
             SettingsAction::ToggleHighlightFocusedBorder.disabled_reason(&config),
             Some("Needs pane borders")
         );
+        assert_eq!(
+            SettingsAction::CycleAlertBorder.disabled_reason(&config),
+            None,
+            "the default paint still tints content without borders"
+        );
+        config.pane.alert_paint = PaneAlertPaint::Border;
         assert_eq!(
             SettingsAction::CycleAlertBorder.disabled_reason(&config),
             Some("Needs pane borders")

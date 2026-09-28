@@ -108,6 +108,8 @@
 # none = no frames, dividers = lines along internal splits only.
 #border_mode = "separate"
 #alert_border = "pulse"
+# What an alert colors: the frame, a faint breathing wash over the terminal content, or both.
+#alert_paint = "both"
 # Frame glyphs for tiled panes: rounded, plain, double, thick, or a dashed style
 # (light-double-dashed, heavy-double-dashed, light-triple-dashed, heavy-triple-dashed,
 # light-quadruple-dashed, heavy-quadruple-dashed).

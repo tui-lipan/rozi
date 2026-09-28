@@ -426,13 +426,7 @@ mod tests {
             .flat_map(|y| {
                 (0..bounds.w).map(move |x| {
                     let mut cell = EffectCell::new("n");
-                    let ctx = EffectContext {
-                        x: bounds.x + x as i16,
-                        y: bounds.y + y as i16,
-                        bounds,
-                        phase: 0,
-                        terminal_bg: None,
-                    };
+                    let ctx = EffectContext::new(bounds.x + x as i16, bounds.y + y as i16, bounds);
                     if effect.uses_backdrop() {
                         effect.apply_with_backdrop(&mut cell, old, &ctx);
                     } else {
@@ -501,13 +495,7 @@ mod tests {
             for x in 0..bounds.w {
                 let mut cell = EffectCell::new("n");
                 cell.set_fg(TerminalColor::White);
-                let ctx = EffectContext {
-                    x: x as i16,
-                    y: y as i16,
-                    bounds,
-                    phase: 0,
-                    terminal_bg: None,
-                };
+                let ctx = EffectContext::new(x as i16, y as i16, bounds);
                 effect.apply_with_backdrop(&mut cell, &old, &ctx);
                 if !matches!(cell.symbol(), "n" | "o") {
                     glyphs += 1;
@@ -531,13 +519,7 @@ mod tests {
             w: 9,
             h: 4,
         };
-        let context = |x, y| EffectContext {
-            x,
-            y,
-            bounds,
-            phase: 99,
-            terminal_bg: None,
-        };
+        let context = |x, y| EffectContext::new(x, y, bounds).with_phase(99);
         let render = |pattern| {
             (0..bounds.h)
                 .flat_map(|y| {
@@ -590,16 +572,8 @@ mod tests {
             for (w, h) in [(0, 0), (1, 1), (1, 2), (2, 1)] {
                 let bounds = Rect { x: 0, y: 0, w, h };
                 let mut cell = EffectCell::new("X");
-                PaneRevealEffect::new(pattern, 0.5, 0).apply(
-                    &mut cell,
-                    &EffectContext {
-                        x: 0,
-                        y: 0,
-                        bounds,
-                        phase: 0,
-                        terminal_bg: None,
-                    },
-                );
+                PaneRevealEffect::new(pattern, 0.5, 0)
+                    .apply(&mut cell, &EffectContext::new(0, 0, bounds));
             }
         }
     }
@@ -695,13 +669,8 @@ mod tests {
                     let mut cell = EffectCell::new("X");
                     PaneRevealEffect::new(pattern, progress, seed).apply(
                         &mut cell,
-                        &EffectContext {
-                            x: bounds.x + x as i16,
-                            y: bounds.y + y as i16,
-                            bounds,
-                            phase: 99,
-                            terminal_bg: None,
-                        },
+                        &EffectContext::new(bounds.x + x as i16, bounds.y + y as i16, bounds)
+                            .with_phase(99),
                     );
                     cell.symbol().to_string()
                 })
@@ -742,16 +711,8 @@ mod tests {
         // or wearing a frontier glyph.
         let sample = |spec: PaneAnimationSpec, pattern, x: i16, y: i16| {
             let mut cell = EffectCell::new("X");
-            PaneRevealEffect::with_spec(pattern, 0.25, 17, spec).apply(
-                &mut cell,
-                &EffectContext {
-                    x,
-                    y,
-                    bounds,
-                    phase: 99,
-                    terminal_bg: None,
-                },
-            );
+            PaneRevealEffect::with_spec(pattern, 0.25, 17, spec)
+                .apply(&mut cell, &EffectContext::new(x, y, bounds).with_phase(99));
             cell.symbol() == "X"
         };
 

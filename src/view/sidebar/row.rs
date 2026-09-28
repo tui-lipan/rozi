@@ -355,7 +355,7 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
             ctx.link()
                 .callback(move |_| Msg::SidebarPointerMoved(panel)),
         )
-        .hover_effect(VisualEffect::transform_fg(ColorTransform::Tint(
+        .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
             ctx.state.theme.status.error,
             1.0,
         )))

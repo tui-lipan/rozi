@@ -175,6 +175,64 @@ pub(crate) fn alert_pulse_transition_config(
     }
 }
 
+/// One breath of a pane alert, from `peak` to `trough` and back, as a pulse the animation registry
+/// owns. `None` while the pulse chain is not running. `calm` picks the slower rate.
+///
+/// Every surface that breathes with a pane alert - the border and the content tint - reads a pulse
+/// from here, and each is anchored where the chain's beat is: the instant it armed, plus the turn
+/// that surface starts fading on (the first, or the second at the calm rate). Before that turn it
+/// holds at `peak`; from there it eases to `trough` over one beat and back over the next. Its value
+/// is therefore a function of the clock alone. However late the chain's ticks are handled, however
+/// long the loop stalls, and whenever a pane starts alerting or a surface starts being drawn, every
+/// surface sits at the point of the breath the clock says, in step with the others.
+///
+/// Each `key` is shared by every pane, so every pane alerting at a rate reads one pulse.
+fn alert_pulse(
+    ctx: &Context<AppRoot>,
+    key: &'static str,
+    calm: bool,
+    peak: f32,
+    trough: f32,
+) -> Option<EffectAmount> {
+    let state = &ctx.state;
+    if !state.alert_pulse_armed {
+        return None;
+    }
+    let beat = state.alert_pulse_half * if calm { 2 } else { 1 };
+    Some(
+        ctx.pulsing_amount(
+            key,
+            EffectPulse::new(peak, trough)
+                .period(beat * 2)
+                .easing(Easing::EaseInOutCubic)
+                .frame_rate(anim::ALERT_PULSE_FRAME_RATE)
+                .starting_at(state.alert_pulse_armed_at + beat),
+        ),
+    )
+}
+
+/// How strongly the content alert tint covers a pane's text and background: from
+/// [`anim::ALERT_CONTENT_TINT`] at the peak of the breath to nothing at its trough.
+pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+    let key = if calm {
+        "rozi-alert-tint-calm"
+    } else {
+        "rozi-alert-tint"
+    };
+    alert_pulse(ctx, key, calm, anim::ALERT_CONTENT_TINT, 0.0)
+}
+
+/// How far an alerting pane border has moved from its peak colour toward its trough: nothing at
+/// the peak of the breath, all the way at its trough.
+pub(crate) fn alert_border_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+    let key = if calm {
+        "rozi-alert-border-calm"
+    } else {
+        "rozi-alert-border"
+    };
+    alert_pulse(ctx, key, calm, 0.0, 1.0)
+}
+
 /// A pane chrome colour, as a paint the renderer resolves while drawing.
 ///
 /// `animated_color` rather than `transition`: chrome colours only ever land in styles, so naming

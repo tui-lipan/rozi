@@ -475,6 +475,7 @@ pub(super) struct PaneFileConfig {
     show_titles: Option<bool>,
     border_mode: Option<String>,
     alert_border: Option<String>,
+    alert_paint: Option<String>,
     pub(super) alert: PaneAlertFileConfig,
     keep_special_borders: Option<bool>,
     background_follows_terminal: Option<bool>,
@@ -1035,6 +1036,14 @@ fn load_config_from_text_with_extensions(
             Some(mode) => config.pane.alert_border = mode,
             None => warnings.push(format!(
                 "Ignored unknown pane.alert_border \"{alert_border}\" (expected one of: off, static, pulse)"
+            )),
+        }
+    }
+    if let Some(alert_paint) = parsed.pane.alert_paint.as_deref() {
+        match crate::state::PaneAlertPaint::parse(alert_paint) {
+            Some(paint) => config.pane.alert_paint = paint,
+            None => warnings.push(format!(
+                "Ignored unknown pane.alert_paint \"{alert_paint}\" (expected one of: border, content, both)"
             )),
         }
     }
@@ -2133,6 +2142,30 @@ mod file_tests {
         assert_eq!(loaded.warnings.len(), 1);
         assert!(
             loaded.warnings[0].contains("off, static, pulse"),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn pane_alert_paint_applies_known_values_and_warns_on_unknown_paint() {
+        let loaded =
+            load_config_from_text("[pane]\nalert_paint = \"content\"", Path::new("test.toml"));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.pane.alert_paint,
+            crate::state::PaneAlertPaint::Content
+        );
+
+        let loaded =
+            load_config_from_text("[pane]\nalert_paint = \"glow\"", Path::new("test.toml"));
+        assert_eq!(
+            loaded.config.pane.alert_paint,
+            crate::state::PaneAlertPaint::Both
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(
+            loaded.warnings[0].contains("border, content, both"),
             "{:?}",
             loaded.warnings
         );

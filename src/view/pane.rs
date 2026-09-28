@@ -265,7 +265,9 @@ impl PaneKind {
 pub(crate) struct PaneFrameChrome {
     pub show_border: bool,
     pub border_style: BorderStyle,
-    pub frame_fg: Paint,
+    /// The border glyphs' colour: `frame_fg` with any breathing alert's transform on it. Anything
+    /// that draws in the border's colour should use this rather than `frame_fg` alone.
+    pub frame_fg_style: Style,
     pub frame_bg: Paint,
     pub frame_style: Style,
 }
@@ -296,7 +298,7 @@ pub(crate) fn pane_frame_chrome(
     };
     let alert = border_mode
         .draws_frames()
-        .then(|| pane_alert(pane, focused, &ctx.state.config.pane))
+        .then(|| pane_border_alert(pane, focused, &ctx.state.config.pane))
         .flatten();
     let alert_pulses = alert.is_some_and(|(_, color)| {
         pane_alert_pulses(
@@ -319,27 +321,40 @@ pub(crate) fn pane_frame_chrome(
             .current()
             .remote_drag
             .is_some_and(|drag| drag.pane_id == pane.id);
+    // A breathing border is drawn at its peak colour and moved toward its trough by a pulse
+    // anchored where the chain's beat is, so its colour is a function of the clock, as the content
+    // tint's is. The chain's turns never retarget it, so it cannot lag them, fall out of step with
+    // the tint, or depart from whatever colour it happened to hold when it started alerting.
+    let breath = alert.filter(|_| alert_pulses).and_then(|(_, color)| {
+        animation::alert_border_pulse(ctx, alert_calm).map(|amount| {
+            ColorTransform::tint(
+                crate::ops::theme::pane_frame_alert_trough(theme, color),
+                amount,
+            )
+        })
+    });
     let frame_fg_target = pane_frame_foreground_target(
         theme,
         alert,
-        alert_pulses,
+        alert_pulses && breath.is_none(),
         alert_phase,
         carried_by_other_client,
         focused,
         ctx.state.config.pane.highlight_focused_border,
     );
-    let frame_fg = animation::chrome_color_with_frame_rate(
-        ctx,
-        pane,
-        ChromeSlot::FrameFg,
-        frame_fg_target,
-        if alert_pulses && ctx.state.alert_pulse_armed {
-            animation::alert_pulse_transition_config(ctx, alert_calm)
-        } else {
-            animation::focus_chrome_transition_config(ctx)
-        },
-        alert_pulses.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
-    );
+    // A breathing border's colour lives entirely in its pulse, over a fixed peak, and its chrome
+    // fade is not asked for while it breathes, so the animation registry lets it go. When the alert
+    // clears, the fade comes back new at the colour the border has now and the border snaps there,
+    // as the content tint does, rather than fading out from a peak that was never on screen.
+    let frame_fg_style = match breath {
+        Some(breath) => Style::new().fg(frame_fg_target).transform_fg(breath),
+        None => Style::new().fg(animation::chrome_color(
+            ctx,
+            pane,
+            ChromeSlot::FrameFg,
+            frame_fg_target,
+        )),
+    };
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,
         focused,
@@ -347,14 +362,14 @@ pub(crate) fn pane_frame_chrome(
     );
     let frame_bg = animation::chrome_color(ctx, pane, ChromeSlot::FrameBg, frame_bg_target);
     let frame_style = if matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)) {
-        Style::new().fg(frame_fg).bg(frame_bg).dim()
+        frame_fg_style.bg(frame_bg).dim()
     } else {
-        Style::new().fg(frame_fg).bg(frame_bg)
+        frame_fg_style.bg(frame_bg)
     };
     PaneFrameChrome {
         show_border,
         border_style,
-        frame_fg,
+        frame_fg_style,
         frame_bg,
         frame_style,
     }
@@ -426,24 +441,75 @@ pub(crate) fn pane_alert(
     .find_map(|(alert, active, color)| Some((alert, active.then_some(color).flatten()?)))
 }
 
-/// Whether a visible pane frame has an alert that can breathe. Other workspaces are represented by
-/// tab markers, and divider-only/none modes have no per-pane frame to animate.
+/// The alert a pane draws on its border: [`pane_alert`], unless the configured paint leaves the
+/// border out.
+pub(crate) fn pane_border_alert(
+    pane: &Pane,
+    focused: bool,
+    config: &PaneConfig,
+) -> Option<(crate::state::PaneAlert, BadgeColor)> {
+    if !config.alert_paint.paints_border() {
+        return None;
+    }
+    pane_alert(pane, focused, config)
+}
+
+/// Whether a visible pane shows an alert that can breathe: on a frame it draws, or as a tint over
+/// its content. Other workspaces are represented by tab markers, and divider-only/none modes have
+/// no per-pane frame to animate, though the content tint still has the terminal to cover.
 pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
-    state.config.pane.border_mode.draws_frames()
-        && state.current().workspaces[state.current().active_workspace]
-            .panes
-            .iter()
-            .any(|pane| {
-                pane_alert(
-                    pane,
-                    state.current().workspaces[state.current().active_workspace]
-                        .focused_pane
-                        .or(state.current().focused_pane)
-                        == Some(pane.id),
-                    &state.config.pane,
-                )
-                .is_some()
-            })
+    let config = &state.config.pane;
+    let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
+    if !frames && !config.alert_paint.paints_content() {
+        return false;
+    }
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let focused = workspace.focused_pane.or(state.current().focused_pane);
+    workspace
+        .panes
+        .iter()
+        .any(|pane| pane_alert(pane, focused == Some(pane.id), config).is_some())
+}
+
+/// Whether `color` can wash over pane content. Only truecolor can: a palette colour would have to
+/// be blended through a stand-in RGB value, repainting the pane in colours that are not the user's.
+pub(crate) fn pane_content_alert_can_tint(theme: &Theme, color: BadgeColor) -> bool {
+    crate::ops::theme::chrome_color_animates(crate::ops::theme::pane_frame_alert_foreground(
+        theme, color,
+    ))
+}
+
+/// The tint this pane's alert lays over its content: the colour, and how strongly it covers the
+/// text and background. `None` when the configured paint leaves the content out.
+///
+/// A breathing alert reads the shared registry pulse for its rate, which fades between
+/// [`ALERT_CONTENT_TINT`] and nothing on the border's beat. A static alert, a pulse that cannot run,
+/// and the stretch before the chain's first turn all hold at the peak, as the border does.
+///
+/// [`ALERT_CONTENT_TINT`]: crate::layout::anim::ALERT_CONTENT_TINT
+fn pane_content_alert_tint(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    focused: bool,
+) -> Option<(Color, EffectAmount)> {
+    let config = &ctx.state.config.pane;
+    if !config.alert_paint.paints_content() {
+        return None;
+    }
+    let (alert, color) = pane_alert(pane, focused, config)?;
+    let theme = &ctx.state.theme;
+    if !pane_content_alert_can_tint(theme, color) {
+        return None;
+    }
+    let target = crate::ops::theme::pane_frame_alert_foreground(theme, color);
+    let animations = ctx.state.config.animations;
+    let pulses =
+        config.alert_border == AlertMode::Pulse && animations.enabled && animations.focus_chrome;
+    let amount = pulses
+        .then(|| animation::alert_tint_pulse(ctx, alert.is_calm()))
+        .flatten()
+        .unwrap_or(EffectAmount::from(crate::layout::anim::ALERT_CONTENT_TINT));
+    Some((target, amount))
 }
 
 fn pane_alert_pulses(
@@ -943,14 +1009,18 @@ pub(crate) fn pane_element(
     let PaneFrameChrome {
         show_border,
         border_style,
-        frame_fg,
+        frame_fg_style,
         frame_bg,
         frame_style,
     } = chrome;
     // Scale keeps the frame's geometry (and therefore the terminal's settled allocation) but paints
     // its own border glyphs with the frame background; the centred overlay owns the visible border.
+    // The breath goes with the colour, or it would tint the background toward the alert's trough.
     let frame_style = if hide_frame_border {
-        frame_style.fg(frame_bg)
+        Style {
+            fg_transform: None,
+            ..frame_style.fg(frame_bg)
+        }
     } else {
         frame_style
     };
@@ -1173,9 +1243,9 @@ pub(crate) fn pane_element(
         .scrollbar_config({
             integrated_scrollbar_config()
                 .variant(pane_scrollbar_variant(border_mode))
-                .thumb_style(Style::new().fg(frame_fg))
-                .thumb_focus_style(Style::new().fg(frame_fg))
-                .track_style(Style::new().fg(frame_fg).bg(frame_bg))
+                .thumb_style(frame_fg_style)
+                .thumb_focus_style(frame_fg_style)
+                .track_style(frame_fg_style.bg(frame_bg))
         })
         .scroll_wheel(terminal_ready && !hinting)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
@@ -1216,6 +1286,15 @@ pub(crate) fn pane_element(
     }
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane.keys.terminal.clone());
+    // Always wrapped, tinted or not, so an alert coming and going never changes the terminal's
+    // place in the tree.
+    let scope = match pane_content_alert_tint(ctx, pane, focused) {
+        // Cells only: the tint marks the text a pane shows, not the pictures in it, so an image keeps
+        // its own pixels whether the tint holds still or breathes.
+        Some((color, amount)) => EffectScope::new().cells_only().tint_by(color, amount),
+        None => EffectScope::new(),
+    };
+    let terminal: Element = scope.child(terminal).into();
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
     // later frame draws in Replace mode, so only panes in the settled merged layer may merge

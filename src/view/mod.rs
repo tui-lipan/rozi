@@ -14,7 +14,8 @@ mod workspace;
 
 pub(crate) use pane::{
     PaneKind, PaneMerge, covers_a_recording, fullscreen_pane, has_pane_alert, pane_alert,
-    pane_chrome_shows_recording, pane_element, recording_dot_off_phase,
+    pane_chrome_shows_recording, pane_content_alert_can_tint, pane_element,
+    recording_dot_off_phase,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
@@ -67,7 +68,7 @@ pub(crate) const HOVER_LIFT: f32 = 0.08;
 /// That matters wherever an element paints its own background - an alerting workspace tab, a
 /// selected row - because an absolute hover color would replace the signal instead of lifting it.
 pub(crate) fn hover_lift() -> ColorTransform {
-    ColorTransform::Elevate(HOVER_LIFT)
+    ColorTransform::elevate(HOVER_LIFT)
 }
 
 pub(crate) const STRIP_LIFT: f32 = 0.05;

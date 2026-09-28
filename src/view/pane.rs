@@ -342,22 +342,18 @@ pub(crate) fn pane_frame_chrome(
         focused,
         ctx.state.config.pane.highlight_focused_border,
     );
-    // Arriving at the peak is instant, as the tint's is; leaving it when the alert clears keeps the
-    // usual focus-chrome fade, since `breath` is gone by then.
-    let frame_fg = animation::chrome_color_with(
-        ctx,
-        pane,
-        ChromeSlot::FrameFg,
-        frame_fg_target,
-        if breath.is_some() {
-            crate::layout::anim::instant_transition()
-        } else {
-            animation::focus_chrome_transition_config(ctx)
-        },
-    );
+    // A breathing border's colour lives entirely in its pulse, over a fixed peak, and its chrome
+    // fade is not asked for while it breathes, so the animation registry lets it go. When the alert
+    // clears, the fade comes back new at the colour the border has now and the border snaps there,
+    // as the content tint does, rather than fading out from a peak that was never on screen.
     let frame_fg_style = match breath {
-        Some(breath) => Style::new().fg(frame_fg).transform_fg(breath),
-        None => Style::new().fg(frame_fg),
+        Some(breath) => Style::new().fg(frame_fg_target).transform_fg(breath),
+        None => Style::new().fg(animation::chrome_color(
+            ctx,
+            pane,
+            ChromeSlot::FrameFg,
+            frame_fg_target,
+        )),
     };
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,

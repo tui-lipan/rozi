@@ -728,6 +728,60 @@ fn a_pane_that_starts_alerting_mid_breath_joins_it_where_it_is() {
     });
 }
 
+/// An alert clearing mid-breath takes its border straight to the ordinary colour, as its tint goes
+/// at once, rather than first jumping back to a peak that was not on screen and fading from there.
+/// A second pane keeps the chain breathing throughout, and carries on unaffected.
+#[test]
+fn clearing_an_alert_mid_breath_snaps_the_border_to_normal() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let ends = breathe_ends();
+        let mut backend = three_pane_backend();
+        breathing_config(&mut backend, PaneAlertPaint::Both);
+        let (calm_border, calm_bg) = surfaces_of(&mut backend, 12);
+        block(&mut backend, 1);
+        block(&mut backend, 2);
+        arm(&mut backend, std::time::Duration::ZERO);
+        surfaces_of(&mut backend, 12);
+        first_turn(&mut backend);
+        surfaces_of(&mut backend, 12);
+        let half = half_period(&backend);
+        backend.advance(half - half / 8);
+        let (near_trough, _) = surfaces_of(&mut backend, 12);
+        let down = travelled(near_trough, ends.border.0, ends.border.1);
+        assert!(down > 0.8, "near the trough before the clear: {down:.2}");
+
+        backend.state_mut().current_mut().workspaces[0].panes[2]
+            .terminal
+            .reported_status = None;
+        let cleared = surfaces_of(&mut backend, 12);
+        assert_ne!(cleared.0, ends.border.0, "not back at the peak");
+        assert_eq!(
+            cleared,
+            (calm_border, calm_bg),
+            "on the frame the alert clears, border and content are back to normal together"
+        );
+        for step in [half / 8, half / 2, half] {
+            backend.advance(step);
+            assert_eq!(
+                surfaces_of(&mut backend, 12),
+                (calm_border, calm_bg),
+                "and stay there"
+            );
+        }
+
+        // The pane still alerting breathes on, border and tint in step.
+        let (frame_fg, content_bg) = surfaces_of(&mut backend, 11);
+        let border_at = travelled(frame_fg, ends.border.0, ends.border.1);
+        let tint_at = travelled(content_bg, ends.tint.0, ends.tint.1);
+        assert!(
+            (border_at - tint_at).abs() < 0.05,
+            "the other pane: border {border_at:.2}, tint {tint_at:.2}"
+        );
+    });
+}
+
 /// Covering the content in the middle of a breathe joins the border's beat, rather than starting a
 /// tint pulse of its own from the moment the setting changed.
 #[test]

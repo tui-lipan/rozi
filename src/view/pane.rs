@@ -1474,20 +1474,31 @@ pub(crate) fn pane_element(
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
-    let flash = pane_screenshot_flash(&ctx.state, id, kind)
-        .map(|strength| (animation::screenshot_flash_color(theme), strength));
     let pane_tree = pane_reveal_scope(
         pane_tree,
         pane.keys.effect_scope.clone(),
         crate::layout::anim::pane_animation_for_pane(animations, pane),
         reveal_progress,
         u64::from(id),
-        flash,
     );
-    let animated = Animated::new(pane_tree)
-        .height(Length::Flex(1))
-        .opacity(opacity)
-        .transition(animation::window_opacity_config(ctx, pane));
+    // A screenshot flash rides the pane's own fade, handed over once like a backdrop dim (see
+    // `animation::LayerFade`), so the images in the pane encode once rather than every frame. The
+    // pane's open or close fade wins over it.
+    let flash = pane_screenshot_flash(&ctx.state, id, kind).filter(|_| opacity >= 1.0);
+    let animated = match flash {
+        Some(strength) => animation::LayerFade::new(
+            &[animation::Fade::flash(
+                strength,
+                ctx.state.screenshot.flash_stage.get(),
+            )],
+            animation::screenshot_flash_color(theme),
+        )
+        .apply(Animated::new(pane_tree)),
+        None => Animated::new(pane_tree)
+            .opacity(opacity)
+            .transition(animation::window_opacity_config(ctx, pane)),
+    }
+    .height(Length::Flex(1));
     // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree
     // and can only clip it, while Scale's surrounding PanView supplies the centred clip window.
     // `prune_closed_pane` drops the state once a closing pane's clip finishes.

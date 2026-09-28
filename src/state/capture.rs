@@ -31,6 +31,8 @@ pub struct ScreenshotState {
     /// What the root view sampled for this frame: the target and the tint's current strength.
     /// `None` at rest. Read by the pane view, which is built later in the same frame.
     pub flash_frame: Cell<Option<(ScreenshotTarget, f32)>>,
+    /// Where this frame's flash stands, so the layer it covers is handed its fade once.
+    pub flash_stage: Cell<crate::layout::anim::FadeStage>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

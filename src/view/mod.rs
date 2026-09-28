@@ -194,11 +194,16 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         .state
         .dim_targets
         .replace((workspace_dimmed, dialog_open));
-    let dim = |progress: f32, dimmed: bool, was_dimmed: bool| animation::Dim {
+    let dim = |progress: f32, dimmed: bool, was_dimmed: bool| animation::Fade {
         current: crate::scratchpad::backdrop_dim(progress),
         target: crate::scratchpad::backdrop_dim(if dimmed { 1.0 } else { 0.0 }),
         transition: dim_transition,
-        retargeted: dimmed != was_dimmed,
+        // A dim eases from wherever it is, so it never restarts; it is only handed over.
+        stage: if dimmed == was_dimmed {
+            crate::layout::anim::FadeStage::Running
+        } else {
+            crate::layout::anim::FadeStage::Handoff
+        },
     };
     let workspace_dim = dim(
         scratch_backdrop_progress.max(dialog_dim_progress),
@@ -215,9 +220,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let flash = animation::screenshot_flash(ctx);
     ctx.state.screenshot.flash_frame.set(flash);
     let ui_flash = match flash {
-        Some((crate::state::ScreenshotTarget::Ui, strength)) => {
-            Some((animation::screenshot_flash_color(theme), strength))
-        }
+        Some((crate::state::ScreenshotTarget::Ui, strength)) => Some((
+            animation::screenshot_flash_color(theme),
+            animation::Fade::flash(strength, ctx.state.screenshot.flash_stage.get()),
+        )),
         _ => None,
     };
     let workspace_fade = animation::layer_fade(
@@ -318,7 +324,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
         // Always wrapped, so the dim's own `Animated` is there to run the fade when a dialog opens.
-        let scratch_layer = animation::layer_fade(dialog_dim, 1.0, theme.surface.backdrop, None)
+        let scratch_layer = animation::LayerFade::new(&[dialog_dim], theme.surface.backdrop)
             .apply(Animated::new(scratch_canvas));
         root = root.child(scratch_layer);
     }
@@ -522,7 +528,12 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         // always mounted so the sidebar's keyed splitter/tab state keeps the same parent as the
         // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
         // never covers the sidebar.
-        let sidebar_fade = animation::layer_fade(dialog_dim, 1.0, theme.surface.backdrop, ui_flash);
+        let sidebar_fade = animation::layer_fade(
+            dialog_dim,
+            animation::Fade::settled(),
+            theme.surface.backdrop,
+            ui_flash,
+        );
         // The splitter spends one column on its own handle, so both the panel's settled width and
         // the window currently clipping it are one short of their reservations.
         let panel_width = ctx.state.sidebar_slide_width(viewport).saturating_sub(1);

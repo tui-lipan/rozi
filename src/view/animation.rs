@@ -246,11 +246,11 @@ pub(crate) fn chrome_paint_with_frame_rate(
 }
 
 /// How far a newly shown session has taken over the screen.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct SessionReveal {
-    /// Opacity of the session content layer (workbar and workspace). Below 1 only while a fade
-    /// reveal is running.
-    pub(crate) opacity: f32,
+    /// Opacity of the session content layer (workbar and workspace), heading for `1.0`. Below 1
+    /// only while a fade reveal is running.
+    pub(crate) opacity: Fade,
     /// How far the portal has opened, `1.0` when there is no portal to draw.
     pub(crate) portal: f32,
 }
@@ -269,7 +269,15 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
     let revision = ctx.state.session_view_revision;
     let previous = ctx.state.session_reveal_seen.replace(Some(revision));
     let changed = previous.is_some_and(|seen| seen != revision);
-    ctx.state.session_view_changed.set(changed);
+    let was_changed = ctx.state.session_view_changed.replace(changed);
+    let stage = anim::FadeStage::next(
+        changed,
+        if was_changed {
+            anim::FadeStage::Restart
+        } else {
+            anim::FadeStage::Running
+        },
+    );
     if changed {
         // Seeded even when the reveal is off: retargeting from a distinct value is what applies
         // the instant config, so a reveal still in flight when animations were disabled stops
@@ -282,11 +290,16 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
     let progress = ctx.transition(KEY, 1.0, config);
     match animations.session {
         anim::SessionAnimationStyle::Off | anim::SessionAnimationStyle::Fade => SessionReveal {
-            opacity: anim::SESSION_REVEAL_FROM + (1.0 - anim::SESSION_REVEAL_FROM) * progress,
+            opacity: Fade {
+                current: anim::SESSION_REVEAL_FROM + (1.0 - anim::SESSION_REVEAL_FROM) * progress,
+                target: 1.0,
+                transition: config,
+                stage,
+            },
             portal: 1.0,
         },
         anim::SessionAnimationStyle::Portal => SessionReveal {
-            opacity: 1.0,
+            opacity: Fade::settled(),
             portal: progress,
         },
     }
@@ -310,9 +323,12 @@ pub(crate) fn screenshot_flash(
         .screenshot
         .flash_seen
         .replace(Some(flash.revision));
-    if previous != Some(flash.revision) {
+    let restarted = previous != Some(flash.revision);
+    if restarted {
         ctx.transition(KEY, 0.0, anim::instant_transition());
     }
+    let stage = &ctx.state.screenshot.flash_stage;
+    stage.set(anim::FadeStage::next(restarted, stage.get()));
     let progress = ctx.transition(KEY, 1.0, anim::screenshot_flash_transition());
     (progress < 1.0).then_some((flash.target, anim::SCREENSHOT_FLASH_PEAK * (1.0 - progress)))
 }
@@ -325,20 +341,53 @@ pub(crate) fn screenshot_flash_color(theme: &Theme) -> Color {
     }
 }
 
-/// A backdrop dim this frame: the opacity its transition is at, the one it settles on, and whether
-/// that target changed on this frame.
+/// A fade this frame: the opacity its transition is at, the one it settles on, its timing, and
+/// its [`anim::FadeStage`].
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Dim {
+pub(crate) struct Fade {
     pub current: f32,
     pub target: f32,
     pub transition: TransitionConfig,
-    pub retargeted: bool,
+    pub stage: anim::FadeStage,
 }
 
-/// What a dimmable layer's `Animated` is given this frame.
+impl Fade {
+    /// A fade with nothing to do: fully opaque, and staying so.
+    pub(crate) fn settled() -> Self {
+        Self {
+            current: 1.0,
+            target: 1.0,
+            transition: anim::instant_transition(),
+            stage: anim::FadeStage::Running,
+        }
+    }
+
+    /// A screenshot flash of `strength` toward its colour, easing back to none.
+    pub(crate) fn flash(strength: f32, stage: anim::FadeStage) -> Self {
+        Self {
+            current: 1.0 - strength,
+            target: 1.0,
+            transition: anim::screenshot_flash_transition(),
+            stage,
+        }
+    }
+}
+
+/// What a fading layer's `Animated` is given this frame.
+///
+/// A fade is handed to the layer at the opacity it ends at, with its timing, and the layer's
+/// `Animated` runs it. tui-lipan recolours the images under an `Animated` at the opacity it is
+/// heading for, so they encode once per fade. Stepping the opacity from the view instead makes
+/// every frame a new final opacity: each image under the layer re-encodes and retransmits on every
+/// frame, and shows black until the fade stops.
+///
+/// Only the frame a fade changes carries its timing: on a [`anim::FadeStage::Restart`] the layer
+/// snaps to where the fade begins, on the [`anim::FadeStage::Handoff`] after it the layer is given
+/// where it ends. Every other frame is instant, since the same `Animated` may follow the layer's
+/// height, which snaps on resize; the fade already running is unaffected.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LayerFade {
-    /// The opacity handed to the `Animated`: where a dim ends, or this frame's flash or reveal.
+    /// The opacity handed to the `Animated`.
     pub opacity: f32,
     /// The opacity the layer shows this frame, for cells painted by hand to match it.
     pub shown: f32,
@@ -347,6 +396,34 @@ pub(crate) struct LayerFade {
 }
 
 impl LayerFade {
+    /// `fades` compounded into one layer's fade toward `color`.
+    pub(crate) fn new(fades: &[Fade], color: Color) -> Self {
+        let shown: f32 = fades.iter().map(|fade| fade.current).product();
+        if fades
+            .iter()
+            .any(|fade| fade.stage == anim::FadeStage::Restart)
+        {
+            return Self {
+                opacity: shown,
+                shown,
+                color,
+                transition: anim::instant_transition(),
+            };
+        }
+        let transition = fades
+            .iter()
+            .filter(|fade| fade.stage == anim::FadeStage::Handoff)
+            .map(|fade| fade.transition)
+            .max_by_key(|transition| transition.duration)
+            .unwrap_or_else(anim::instant_transition);
+        Self {
+            opacity: fades.iter().map(|fade| fade.target).product(),
+            shown,
+            color,
+            transition,
+        }
+    }
+
     pub(crate) fn apply(self, animated: Animated) -> Animated {
         animated
             .opacity(self.opacity)
@@ -355,46 +432,23 @@ impl LayerFade {
     }
 }
 
-/// A layer's fade: the UI screenshot flash's tint, the session reveal, or its dim toward
+/// A layer's fade: the UI screenshot flash's tint, or its dim and session reveal toward
 /// `backdrop`.
 ///
-/// A dim is handed to the layer at the opacity it ends at, with its timing, on the frame it changes,
-/// and the layer's `Animated` runs the fade. tui-lipan recolours the images under an `Animated` at
-/// the opacity it is heading for, so they encode once per dim. Stepping the opacity from the view
-/// instead makes every frame a new final dim: each image under the layer re-encodes and retransmits
-/// on every frame, and shows black until the fade stops. Every other frame is instant, since the
-/// same `Animated` follows the layer's height, which snaps on resize; the fade already running is
-/// unaffected.
-///
-/// The flash and the reveal still step the opacity per frame. They ride the layer's existing fade
-/// rather than an effect scope of their own, because every level wrapped around the whole view tree
-/// is recursion each frame carries. A dimmed layer keeps its dim: a flash is not worth un-dimming a
-/// dialog's backdrop for.
+/// The flash rides the layer's existing fade rather than an effect scope of its own, because every
+/// level wrapped around the whole view tree is recursion each frame carries. A dimmed or revealing
+/// layer keeps its fade: a flash is not worth un-dimming a dialog's backdrop for.
 pub(crate) fn layer_fade(
-    dim: Dim,
-    reveal: f32,
+    dim: Fade,
+    reveal: Fade,
     backdrop: Color,
-    flash: Option<(Color, f32)>,
+    flash: Option<(Color, Fade)>,
 ) -> LayerFade {
-    let stepped = |opacity, color| LayerFade {
-        opacity,
-        shown: opacity,
-        color,
-        transition: anim::instant_transition(),
-    };
     match flash {
-        Some((color, strength)) if dim.current * reveal >= 1.0 => stepped(1.0 - strength, color),
-        _ if reveal < 1.0 => stepped(dim.current * reveal, backdrop),
-        _ => LayerFade {
-            opacity: dim.target,
-            shown: dim.current,
-            color: backdrop,
-            transition: if dim.retargeted {
-                dim.transition
-            } else {
-                anim::instant_transition()
-            },
-        },
+        Some((color, flash)) if dim.current * reveal.current >= 1.0 => {
+            LayerFade::new(&[flash], color)
+        }
+        _ => LayerFade::new(&[dim, reveal], backdrop),
     }
 }
 
@@ -726,19 +780,31 @@ mod tests {
         });
     }
 
-    fn dim(current: f32, target: f32, retargeted: bool) -> super::Dim {
-        super::Dim {
+    fn fade(current: f32, target: f32, stage: anim::FadeStage) -> super::Fade {
+        super::Fade {
             current,
             target,
             transition: anim::geometry_transition(Duration::from_millis(200)),
-            retargeted,
+            stage,
         }
     }
 
     #[test]
+    fn fade_stages_restart_then_hand_over_once() {
+        use anim::FadeStage::{Handoff, Restart, Running};
+        assert_eq!(anim::FadeStage::next(true, Running), Restart);
+        assert_eq!(anim::FadeStage::next(true, Restart), Restart);
+        assert_eq!(anim::FadeStage::next(false, Restart), Handoff);
+        assert_eq!(anim::FadeStage::next(false, Handoff), Running);
+        assert_eq!(anim::FadeStage::next(false, Running), Running);
+    }
+
+    #[test]
     fn a_dim_hands_its_final_opacity_to_the_layer_once() {
+        use anim::FadeStage::{Handoff, Running};
         let backdrop = Color::Black;
-        let opening = super::layer_fade(dim(1.0, 0.5, true), 1.0, backdrop, None);
+        let reveal = super::Fade::settled();
+        let opening = super::layer_fade(fade(1.0, 0.5, Handoff), reveal, backdrop, None);
         assert_eq!(
             opening.opacity, 0.5,
             "images under the layer dim once, to where the fade ends"
@@ -746,9 +812,8 @@ mod tests {
         assert_eq!(opening.shown, 1.0, "the cells still start undimmed");
         assert_eq!(opening.transition.duration, Duration::from_millis(200));
 
-        let midway = super::layer_fade(dim(0.75, 0.5, false), 1.0, backdrop, None);
-        assert_eq!(midway.opacity, 0.5);
-        assert_eq!(midway.shown, 0.75);
+        let midway = super::layer_fade(fade(0.75, 0.5, Running), reveal, backdrop, None);
+        assert_eq!((midway.opacity, midway.shown), (0.5, 0.75));
         assert!(
             midway.transition.duration.is_zero(),
             "later frames snap, so a resize does not animate the layer's height"
@@ -756,22 +821,46 @@ mod tests {
     }
 
     #[test]
-    fn a_flash_or_reveal_still_steps_the_layer_per_frame() {
+    fn a_reveal_snaps_to_its_start_then_hands_over_its_end() {
+        use anim::FadeStage::{Handoff, Restart, Running};
         let backdrop = Color::Black;
-        let flash = Some((Color::Red, 0.25));
-        let flashed = super::layer_fade(dim(1.0, 1.0, false), 1.0, backdrop, flash);
-        assert_eq!((flashed.opacity, flashed.color), (0.75, Color::Red));
-        assert!(flashed.transition.duration.is_zero());
+        let dim = fade(0.5, 0.5, Running);
+        let restart = super::layer_fade(dim, fade(0.8, 1.0, Restart), backdrop, None);
+        assert_eq!(
+            restart.opacity, 0.4,
+            "the layer snaps to where the reveal begins"
+        );
+        assert!(restart.transition.duration.is_zero());
 
-        let dimmed = super::layer_fade(dim(0.5, 0.5, false), 1.0, backdrop, flash);
+        let handoff = super::layer_fade(dim, fade(0.8, 1.0, Handoff), backdrop, None);
+        assert_eq!(
+            handoff.opacity, 0.5,
+            "the reveal ends at the dim, which images take at once"
+        );
+        assert_eq!(handoff.shown, 0.4);
+        assert_eq!(handoff.transition.duration, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn a_flash_hands_over_its_fade_unless_the_layer_is_dimmed() {
+        use anim::FadeStage::{Handoff, Restart, Running};
+        let backdrop = Color::Black;
+        let rest = super::Fade::settled();
+        let flash = |stage| Some((Color::Red, super::Fade::flash(0.25, stage)));
+
+        let restart = super::layer_fade(rest, rest, backdrop, flash(Restart));
+        assert_eq!((restart.opacity, restart.color), (0.75, Color::Red));
+        assert!(restart.transition.duration.is_zero());
+
+        let handoff = super::layer_fade(rest, rest, backdrop, flash(Handoff));
+        assert_eq!((handoff.opacity, handoff.color), (1.0, Color::Red));
+        assert_eq!(handoff.transition.duration, anim::SCREENSHOT_FLASH);
+
+        let dimmed = super::layer_fade(fade(0.5, 0.5, Running), rest, backdrop, flash(Restart));
         assert_eq!(
             (dimmed.opacity, dimmed.color),
             (0.5, backdrop),
             "a dimmed layer keeps its dim"
         );
-
-        let revealing = super::layer_fade(dim(0.5, 0.5, false), 0.5, backdrop, None);
-        assert_eq!((revealing.opacity, revealing.shown), (0.25, 0.25));
-        assert!(revealing.transition.duration.is_zero());
     }
 }

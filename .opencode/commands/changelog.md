@@ -1,7 +1,7 @@
 ---
 description: Generate the canonical GitHub Release notes from an exact commit range
 agent: rosie
-model: google/gemini-3.5-flash-lite
+model: openai/gpt-6-luna
 ---
 
 Create `release-notes.md` from `release-notes-input.md`.

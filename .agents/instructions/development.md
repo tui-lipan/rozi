@@ -69,7 +69,7 @@ change.
 
 Tagged releases resolve the previous published `v` release and exact tagged commit in
 `scripts/release_notes.py`, then Rosie runs `.opencode/commands/changelog.md` with
-`google/gemini-3.5-flash-lite` and writes notes from each candidate Summary. The workflow
+`openai/gpt-6-luna` and writes notes from each candidate Summary. The workflow
 validates the fixed Markdown section format and publishes the resulting artifact unchanged. Note
 generation gates signing and has no fallback. GitHub Releases is the only changelog; the
 repository intentionally has no `CHANGELOG.md`.

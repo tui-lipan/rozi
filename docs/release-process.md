@@ -16,7 +16,7 @@ A release maintainer needs:
 - the GitHub CLI, for inspecting the release after publication;
 - these secrets in the protected `release` environment:
   - `ROZI_RELEASE_PRIVATE_KEY` — the active signing key's private half;
-  - `GOOGLE_GENERATIVE_AI_API_KEY` — a Google Gemini API key for release notes;
+  - `OPENAI_API_KEY` — an OpenAI API key for release notes;
   - `CARGO_REGISTRY_TOKEN` — a crates.io API token.
 
 The committed `release-keys.json` trust store holds two Ed25519 keys:
@@ -121,7 +121,7 @@ stable release before the signing workflow completes.
    non-draft `v` tag other than the one being built, resolves both tags to exact commits, and proves
    the previous release is an ancestor. It passes every candidate commit's metadata and changed
    paths to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie writes notes
-   from each candidate's subject, PR URL, and Summary using `google/gemini-3.5-flash-lite`, without
+   from each candidate's subject, PR URL, and Summary using `openai/gpt-6-luna`, without
    reading diffs. Obvious isolated CI, test, documentation, and release-metadata commits are dropped
    conservatively; every other commit remains evidence, even with a `refactor`, `perf`, or `chore`
    prefix.

@@ -135,12 +135,12 @@ jobs:
       # reading release-notes-input.md and writing release-notes.md; every other operation is denied.
       - name: Write user-facing notes
         env:
-          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENCODE_CONFIG: ${{ github.workspace }}/.opencode/release-notes.json
           OPENCODE_DISABLE_AUTOUPDATE: "true"
         run: |
           set -euo pipefail
-          test -n "$GOOGLE_GENERATIVE_AI_API_KEY"
+          test -n "$OPENAI_API_KEY"
           opencode run --variant low --command changelog
           test -s release-notes.md
 

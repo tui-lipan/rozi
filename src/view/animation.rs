@@ -325,20 +325,76 @@ pub(crate) fn screenshot_flash_color(theme: &Theme) -> Color {
     }
 }
 
-/// A layer's opacity and the colour it fades toward: the UI screenshot flash's tint, or the dim
-/// toward `backdrop` it would otherwise have.
+/// A backdrop dim this frame: the opacity its transition is at, the one it settles on, and whether
+/// that target changed on this frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Dim {
+    pub current: f32,
+    pub target: f32,
+    pub transition: TransitionConfig,
+    pub retargeted: bool,
+}
+
+/// What a dimmable layer's `Animated` is given this frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LayerFade {
+    /// The opacity handed to the `Animated`: where a dim ends, or this frame's flash or reveal.
+    pub opacity: f32,
+    /// The opacity the layer shows this frame, for cells painted by hand to match it.
+    pub shown: f32,
+    pub color: Color,
+    pub transition: TransitionConfig,
+}
+
+impl LayerFade {
+    pub(crate) fn apply(self, animated: Animated) -> Animated {
+        animated
+            .opacity(self.opacity)
+            .opacity_target(self.color)
+            .transition(self.transition)
+    }
+}
+
+/// A layer's fade: the UI screenshot flash's tint, the session reveal, or its dim toward
+/// `backdrop`.
 ///
-/// The flash rides the layer's existing fade rather than an effect scope of its own, because every
-/// level wrapped around the whole view tree is recursion each frame carries. A dimmed layer keeps its
-/// dim: a flash is not worth un-dimming a dialog's backdrop for.
-pub(crate) fn dim_or_flash(
-    opacity: f32,
+/// A dim is handed to the layer at the opacity it ends at, with its timing, on the frame it changes,
+/// and the layer's `Animated` runs the fade. tui-lipan recolours the images under an `Animated` at
+/// the opacity it is heading for, so they encode once per dim. Stepping the opacity from the view
+/// instead makes every frame a new final dim: each image under the layer re-encodes and retransmits
+/// on every frame, and shows black until the fade stops. Every other frame is instant, since the
+/// same `Animated` follows the layer's height, which snaps on resize; the fade already running is
+/// unaffected.
+///
+/// The flash and the reveal still step the opacity per frame. They ride the layer's existing fade
+/// rather than an effect scope of their own, because every level wrapped around the whole view tree
+/// is recursion each frame carries. A dimmed layer keeps its dim: a flash is not worth un-dimming a
+/// dialog's backdrop for.
+pub(crate) fn layer_fade(
+    dim: Dim,
+    reveal: f32,
     backdrop: Color,
     flash: Option<(Color, f32)>,
-) -> (f32, Color) {
+) -> LayerFade {
+    let stepped = |opacity, color| LayerFade {
+        opacity,
+        shown: opacity,
+        color,
+        transition: anim::instant_transition(),
+    };
     match flash {
-        Some((color, strength)) if opacity >= 1.0 => (1.0 - strength, color),
-        _ => (opacity, backdrop),
+        Some((color, strength)) if dim.current * reveal >= 1.0 => stepped(1.0 - strength, color),
+        _ if reveal < 1.0 => stepped(dim.current * reveal, backdrop),
+        _ => LayerFade {
+            opacity: dim.target,
+            shown: dim.current,
+            color: backdrop,
+            transition: if dim.retargeted {
+                dim.transition
+            } else {
+                anim::instant_transition()
+            },
+        },
     }
 }
 
@@ -668,5 +724,54 @@ mod tests {
             backend.render();
             assert_eq!(backgrounds(&backend), settled);
         });
+    }
+
+    fn dim(current: f32, target: f32, retargeted: bool) -> super::Dim {
+        super::Dim {
+            current,
+            target,
+            transition: anim::geometry_transition(Duration::from_millis(200)),
+            retargeted,
+        }
+    }
+
+    #[test]
+    fn a_dim_hands_its_final_opacity_to_the_layer_once() {
+        let backdrop = Color::Black;
+        let opening = super::layer_fade(dim(1.0, 0.5, true), 1.0, backdrop, None);
+        assert_eq!(
+            opening.opacity, 0.5,
+            "images under the layer dim once, to where the fade ends"
+        );
+        assert_eq!(opening.shown, 1.0, "the cells still start undimmed");
+        assert_eq!(opening.transition.duration, Duration::from_millis(200));
+
+        let midway = super::layer_fade(dim(0.75, 0.5, false), 1.0, backdrop, None);
+        assert_eq!(midway.opacity, 0.5);
+        assert_eq!(midway.shown, 0.75);
+        assert!(
+            midway.transition.duration.is_zero(),
+            "later frames snap, so a resize does not animate the layer's height"
+        );
+    }
+
+    #[test]
+    fn a_flash_or_reveal_still_steps_the_layer_per_frame() {
+        let backdrop = Color::Black;
+        let flash = Some((Color::Red, 0.25));
+        let flashed = super::layer_fade(dim(1.0, 1.0, false), 1.0, backdrop, flash);
+        assert_eq!((flashed.opacity, flashed.color), (0.75, Color::Red));
+        assert!(flashed.transition.duration.is_zero());
+
+        let dimmed = super::layer_fade(dim(0.5, 0.5, false), 1.0, backdrop, flash);
+        assert_eq!(
+            (dimmed.opacity, dimmed.color),
+            (0.5, backdrop),
+            "a dimmed layer keeps its dim"
+        );
+
+        let revealing = super::layer_fade(dim(0.5, 0.5, false), 0.5, backdrop, None);
+        assert_eq!((revealing.opacity, revealing.shown), (0.25, 0.25));
+        assert!(revealing.transition.duration.is_zero());
     }
 }

@@ -133,6 +133,9 @@ pub struct State {
     pub last_content_viewport: Cell<Option<Rect>>,
     /// Last rendered attachment, active workspace, and outgoing workspace.
     pub workspace_slide: Cell<Option<(u64, usize, usize)>>,
+    /// Whether the last view dimmed the workspace, and whether it dimmed for a dialog, so each dim
+    /// is handed to its layer on the frame it changes. See `view::animation::layer_fade`.
+    pub dim_targets: Cell<(bool, bool)>,
     /// Last [`Self::session_view_revision`] the view rendered, so the reveal starts exactly once.
     pub session_reveal_seen: Cell<Option<u64>>,
     /// Whether the frame being rendered is the first to show a new session view. Focus chrome
@@ -511,6 +514,7 @@ impl State {
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
             workspace_slide: Cell::new(None),
+            dim_targets: Cell::new((false, false)),
             session_reveal_seen: Cell::new(None),
             session_view_changed: Cell::new(false),
             screenshot: ScreenshotState::default(),

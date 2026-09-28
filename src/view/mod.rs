@@ -1167,6 +1167,11 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body);
+    }
+
+    fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body() {
         // The narrow first pane is clipped just left of the follower. With the canonical origin
         // snapped to -28, pane 2's left frame lands exactly on local column zero.
         let mut backend = smaller_follower_backend(
@@ -1204,6 +1209,11 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_equal_gaps_between_visible_columns() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_smaller_follower_keeps_equal_gaps_between_visible_columns_body);
+    }
+
+    fn a_smaller_follower_keeps_equal_gaps_between_visible_columns_body() {
         let mut backend = smaller_follower_backend(3, LayoutKind::Columns, None, (135, 25));
 
         backend.render();
@@ -1224,6 +1234,13 @@ mod pane_layer_tests {
 
     #[test]
     fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(
+            a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges_body,
+        );
+    }
+
+    fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges_body() {
         let mut backend = smaller_follower_backend(
             3,
             LayoutKind::Dwindle,

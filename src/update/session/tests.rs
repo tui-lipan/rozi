@@ -1272,6 +1272,11 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
 
 #[test]
 fn losing_control_discards_only_shared_drag_resizes() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(losing_control_discards_only_shared_drag_resizes_body);
+}
+
+fn losing_control_discards_only_shared_drag_resizes_body() {
     let mut backend = follower_backend();
     {
         let state = backend.state_mut();
@@ -1316,6 +1321,11 @@ fn losing_control_discards_only_shared_drag_resizes() {
 
 #[test]
 fn settled_resize_survives_a_later_drag_control_loss() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(settled_resize_survives_a_later_drag_control_loss_body);
+}
+
+fn settled_resize_survives_a_later_drag_control_loss_body() {
     let mut backend = follower_backend();
     let (client, _rx) = SessionClient::test_channel();
     {
@@ -1386,6 +1396,11 @@ fn settled_resize_survives_a_later_drag_control_loss() {
 
 #[test]
 fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body);
+}
+
+fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
     let mut backend = follower_backend();
     let (old_client, _old_rx) = SessionClient::test_channel();
     {

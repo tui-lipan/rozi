@@ -1270,7 +1270,9 @@ pub(crate) fn pane_element(
     // Always wrapped, tinted or not, so an alert coming and going never changes the terminal's
     // place in the tree.
     let scope = match pane_content_alert_tint(ctx, pane, focused) {
-        Some((color, amount)) => EffectScope::new().tint_by(color, amount),
+        // Cells only: the tint marks the text a pane shows, not the pictures in it, so an image keeps
+        // its own pixels whether the tint holds still or breathes.
+        Some((color, amount)) => EffectScope::new().cells_only().tint_by(color, amount),
         None => EffectScope::new(),
     };
     let terminal: Element = scope.child(terminal).into();

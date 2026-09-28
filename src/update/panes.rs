@@ -303,13 +303,12 @@ pub(crate) fn arm_alert_pulse(ctx: &mut Context<AppRoot>) {
     let Some(link) = ctx.state.command_link.clone() else {
         return;
     };
+    let half = crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations);
     ctx.state.alert_pulse_armed = true;
+    ctx.state.alert_pulse_armed_at = ctx.elapsed();
+    ctx.state.alert_pulse_half = half;
     ctx.state.alert_pulse_turns = 0;
-    ctx.state.alert_tint_keys.renew();
-    link.send_after(
-        crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
-        crate::Msg::AlertPulseTick,
-    );
+    link.send_after(half, crate::Msg::AlertPulseTick);
 }
 
 pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
@@ -325,16 +324,44 @@ pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
             Update::none()
         };
     }
-    ctx.state.alert_pulse_phase = !ctx.state.alert_pulse_phase;
-    ctx.state.alert_pulse_turns = ctx.state.alert_pulse_turns.saturating_add(1);
-    // One chain drives both rates: the calm phase turns over once per full urgent cycle, which is
-    // why it needs no timer of its own and can never drift out of step with the urgent one.
-    if !ctx.state.alert_pulse_phase {
-        ctx.state.alert_pulse_calm_phase = !ctx.state.alert_pulse_calm_phase;
+    let now = ctx.elapsed();
+    let half = crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations);
+    let delay = turn_alert_pulse(&mut ctx.state, now, half);
+    Update::with_command(schedule_alert_pulse_tick(delay))
+}
+
+/// Bring the chain's phases to where the clock says they are at `now`, and return how long until
+/// its next turn falls due.
+///
+/// The phases are a function of `now - alert_pulse_armed_at` alone. A tick handled late does not
+/// push the next one later, which is what keeps the border in step with the content tint's
+/// registry pulse on the same anchor. A stall of several half periods lands on the phase the clock
+/// has reached in one step rather than working through the turns it missed, and a tick that fires
+/// a hair early turns nothing and just waits out the remainder.
+///
+/// A new half period (the animation speed changed) re-anchors the beat so the turns already taken
+/// keep their count, and the phase carries on from where it is rather than jumping.
+fn turn_alert_pulse(
+    state: &mut State,
+    now: std::time::Duration,
+    half: std::time::Duration,
+) -> std::time::Duration {
+    let half = half.max(std::time::Duration::from_millis(1));
+    if half != state.alert_pulse_half {
+        state.alert_pulse_armed_at = now.saturating_sub(half * state.alert_pulse_turns);
+        state.alert_pulse_half = half;
     }
-    Update::with_command(schedule_alert_pulse_tick(
-        crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
-    ))
+    let since = now.saturating_sub(state.alert_pulse_armed_at);
+    let due = u32::try_from(since.as_nanos() / half.as_nanos()).unwrap_or(u32::MAX);
+    if due > state.alert_pulse_turns {
+        state.alert_pulse_turns = due;
+        // Urgent alerts turn every half period; calm ones every other, which keeps the two rates
+        // in a fixed ratio off one beat.
+        state.alert_pulse_phase = due % 2 == 1;
+        state.alert_pulse_calm_phase = (due / 2) % 2 == 1;
+    }
+    let next = state.alert_pulse_armed_at + half * state.alert_pulse_turns.saturating_add(1);
+    next.saturating_sub(now)
 }
 
 fn alert_pulse_should_run(state: &State) -> bool {
@@ -585,6 +612,86 @@ mod tests {
         );
     }
 
+    fn ms(ms: u64) -> std::time::Duration {
+        std::time::Duration::from_millis(ms)
+    }
+
+    /// A chain armed at `armed_at` on a 100 ms beat, before its first turn.
+    fn armed_chain(armed_at: std::time::Duration) -> State {
+        let mut state = State::new(Config::default(), Theme::default());
+        state.alert_pulse_armed = true;
+        state.alert_pulse_armed_at = armed_at;
+        state.alert_pulse_half = ms(100);
+        state
+    }
+
+    /// Each tick handled late still leaves the next due on the original beat, so lateness never
+    /// adds up: forty ticks each 10 ms late leave the phase exactly where the clock puts it.
+    #[test]
+    fn late_ticks_never_push_the_beat_later() {
+        let mut state = armed_chain(ms(1_000));
+        let mut now = ms(1_000);
+        let mut delay = ms(100);
+        for turn in 1..=40u32 {
+            now += delay + ms(10);
+            delay = turn_alert_pulse(&mut state, now, ms(100));
+            assert_eq!(state.alert_pulse_turns, turn);
+            assert_eq!(
+                delay,
+                ms(90),
+                "turn {turn}: the next is due on the beat, not after it"
+            );
+        }
+        assert!(
+            !state.alert_pulse_phase,
+            "40 turns in: an even turn, heading up"
+        );
+        assert!(!state.alert_pulse_calm_phase, "20 calm turns in: even too");
+    }
+
+    /// A stall of several half periods lands on the phase the clock has reached in one step,
+    /// instead of replaying the turns it missed one tick at a time.
+    #[test]
+    fn a_long_stall_lands_on_the_current_phase_in_one_turn() {
+        let mut state = armed_chain(ms(1_000));
+        assert_eq!(turn_alert_pulse(&mut state, ms(1_100), ms(100)), ms(100));
+        assert_eq!(state.alert_pulse_turns, 1);
+
+        // Stalled for 2.5 half periods past the next deadline.
+        let delay = turn_alert_pulse(&mut state, ms(1_450), ms(100));
+        assert_eq!(
+            state.alert_pulse_turns, 4,
+            "straight to the turn the clock is on"
+        );
+        assert!(!state.alert_pulse_phase && !state.alert_pulse_calm_phase);
+        assert_eq!(delay, ms(50), "and the next turn is back on the beat");
+    }
+
+    /// A tick that fires a hair before its deadline turns nothing and waits out the remainder.
+    #[test]
+    fn an_early_tick_waits_for_its_deadline() {
+        let mut state = armed_chain(ms(1_000));
+        assert_eq!(turn_alert_pulse(&mut state, ms(1_099), ms(100)), ms(1));
+        assert_eq!(state.alert_pulse_turns, 0);
+        assert!(!state.alert_pulse_phase);
+        turn_alert_pulse(&mut state, ms(1_100), ms(100));
+        assert_eq!(state.alert_pulse_turns, 1);
+        assert!(state.alert_pulse_phase);
+    }
+
+    /// A new animation speed re-anchors the beat at the turn it is on, so the phase carries on
+    /// rather than jumping to wherever the new half period would put it from the old anchor.
+    #[test]
+    fn a_changed_half_period_carries_the_phase_on() {
+        let mut state = armed_chain(ms(1_000));
+        turn_alert_pulse(&mut state, ms(1_300), ms(100));
+        assert_eq!(state.alert_pulse_turns, 3);
+        let delay = turn_alert_pulse(&mut state, ms(1_300), ms(400));
+        assert_eq!(state.alert_pulse_turns, 3, "no turn is taken or lost");
+        assert_eq!(state.alert_pulse_armed_at, ms(100));
+        assert_eq!(delay, ms(400), "the next turn is one new half period away");
+    }
+
     #[test]
     fn the_pulse_chain_stops_once_the_last_recording_ends() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
@@ -603,10 +710,16 @@ mod tests {
                 .terminal
                 .recording = true;
             state.alert_pulse_armed = true;
+            state.alert_pulse_half =
+                crate::layout::anim::alert_pulse_half_period(state.config.animations);
             id
         };
-        backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
-        backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
+        let half = backend.state().alert_pulse_half;
+        // Two turns: the phase follows the clock, so each tick needs its half period to pass.
+        for _ in 0..2 {
+            backend.advance(half);
+            backend.dispatch(crate::Msg::AlertPulseTick).unwrap();
+        }
         assert!(backend.state().alert_pulse_armed);
         assert!(backend.state().alert_pulse_calm_phase);
 

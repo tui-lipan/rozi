@@ -217,14 +217,6 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // anchor while the thing it navigates changes. Sampled before the workbar, panes, and sidebar
     // are built: it also decides whether their focus chrome snaps on this frame.
     let reveal = animation::session_reveal(ctx);
-    // Asked for on every frame the chain runs, not only by an alerting pane: a pulse starts when its
-    // key is first asked for, so this pins both to the chain's turns, and a pane that starts
-    // alerting later joins them in step with the borders. With no pane on screen reading them they
-    // are suspended and cost no paints.
-    if ctx.state.config.pane.alert_paint.paints_content() {
-        animation::alert_tint_pulse(ctx, false);
-        animation::alert_tint_pulse(ctx, true);
-    }
     // Before the panes are built: a pane's flash is read back from here.
     let flash = animation::screenshot_flash(ctx);
     ctx.state.screenshot.flash_frame.set(flash);

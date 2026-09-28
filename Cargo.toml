@@ -49,7 +49,9 @@ exclude = [
 # 0.16.5: toast click callbacks and explicit copy text.
 # 0.16.6: answer DA1 as a VT220, so `kitten icat` stops timing out in a pane.
 # 0.17.0: late-bound effect amounts and registry-owned pulses, for the pane alert content tint.
-tui-lipan = { version = "0.17.0", features = [
+# 0.17.1: cells-only effect scopes, `Context::elapsed`, and anchored pulses, so the alert tint
+# skips inline images and keeps the border's beat.
+tui-lipan = { version = "0.17.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

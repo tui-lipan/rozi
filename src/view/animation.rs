@@ -176,41 +176,38 @@ pub(crate) fn alert_pulse_transition_config(
 }
 
 /// The content alert tint's strength, as a pulse the animation registry owns, for an alert breathing
-/// at the calm rate or the urgent one. `None` until the pulse chain has turned far enough for that
-/// rate to have started fading, which is when the border starts too.
+/// at the calm rate or the urgent one. `None` while the pulse chain is not running.
 ///
 /// The border breathes by retargeting a colour fade on each turn of the chain: it holds at its peak
 /// until the first turn (the second, at the calm rate), then eases to its trough over one half
-/// period and back over the next. A pulse from the peak to nothing, started on that same turn with
-/// a period of two halves and the same easing, traces the same curve, so the two surfaces breathe as
-/// one without the tint's samples costing a rebuild.
+/// period and back over the next. The chain lays its turns on fixed deadlines from the instant it
+/// armed, so this pulse is anchored to the same instant: it holds at the peak until the turn the
+/// border starts fading on, then traces the same curve with the same easing. Both are functions of
+/// the clock, so the two surfaces breathe as one however late a tick is handled, and a pane that
+/// starts alerting or showing the tint part way through joins mid-breath rather than starting
+/// over.
 ///
 /// Every pane asks for the same key, so every alerting pane at a rate reads one shared pulse.
 pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
     let state = &ctx.state;
-    let first_turn = if calm { 2 } else { 1 };
-    if !state.alert_pulse_armed || state.alert_pulse_turns < first_turn {
+    if !state.alert_pulse_armed {
         return None;
     }
-    let animations = state.config.animations;
-    let (key, half) = if calm {
-        (
-            &state.alert_tint_keys.calm,
-            anim::alert_pulse_calm_half_period(animations),
-        )
+    let half = state.alert_pulse_half;
+    let (key, first_turn) = if calm {
+        ("rozi-alert-tint-calm", 2)
     } else {
-        (
-            &state.alert_tint_keys.urgent,
-            anim::alert_pulse_half_period(animations),
-        )
+        ("rozi-alert-tint", 1)
     };
+    let beat = half * first_turn;
     Some(
         ctx.pulsing_amount(
-            key.clone(),
+            key,
             EffectPulse::new(anim::ALERT_CONTENT_TINT, 0.0)
-                .period(half * 2)
+                .period(beat * 2)
                 .easing(Easing::EaseInOutCubic)
-                .frame_rate(anim::ALERT_PULSE_FRAME_RATE),
+                .frame_rate(anim::ALERT_PULSE_FRAME_RATE)
+                .starting_at(state.alert_pulse_armed_at + beat),
         ),
     )
 }

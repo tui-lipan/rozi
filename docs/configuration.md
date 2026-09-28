@@ -219,7 +219,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `titlebar` | string | `"bar"` | `"bar"`, `"border"`, `"integrated"`, or `"inset"`. |
 | `border_mode` | string | `"separate"` | `"separate"`, `"merged"`, `"none"`, or `"dividers"`. |
 | `alert_border` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. Sets whether pane alerts show and whether they breathe, for every surface `alert_paint` picks. |
-| `alert_paint` | string | `"both"` | `"border"`, `"content"`, or `"both"`. `content` lays a faint wash of the alert color over the terminal text and background, breathing on the border's beat. It works in every `border_mode`, including `none`. Themes that use terminal palette colors skip the wash. |
+| `alert_paint` | string | `"both"` | `"border"`, `"content"`, or `"both"`. `content` lays a faint wash of the alert color over the terminal text and background, breathing on the border's beat. It works in every `border_mode`, including `none`. Inline images keep their own colors. Themes that use terminal palette colors skip the wash. |
 | `border_style` | string | `"rounded"` | Frame glyphs for tiled panes in framed modes. See the token list below. |
 | `float_border_style` | string | `"double"` | Same tokens as `border_style`. Floating panes and popups. |
 | `scratch_border_style` | string | `float_border_style` | Same tokens as `border_style`. Scratchpad panes. |

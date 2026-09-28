@@ -1482,15 +1482,12 @@ pub(crate) fn pane_element(
         u64::from(id),
     );
     // A screenshot flash rides the pane's own fade, handed over once like a backdrop dim (see
-    // `animation::LayerFade`), so the images in the pane encode once rather than every frame. The
-    // pane's open or close fade wins over it.
-    let flash = pane_screenshot_flash(&ctx.state, id, kind).filter(|_| opacity >= 1.0);
+    // `animation::LayerFade`), so the images in the pane encode once rather than every frame.
+    let flash =
+        pane_screenshot_flash(&ctx.state, id, kind).filter(|_| pane_fade_settled(pane, opacity));
     let animated = match flash {
         Some(strength) => animation::LayerFade::new(
-            &[animation::Fade::flash(
-                strength,
-                ctx.state.screenshot.flash_stage.get(),
-            )],
+            animation::Fade::flash(strength, ctx.state.screenshot.flash_stage.get()),
             animation::screenshot_flash_color(theme),
         )
         .apply(Animated::new(pane_tree)),
@@ -1505,6 +1502,14 @@ pub(crate) fn pane_element(
     let element: Element = animated.into();
 
     element.key(pane_window_key(id, pane.pty_generation))
+}
+
+/// Whether the pane's open or close fade is over, so a screenshot flash may take its `Animated`.
+///
+/// `opacity` is only where that fade is heading: an opening pane heads for 1.0 as soon as
+/// `opening` clears, while its opening animation is still fading it in.
+fn pane_fade_settled(pane: &Pane, opacity: f32) -> bool {
+    opacity >= 1.0 && !crate::layout::anim::pane_opening_transition(pane) && !pane.closing
 }
 
 /// How strongly this frame's screenshot flash tints pane `id`, drawn as `kind`.
@@ -2176,6 +2181,30 @@ mod tests {
                 h: 24.0,
             },
         )
+    }
+
+    #[test]
+    fn a_screenshot_flash_waits_for_the_pane_fade_to_finish() {
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        pane.opening = false;
+        pane.opening_animation = None;
+        assert!(pane_fade_settled(&pane, 1.0));
+        assert!(!pane_fade_settled(&pane, 0.0), "a hidden pane");
+
+        pane.opening_animation = Some(crate::layout::anim::PaneAnimationSnapshot {
+            spec: crate::layout::anim::builtin_animation(
+                crate::layout::anim::PaneAnimationStyle::Scale,
+            ),
+            active: true,
+        });
+        assert!(
+            !pane_fade_settled(&pane, 1.0),
+            "an opening pane heads for 1.0 while it still fades in"
+        );
+
+        pane.opening_animation = None;
+        pane.closing = true;
+        assert!(!pane_fade_settled(&pane, 1.0), "a closing pane");
     }
 
     #[test]

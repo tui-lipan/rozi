@@ -731,8 +731,23 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
         .expect("resize test thread completes");
 }
 
+fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn test thread")
+        .join()
+        .expect("test completes");
+}
+
+/// Renders the whole app through every pane style, a view tree deeper than the default test stack
+/// holds.
 #[test]
 fn pane_animation_styles_keep_the_pty_grid_stable_during_open_and_close() {
+    on_large_stack(pane_animation_styles_keep_the_pty_grid_stable);
+}
+
+fn pane_animation_styles_keep_the_pty_grid_stable() {
     use crate::layout::anim::{PaneAnimationSnapshot, PaneAnimationStyle, builtin_animation};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::state::SharedSessionState;

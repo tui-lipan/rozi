@@ -1483,8 +1483,8 @@ pub(crate) fn pane_element(
     );
     // A screenshot flash rides the pane's own fade, handed over once like a backdrop dim (see
     // `animation::LayerFade`), so the images in the pane encode once rather than every frame.
-    let flash =
-        pane_screenshot_flash(&ctx.state, id, kind).filter(|_| pane_fade_settled(pane, opacity));
+    let flash = pane_screenshot_flash(&ctx.state, id, kind)
+        .filter(|_| pane_lifecycle_settled(pane, opacity));
     let animated = match flash {
         Some(strength) => animation::LayerFade::new(
             animation::Fade::flash(strength, ctx.state.screenshot.flash_stage.get()),
@@ -1504,11 +1504,12 @@ pub(crate) fn pane_element(
     element.key(pane_window_key(id, pane.pty_generation))
 }
 
-/// Whether the pane's open or close fade is over, so a screenshot flash may take its `Animated`.
+/// Whether the pane's open or close animation is over, so a screenshot flash may take its
+/// `Animated`. Conservative for styles that do not fade, such as Slide: the flash waits for them too.
 ///
-/// `opacity` is only where that fade is heading: an opening pane heads for 1.0 as soon as
-/// `opening` clears, while its opening animation is still fading it in.
-fn pane_fade_settled(pane: &Pane, opacity: f32) -> bool {
+/// `opacity` is only where the pane's fade is heading: an opening pane heads for 1.0 as soon as
+/// `opening` clears, while its opening animation is still running.
+fn pane_lifecycle_settled(pane: &Pane, opacity: f32) -> bool {
     opacity >= 1.0 && !crate::layout::anim::pane_opening_transition(pane) && !pane.closing
 }
 
@@ -2184,12 +2185,12 @@ mod tests {
     }
 
     #[test]
-    fn a_screenshot_flash_waits_for_the_pane_fade_to_finish() {
+    fn a_screenshot_flash_waits_for_the_pane_lifecycle_to_settle() {
         let mut pane = Pane::new(1, 100, FloatRect::default());
         pane.opening = false;
         pane.opening_animation = None;
-        assert!(pane_fade_settled(&pane, 1.0));
-        assert!(!pane_fade_settled(&pane, 0.0), "a hidden pane");
+        assert!(pane_lifecycle_settled(&pane, 1.0));
+        assert!(!pane_lifecycle_settled(&pane, 0.0), "a hidden pane");
 
         pane.opening_animation = Some(crate::layout::anim::PaneAnimationSnapshot {
             spec: crate::layout::anim::builtin_animation(
@@ -2198,13 +2199,13 @@ mod tests {
             active: true,
         });
         assert!(
-            !pane_fade_settled(&pane, 1.0),
+            !pane_lifecycle_settled(&pane, 1.0),
             "an opening pane heads for 1.0 while it still fades in"
         );
 
         pane.opening_animation = None;
         pane.closing = true;
-        assert!(!pane_fade_settled(&pane, 1.0), "a closing pane");
+        assert!(!pane_lifecycle_settled(&pane, 1.0), "a closing pane");
     }
 
     #[test]

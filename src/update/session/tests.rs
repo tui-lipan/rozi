@@ -2744,6 +2744,11 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
 
 #[test]
 fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body);
+}
+
+fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body() {
     let mut backend = TestBackend::new(crate::AppRoot::default());
     let (reply, response) = std::sync::mpsc::channel();
     backend.state_mut().pending_agent_report_replies.insert(
@@ -2767,8 +2772,22 @@ fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
     assert!(backend.state().pending_agent_report_replies.is_empty());
 }
 
+fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn test thread")
+        .join()
+        .expect("test completes");
+}
+
 #[test]
 fn attached_agent_acknowledgement_rejects_another_epoch() {
+    // Renders the whole app, a view tree deeper than the default test stack holds.
+    on_large_stack(attached_agent_acknowledgement_rejects_another_epoch_body);
+}
+
+fn attached_agent_acknowledgement_rejects_another_epoch_body() {
     let mut backend = TestBackend::new(crate::AppRoot::default());
     let (reply, response) = std::sync::mpsc::channel();
     backend.state_mut().pending_agent_report_replies.insert(

@@ -1090,8 +1090,22 @@ mod pane_layer_tests {
     /// shrinking frame floats over space the neighbour has already taken. Both read as artifacts.
     /// Underneath, the neighbour paints what it has claimed and the leaving pane shows through the
     /// rest, which is what going away looks like.
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test completes");
+    }
+
     #[test]
     fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space() {
+        // Renders the whole app, a view tree deeper than the default test stack holds.
+        on_large_stack(a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body);
+    }
+
+    fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body() {
         for style in [
             PaneAnimationStyle::Scale,
             PaneAnimationStyle::Slide,

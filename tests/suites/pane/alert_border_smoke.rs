@@ -293,3 +293,62 @@ fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
         assert_ne!(calm.bg, blocked.bg);
     });
 }
+
+/// A breathing content tint is a registry pulse kept on the border's beat: it holds at its peak
+/// until the chain's first turn, then fades to nothing over one half period - as the border fades to
+/// its trough - and back over the next.
+#[test]
+fn a_pulsing_content_tint_breathes_on_the_borders_beat() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = backend(PaneBorderMode::Separate);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = true;
+            state.config.animations.pane_style = rozi::layout::anim::PaneAnimationStyle::Off;
+            state.theme.status.error = Color::rgb(255, 0, 1);
+            state.config.pane.highlight_focused_border = false;
+            state.config.pane.alert_paint = PaneAlertPaint::Content;
+            state.alert_pulse_armed = true;
+        }
+        block_second(&mut backend);
+        let half = rozi::layout::anim::alert_pulse_half_period(backend.state().config.animations);
+        let blocked_bg = |backend: &mut TestBackend<AppRoot>| {
+            backend.render();
+            let frame = backend.capture_frame();
+            let calm = frame.cells[5 * 30 + 7].bg;
+            let blocked = frame.cells[5 * 30 + 22].bg;
+            (calm, blocked)
+        };
+
+        // Armed but not yet turned: held at the peak, however long that takes.
+        let (calm, peak) = blocked_bg(&mut backend);
+        assert_ne!(calm, peak, "tinted at its peak before the first turn");
+        backend.advance(half);
+        assert_eq!(blocked_bg(&mut backend).1, peak);
+
+        // The first turn starts the pulse from the peak.
+        backend.state_mut().alert_pulse_turns = 1;
+        backend.state_mut().alert_pulse_phase = true;
+        assert_eq!(blocked_bg(&mut backend).1, peak);
+        backend.advance(half / 2);
+        let (_, midway) = blocked_bg(&mut backend);
+        assert!(
+            midway != peak && midway != calm,
+            "halfway down: {calm:?} < {midway:?} < {peak:?}"
+        );
+        backend.advance(half / 2);
+        let (calm, trough) = blocked_bg(&mut backend);
+        assert_eq!(
+            trough, calm,
+            "no tint at the trough, as the border bottoms out"
+        );
+        backend.advance(half);
+        assert_eq!(
+            blocked_bg(&mut backend).1,
+            peak,
+            "back at the peak a period later"
+        );
+    });
+}

@@ -304,6 +304,8 @@ pub(crate) fn arm_alert_pulse(ctx: &mut Context<AppRoot>) {
         return;
     };
     ctx.state.alert_pulse_armed = true;
+    ctx.state.alert_pulse_turns = 0;
+    ctx.state.alert_tint_keys.renew();
     link.send_after(
         crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),
         crate::Msg::AlertPulseTick,
@@ -316,22 +318,19 @@ pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.alert_pulse_armed = false;
         ctx.state.alert_pulse_phase = false;
         ctx.state.alert_pulse_calm_phase = false;
-        ctx.state.alert_pulse_turned_at = None;
-        ctx.state.alert_pulse_calm_turned_at = None;
+        ctx.state.alert_pulse_turns = 0;
         return if changed {
             Update::full()
         } else {
             Update::none()
         };
     }
-    let now = std::time::Instant::now();
     ctx.state.alert_pulse_phase = !ctx.state.alert_pulse_phase;
-    ctx.state.alert_pulse_turned_at = Some(now);
+    ctx.state.alert_pulse_turns = ctx.state.alert_pulse_turns.saturating_add(1);
     // One chain drives both rates: the calm phase turns over once per full urgent cycle, which is
     // why it needs no timer of its own and can never drift out of step with the urgent one.
     if !ctx.state.alert_pulse_phase {
         ctx.state.alert_pulse_calm_phase = !ctx.state.alert_pulse_calm_phase;
-        ctx.state.alert_pulse_calm_turned_at = Some(now);
     }
     Update::with_command(schedule_alert_pulse_tick(
         crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations),

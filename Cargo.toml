@@ -48,7 +48,8 @@ exclude = [
 # 0.16.4: preserve pixel mouse coordinates when motion tracking changes.
 # 0.16.5: toast click callbacks and explicit copy text.
 # 0.16.6: answer DA1 as a VT220, so `kitten icat` stops timing out in a pane.
-tui-lipan = { version = "0.16.6", features = [
+# 0.17.0: late-bound effect amounts and registry-owned pulses, for the pane alert content tint.
+tui-lipan = { version = "0.17.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

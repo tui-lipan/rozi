@@ -100,6 +100,38 @@ pub struct ConnectHold {
     pub active: bool,
 }
 
+/// Animation keys for the content tint's two registry pulses, one per breathe rate.
+///
+/// A registry pulse starts the first time its key is asked for and keeps its own timeline from
+/// there, so the key has to be new whenever the chain it keeps step with starts again. Otherwise a
+/// pulse kept alive across a stop and restart would carry on from the old chain's beat.
+pub struct AlertTintKeys {
+    generation: u64,
+    pub urgent: tui_lipan::prelude::Key,
+    pub calm: tui_lipan::prelude::Key,
+}
+
+impl AlertTintKeys {
+    fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            urgent: format!("rozi-alert-tint-{generation}").into(),
+            calm: format!("rozi-alert-tint-calm-{generation}").into(),
+        }
+    }
+
+    /// Name a fresh pair of pulses, for a chain that is starting.
+    pub fn renew(&mut self) {
+        *self = Self::new(self.generation.wrapping_add(1));
+    }
+}
+
+impl Default for AlertTintKeys {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 pub struct State {
     pub config: Config,
     /// Opaque per-runtime fencing tokens keyed by stable extension id.
@@ -177,11 +209,12 @@ pub struct State {
     pub alert_pulse_calm_phase: bool,
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
-    /// When [`Self::alert_pulse_phase`] last turned, so the content tint can run its fade off the
-    /// clock and stay on the beat the border's transition starts from. `None` before the first turn.
-    pub alert_pulse_turned_at: Option<std::time::Instant>,
-    /// When [`Self::alert_pulse_calm_phase`] last turned.
-    pub alert_pulse_calm_turned_at: Option<std::time::Instant>,
+    /// How many times [`Self::alert_pulse_phase`] has turned since the chain last armed, saturating.
+    /// The content tint's pulses start on the turns the border starts fading on.
+    pub alert_pulse_turns: u32,
+    /// Keys for the content tint's registry pulses, renamed whenever the chain arms. See
+    /// [`AlertTintKeys`].
+    pub alert_tint_keys: AlertTintKeys,
     pub sidebar_visible: bool,
     /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
     /// view each frame, because the transition driving it lives there.
@@ -539,8 +572,8 @@ impl State {
             alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
-            alert_pulse_turned_at: None,
-            alert_pulse_calm_turned_at: None,
+            alert_pulse_turns: 0,
+            alert_tint_keys: AlertTintKeys::default(),
             sidebar_visible,
             sidebar_slide: Cell::new(if sidebar_visible { 1.0 } else { 0.0 }),
             sidebar,

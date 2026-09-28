@@ -4,7 +4,6 @@ pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
 mod pane;
-mod pane_alert_tint;
 mod pane_reveal;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
@@ -18,7 +17,6 @@ pub(crate) use pane::{
     pane_chrome_shows_recording, pane_content_alert_can_tint, pane_element,
     recording_dot_off_phase,
 };
-pub(crate) use pane_alert_tint::AlertTint;
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 #[cfg(test)]
 pub use widget_keys::pane_window_key;
@@ -70,7 +68,7 @@ pub(crate) const HOVER_LIFT: f32 = 0.08;
 /// That matters wherever an element paints its own background - an alerting workspace tab, a
 /// selected row - because an absolute hover color would replace the signal instead of lifting it.
 pub(crate) fn hover_lift() -> ColorTransform {
-    ColorTransform::Elevate(HOVER_LIFT)
+    ColorTransform::elevate(HOVER_LIFT)
 }
 
 pub(crate) const STRIP_LIFT: f32 = 0.05;
@@ -219,6 +217,14 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // anchor while the thing it navigates changes. Sampled before the workbar, panes, and sidebar
     // are built: it also decides whether their focus chrome snaps on this frame.
     let reveal = animation::session_reveal(ctx);
+    // Asked for on every frame the chain runs, not only by an alerting pane: a pulse starts when its
+    // key is first asked for, so this pins both to the chain's turns, and a pane that starts
+    // alerting later joins them in step with the borders. With no pane on screen reading them they
+    // are suspended and cost no paints.
+    if ctx.state.config.pane.alert_paint.paints_content() {
+        animation::alert_tint_pulse(ctx, false);
+        animation::alert_tint_pulse(ctx, true);
+    }
     // Before the panes are built: a pane's flash is read back from here.
     let flash = animation::screenshot_flash(ctx);
     ctx.state.screenshot.flash_frame.set(flash);

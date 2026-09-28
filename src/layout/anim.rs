@@ -706,11 +706,6 @@ fn reverse_curve(curve: Easing) -> Easing {
 }
 
 /// Half the configured breathe period, floored to prevent alert colors becoming a strobe.
-/// Repaint cadence for a breathing alert, as an interval.
-pub fn alert_pulse_frame_interval() -> Duration {
-    Duration::from_millis(1000 / u64::from(ALERT_PULSE_FRAME_RATE))
-}
-
 pub fn alert_pulse_half_period(animations: WindowAnimationConfig) -> Duration {
     (animations.alert_pulse_duration / 2).max(Duration::from_millis(ALERT_PULSE_MIN_HALF_MS))
 }

@@ -175,6 +175,46 @@ pub(crate) fn alert_pulse_transition_config(
     }
 }
 
+/// The content alert tint's strength, as a pulse the animation registry owns, for an alert breathing
+/// at the calm rate or the urgent one. `None` until the pulse chain has turned far enough for that
+/// rate to have started fading, which is when the border starts too.
+///
+/// The border breathes by retargeting a colour fade on each turn of the chain: it holds at its peak
+/// until the first turn (the second, at the calm rate), then eases to its trough over one half
+/// period and back over the next. A pulse from the peak to nothing, started on that same turn with
+/// a period of two halves and the same easing, traces the same curve, so the two surfaces breathe as
+/// one without the tint's samples costing a rebuild.
+///
+/// Every pane asks for the same key, so every alerting pane at a rate reads one shared pulse.
+pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+    let state = &ctx.state;
+    let first_turn = if calm { 2 } else { 1 };
+    if !state.alert_pulse_armed || state.alert_pulse_turns < first_turn {
+        return None;
+    }
+    let animations = state.config.animations;
+    let (key, half) = if calm {
+        (
+            &state.alert_tint_keys.calm,
+            anim::alert_pulse_calm_half_period(animations),
+        )
+    } else {
+        (
+            &state.alert_tint_keys.urgent,
+            anim::alert_pulse_half_period(animations),
+        )
+    };
+    Some(
+        ctx.pulsing_amount(
+            key.clone(),
+            EffectPulse::new(anim::ALERT_CONTENT_TINT, 0.0)
+                .period(half * 2)
+                .easing(Easing::EaseInOutCubic)
+                .frame_rate(anim::ALERT_PULSE_FRAME_RATE),
+        ),
+    )
+}
+
 /// A pane chrome colour, as a paint the renderer resolves while drawing.
 ///
 /// `animated_color` rather than `transition`: chrome colours only ever land in styles, so naming

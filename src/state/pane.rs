@@ -43,11 +43,6 @@ pub struct Pane {
     /// `pty_generation`, which is a public field written from many places, and a cache behind a
     /// field that anything may assign is a correctness trap rather than a saving.
     pub keys: PaneKeys,
-    /// The content alert tint this pane last drew, with the effect built for it. Held so a rebuild
-    /// that lands on the same tint hands the scope the same effect; see
-    /// `view::pane_alert_tint::alert_tint_effect`.
-    pub(crate) alert_tint:
-        std::cell::RefCell<Option<(crate::view::AlertTint, tui_lipan::prelude::VisualEffect)>>,
 }
 
 /// A chrome colour a pane animates independently.
@@ -154,7 +149,6 @@ impl Pane {
             activity: PaneActivity::default(),
             agent_refs: Vec::new(),
             keys: PaneKeys::new(id),
-            alert_tint: std::cell::RefCell::new(None),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);
                 terminal.bind_session(id, 0);

@@ -277,7 +277,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let content = if holding {
             empty()
         } else {
-            dimmed_content().height(Length::Flex(1)).into()
+            dimmed_content().into()
         };
         Animated::new(pane_reveal::session_portal_scope(
             content,
@@ -292,8 +292,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let layer = if holding {
             Animated::new(empty()).transition(crate::layout::anim::instant_transition())
         } else {
-            animation::LayerFade::new(reveal.opacity, theme.surface.backdrop)
-                .apply(Animated::new(dimmed_content()))
+            animation::crossfade(reveal.opacity, Animated::new(dimmed_content()))
         };
         layer.height(Length::Flex(1)).auto_exit(exit).into()
     };

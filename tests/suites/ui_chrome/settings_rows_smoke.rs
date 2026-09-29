@@ -923,7 +923,7 @@ fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
         let mut backend = settings_backend(90, 30);
         backend.state_mut().config.animations.enabled = true;
         type_query(&mut backend, "session switching");
-        assert!(setting_row(&rendered_rows(&mut backend), "Session switching").contains("Fade"));
+        assert!(setting_row(&rendered_rows(&mut backend), "Session switching").contains("Portal"));
 
         backend
             .dispatch(rozi::Msg::SettingsActivate(CycleSessionAnimation))
@@ -932,14 +932,14 @@ fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
         for label in ["Off", "Fade", "Portal"] {
             assert!(frame.contains(label), "{label} missing:\n{frame}");
         }
-        backend.dispatch(rozi::Msg::SettingsChoicePick(2)).unwrap();
+        backend.dispatch(rozi::Msg::SettingsChoicePick(1)).unwrap();
         assert_eq!(
             backend.state().config.animations.session,
-            SessionAnimationStyle::Portal
+            SessionAnimationStyle::Fade
         );
         assert_eq!(
             rozi::config::load_config().config.animations.session,
-            SessionAnimationStyle::Portal
+            SessionAnimationStyle::Fade
         );
 
         backend.state_mut().config.animations.enabled = false;

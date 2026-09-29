@@ -886,6 +886,9 @@ pub(crate) fn attach_startup_ephemeral(
             empty.auto_created = true;
             empty
         } else if ctx.state.is_launcher() {
+            // The shell is a new view, not the launcher gaining panes: a new id replaces the
+            // launcher's layer, which is retained beneath the shell for the switch animation.
+            ctx.state.runtime_epoch = ctx.state.mint_attachment_id();
             // A launcher reached by killing a session has no parked seed, so it opens the same way
             // a fresh ephemeral does: from `[profile] default` when one is configured.
             match ctx.state.launcher_seed.take() {

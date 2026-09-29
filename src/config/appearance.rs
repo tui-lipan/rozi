@@ -95,7 +95,7 @@ fn apply_session_animation(
 ) {
     match session {
         None => {}
-        Some(SessionSpec::Enabled(true)) => target.session = SessionAnimationStyle::Fade,
+        Some(SessionSpec::Enabled(true)) => target.session = SessionAnimationStyle::default(),
         Some(SessionSpec::Enabled(false)) => target.session = SessionAnimationStyle::Off,
         Some(SessionSpec::Style(style)) => match SessionAnimationStyle::parse(style) {
             Some(style) => target.session = style,

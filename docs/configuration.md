@@ -270,7 +270,7 @@ Border colors for pane alert states. Each value is a theme role or `"off"`. Them
 | `sidebar` | bool | `true` | Animates sidebar movement. |
 | `workspace` | bool | `true` | Slides workspace content horizontally when switching. In Settings: General › Animations › Workspace switching. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
-| `session` | string or bool | `"fade"` | `"fade"`, `"portal"`, or `"off"`; `true` means `"fade"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
+| `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, or `"scan"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
@@ -282,14 +282,15 @@ Border colors for pane alert states. Each value is a theme role or `"off"`. Them
 `session` controls how the workbar and panes arrive when the foreground session changes: when you
 switch sessions, when a session finishes connecting, or when you drop to the launcher.
 
-- `"fade"` brings in the new session in place from slightly dimmed, over one and a half times
-  `geometry_ms` (330 ms by default).
 - `"portal"` opens a portal from the center onto the new session while the previous one recedes
   behind it, over `geometry_ms`. The ring uses the theme's accent colors.
+- `"fade"` crossfades from the previous session to the new one in place, over one and a half
+  times `geometry_ms` (330 ms by default). Images in panes appear at full strength rather than
+  fading with the text.
 - `"off"` switches at once.
 
 Pane geometry always snaps and the sidebar stays still. The value is case-insensitive; an unknown
-value keeps the fade and warns.
+value keeps the portal and warns.
 
 `pane_style = "off"` shows or hides a pane at once, with no fade and no spawn delay. `spawn`,
 `close`, and `enabled` still decide whether neighboring panes animate, and they still reflow over

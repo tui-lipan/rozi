@@ -52,7 +52,9 @@ exclude = [
 # 0.17.1: cells-only effect scopes, `Context::elapsed`, and anchored pulses, so the alert tint
 # skips inline images and keeps the border's beat.
 # 0.17.2: accept unpadded base64 graphics payloads, so `kitten icat` images show in a pane.
-tui-lipan = { version = "0.17.2", features = [
+# 0.17.3: glyphs crossfade under a translucent layer and `auto_exit` can hold, so the fade session
+# switch crossfades.
+tui-lipan = { version = "0.17.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

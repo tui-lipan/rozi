@@ -51,7 +51,7 @@ exclude = [
 # 0.17.0: late-bound effect amounts and registry-owned pulses, for the pane alert content tint.
 # 0.17.1: cells-only effect scopes, `Context::elapsed`, and anchored pulses, so the alert tint
 # skips inline images and keeps the border's beat.
-tui-lipan = { version = "0.17.1", features = [
+tui-lipan = { version = "0.17.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

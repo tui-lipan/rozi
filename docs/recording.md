@@ -77,6 +77,8 @@ that fails shows why.
 A pane recording that ends without being stopped also shows a toast with its path in every UI
 attached to the session: when it reaches its duration or size limit, when its pane exits or
 closes, or when writing fails, such as on a full disk. A failure shows the error above the path.
+When finishing the file of a recording you stopped fails, the toast says the recording failed
+rather than that it stopped.
 
 They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`,
 `toggle-ui-recording`, or `mark-ui-recording` under
@@ -314,8 +316,9 @@ Export and play read the file on the machine you run them on and need no session
 
 A recording can come from someone else, such as a bug report, so both refuse a file with a line
 longer than 64 MiB, a screen of more than 1,048,576 cells, or an image larger than 64 MiB decoded.
-Of the images a recording has shown, they keep up to 256 MiB for the frames still to come; past
-that the oldest are dropped, and a later frame shows a dropped image as its half-block
+Of the images a recording has shown, they keep up to 256 MiB for the frames still to come, each
+image counted with its bookkeeping, and refuse an image id longer than 64 bytes; past that budget
+the oldest are dropped, and a later frame shows a dropped image as its half-block
 approximation. rozi never writes a recording beyond these limits.
 
 ## Cost

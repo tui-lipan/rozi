@@ -256,16 +256,30 @@ pub(crate) fn answered(
             }
         }
         RecordingAction::Stop(_) => {
-            let paths = response
+            let stopped = response
                 .data
                 .and_then(|data| serde_json::from_value::<RecordingStopList>(data).ok())
-                .map(|list| {
-                    list.stopped
-                        .into_iter()
-                        .map(|stopped| stopped.path)
-                        .collect::<Vec<_>>()
-                })
+                .map(|list| list.stopped)
                 .unwrap_or_default();
+            // Finishing a stopped file can still fail, and that must not read as a clean stop.
+            let (failed, stopped): (Vec<_>, Vec<_>) = stopped
+                .into_iter()
+                .partition(|stopped| stopped.reason == EndReason::WriteFailed);
+            if !failed.is_empty() {
+                let message = failed
+                    .iter()
+                    .map(|failed| {
+                        let error = failed.error.as_deref().unwrap_or_default();
+                        format!("{error}\n{}", shown(&failed.path))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                notify_error(ctx, format!("Recording failed{on_host}"), message);
+                if stopped.is_empty() {
+                    return Update::full();
+                }
+            }
+            let paths: Vec<String> = stopped.into_iter().map(|stopped| stopped.path).collect();
             if paths.is_empty() {
                 notify_info(ctx, format!("Recording stopped{on_host}"));
             } else {
@@ -675,6 +689,37 @@ mod tests {
                     "Recording reached its size limit on devbox /srv/rec/work-pane-1.rozirec",
                 ],
                 "a stop already answered whoever asked for it"
+            );
+        });
+    }
+
+    #[test]
+    fn a_stop_whose_file_failed_says_so_instead_of_stopped() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = attached(None);
+            let pane = set_recording(&mut backend, true);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            let [(request_id, _)] = sent(&outbound).try_into().unwrap();
+            answer(
+                &mut backend,
+                request_id,
+                RecordingStopList {
+                    stopped: vec![RecordingStopped {
+                        id: 1,
+                        pane,
+                        path: "/srv/rec/a.rozirec".into(),
+                        reason: EndReason::WriteFailed,
+                        elapsed_ms: 5,
+                        error: Some("No space left on device".into()),
+                        totals: Default::default(),
+                    }],
+                },
+            );
+            assert_eq!(
+                toasts(&backend),
+                ["Recording failed No space left on device /srv/rec/a.rozirec"]
             );
         });
     }

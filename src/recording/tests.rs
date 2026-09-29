@@ -887,6 +887,45 @@ fn a_reader_refuses_a_line_frame_or_image_too_large_to_hold() {
 }
 
 #[test]
+fn images_with_no_pixels_still_count_against_the_image_budget() {
+    let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
+    file.push(b'\n');
+    for n in 0..5_000 {
+        let image = RecordingEvent::Image(format::RecordedImage {
+            t: 0,
+            id: format!("unique-id-{n}"),
+            pixel_width: 1,
+            pixel_height: 1,
+            png_base64: String::new(),
+        });
+        file.extend_from_slice(&serde_json::to_vec(&image).unwrap());
+        file.push(b'\n');
+    }
+    let mut replay = Replay::new(BufReader::new(file.as_slice()))
+        .unwrap()
+        .with_image_budget(16 * 1024);
+    assert_eq!(replay.step(), Ok(None));
+    let retained = replay.retained_images();
+    assert!((1..100).contains(&retained), "{retained} images kept");
+
+    let image = |id: String, side: u32| {
+        serde_json::json!({
+            "kind": "image",
+            "t": 0,
+            "id": id,
+            "pixel_width": side,
+            "pixel_height": side,
+            "png_base64": "",
+        })
+    };
+    let refused = refusal(&[image("x".repeat(65), 1)]);
+    assert!(refused.contains("image id"), "{refused}");
+    // Wide enough that the product wraps a u64.
+    let refused = refusal(&[image("wraps".into(), u32::MAX)]);
+    assert!(refused.contains("larger than rozi reads"), "{refused}");
+}
+
+#[test]
 fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
     let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
     file.push(b'\n');

@@ -602,15 +602,18 @@ impl SessionServer {
                     ControlResponse::ok(stopped.clone()),
                 );
             }
+            let mut asked_to_stop = false;
             for stop in &mut self.recording_stops {
                 if let Some(index) = stop.waiting.iter().position(|&waiting| waiting == id) {
                     stop.waiting.swap_remove(index);
                     stop.stopped.push(stopped.clone());
+                    asked_to_stop = true;
                 }
             }
-            // A stopped recording answered whoever stopped it. One that ended by itself would
-            // otherwise only lose its `REC`, so every UI hears how and where it went.
-            if stopped.reason != EndReason::Stopped {
+            // A recording someone stopped answers them, however it ended: finishing its file can
+            // still fail, or a limit can race the stop. One that ended by itself would otherwise
+            // only lose its `REC`, so every UI hears how and where it went.
+            if !asked_to_stop && stopped.reason != EndReason::Stopped {
                 let message = ServerMessage::RecordingEnded { stopped };
                 self.broadcast_outbound(&ServerOutbound::control(message));
             }
@@ -1436,6 +1439,31 @@ mod tests {
             frames.last().unwrap().contains("at the deadline"),
             "{frames:?}"
         );
+    }
+
+    #[test]
+    fn a_stop_that_races_a_limit_answers_its_stopper_and_nobody_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("raced.rozirec");
+        let mut server = server();
+        let watcher = attached(&mut server);
+        stalled_and_full(&mut server, &path, Some(20));
+        std::thread::sleep(Duration::from_millis(30));
+        // The deadline ends it first, but its stalled writer has not finished the file yet.
+        server.pump_recordings();
+        let (stopper, _stream) = add_client(&mut server);
+        let stop = ControlCommand::RecordStop {
+            id: None,
+            target: None,
+        };
+        assert!(ask(&mut server, stopper, stop).is_empty(), "held");
+        resume_and_finish(&mut server);
+
+        let [stopped] = stopped_by(answered(&server, stopper).remove(0))
+            .try_into()
+            .unwrap();
+        assert_eq!(stopped.reason, EndReason::Duration);
+        assert!(ended(&server, watcher).is_empty(), "the stopper was told");
     }
 
     #[test]

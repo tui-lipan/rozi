@@ -25,9 +25,14 @@ pub const MAX_EVENT_LINE: usize = 64 * 1024 * 1024;
 pub const MAX_FRAME_CELLS: usize = 1 << 20;
 /// The most bytes one image may take decoded.
 pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
-/// The most encoded image data a replay keeps for the frames to come. Past it the oldest images
-/// are forgotten, and a later frame showing one shows its half-block stand-in.
+/// The most encoded image data a replay keeps for the frames to come, each image charged its
+/// bookkeeping too. Past it the oldest images are forgotten, and a later frame showing one shows
+/// its half-block stand-in.
 pub const MAX_RETAINED_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+/// The longest image id a reader takes. rozi writes 32 hex digits.
+const MAX_IMAGE_ID_LEN: usize = 64;
+/// What keeping one image costs besides its id and pixels: its entry in the map and the queue.
+const IMAGE_ENTRY_COST: usize = 256;
 
 /// Read through the next newline into `buffer`, taking at most `max` bytes before it. `Err` names
 /// a longer line.
@@ -64,6 +69,12 @@ fn check_cells(what: &str, width: u16, height: u16) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// What keeping `image` costs a replay: its pixels, its id in the map and in the queue, and the
+/// entries themselves, so an image with no pixels is not free.
+fn retained_cost(image: &RecordedImage) -> usize {
+    image.png_base64.len() + 2 * image.id.len() + IMAGE_ENTRY_COST
 }
 
 /// A recording's events, in order, one line at a time.
@@ -269,8 +280,14 @@ impl<R: BufRead> Replay<R> {
 
     /// Keep `image` for the frames that show it, forgetting the oldest past the budget.
     fn store(&mut self, image: RecordedImage) -> Result<(), String> {
-        let decoded = u64::from(image.pixel_width) * u64::from(image.pixel_height) * 4;
-        if decoded > MAX_IMAGE_BYTES as u64 {
+        if image.id.len() > MAX_IMAGE_ID_LEN {
+            return Err(format!(
+                "an image id of {} bytes is longer than rozi reads",
+                image.id.len()
+            ));
+        }
+        let decoded = u128::from(image.pixel_width) * u128::from(image.pixel_height) * 4;
+        if decoded > MAX_IMAGE_BYTES as u128 {
             return Err(format!(
                 "image {} of {}x{} pixels is larger than rozi reads",
                 image.id, image.pixel_width, image.pixel_height
@@ -279,18 +296,23 @@ impl<R: BufRead> Replay<R> {
         if self.images.contains_key(&image.id) {
             return Ok(());
         }
-        self.image_bytes += image.png_base64.len();
+        self.image_bytes += retained_cost(&image);
         self.image_order.push_back(image.id.clone());
         self.images.insert(image.id.clone(), image);
         while self.image_bytes > self.image_budget
             && let Some(oldest) = self.image_order.pop_front()
         {
             if let Some(forgotten) = self.images.remove(&oldest) {
-                self.image_bytes -= forgotten.png_base64.len();
+                self.image_bytes -= retained_cost(&forgotten);
             }
             self.decoded.remove(&oldest);
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_images(&self) -> usize {
+        self.images.len()
     }
 
     /// Read events until one says something, or the recording ends.

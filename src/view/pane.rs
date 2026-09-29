@@ -2218,7 +2218,7 @@ fn copy_mode_is_cursor_only(ctx: &Context<AppRoot>, id: PaneId) -> bool {
         .is_some_and(|copy| copy.navigation.anchor().is_none())
 }
 
-fn selection_for_render(selection: &TerminalSelection) -> TerminalSelection {
+pub(crate) fn selection_for_render(selection: &TerminalSelection) -> TerminalSelection {
     let (start, end) = selection.normalized();
     TerminalSelection {
         anchor: start,

@@ -154,9 +154,10 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
                     row: matched.row(),
                     col: matched.start_col(),
                 },
+                // The flash range end is exclusive, like the hint's own end column.
                 cursor: tui_lipan::utils::GridPos {
                     row: matched.end_row(),
-                    col: matched.end_col().saturating_sub(1),
+                    col: matched.end_col(),
                 },
             },
         )

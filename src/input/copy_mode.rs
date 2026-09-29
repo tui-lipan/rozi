@@ -53,7 +53,9 @@ pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
             }
             let offset = pane.terminal.scrollback_offset();
             let viewport_rows = usize::from(pane.terminal.rows);
-            Some((text, to_viewport(&selection, offset, total, viewport_rows)))
+            // The flash paints an exclusive end, so widen it to include the cursor cell.
+            let flash = crate::view::selection_for_render(&selection);
+            Some((text, to_viewport(&flash, offset, total, viewport_rows)))
         });
         if let Some((text, projected)) = prepared {
             match ctx.clipboard().copy(&text) {

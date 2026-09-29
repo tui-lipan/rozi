@@ -47,10 +47,13 @@ exclude = [
 # 0.16.2: cast recordings write resize and marker events (`rozi record export --to cast`).
 # 0.16.4: preserve pixel mouse coordinates when motion tracking changes.
 # 0.16.5: toast click callbacks and explicit copy text.
-# 0.16.6: answer DA1 as a VT220, so `kitten icat` stops timing out in a pane.
+# 0.16.6: answer DA1 as a VT220, so `kitten icat` stops waiting for a reply in a pane.
 # 0.17.0: late-bound effect amounts and registry-owned pulses, for the pane alert content tint.
 # 0.17.1: cells-only effect scopes, `Context::elapsed`, and anchored pulses, so the alert tint
 # skips inline images and keeps the border's beat.
+# 0.17.2: accept unpadded base64 graphics payloads, so `kitten icat` images show in a pane.
+# 0.17.3: glyphs crossfade under a translucent layer and `auto_exit` can hold, so the fade session
+# switch crossfades.
 tui-lipan = { version = "0.17.3", features = [
   "terminal",
   "terminal-images",

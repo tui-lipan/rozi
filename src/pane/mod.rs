@@ -1130,6 +1130,59 @@ mod tests {
         assert_ne!(plain, themed, "the theme palette colors the image");
     }
 
+    /// `kitten icat` sends one quiet `a=T` with the PNG in base64 *without* `=` padding. Before
+    /// tui-lipan 0.17.2 a pane dropped any such payload whose length needed padding: icat exited 0,
+    /// nothing was drawn, and only its trailing newline was left behind.
+    #[test]
+    fn a_png_sent_the_way_kitten_icat_sends_it_is_placed() {
+        use base64::Engine as _;
+
+        let png = (1..16)
+            .map(|width| {
+                let mut png = Vec::new();
+                let mut encoder = png::Encoder::new(&mut png, width, 40);
+                encoder.set_color(png::ColorType::Rgb);
+                let mut writer = encoder.write_header().expect("png header");
+                writer
+                    .write_image_data(&[255u8, 0, 0].repeat(width as usize * 40))
+                    .expect("png data");
+                writer.finish().expect("png end");
+                png
+            })
+            .find(|png| !png.len().is_multiple_of(3))
+            .expect("a PNG whose base64 needs padding");
+        let payload = base64::engine::general_purpose::STANDARD_NO_PAD.encode(&png);
+        let bytes = format!("\r\x1b[2C\x1b_Ga=T,q=2,f=100,X=4;{payload}\x1b\\\r\n");
+
+        // The session server keeps the pixels to seed later attachments; the UI's pane decodes
+        // them to draw. Both have to take the picture and move the cursor under it.
+        for server in [true, false] {
+            let mut screen = new_terminal_screen(6, 20, 100);
+            screen.set_cell_size(TerminalCellSize {
+                width: 10,
+                height: 20,
+            });
+            screen.set_image_media_policy(GraphicsMediaPolicy::SHARED);
+            screen.set_image_budget(PANE_IMAGE_BUDGET_BYTES);
+            if server {
+                screen.set_image_storage_enabled(true);
+            }
+            screen.process_bytes(bytes.as_bytes());
+
+            let snapshot = screen.render_snapshot();
+            assert_eq!(snapshot.images.len(), 1, "server={server}");
+            assert_eq!(
+                (snapshot.cursor_row, snapshot.cursor_col),
+                (2, 0),
+                "the cursor ends on the image's last row, then icat's newline, server={server}"
+            );
+            assert!(
+                screen.drain_responses().is_empty(),
+                "q=2 hears nothing, server={server}"
+            );
+        }
+    }
+
     #[test]
     fn styled_captures_include_the_images_a_program_displayed() {
         use base64::Engine as _;

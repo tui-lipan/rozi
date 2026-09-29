@@ -699,6 +699,7 @@ and writes on the UI's machine.
 | `max_fps` | integer | `30` | `1` to `120`. |
 | `duration` | duration string | `"24h"` | Such as `"90s"`, `"8h"`, or `"1h30m"`; at most `"7d"`. |
 | `max_bytes` | size string | `"1GiB"` | Such as `"512MiB"`; at least `"64KiB"`. |
+| `ui_indicator` | bool | `true` | Whether a UI recording shows its `REC` chip. When `false`, the chip is neither on screen nor in the recording. `rozi record start ui --hide-indicator` hides it for one recording. |
 
 A value out of range, or one that does not parse, warns and keeps the default. The `--max-fps`,
 `--duration`, and `--max-bytes` options of `rozi record start` override these for one recording.

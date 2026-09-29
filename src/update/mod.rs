@@ -755,6 +755,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             epoch,
             session: name,
         } => session::renamed(ctx, epoch, name),
+        Msg::SessionRecordingEnded { epoch, stopped } => {
+            crate::ops::recording::ended(ctx, epoch, stopped)
+        }
     }
 }
 

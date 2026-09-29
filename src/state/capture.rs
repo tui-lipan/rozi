@@ -50,10 +50,19 @@ pub enum RecordingAction {
     Mark(PaneId),
 }
 
-/// The Mark pane recording prompt: the label for the recordings of `target`.
+/// The Mark pane recording and Mark UI recording prompt: the label for `target`.
 pub struct RecordingMarkPrompt {
-    pub target: PaneId,
+    pub target: RecordingMarkTarget,
     pub input: TextInput,
+}
+
+/// What a mark prompt marks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingMarkTarget {
+    /// The recordings of this pane, in its session server.
+    Pane(PaneId),
+    /// This UI's own recording.
+    Ui,
 }
 
 /// A recording of this UI as it paints, from `record-ui-start` or the Start UI recording command.
@@ -67,6 +76,8 @@ pub struct UiRecording {
     pub max_fps: u32,
     pub duration_ms: u64,
     pub max_bytes: u64,
+    /// The `REC` chip stays off the screen, and so out of the recording.
+    pub hide_indicator: bool,
     pub phase: UiRecordingPhase,
     /// When the last frame handed to the writer was painted. The `max_fps` ceiling counts from it.
     pub last_written: Option<Instant>,
@@ -87,7 +98,8 @@ pub struct UiRecording {
 /// Where a UI recording is in its life.
 pub enum UiRecordingPhase {
     /// Waiting for the first frame, whose size and colors the file's header records. The start
-    /// repaints the UI, since it puts the recording indicator on screen, so this is one frame.
+    /// repaints the UI, putting the recording indicator on screen unless it is hidden, so this is
+    /// one frame.
     Starting {
         output: crate::recording::start::Output,
         force: bool,

@@ -208,6 +208,7 @@ struct RecordingFileConfig {
     max_fps: Option<i64>,
     duration: Option<String>,
     max_bytes: Option<String>,
+    ui_indicator: Option<bool>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -762,6 +763,9 @@ fn apply_recording_config(
             )),
             Err(error) => warnings.push(format!("Ignored recording.max_bytes: {error}")),
         }
+    }
+    if let Some(ui_indicator) = parsed.ui_indicator {
+        config.ui_indicator = ui_indicator;
     }
 }
 
@@ -2365,7 +2369,7 @@ mod file_tests {
         assert_eq!(loaded.config.recording, RecordingConfig::default());
 
         let loaded = load_config_from_text(
-            "[recording]\ndir = \"~/recs\"\nmax_fps = 10\nduration = \"8h\"\nmax_bytes = \"512MiB\"\n",
+            "[recording]\ndir = \"~/recs\"\nmax_fps = 10\nduration = \"8h\"\nmax_bytes = \"512MiB\"\nui_indicator = false\n",
             path,
         );
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
@@ -2376,6 +2380,7 @@ mod file_tests {
                 max_fps: 10,
                 duration_ms: 8 * 3_600_000,
                 max_bytes: 512 << 20,
+                ui_indicator: false,
             }
         );
 

@@ -1358,6 +1358,9 @@ pub struct RecordingConfig {
     pub max_fps: u32,
     pub duration_ms: u64,
     pub max_bytes: u64,
+    /// Whether a UI recording shows its `REC` chip, and so records it. `--hide-indicator` hides it
+    /// for one recording.
+    pub ui_indicator: bool,
 }
 
 impl Default for RecordingConfig {
@@ -1367,6 +1370,7 @@ impl Default for RecordingConfig {
             max_fps: crate::control::DEFAULT_RECORDING_MAX_FPS,
             duration_ms: crate::control::DEFAULT_RECORDING_DURATION_MS,
             max_bytes: crate::control::DEFAULT_RECORDING_MAX_BYTES,
+            ui_indicator: true,
         }
     }
 }

@@ -297,6 +297,7 @@ pub(crate) fn handle_control_request(
             duration_ms,
             max_bytes,
             force,
+            hide_indicator,
         } => {
             return crate::ops::ui_recording::start_command(
                 ctx,
@@ -306,6 +307,7 @@ pub(crate) fn handle_control_request(
                     duration_ms,
                     max_bytes,
                     force,
+                    hide_indicator,
                 },
                 envelope.reply,
             );

@@ -355,6 +355,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
                 && !crate::ops::recording::target_toggle_pending(state)
         }
         Action::MarkPaneRecording => crate::ops::recording::target_is_recording(state),
+        Action::MarkUiRecording => crate::ops::ui_recording::is_recording(state),
         _ => true,
     }
 }
@@ -1354,6 +1355,7 @@ mod tests {
             ("toggle-pane-recording", "Start pane recording"),
             ("mark-pane-recording", "Mark pane recording…"),
             ("toggle-ui-recording", "Start UI recording"),
+            ("mark-ui-recording", "Mark UI recording…"),
         ] {
             let action = Action::from_id(id).unwrap_or_else(|| panic!("`{id}` parses"));
             let command = BUILTIN_COMMANDS

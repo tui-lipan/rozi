@@ -290,7 +290,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         table,
         "",
         "recording",
-        &["dir", "max_fps", "duration", "max_bytes"],
+        &["dir", "max_fps", "duration", "max_bytes", "ui_indicator"],
         unknown,
     );
     collect_keys(table, unknown);

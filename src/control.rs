@@ -33,9 +33,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
 /// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
-/// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, and version 13
-/// with `new-pane`'s `size`.
-pub const API_SCHEMA_VERSION: u32 = 13;
+/// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
+/// `record-ui-start`'s `hide_indicator`, and version 14 with `new-pane`'s `size`.
+pub const API_SCHEMA_VERSION: u32 = 14;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -682,6 +682,10 @@ pub enum ControlCommand {
         /// Replace an existing regular file at `output`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         force: bool,
+        /// Leave the `REC` chip off the screen while this recording runs, and so out of it. Off,
+        /// `[recording] ui_indicator` decides.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        hide_indicator: bool,
     },
     /// Stop the UI's recording and answer once its file is complete.
     RecordUiStop,

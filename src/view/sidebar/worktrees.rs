@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Row, RowTarget, SidebarRow};
+use super::row::{Priority, Row, RowTarget, SidebarRow};
 use crate::AppRoot;
 use crate::state::{WorktreeTabItem, WorktreeTabRow};
 
@@ -21,13 +21,16 @@ pub(super) fn worktrees_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         .worktree_tab_items()
         .into_iter()
         .map(|item| match item {
-            WorktreeTabItem::Header { repository, host } => {
-                SidebarRow::header(super::row::header_with_note(ctx, repository, host))
-            }
+            // The host is short and says which machine every row below lives on; the repository
+            // name is the one that can afford to clip.
+            WorktreeTabItem::Header { repository, host } => SidebarRow::header(
+                super::row::header_with_note(ctx, repository, host, Priority::Description),
+            ),
             WorktreeTabItem::Checkout(row) => checkout_row(ctx, row),
             WorktreeTabItem::Creating { branch } => SidebarRow::item(
                 Row::new(branch)
                     .title_style(muted)
+                    .priority(Priority::Description)
                     .badge_text("creating…", accent),
                 RowTarget::Inert,
             ),
@@ -141,9 +144,12 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     } else {
         super::super::fg_only(&theme.primary)
     };
+    // The right edge is the checkout's status rail and, under the pointer, what Enter does. Both
+    // are short and both are the point of the row, so the branch name truncates before they do.
     let mut item = Row::new(branch)
         .active(row.current)
-        .title_style(title_style);
+        .title_style(title_style)
+        .priority(Priority::Description);
 
     let strongest = row
         .sessions
@@ -176,14 +182,9 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     });
     item = match (row.removing, state, marker) {
         (true, _, _) => item.badge_text("removing…", muted),
-        (false, Some((state, state_style)), Some((marker, marker_style))) => item.badge(
-            HStack::new()
-                .gap(1)
-                .width(Length::Auto)
-                .height(Length::Px(1))
-                .child(Text::new(state).style(state_style).height(Length::Px(1)))
-                .child(Text::new(marker).style(marker_style).height(Length::Px(1))),
-        ),
+        (false, Some((state, state_style)), Some((marker, marker_style))) => {
+            item.badge_parts([(state.to_string(), state_style), (marker, marker_style)])
+        }
         (false, None, Some((marker, style))) => item.badge_text(marker, style),
         (false, Some((state, style)), None) => item.badge_text(state, style),
         (false, None, None) => item,

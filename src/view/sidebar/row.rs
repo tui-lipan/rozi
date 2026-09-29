@@ -72,6 +72,23 @@ pub(super) struct CloseAffordance {
     pub armed: bool,
 }
 
+/// Which half of a title line keeps its text when the label and its description cannot both fit.
+/// Each tab picks the one that carries its meaning; there is no single right answer for the sidebar.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum Priority {
+    /// The label stays whole and the description takes whatever width is left — a project name
+    /// beside its branch, an agent beside its workspace.
+    #[default]
+    Label,
+    /// The description stays whole and the label truncates — a status rail or a hover affordance
+    /// that says what clicking does, beside a branch name that can run arbitrarily long.
+    Description,
+}
+
+/// The least blank space between a label and its description, so the two read as separate things
+/// rather than as one run of text when the row is crowded.
+const DESCRIPTION_GAP: u16 = 3;
+
 /// The row shape shared by every sidebar tab: an accent marker gutter that fills for the current
 /// row, an optional glyph column, then a title over an optional dimmed detail line. One builder is
 /// what keeps user-defined tabs reading as the same list as the built-in ones rather than as bare
@@ -86,8 +103,9 @@ pub(crate) struct Row {
     title: String,
     title_style: Style,
     badge: Option<Element>,
-    description: Option<(String, Style)>,
-    hover_description: Option<(String, Style)>,
+    description: Vec<(String, Style)>,
+    hover_description: Vec<(String, Style)>,
+    priority: Priority,
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
     armed_prompt: Option<String>,
@@ -102,8 +120,9 @@ impl Row {
             title: title.into(),
             title_style: Style::default(),
             badge: None,
-            description: None,
-            hover_description: None,
+            description: Vec::new(),
+            hover_description: Vec::new(),
+            priority: Priority::Label,
             meta: None,
             detail: Vec::new(),
             armed_prompt: None,
@@ -134,7 +153,7 @@ impl Row {
     /// priority when they both cannot fit.
     pub(super) fn badge(mut self, badge: impl Into<Element>) -> Self {
         self.badge = Some(badge.into());
-        self.description = None;
+        self.description.clear();
         self
     }
 
@@ -147,9 +166,21 @@ impl Row {
     }
 
     /// Text badge helper for the common string + style case.
-    pub(super) fn badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.description = Some((text.into(), style));
+    pub(super) fn badge_text(self, text: impl Into<String>, style: Style) -> Self {
+        self.badge_parts([(text.into(), style)])
+    }
+
+    /// Several differently styled tokens sharing the badge slot, joined by single spaces. Unlike an
+    /// element badge they truncate with the title line under its [`Priority`].
+    pub(super) fn badge_parts(mut self, parts: impl IntoIterator<Item = (String, Style)>) -> Self {
+        self.description = parts.into_iter().collect();
         self.badge = None;
+        self
+    }
+
+    /// Which of title and badge text survives when the title line is too narrow for both.
+    pub(super) fn priority(mut self, priority: Priority) -> Self {
+        self.priority = priority;
         self
     }
 
@@ -158,7 +189,7 @@ impl Row {
     /// what it is and what clicking it does without growing — and a row that grows under the
     /// pointer shifts everything below it out from under the hand that is aiming.
     pub(super) fn hover_badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.hover_description = Some((text.into(), style));
+        self.hover_description = vec![(text.into(), style)];
         self
     }
 
@@ -226,15 +257,15 @@ impl Row {
         // column this narrow it gets the space.
         let trailing = if let Some(close) = close {
             Some(close_affordance(ctx, close))
-        } else if hovered && self.hover_description.is_some() {
+        } else if hovered && !self.hover_description.is_empty() {
             None
         } else {
             self.badge
         };
         let description = if trailing.is_some() {
-            None
-        } else if hovered {
-            self.hover_description.or(self.description)
+            Vec::new()
+        } else if hovered && !self.hover_description.is_empty() {
+            self.hover_description
         } else {
             self.description
         };
@@ -243,13 +274,13 @@ impl Row {
         if let Some((meta, style)) = self.meta {
             spans.push(Span::new(format!(" {meta}")).style(style));
         }
-        let description_spans = description
-            .map(|(text, style)| vec![Span::new(text).style(style)])
-            .unwrap_or_default();
         // Title-line chrome (✕, host status) pins to this line only. A two-line List beside that
         // badge would steal width from the detail as well, which is how "Click to connect" was
         // ellipsized with empty space still sitting to its right.
-        let mut title = item_text(labeled_item(spans, description_spans), 1);
+        let mut title = item_text(
+            titled_item(spans, joined_spans(description), self.priority),
+            1,
+        );
         if let Some(trailing) = trailing {
             title = HStack::new()
                 .gap(1)
@@ -286,6 +317,29 @@ impl Row {
     }
 }
 
+/// A title line: label left, description right-aligned and held off the label by
+/// [`DESCRIPTION_GAP`], with `priority` deciding which of the two truncates. A description squeezed
+/// down to a bare `…` is dropped rather than shown.
+fn titled_item(label: Vec<Span>, description: Vec<Span>, priority: Priority) -> ListItem {
+    let item = labeled_item(label, description).primary_description_gap(DESCRIPTION_GAP);
+    match priority {
+        Priority::Label => item,
+        Priority::Description => item.primary_truncate_description_first(false),
+    }
+}
+
+/// Styled tokens as spans separated by single spaces.
+fn joined_spans(parts: Vec<(String, Style)>) -> Vec<Span> {
+    let mut spans = Vec::with_capacity(parts.len() * 2);
+    for (index, (text, style)) in parts.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::new(" "));
+        }
+        spans.push(Span::new(text).style(style));
+    }
+    spans
+}
+
 fn labeled_item(label: Vec<Span>, description: Vec<Span>) -> ListItem {
     let mut item = ListItem::from_spans(label).primary_truncate_description_first(true);
     if !description.is_empty() {
@@ -314,16 +368,9 @@ fn item_text(item: ListItem, lines: u16) -> Element {
 fn detail_item(detail: Vec<(String, Style)>) -> Option<ListItem> {
     let mut parts = detail.into_iter();
     let (first, first_style) = parts.next()?;
-    let mut description = Vec::new();
-    for (index, (text, style)) in parts.enumerate() {
-        if index > 0 {
-            description.push(Span::new(" "));
-        }
-        description.push(Span::new(text).style(style));
-    }
     Some(labeled_item(
         vec![Span::new(first).style(first_style)],
-        description,
+        joined_spans(parts.collect()),
     ))
 }
 
@@ -391,28 +438,30 @@ pub(super) fn header(ctx: &Context<AppRoot>, label: impl Into<String>, muted: bo
         .into()
 }
 
-/// A section header carrying a right-aligned note — the project header's branch. The label flexes,
-/// so an overlong project name truncates rather than pushing the note off the edge: the note is a
-/// fixed short thing that is either fully readable or worthless, while a clipped project name is
-/// still recognizable.
+/// A section header carrying a right-aligned note — the project's branch, the repository's host.
+/// `priority` says which one yields when both cannot fit, exactly as it does for a row's title line,
+/// and the note lands in the same right-hand column as the rows' badges below it.
+///
+/// A note that has to shorten keeps its tail: `feat/pricing-v2` and `feat/pricing-v3` differ only
+/// there.
 pub(super) fn header_with_note(
     ctx: &Context<AppRoot>,
     label: impl Into<String>,
     note: impl Into<String>,
+    priority: Priority,
 ) -> Element {
+    let label = vec![Span::new(label.into()).style(super::super::rozi_fg(&ctx.state.theme).bold())];
+    let note =
+        vec![Span::new(note.into()).style(super::super::fg_only(&ctx.state.theme.muted).dim())];
+    // The leading cell aligns the label with the plain header's leading space.
     HStack::new()
-        .gap(1)
         .height(Length::Px(1))
-        // Left cell aligns with the plain header's leading space. Nothing on the right: the note
-        // lands in the same column as the rows' badges below it, which is what makes the two read
-        // as one right-hand rail rather than two near-misses.
         .padding((0, 0, 0, 1))
-        .child(
-            Text::new(label.into())
-                .style(super::super::rozi_fg(&ctx.state.theme).bold())
-                .width(Length::Flex(1)),
-        )
-        .child(Text::new(note.into()).style(super::super::fg_only(&ctx.state.theme.muted).dim()))
+        .child(item_text(
+            titled_item(label, note, priority)
+                .primary_description_truncation(ListTruncation::Start),
+            1,
+        ))
         .into()
 }
 

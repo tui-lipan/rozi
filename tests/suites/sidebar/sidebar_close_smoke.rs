@@ -256,10 +256,11 @@ fn the_keyboard_cursor_reveals_the_close_affordance_while_focused() {
 }
 
 /// A short pane name must not cap its program badge at half the row. ListItem descriptions share
-/// leftover width with the label, and the label keeps priority when both cannot fit.
+/// leftover width with the label, held three cells off it, and the label keeps priority when both
+/// cannot fit.
 #[test]
 fn pane_row_description_shares_leftover_width_with_the_label() {
-    const PROGRAM: &str = "abcdefghijklmnop-long-bin";
+    const PROGRAM: &str = "abcdefghijklmn-long-bin";
     let lines = panes_sidebar_lines(|state| {
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.set_custom_title("zsh");
@@ -273,5 +274,9 @@ fn pane_row_description_shares_leftover_width_with_the_label() {
     assert!(
         title.contains(PROGRAM),
         "description should use leftover width after a short label, not half the row: {title:?}"
+    );
+    assert!(
+        title.contains("zsh   ") && title.trim_end_matches('│').ends_with(PROGRAM),
+        "a crowded description keeps a three-cell gap from the label: {title:?}"
     );
 }

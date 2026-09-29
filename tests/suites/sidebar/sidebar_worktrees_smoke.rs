@@ -155,6 +155,34 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
     });
 }
 
+/// The right edge is what a checkout row is for — its state at rest, what Enter does under the
+/// pointer — so a long branch name truncates before either does, and never closer than three cells.
+#[test]
+fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
+    const BRANCH: &str = "feat/show-working-directory-in-the-sidebar";
+    let render = |hovered: bool| {
+        let mut backend = seeded(100, 30);
+        let state = backend.state_mut();
+        state.sidebar.worktrees.entries[0].branch = Some(BRANCH.into());
+        // Row 0 is the repository header; the primary checkout is first under it.
+        state.sidebar.panels[0].hovered_row = hovered.then_some(1);
+        let lines = sidebar_lines(&mut backend, 32);
+        lines
+            .into_iter()
+            .find(|line| line.contains("feat/show"))
+            .expect("the primary checkout row")
+    };
+    on_large_stack(move || {
+        let resting = render(false);
+        assert!(resting.contains('…'), "{resting:?}");
+        assert!(resting.contains("…   primary ●"), "{resting:?}");
+
+        let hovered = render(true);
+        assert!(hovered.contains('…'), "{hovered:?}");
+        assert!(hovered.contains("…   attach"), "{hovered:?}");
+    });
+}
+
 #[test]
 fn a_pane_outside_any_repository_says_so() {
     on_large_stack(|| {

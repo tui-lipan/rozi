@@ -96,6 +96,8 @@ focused pane.
   scrolls when a key or click reaches that pane.
 - Moving, swapping, or dragging a column does not scroll the strip if the column ends up fully
   visible. If it lands partly hidden, the strip scrolls just far enough to show it.
+- A script can scroll the strip to a pane without focusing it with
+  [`rozi pane reveal`](control.md#changing-the-layout).
 
 A column's default width is `0.45` of the view, and widths are limited to `0.20` through `0.80`.
 To change the focused column's width, use `=` and `-`, the horizontal resize-mode keys, or drag

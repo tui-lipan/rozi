@@ -840,6 +840,32 @@ pub(crate) fn sync_scrollable_reveal(state: &mut State, id: PaneId, arm_axis_cha
     );
 }
 
+/// Scroll workspace `index`'s Scrollable strip so tiled pane `id` is in view, leaving focus where
+/// it is. Returns whether the viewport moved.
+///
+/// On screen, the strip scrolls just far enough, as focusing a clipped column does. A workspace
+/// that is not on screen has no measured strip, so `id` becomes its anchor and shows when the
+/// workspace does. Any other layout, or a floating pane, already shows the pane: nothing changes.
+pub(crate) fn reveal_pane(state: &mut State, index: usize, id: PaneId) -> bool {
+    let on_screen = !state.scratch_visible && state.current().active_workspace == index;
+    let workspace = &state.current().workspaces[index];
+    let tiled = workspace.tiled_ids();
+    if workspace.layout_kind != LayoutKind::Scrollable || !tiled.contains(&id) {
+        return false;
+    }
+    let prior_anchor = scrollable_viewport_anchor(workspace, &tiled);
+    let prior_edge = workspace.scrollable_reveal_edge;
+    if on_screen {
+        sync_scrollable_reveal(state, id, true);
+    } else if prior_anchor != Some(id) {
+        let edge = scrollable_reveal_edge_from_order(&tiled, id, prior_anchor, prior_edge);
+        state.current_mut().workspaces[index].set_scrollable_viewport(Some(id), edge);
+    }
+    let workspace = &state.current().workspaces[index];
+    scrollable_viewport_anchor(workspace, &tiled) != prior_anchor
+        || workspace.scrollable_reveal_edge != prior_edge
+}
+
 fn apply_scrollable_reveal_decision(
     state: &mut State,
     id: PaneId,

@@ -82,6 +82,7 @@ pub(crate) fn handle_control_request(
             with,
             if_revision,
         } => pane_swap(ctx, target, with, if_revision),
+        ControlCommand::PaneReveal { target } => pane_reveal(ctx, target),
         ControlCommand::PaneClose {
             target,
             if_revision,
@@ -810,6 +811,20 @@ fn pane_move(
         }
     }
     layout_change_reply(ctx, changed, destination)
+}
+
+/// `pane reveal` from this UI: a view change, not a layout write, so it needs no layout control
+/// and leaves the revision and focus alone.
+fn pane_reveal(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
+    let index = match locate_layout_pane(ctx, target) {
+        Ok((index, _)) => index,
+        Err(response) => return response,
+    };
+    let changed = crate::ops::focus::reveal_pane(&mut ctx.state, index, target);
+    ControlResponse::ok(crate::control::PaneRevealed {
+        changed,
+        workspace: index + 1,
+    })
 }
 
 /// `pane swap` from this UI.
@@ -2948,6 +2963,78 @@ mod tests {
             .expect("spawn move test thread")
             .join()
             .expect("move test thread completes");
+    }
+
+    /// `pane reveal` scrolls this UI's strip to a pane and nothing else: focus, the shared
+    /// document, and its revision stay as they were.
+    #[test]
+    fn a_ui_reveals_a_scrollable_pane_without_moving_focus_or_the_layout() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, canvas) = three_tiled_panes();
+                let reveal = |target| ControlCommand::PaneReveal { target };
+                let revealed = |response: ControlResponse| {
+                    assert!(response.ok, "{:?}", response.error);
+                    serde_json::from_value::<crate::control::PaneRevealed>(
+                        response.data.expect("reveal data"),
+                    )
+                    .expect("a PaneRevealed")
+                };
+
+                let response = revealed(dispatch(&mut backend, reveal(3)));
+                assert!(!response.changed, "Dwindle already shows every tile");
+
+                let response = dispatch(
+                    &mut backend,
+                    ControlCommand::LayoutSet {
+                        workspace: 1,
+                        layout: Some(crate::control::ControlLayoutKind::Scrollable),
+                        master_ratio: None,
+                        if_revision: None,
+                    },
+                );
+                assert!(response.ok, "{:?}", response.error);
+                crate::ops::focus::focus_pane(backend.state_mut(), 1);
+                let document =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                let anchor = |backend: &TestBackend<crate::AppRoot>| {
+                    let workspace = &backend.state().current().workspaces[0];
+                    crate::layout::scrollable_viewport_anchor(workspace, &workspace.tiled_ids())
+                };
+                assert_eq!(anchor(&backend), Some(1));
+
+                let response = revealed(dispatch(&mut backend, reveal(3)));
+                assert_eq!((response.changed, response.workspace), (true, 1));
+                assert_eq!(
+                    anchor(&backend),
+                    Some(3),
+                    "the strip follows the revealed pane"
+                );
+                assert_eq!(backend.state().focused_pane(), Some(1), "focus stays put");
+                assert_eq!(
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    document,
+                    "the view is local: the shared document is untouched"
+                );
+                assert!(
+                    !revealed(dispatch(&mut backend, reveal(3))).changed,
+                    "revealing it again moves nothing"
+                );
+
+                // A workspace off screen keeps the pane as its anchor for when it is shown.
+                backend.state_mut().current_mut().active_workspace = 1;
+                assert!(revealed(dispatch(&mut backend, reveal(2))).changed);
+                assert_eq!(anchor(&backend), Some(2));
+
+                assert_eq!(
+                    dispatch(&mut backend, reveal(99)).code,
+                    Some(ControlErrorCode::PaneNotFound)
+                );
+            })
+            .expect("spawn reveal test thread")
+            .join()
+            .expect("reveal test thread completes");
     }
 
     /// Absolute sizes land in the same document from a UI as from a session server, read back

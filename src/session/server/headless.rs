@@ -98,6 +98,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
+        ControlCommand::PaneReveal { .. } => Some(
+            "the viewport is client-local; a session server has no view to scroll (run pane reveal from a pane inside a UI)",
+        ),
         ControlCommand::SwitchWorkspace { .. } | ControlCommand::MoveToWorkspace { .. } => Some(
             "the active workspace is client-local; a session server cannot switch it (use `split --workspace` to place a pane)",
         ),
@@ -3227,6 +3230,7 @@ mod tests {
         // `session_control_unsupported`, and this is what forces the author to choose.
         for command in [
             ControlCommand::Focus { target: 1 },
+            ControlCommand::PaneReveal { target: 1 },
             ControlCommand::RunAction {
                 action: "toggle-float".to_string(),
             },

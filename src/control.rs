@@ -33,8 +33,8 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
 /// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
-/// meta events, and the `ui-exited` end reason.
-pub const API_SCHEMA_VERSION: u32 = 11;
+/// meta events, and the `ui-exited` end reason, and version 12 with `pane-reveal`.
+pub const API_SCHEMA_VERSION: u32 = 12;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -69,6 +69,8 @@ pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
 /// A UI records itself as it paints, chrome included, with `record-ui-start`, `record-ui-stop`,
 /// and `record-ui-mark`, into a file on the UI's own host.
 pub const RECORD_UI_CAPABILITY: &str = "record-ui";
+/// A UI answers `pane-reveal`, scrolling a Scrollable strip to a pane without moving focus.
+pub const PANE_REVEAL_CAPABILITY: &str = "pane-reveal";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -98,6 +100,7 @@ impl ApiDescription {
                 CAPTURE_WAIT_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
+                PANE_REVEAL_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 RECORD_PANE_CAPABILITY,
                 RECORD_UI_CAPABILITY,
@@ -398,6 +401,11 @@ pub enum ControlCommand {
         with: PaneId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
+    },
+    /// Scroll a Scrollable strip so a pane is in view, without moving focus. The viewport is
+    /// client-local, so only a UI answers; the shared layout and its revision do not change.
+    PaneReveal {
+        target: PaneId,
     },
     /// Close a pane, ending its process. The request is the confirmation; `[confirm]` does not
     /// apply.
@@ -1099,6 +1107,16 @@ pub struct LayoutChange {
     pub committed: bool,
     /// The affected workspace as it now stands, in the same shape `layout get` reports.
     pub workspace: WorkspaceLayout,
+}
+
+/// What `pane reveal` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneRevealed {
+    /// False when the pane was already in view, floats, or sits in a layout that shows every tile.
+    pub changed: bool,
+    /// The one-based workspace holding the pane.
+    pub workspace: usize,
 }
 
 /// What `pane close` answers with.

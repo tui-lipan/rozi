@@ -188,7 +188,8 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         heading: "PANES",
         advanced_only: false,
         note: "With --session <NAME> these reach that session server directly, with\n    \
-               nothing attached. focus and the workspace commands need a UI.",
+               nothing attached. focus, pane reveal, and the workspace commands need\n    \
+               a UI.",
         rows: &[
             row(
                 "list-panes [--format text|json]",
@@ -219,6 +220,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             row(
                 "pane close --target <ID> [--if-revision <N>]",
                 "Close a pane without asking",
+            ),
+            row(
+                "pane reveal --target <ID>",
+                "Scroll the strip to a pane, keeping focus",
             ),
             row("focus <PANE_ID>", "Focus a pane"),
             row(

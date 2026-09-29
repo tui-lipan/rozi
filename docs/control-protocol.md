@@ -114,6 +114,7 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 | `layout-get` | A layout report; see [Control CLI](control.md#layout). |
 | `layout-set`, `pane-set`, `pane-move`, `pane-swap` | `{ "changed": bool, "revision": number or null, "committed": bool, "workspace": object }`; see [Changing the layout](control.md#changing-the-layout). |
 | `pane-close` | `{ "id": number, "revision": number or null, "committed": bool, "workspace": object or absent }` |
+| `pane-reveal` | `{ "changed": bool, "workspace": number }`; see [Changing the layout](control.md#changing-the-layout). |
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }`, or for `spans` `{ "id": number, "title": string or null, "render": "spans", "frame": object }`; see [Spans frames](#spans-frames) |
 | `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text`, `png_base64`, or `frame` fields as `capture-pane` |
@@ -433,6 +434,7 @@ An image in a recorded frame has an `id` naming the `image` event that holds its
 {"cmd":"pane-move","target":7,"workspace":3}
 {"cmd":"pane-swap","target":7,"with":4}
 {"cmd":"pane-close","target":7,"if_revision":21}
+{"cmd":"pane-reveal","target":7}
 ```
 
 - `layout-set.workspace` and the `target` of every `pane-*` request are required. None of them falls
@@ -442,6 +444,9 @@ An image in a recorded frame has an `id` naming the `image` event that holds its
   `split_ratio`, and `width_ratio`. `rect` and `rect_fraction` exclude each other.
 - Ratios run from `0.2` to `0.8`.
 - A stale `if_revision` fails with `conflict`.
+- `pane-reveal` scrolls only the UI's own view: it takes no `if_revision`, needs no layout control,
+  and a session server refuses it with `unsupported`. `pane-reveal` in `rozi api describe`
+  advertises it.
 
 ### Focus and input
 

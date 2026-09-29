@@ -875,6 +875,25 @@
           "type": "object"
         },
         {
+          "description": "Scroll a Scrollable strip so a pane is in view, without moving focus. The viewport is\nclient-local, so only a UI answers; the shared layout and its revision do not change.",
+          "properties": {
+            "cmd": {
+              "const": "pane-reveal",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Close a pane, ending its process. The request is the confirmation; `[confirm]` does not\napply.",
           "properties": {
             "cmd": {
@@ -2176,6 +2195,25 @@
             "cmd",
             "target",
             "with"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Scroll a Scrollable strip so a pane is in view, without moving focus. The viewport is\nclient-local, so only a UI answers; the shared layout and its revision do not change.",
+          "properties": {
+            "cmd": {
+              "const": "pane-reveal",
+              "type": "string"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
           ],
           "type": "object"
         },
@@ -4009,6 +4047,26 @@
       ],
       "type": "object"
     },
+    "PaneRevealed": {
+      "description": "What `pane reveal` answers with.",
+      "properties": {
+        "changed": {
+          "description": "False when the pane was already in view, floats, or sits in a layout that shows every tile.",
+          "type": "boolean"
+        },
+        "workspace": {
+          "description": "The one-based workspace holding the pane.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "changed",
+        "workspace"
+      ],
+      "type": "object"
+    },
     "PaneWait": {
       "description": "Hold a `capture-pane`, `send-text`, or `send-keys` reply until the pane's visible screen shows\n`text`, stops changing for `settle_ms`, or both, in that order.\n\nBoth conditions read the screen as it is drawn - its grid of cells - rather than the bytes the\nprogram wrote. A redraw that paints the same cells again, a cursor that only moves, and a title\nchange are not changes, which is what \"the screen settled\" has to mean for a program that\nrepaints on a timer.\n\n`text` is a literal substring of one visible row, matched against the untrimmed row. For\n`capture-pane` it matches whatever is on screen, including text that was already there. For\n`send-text` and `send-keys` it matches only rows the input's answer produced: text on screen\nwhen the input was written does not count, even after it scrolls.\n\nA wait that outlives `timeout_ms` fails with `timeout`; a pane whose program exits, or that\ncloses, fails with `pane-not-running`. Both carry the pane's capture in `data` when the pane is\nstill there to capture.",
       "properties": {
@@ -5816,5 +5874,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 11
+  "x-rozi-schema-version": 12
 }

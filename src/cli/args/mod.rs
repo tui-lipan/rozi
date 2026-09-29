@@ -1779,6 +1779,10 @@ mod tests {
                 if_revision: None,
             }
         );
+        assert_eq!(
+            command(&["pane", "reveal", "--target", "4"]),
+            control::ControlCommand::PaneReveal { target: 4 }
+        );
 
         assert_eq!(
             command(&["layout", "set", "--workspace", "1", "--master-ratio", "0.6"]),
@@ -1815,6 +1819,9 @@ mod tests {
             &["pane", "swap", "--target", "4"],
             &["pane", "close"],
             &["pane", "close", "--target", "4", "--floating", "true"],
+            &["pane", "reveal"],
+            &["pane", "reveal", "--target", "4", "--if-revision", "2"],
+            &["pane", "reveal", "--target", "4", "--width-ratio", "0.5"],
             &[
                 "pane",
                 "move",

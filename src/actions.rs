@@ -513,6 +513,7 @@ fn execute_action_inner(
         Action::ScreenshotUi => crate::ops::screenshot::screenshot_ui(ctx),
         Action::TogglePaneRecording => crate::ops::recording::toggle_pane_recording(ctx),
         Action::MarkPaneRecording => crate::ops::recording::open_mark_prompt(ctx),
+        Action::MarkUiRecording => crate::ops::recording::open_ui_mark_prompt(ctx),
         Action::ToggleUiRecording => crate::ops::ui_recording::toggle(ctx),
         Action::TogglePaneSynchronization => {
             // No toast: synchronization is a persistent mode that silently multiplies every
@@ -539,6 +540,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::RenameSession
             | Action::SaveProfile
             | Action::MarkPaneRecording
+            | Action::MarkUiRecording
             | Action::OpenProfilePicker
             | Action::OpenWorktrees
             | Action::ApplyProfile

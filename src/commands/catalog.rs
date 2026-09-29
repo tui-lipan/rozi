@@ -433,6 +433,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::MarkUiRecording,
+        label: "Mark UI recording…",
+        category: "Capture",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenProfilePicker,
         label: "Profiles…",
         category: "Profile",

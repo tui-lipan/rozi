@@ -1,7 +1,11 @@
 //! Reading a recording back: its header, its events, and the frames they add up to.
+//!
+//! A recording can come from anywhere, such as a bug report, so reading one is bounded: a line,
+//! a frame, an image, and the images kept for later frames each have a ceiling well above anything
+//! rozi writes.
 
-use std::collections::HashMap;
-use std::io::BufRead;
+use std::collections::{HashMap, VecDeque};
+use std::io::{BufRead, Read as _};
 
 use base64::Engine as _;
 
@@ -12,6 +16,55 @@ use super::format::{
 };
 use super::frame::DecodedImage;
 use crate::control::SpanFrame;
+
+/// The longest header line a reader takes.
+const MAX_HEADER_LINE: usize = 1024 * 1024;
+/// The longest event line a reader takes: room for the largest image a pane holds, as base64.
+pub const MAX_EVENT_LINE: usize = 64 * 1024 * 1024;
+/// The most cells a frame, or an image's area in one, may cover.
+pub const MAX_FRAME_CELLS: usize = 1 << 20;
+/// The most bytes one image may take decoded.
+pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+/// The most encoded image data a replay keeps for the frames to come. Past it the oldest images
+/// are forgotten, and a later frame showing one shows its half-block stand-in.
+pub const MAX_RETAINED_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Read through the next newline into `buffer`, taking at most `max` bytes before it. `Err` names
+/// a longer line.
+fn read_line(reader: &mut impl BufRead, buffer: &mut Vec<u8>, max: usize) -> Result<usize, String> {
+    let read = reader
+        .take(max as u64 + 1)
+        .read_until(b'\n', buffer)
+        .map_err(|error| format!("cannot read the recording: {error}"))?;
+    if buffer.len() > max && !buffer.ends_with(b"\n") {
+        return Err(format!(
+            "a line is longer than the {} MiB a recording line may be",
+            max / (1024 * 1024)
+        ));
+    }
+    Ok(read)
+}
+
+/// Refuse a frame too large to draw.
+fn check_frame(frame: &SpanFrame) -> Result<(), String> {
+    check_cells("a frame", frame.width, frame.height)?;
+    check_images(&frame.images)
+}
+
+fn check_images(images: &[crate::control::SpanImage]) -> Result<(), String> {
+    images
+        .iter()
+        .try_for_each(|image| check_cells("an image", image.width, image.height))
+}
+
+fn check_cells(what: &str, width: u16, height: u16) -> Result<(), String> {
+    if usize::from(width) * usize::from(height) > MAX_FRAME_CELLS {
+        return Err(format!(
+            "{what} of {width}x{height} cells is larger than rozi reads"
+        ));
+    }
+    Ok(())
+}
 
 /// A recording's events, in order, one line at a time.
 ///
@@ -27,9 +80,8 @@ pub struct RecordingReader<R> {
 impl<R: BufRead> RecordingReader<R> {
     pub fn new(mut reader: R) -> Result<Self, String> {
         let mut first = Vec::new();
-        reader
-            .read_until(b'\n', &mut first)
-            .map_err(|error| format!("cannot read the recording: {error}"))?;
+        read_line(&mut reader, &mut first, MAX_HEADER_LINE)
+            .map_err(|_| "not a rozi recording: the first line is too long".to_string())?;
         if !first.ends_with(b"\n") {
             return Err("not a rozi recording: the header is incomplete".to_string());
         }
@@ -58,6 +110,7 @@ impl<R: BufRead> RecordingReader<R> {
                 "recording is compressed with `{compression}`, which this rozi cannot read"
             ));
         }
+        check_cells("a recording", header.width, header.height)?;
         Ok(Self {
             reader,
             header,
@@ -80,10 +133,8 @@ impl<R: BufRead> RecordingReader<R> {
         let mut buffer = Vec::new();
         loop {
             buffer.clear();
-            let read = self
-                .reader
-                .read_until(b'\n', &mut buffer)
-                .map_err(|error| format!("cannot read the recording: {error}"))?;
+            let read = read_line(&mut self.reader, &mut buffer, MAX_EVENT_LINE)
+                .map_err(|error| format!("line {}: {error}", self.line + 1))?;
             if read == 0 {
                 return Ok(None);
             }
@@ -125,6 +176,11 @@ pub struct Replay<R> {
     reader: RecordingReader<R>,
     frame: Option<SpanFrame>,
     images: HashMap<String, RecordedImage>,
+    /// `images`' ids, oldest first, and the base64 bytes they hold.
+    image_order: VecDeque<String>,
+    image_bytes: usize,
+    image_budget: usize,
+    /// Pixels of the images the last drawn frame showed.
     decoded: HashMap<String, DecodedImage>,
     /// The time of the last event with one, so an ended recording's length is known without an
     /// `end` event.
@@ -137,6 +193,9 @@ impl<R: BufRead> Replay<R> {
             reader: RecordingReader::new(reader)?,
             frame: None,
             images: HashMap::new(),
+            image_order: VecDeque::new(),
+            image_bytes: 0,
+            image_budget: MAX_RETAINED_IMAGE_BYTES,
             decoded: HashMap::new(),
             last_t: 0,
         })
@@ -144,6 +203,12 @@ impl<R: BufRead> Replay<R> {
 
     pub fn header(&self) -> &RecordingHeader {
         self.reader.header()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_image_budget(mut self, bytes: usize) -> Self {
+        self.image_budget = bytes;
+        self
     }
 
     pub fn truncated(&self) -> bool {
@@ -182,7 +247,9 @@ impl<R: BufRead> Replay<R> {
         Ok(super::frame::captured_frame(frame, &self.decoded))
     }
 
+    /// Decode the images `ids` names, and let go of the pixels of any other.
     fn decode(&mut self, ids: &[String]) -> Result<(), String> {
+        self.decoded.retain(|id, _| ids.contains(id));
         for id in ids {
             if self.decoded.contains_key(id) {
                 continue;
@@ -193,8 +260,35 @@ impl<R: BufRead> Replay<R> {
             let png = base64::engine::general_purpose::STANDARD
                 .decode(&image.png_base64)
                 .map_err(|error| format!("image {id}: {error}"))?;
-            self.decoded
-                .insert(id.clone(), DecodedImage::from_png(&png)?);
+            let decoded = DecodedImage::from_png(&png, MAX_IMAGE_BYTES)
+                .map_err(|error| format!("image {id}: {error}"))?;
+            self.decoded.insert(id.clone(), decoded);
+        }
+        Ok(())
+    }
+
+    /// Keep `image` for the frames that show it, forgetting the oldest past the budget.
+    fn store(&mut self, image: RecordedImage) -> Result<(), String> {
+        let decoded = u64::from(image.pixel_width) * u64::from(image.pixel_height) * 4;
+        if decoded > MAX_IMAGE_BYTES as u64 {
+            return Err(format!(
+                "image {} of {}x{} pixels is larger than rozi reads",
+                image.id, image.pixel_width, image.pixel_height
+            ));
+        }
+        if self.images.contains_key(&image.id) {
+            return Ok(());
+        }
+        self.image_bytes += image.png_base64.len();
+        self.image_order.push_back(image.id.clone());
+        self.images.insert(image.id.clone(), image);
+        while self.image_bytes > self.image_budget
+            && let Some(oldest) = self.image_order.pop_front()
+        {
+            if let Some(forgotten) = self.images.remove(&oldest) {
+                self.image_bytes -= forgotten.png_base64.len();
+            }
+            self.decoded.remove(&oldest);
         }
         Ok(())
     }
@@ -207,6 +301,7 @@ impl<R: BufRead> Replay<R> {
             }
             match event {
                 RecordingEvent::Keyframe { t, frame } => {
+                    check_frame(&frame)?;
                     self.frame = Some(frame);
                     return Ok(Some(ReplayStep::Frame { t }));
                 }
@@ -215,12 +310,13 @@ impl<R: BufRead> Replay<R> {
                         .frame
                         .as_mut()
                         .ok_or_else(|| "a delta precedes the first keyframe".to_string())?;
+                    if let Some(images) = &delta.images {
+                        check_images(images)?;
+                    }
                     apply_delta(frame, &delta)?;
                     return Ok(Some(ReplayStep::Frame { t: delta.t }));
                 }
-                RecordingEvent::Image(image) => {
-                    self.images.insert(image.id.clone(), image);
-                }
+                RecordingEvent::Image(image) => self.store(image)?,
                 RecordingEvent::Mark { t, label } => {
                     return Ok(Some(ReplayStep::Mark { t, label }));
                 }

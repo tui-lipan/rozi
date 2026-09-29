@@ -25,9 +25,12 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
-    /// Decode an 8-bit RGB or RGBA PNG.
-    pub fn from_png(bytes: &[u8]) -> std::result::Result<Self, String> {
-        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    /// Decode an 8-bit RGB or RGBA PNG, allocating at most `max_bytes` for it.
+    pub fn from_png(bytes: &[u8], max_bytes: usize) -> std::result::Result<Self, String> {
+        let decoder = png::Decoder::new_with_limits(
+            std::io::Cursor::new(bytes),
+            png::Limits { bytes: max_bytes },
+        );
         let mut reader = decoder
             .read_info()
             .map_err(|error| format!("invalid image: {error}"))?;

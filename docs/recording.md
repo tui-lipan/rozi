@@ -62,6 +62,7 @@ recordings but not start, stop, or mark one.
 | **Mark pane recording…** | Asks for a label and marks the focused pane's recordings with it. |
 | **Start UI recording** | Starts recording this whole UI, with the file named by rozi. |
 | **Stop UI recording** | Shown instead while the UI records. |
+| **Mark UI recording…** | Asks for a label and marks the UI recording with it. Shown while the UI records. |
 
 The pane commands appear only when the focused pane can be recorded: the UI is attached to a session, it
 is not attached read-only, and the pane is not a scratch or popup pane. **Mark pane recording…** also
@@ -73,8 +74,12 @@ to copy the full path. When stopping several recordings, it copies all paths, on
 session on another host, the title names that host and the copied paths are on that host. A command
 that fails shows why.
 
-They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`, or
-`toggle-ui-recording` under
+A pane recording that ends without being stopped also shows a toast with its path in every UI
+attached to the session: when it reaches its duration or size limit, when its pane exits or
+closes, or when writing fails, such as on a full disk. A failure shows the error above the path.
+
+They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`,
+`toggle-ui-recording`, or `mark-ui-recording` under
 [`[keys]`](keybindings.md#rebind-a-command), for example to `Ctrl+A`, then `Shift+R`:
 
 ```toml
@@ -99,8 +104,9 @@ the sidebar, toasts, and any open overlay, as `capture-ui` would photograph them
 your machine, like a screenshot, even when the session is on another host, and it lasts only as
 long as that rozi runs.
 
-In rozi, open the command palette and run **Start UI recording**. A toast says where the file is;
-run **Stop UI recording** to finish. From a shell inside rozi:
+In rozi, open the command palette and run **Start UI recording**. A toast says where the file is.
+Run **Mark UI recording…** to label the current moment, and **Stop UI recording** to finish. From a
+shell inside rozi:
 
 ```sh
 rozi record start ui
@@ -125,10 +131,17 @@ below is written at once. The recording also notes, with their times:
 - switching workspace, with its number and name;
 - an overlay, such as the palette or Settings, opening and closing.
 
-The recording holds exactly what the terminal showed, so the `REC` indicator is in it too. Leaving
-it out would mean drawing every frame a second time, and that frame would no longer be the one you
-saw. Everything on screen is recorded, secrets included; see
-[What a recording holds](#what-a-recording-holds).
+The recording holds exactly what the terminal showed, so the `REC` indicator is in it too. For a
+demo without it, hide it for one recording:
+
+```sh
+rozi record start ui --hide-indicator
+```
+
+or for every UI recording, including **Start UI recording**, with `ui_indicator = false` under
+[`[recording]`](configuration.md#recording). A hidden indicator is hidden on your screen as well:
+nothing shows that the UI is recording, so make sure you remember to stop it. Everything on screen
+is recorded, secrets included; see [What a recording holds](#what-a-recording-holds).
 
 A UI recording ends when you stop it, when it reaches its duration or size, or when rozi exits,
 which waits up to five seconds for the file to be finished. Switching sessions does not end it.
@@ -298,6 +311,12 @@ cast markers, which players list as chapters to jump to, and when the pane chang
 terminal changes size with it. Neither export replaces existing files unless you pass `--force`.
 
 Export and play read the file on the machine you run them on and need no session.
+
+A recording can come from someone else, such as a bug report, so both refuse a file with a line
+longer than 64 MiB, a screen of more than 1,048,576 cells, or an image larger than 64 MiB decoded.
+Of the images a recording has shown, they keep up to 256 MiB for the frames still to come; past
+that the oldest are dropped, and a later frame shows a dropped image as its half-block
+approximation. rozi never writes a recording beyond these limits.
 
 ## Cost
 

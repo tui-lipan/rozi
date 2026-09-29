@@ -83,6 +83,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Stop at this size ([recording] max_bytes)",
             ),
             row("    --force", "Replace an existing file"),
+            row(
+                "    --hide-indicator",
+                "Keep REC off screen and out of a UI recording",
+            ),
             row("    --id <ID>", "A recording, from record list"),
             row("    --ui", "Stop or mark the UI recording"),
             row("    --scale <N>", "PNG frame scale, 1 to 3 (1)"),
@@ -276,6 +280,7 @@ struct StartOptions {
     duration_ms: Option<u64>,
     max_bytes: Option<u64>,
     force: bool,
+    hide_indicator: bool,
 }
 
 fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String> {
@@ -291,6 +296,7 @@ fn parse_start(args: Vec<String>, foreground: bool) -> Result<RecordArgs, String
         duration_ms,
         max_bytes,
         force,
+        ..
     } = parse_start_options(args, name, true)?;
     if force && output.is_none() {
         return Err(format!(
@@ -319,6 +325,7 @@ fn parse_start_ui(args: Vec<String>) -> Result<RecordArgs, String> {
         duration_ms,
         max_bytes,
         force,
+        hide_indicator,
         ..
     } = parse_start_options(args, "record start ui", false)?;
     if force && output.is_none() {
@@ -334,6 +341,7 @@ fn parse_start_ui(args: Vec<String>) -> Result<RecordArgs, String> {
             duration_ms,
             max_bytes,
             force,
+            hide_indicator,
         },
         output_format: None,
         foreground: false,
@@ -354,6 +362,7 @@ fn parse_start_options(
         duration_ms,
         max_bytes,
         force,
+        hide_indicator,
     } = &mut options;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -380,6 +389,13 @@ fn parse_start_options(
                 *max_bytes = Some(parse_size(&value)?);
             }
             "--force" => *force = true,
+            "--hide-indicator" if !takes_target => *hide_indicator = true,
+            "--hide-indicator" => {
+                return Err(
+                    "--hide-indicator applies to record start ui; a pane recording holds no REC chip"
+                        .to_string(),
+                );
+            }
             other => return Err(format!("unexpected argument `{other}` after {name}")),
         }
     }
@@ -681,6 +697,7 @@ mod tests {
             "relative.rozirec",
             "--max-fps",
             "12",
+            "--hide-indicator",
         ]) else {
             panic!("expected a UI recording start");
         };
@@ -693,6 +710,7 @@ mod tests {
                 duration_ms: None,
                 max_bytes: None,
                 force: false,
+                hide_indicator: true,
             },
             "a UI records on this machine, so a relative path is resolved here"
         );
@@ -722,6 +740,10 @@ mod tests {
             ),
             (&["record", "start", "ui", "--target", "3"][..], "--target"),
             (&["record", "start", "ui", "--force"][..], "--force"),
+            (
+                &["--session", "dev", "record", "start", "--hide-indicator"][..],
+                "record start ui",
+            ),
             (&["record", "stop", "--ui", "--id", "1"][..], "--ui"),
             (
                 &["record", "mark", "x", "--ui", "--target", "3"][..],

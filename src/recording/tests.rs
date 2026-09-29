@@ -834,6 +834,99 @@ fn a_reader_refuses_frames_newer_than_it_reads() {
     assert!(refused.contains("rozi-spans"), "{refused}");
 }
 
+/// Step through `events` after a valid header, and say why reading stopped.
+fn refusal(events: &[serde_json::Value]) -> String {
+    let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
+    file.push(b'\n');
+    for event in events {
+        file.extend_from_slice(&serde_json::to_vec(event).unwrap());
+        file.push(b'\n');
+    }
+    let mut replay = Replay::new(BufReader::new(file.as_slice())).unwrap();
+    loop {
+        match replay.step() {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("read to the end"),
+            Err(error) => return error,
+        }
+    }
+}
+
+#[test]
+fn a_reader_refuses_a_line_frame_or_image_too_large_to_hold() {
+    // A line past the ceiling is refused before it is parsed, or even held whole.
+    let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
+    file.push(b'\n');
+    let endless = std::io::Read::chain(
+        file.as_slice(),
+        std::io::Read::take(std::io::repeat(b' '), read::MAX_EVENT_LINE as u64 + 2),
+    );
+    let mut reader = RecordingReader::new(BufReader::new(endless)).unwrap();
+    let refused = reader.next_event().unwrap_err();
+    assert!(refused.contains("longer than"), "{refused}");
+
+    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    (frame.width, frame.height) = (2048, 1024);
+    let refused =
+        refusal(&[serde_json::to_value(RecordingEvent::Keyframe { t: 0, frame }).unwrap()]);
+    assert!(refused.contains("2048x1024 cells"), "{refused}");
+
+    let refused = refusal(&[serde_json::json!({
+        "kind": "image",
+        "t": 0,
+        "id": "huge",
+        "pixel_width": 16384,
+        "pixel_height": 16384,
+        "png_base64": "",
+    })]);
+    assert!(refused.contains("16384x16384 pixels"), "{refused}");
+
+    let mut file = serde_json::to_vec(&header(4096, 4096)).unwrap();
+    file.push(b'\n');
+    assert!(Replay::new(BufReader::new(file.as_slice())).is_err());
+}
+
+#[test]
+fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
+    let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
+    file.push(b'\n');
+    for id in ["old", "new"] {
+        let image = RecordingEvent::Image(format::RecordedImage {
+            t: 0,
+            id: id.to_string(),
+            pixel_width: 1,
+            pixel_height: 1,
+            png_base64: "A".repeat(600),
+        });
+        file.extend_from_slice(&serde_json::to_vec(&image).unwrap());
+        file.push(b'\n');
+    }
+    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    frame.images = ["old", "new"]
+        .map(|id| crate::control::SpanImage {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            pixel_width: 1,
+            pixel_height: 1,
+            visible: None,
+            png_base64: None,
+            id: Some(id.to_string()),
+        })
+        .to_vec();
+    file.extend_from_slice(&serde_json::to_vec(&RecordingEvent::Keyframe { t: 0, frame }).unwrap());
+    file.push(b'\n');
+
+    let mut replay = Replay::new(BufReader::new(file.as_slice()))
+        .unwrap()
+        .with_image_budget(1000);
+    assert!(matches!(replay.step(), Ok(Some(ReplayStep::Frame { .. }))));
+    // The forgotten image is skipped; the kept one is decoded, and its garbage refused.
+    let refused = replay.frame_images().unwrap_err();
+    assert!(refused.starts_with("image new:"), "{refused}");
+}
+
 #[test]
 fn a_cast_resizes_its_terminal_with_the_pane_and_keeps_marks() {
     let (dir, path) = scratch();

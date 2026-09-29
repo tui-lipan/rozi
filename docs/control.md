@@ -176,7 +176,7 @@ attached.
 | `record list [--format text\|json]` | List running recordings. | yes |
 | `record mark TEXT [--id ID \| --target ID]` | Label the current moment of running recordings. | yes |
 | `record stop [--id ID \| --target ID]` | Stop recordings once their files are complete. | yes |
-| `record start ui [--output FILE [--force]] [--max-fps N] [--duration DUR] [--max-bytes SIZE]` | Record the UI as it paints, chrome included. | no |
+| `record start ui [--output FILE [--force]] [--max-fps N] [--duration DUR] [--max-bytes SIZE] [--hide-indicator]` | Record the UI as it paints, chrome included. | no |
 | `record mark --ui TEXT` | Label the current moment of the UI recording. | no |
 | `record stop --ui` | Stop the UI recording once its file is complete. | no |
 | `record export FILE --to png-frames DIR [--scale 1-3] \| --to cast OUT [--force]` | Export a recording. | — |
@@ -219,8 +219,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 11,
-  "session_protocol": 19,
+  "schema": 13,
+  "session_protocol": 20,
   "capabilities": [
     "agent-waits",
     "attached-control",

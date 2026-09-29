@@ -608,6 +608,12 @@ impl SessionServer {
                     stop.stopped.push(stopped.clone());
                 }
             }
+            // A stopped recording answered whoever stopped it. One that ended by itself would
+            // otherwise only lose its `REC`, so every UI hears how and where it went.
+            if stopped.reason != EndReason::Stopped {
+                let message = ServerMessage::RecordingEnded { stopped };
+                self.broadcast_outbound(&ServerOutbound::control(message));
+            }
             self.sync_recording_flag(recording.pane_id);
         }
         let (done, waiting) = std::mem::take(&mut self.recording_stops)
@@ -847,6 +853,17 @@ mod tests {
             .collect()
     }
 
+    /// The recordings every UI was told ended on their own.
+    fn ended(server: &SessionServer, client: ClientId) -> Vec<RecordingStopped> {
+        outbox(server, client)
+            .into_iter()
+            .filter_map(|message| match message {
+                ServerMessage::RecordingEnded { stopped } => Some(stopped),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn attached(server: &mut SessionServer) -> ClientId {
         let (client, stream) = add_client(server);
         std::mem::forget(stream);
@@ -932,6 +949,10 @@ mod tests {
         assert_eq!(stopped.totals.marks, 1);
         assert!(!server.panes[&3].runtime.recording);
         assert_eq!(runtime_flags(&server, watcher), [true, false]);
+        assert!(
+            ended(&server, watcher).is_empty(),
+            "a stopped recording answered its stopper"
+        );
 
         let (frames, _, marks, end) = replay(&path);
         assert_eq!(frames, ["$", "$ make", "$ make\ndone"]);
@@ -971,6 +992,7 @@ mod tests {
             max_fps: 7,
             duration_ms: 90_000,
             max_bytes: 2 * 1024 * 1024,
+            ui_indicator: true,
         };
         let (client, _stream) = add_client(&mut server);
 
@@ -1481,6 +1503,27 @@ mod tests {
         assert!(ask(&mut server, client, start(&shutdown, None, false))[0].ok);
         server.finish_recordings_for_shutdown(EndReason::ServerShutdown);
         assert_eq!(replay(&shutdown).3.reason, EndReason::ServerShutdown);
+    }
+
+    #[test]
+    fn a_recording_that_ends_by_itself_tells_every_ui_how_and_where() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("limit.rozirec");
+        let mut server = server();
+        let watcher = attached(&mut server);
+        let (client, _stream) = add_client(&mut server);
+        let mut command = start(&path, None, false);
+        if let ControlCommand::RecordStart { duration_ms, .. } = &mut command {
+            *duration_ms = Some(20);
+        }
+        assert!(ask(&mut server, client, command)[0].ok);
+        std::thread::sleep(Duration::from_millis(30));
+        pump_until_finished(&mut server);
+
+        let [ended] = ended(&server, watcher).try_into().unwrap();
+        assert_eq!(ended.reason, EndReason::Duration);
+        assert_eq!(ended.path, path.display().to_string());
+        assert_eq!(runtime_flags(&server, watcher), [true, false]);
     }
 
     #[test]

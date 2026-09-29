@@ -385,9 +385,13 @@ pub(crate) fn recording_mark_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(prompt) = ctx.state.recording_mark.as_ref() else {
         return Text::new("").into();
     };
+    let title = match prompt.target {
+        crate::state::RecordingMarkTarget::Pane(_) => "Mark pane recording",
+        crate::state::RecordingMarkTarget::Ui => "Mark UI recording",
+    };
     prompt_overlay(
         ctx,
-        PromptChrome::new("Mark pane recording", "Label", &[("mark", "enter")]),
+        PromptChrome::new(title, "Label", &[("mark", "enter")]),
         &prompt.input,
         recording_mark_input_key(),
         Msg::RecordingMarkChanged,

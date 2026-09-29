@@ -159,7 +159,7 @@ pub(crate) enum UiRecordingChip {
 
 /// Where the UI recording indicator goes while the UI records itself.
 pub(crate) fn ui_recording_chip(state: &crate::state::State) -> Option<UiRecordingChip> {
-    if !crate::ops::ui_recording::is_recording(state) {
+    if !crate::ops::ui_recording::shows_indicator(state) {
         return None;
     }
     let cover = super::fullscreen_pane(state.active_workspace_ref());
@@ -174,7 +174,7 @@ pub(crate) fn ui_recording_chip(state: &crate::state::State) -> Option<UiRecordi
 /// `REC`, so the chip never relies on its color alone. The dot blinks as a pane's does, by giving way
 /// to blanks of its own width, and holds steady whenever motion is off.
 pub(crate) fn ui_recording_label(state: &crate::state::State) -> Option<String> {
-    if !crate::ops::ui_recording::is_recording(state) {
+    if !crate::ops::ui_recording::shows_indicator(state) {
         return None;
     }
     let icon = state.config.recording_icon();

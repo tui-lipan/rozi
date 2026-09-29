@@ -1161,6 +1161,17 @@
               "default": false,
               "type": "boolean"
             },
+            "size": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneSize"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The terminal size the pane starts at, instead of the size its tile will get.\n\nWhat this is for: a pane no UI draws - one in a workspace nobody is looking at, or one a\ndetached session opened - never gets a tile to measure, so it keeps its spawn size. A\nscript that captures such a pane chooses that size here, including sizes no window\ncould show. Once a UI draws the pane, the tile decides its size as it does for any other."
+            },
             "title": {
               "type": [
                 "string",
@@ -2488,6 +2499,17 @@
             "keep_open": {
               "default": false,
               "type": "boolean"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneSize"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The terminal size the pane starts at, instead of the size its tile will get.\n\nWhat this is for: a pane no UI draws - one in a workspace nobody is looking at, or one a\ndetached session opened - never gets a tile to measure, so it keeps its spawn size. A\nscript that captures such a pane chooses that size here, including sizes no window\ncould show. Once a UI draws the pane, the tile decides its size as it does for any other."
             },
             "title": {
               "type": [
@@ -4072,6 +4094,28 @@
       "required": [
         "changed",
         "workspace"
+      ],
+      "type": "object"
+    },
+    "PaneSize": {
+      "description": "A terminal size in cells, as `split --size COLSxROWS` spells it.",
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cols",
+        "rows"
       ],
       "type": "object"
     },
@@ -5882,5 +5926,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 13
+  "x-rozi-schema-version": 14
 }

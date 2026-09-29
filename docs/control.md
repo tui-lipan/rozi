@@ -219,8 +219,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 13,
-  "session_protocol": 20,
+  "schema": 14,
+  "session_protocol": 21,
   "capabilities": [
     "agent-waits",
     "attached-control",
@@ -231,11 +231,13 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-wait",
     "layout-control",
     "pane-control",
+    "pane-reveal",
     "published-activity",
     "record-pane",
     "record-ui",
     "remote-control",
-    "session-control"
+    "session-control",
+    "split-size"
   ]
 }
 ```
@@ -311,6 +313,7 @@ answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `P
 | `--workspace 1-9` | Open the pane in that workspace. |
 | `--focus` | Focus the new pane. |
 | `--keep-open` | Keep the pane after its process exits. |
+| `--size COLSxROWS` | Start the pane at this terminal size, 1 to 1000 cells per side. |
 | `--argv PROGRAM [ARG...]` | Run a program directly, without a shell. |
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
@@ -323,6 +326,29 @@ rozi split --workspace 9 --focus --argv cargo test -- --nocapture
 
 The reply waits up to five seconds for the pane's process to be ready. `pty_ready: false` means the
 pane exists but has not reported ready yet.
+
+### Choose the size of a pane
+
+A pane takes the size of the tile a UI draws it in. A pane nobody is looking at — one in a
+workspace that is not on screen, or one in a detached session — has no tile, so it keeps the size
+it started at. Without `--size`, that is 120×32 in a UI, or the size of the session's other panes
+in a detached session.
+
+`--size` sets that starting size, including sizes larger than any window, so a script can capture
+a program's whole screen at once:
+
+```sh
+pane=$(rozi split --workspace 9 --size 100x220 --argv my-tui | jq -r '.data.id')
+rozi capture-pane --target "$pane" --settle 500ms --timeout 10s
+```
+
+The size holds until a UI draws the pane. Opening it in the workspace on screen, or switching to
+its workspace later, resizes it to its tile like any other pane.
+
+A session server started by an older rozi refuses `rozi --session <NAME> split` with
+`protocol-mismatch`, so a sized pane never silently opens at the wrong size. A UI that is still
+running an older rozi does not know the field, and opens the pane at its default size; restart it
+after upgrading.
 
 ### Open a pane in a detached session
 

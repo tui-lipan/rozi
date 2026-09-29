@@ -27,6 +27,8 @@ pub enum PendingSessionAction {
         focus: bool,
         /// Zero-based, already validated by the control command that asked for it.
         workspace: Option<usize>,
+        /// Already validated by the control command that asked for it.
+        size: Option<crate::control::PaneSize>,
     },
     Popup {
         command: String,

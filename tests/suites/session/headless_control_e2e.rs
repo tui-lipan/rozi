@@ -102,6 +102,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
             keep_open: false,
             focus: false,
             workspace: Some(2),
+            size: None,
         },
     );
     assert_eq!(spawned["accepted"], serde_json::json!(true));
@@ -240,6 +241,7 @@ fn a_detached_session_captures_its_screen_as_ansi_png_and_spans() {
             keep_open: true,
             focus: false,
             workspace: None,
+            size: None,
         },
     );
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
@@ -334,6 +336,7 @@ fn a_detached_session_reports_its_arrangement_without_any_client() {
                 keep_open: false,
                 focus: false,
                 workspace: Some(3),
+                size: None,
             },
         );
         spawned.push(data["id"].as_u64().expect("spawn reported a pane id"));
@@ -389,6 +392,7 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
                 keep_open: false,
                 focus: false,
                 workspace: Some(1),
+                size: None,
             },
         );
         panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
@@ -478,6 +482,7 @@ fn a_detached_session_can_close_a_pane_without_any_client() {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
@@ -558,6 +563,7 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     );
     assert!(!refused.ok, "a controller is driving this session");
@@ -592,6 +598,7 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         if response.ok || Instant::now() >= deadline {
@@ -681,6 +688,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     )["id"]
         .as_u64()
@@ -695,6 +703,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     );
 
@@ -778,6 +787,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     )["id"]
         .as_u64()
@@ -805,6 +815,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     )["id"]
         .as_u64()
@@ -876,6 +887,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     );
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;

@@ -78,6 +78,7 @@ fn a_recording_without_a_path_is_named_in_the_state_directory_and_stops_by_its_p
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         }),
     )
     .expect("the session answered");

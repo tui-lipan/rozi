@@ -130,6 +130,21 @@ mod tests {
         );
     }
 
+    /// A schema-validated `new-pane` must not pass a size the endpoint then refuses.
+    #[test]
+    fn a_pane_size_is_bounded_as_the_endpoint_checks_it() {
+        let bundle = bundle();
+        let properties = &bundle["$defs"]["PaneSize"]["properties"];
+        for side in ["cols", "rows"] {
+            assert_eq!(properties[side]["minimum"], 1, "{side} minimum");
+            assert_eq!(
+                properties[side]["maximum"],
+                crate::control::MAX_PANE_SIZE_CELLS,
+                "{side} maximum"
+            );
+        }
+    }
+
     /// Two rules the bundle is meant to follow, in the two directions that matter.
     ///
     /// Closed vocabularies - error codes, agent states, event names - are exactly where a schema

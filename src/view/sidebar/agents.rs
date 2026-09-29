@@ -629,20 +629,12 @@ fn group_header(ctx: &Context<AppRoot>, group: &AgentGroup) -> Element {
     let Some(label) = group.project.as_deref() else {
         return row::header(ctx, "elsewhere", true);
     };
+    // The project name is what the group is; the branch qualifies it and takes whatever width the
+    // name leaves, down to nothing.
     match group.branch.as_deref() {
-        Some(branch) => row::header_with_note(
-            ctx,
-            label,
-            row::truncate_start(branch, branch_budget(ctx.state.sidebar_requested_width())),
-        ),
+        Some(branch) => row::header_with_note(ctx, label, branch.trim(), row::Priority::Label),
         None => row::header(ctx, label, false),
     }
-}
-
-/// Character budget for the branch on a project header. Half the sidebar is the most a branch may
-/// take from the project name beside it; below that the pair stops being two readable things.
-fn branch_budget(width: u16) -> usize {
-    (usize::from(width) / 2).max(6)
 }
 
 /// How much of a row's in-project path may sit in the badge, before width forces it shorter.
@@ -659,9 +651,9 @@ const SUBPATH_MAX_CHARS: usize = 12;
 /// address, and unlike a path it cannot be guessed from the row above. So the subpath yields to it
 /// rather than the pair being clipped together from the right, which is what dropped the number.
 fn subpath_budget(width: u16, name: &str, duration: Option<&str>, workspace: &str) -> usize {
-    // Gutter, glyph, their gaps, the divider, the scrollbar column, and the ` · ` joining the
-    // subpath to the workspace number.
-    let chrome = 10;
+    // Gutter, glyph, their gaps, the divider, the scrollbar column, the gap holding the badge off
+    // the name, and the ` · ` joining the subpath to the workspace number.
+    let chrome = 13;
     let taken = name.chars().count()
         + workspace.chars().count()
         + duration.map_or(0, |text| text.chars().count() + 1);
@@ -1321,20 +1313,6 @@ mod tests {
         assert_eq!(groups[1].project.as_deref(), Some("notes"));
         assert_eq!(groups[1].branch, None);
         assert!(groups[1].rows[0].subpath.is_none());
-    }
-
-    /// The branch column may take at most half the header, and keeps the tail of a long branch
-    /// name — `feat/pricing-v2` and `feat/pricing-v3` differ only there.
-    #[test]
-    fn branch_budget_splits_the_header_and_keeps_the_distinguishing_tail() {
-        assert_eq!(branch_budget(32), 16);
-        assert_eq!(branch_budget(48), 24);
-        assert_eq!(branch_budget(2), 6, "a floor, never zero");
-        assert_eq!(row::truncate_start("master", branch_budget(32)), "master");
-        assert_eq!(
-            row::truncate_start("feat/show-working-directory-v2", branch_budget(32)),
-            "…ng-directory-v2"
-        );
     }
 
     #[test]

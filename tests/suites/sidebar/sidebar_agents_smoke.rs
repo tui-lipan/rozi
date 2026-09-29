@@ -297,9 +297,10 @@ fn agents_tab_heads_projects_with_their_branch() {
             assert!(sidebar.iter().any(|line| line.contains("src/view · 1")));
             // A worktree is a separate group, and the branch is what tells the two apart.
             let worktree = line_index("rozi-wt");
-            // Too long for half the header, so it keeps the tail — the end of a branch name is
-            // what distinguishes it from its neighbours.
-            assert!(sidebar[worktree].contains("…/agent-branches"));
+            // The branch takes whatever width the project name leaves rather than a fixed share of
+            // the header, held off the name by a three-cell gap.
+            let header = &sidebar[worktree];
+            assert!(header.contains("rozi-wt   ") && header.contains("feat/agent-branches"));
             assert!(worktree < line_index("OpenCode"));
         })
         .expect("spawn agents branch smoke thread")

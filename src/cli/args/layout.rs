@@ -74,23 +74,24 @@ pub(super) fn parse_layout_args(iter: &mut impl Iterator<Item = String>) -> Pars
     ))
 }
 
-/// `pane set|move|swap|close --target <ID> ...`.
+/// `pane set|move|swap|close|reveal --target <ID> ...`.
 ///
 /// `set` takes `[--floating B] [--fullscreen B] [--rect X,Y,W,H] [--rect-fraction X,Y,W,H]`,
-/// `move` takes `--workspace <1-9>`, and `swap` takes `--with <ID>`. Every one takes
-/// `[--if-revision N]`.
+/// `move` takes `--workspace <1-9>`, and `swap` takes `--with <ID>`. Every one but `reveal`, which
+/// changes only this UI's view, takes `[--if-revision N]`.
 pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed {
-    let subcommand = iter
-        .next()
-        .ok_or_else(|| "pane requires a subcommand (set, move, swap, or close)".to_string())?;
+    let subcommand = iter.next().ok_or_else(|| {
+        "pane requires a subcommand (set, move, swap, close, or reveal)".to_string()
+    })?;
     let command = match subcommand.as_str() {
         "set" => "pane set",
         "move" => "pane move",
         "swap" => "pane swap",
         "close" => "pane close",
+        "reveal" => "pane reveal",
         other => {
             return Err(format!(
-                "unknown pane subcommand `{other}`; expected set, move, swap, or close"
+                "unknown pane subcommand `{other}`; expected set, move, swap, close, or reveal"
             ));
         }
     };
@@ -135,7 +136,7 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
                 parse_ratio(iter, "--width-ratio")?,
                 "--width-ratio",
             )?,
-            "--if-revision" => flags.if_revision(iter)?,
+            "--if-revision" if command != "pane reveal" => flags.if_revision(iter)?,
             "--format" => flags.format(iter)?,
             other => return Err(format!("unexpected argument `{other}` after {command}")),
         }
@@ -167,6 +168,7 @@ pub(super) fn parse_pane_args(iter: &mut impl Iterator<Item = String>) -> Parsed
             with: with.ok_or_else(|| "pane swap requires --with <PANE_ID>".to_string())?,
             if_revision,
         },
+        "pane reveal" => ControlCommand::PaneReveal { target },
         _ => ControlCommand::PaneClose {
             target,
             if_revision,

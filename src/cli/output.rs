@@ -772,6 +772,23 @@ pub(super) fn format_control_text(
         | control::ControlCommand::PaneMove { .. }
         | control::ControlCommand::PaneSwap { .. } => format_layout_change_text(data, styles),
         control::ControlCommand::PaneClose { .. } => format_pane_closed_text(data, styles),
+        control::ControlCommand::PaneReveal { target } => {
+            let changed = data
+                .and_then(|data| data.get("changed"))
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+            if changed {
+                format!(
+                    "{}\n",
+                    styles.paint(&format!("Revealed pane {target}"), OutputTone::Success)
+                )
+            } else {
+                format!(
+                    "{}\n",
+                    styles.paint(&format!("Pane {target} already in view"), OutputTone::Muted)
+                )
+            }
+        }
         control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
             format_agents_text(data, styles)
         }

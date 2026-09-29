@@ -155,6 +155,7 @@ attached.
 | `pane move --target ID --workspace 1-9 [--if-revision N]` | Move a pane to another workspace. | yes |
 | `pane swap --target ID --with ID [--if-revision N]` | Exchange two tiled panes. | yes |
 | `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
+| `pane reveal --target ID` | Scroll a Scrollable strip to a pane without focusing it. | no |
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
@@ -487,6 +488,19 @@ workspace it is already in is `changed: false`.
 `pane swap --with ID` exchanges two tiled panes in one workspace: each takes the other's tile and
 position in the tiling order. Anything else, including a floating pane or panes in different
 workspaces, fails with `invalid-argument`.
+
+`pane reveal` scrolls the pane's Scrollable strip so the pane is in view, without focusing it. The
+strip scrolls just far enough, as when you focus a partly hidden column. It changes only this UI's
+view, so it needs no layout control, creates no revision, and `--if-revision` does not apply. On a
+workspace that is not on screen, the pane is shown when you switch to it. The reply is
+`{ "changed": bool, "workspace": N }`; `changed` is `false` when the pane was already in view,
+floats, or sits in a layout that shows every tile. Focus is unchanged, so the strip scrolls back
+to the focused pane when it next scrolls to follow focus, such as when you type into it or move
+focus.
+
+```sh
+rozi pane reveal --target 7
+```
 
 `pane close` ends the pane's process and removes it from the layout. The request is the
 confirmation, so `[confirm]` is not consulted. It replies with the closed `id`, the new `revision`,

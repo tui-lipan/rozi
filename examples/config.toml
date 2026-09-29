@@ -438,6 +438,8 @@
 #duration = "24h"
 # Stop before the file grows past this, at least 64KiB.
 #max_bytes = "1GiB"
+# Show a UI recording's REC chip, on screen and so in the recording. Applies to UI recordings only.
+#ui_indicator = true
 
 # Per-alias SSH overrides, matched by a bare `--remote <alias>`. Repeat the table per host.
 [remote.hosts.workbox]

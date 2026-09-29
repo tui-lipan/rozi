@@ -814,6 +814,9 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             ServerMessage::RuntimeMetrics { metrics } => {
                 Msg::SessionRuntimeMetrics { epoch, metrics }
             }
+            ServerMessage::RecordingEnded { stopped } => {
+                Msg::SessionRecordingEnded { epoch, stopped }
+            }
             ServerMessage::DirectoryListing {
                 path,
                 entries,

@@ -169,7 +169,7 @@ pub(crate) fn clear_pane_local_state(state: &mut State, id: PaneId) {
     if state
         .recording_mark
         .as_ref()
-        .is_some_and(|prompt| prompt.target == id)
+        .is_some_and(|prompt| prompt.target == crate::state::RecordingMarkTarget::Pane(id))
     {
         state.recording_mark = None;
     }

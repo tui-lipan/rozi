@@ -794,4 +794,9 @@ pub enum Msg {
         epoch: u64,
         session: String,
     },
+    /// A pane recording in a session ended on its own.
+    SessionRecordingEnded {
+        epoch: u64,
+        stopped: crate::control::RecordingStopped,
+    },
 }

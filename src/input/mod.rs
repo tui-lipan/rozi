@@ -139,6 +139,8 @@ pub enum Action {
     MarkPaneRecording,
     /// Start recording this whole UI as it paints, or stop that recording.
     ToggleUiRecording,
+    /// Add a labelled mark to this UI's recording.
+    MarkUiRecording,
     /// Runs `config.commands[index]`. The stable runtime id lives in config and is registered
     /// explicitly, so this index-bearing action remains `Copy`.
     RunNamedCommand(usize),
@@ -271,6 +273,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::TogglePaneRecording,
     Action::MarkPaneRecording,
     Action::ToggleUiRecording,
+    Action::MarkUiRecording,
 ];
 
 impl Action {
@@ -404,6 +407,7 @@ impl Action {
             Action::TogglePaneRecording => "toggle-pane-recording",
             Action::MarkPaneRecording => "mark-pane-recording",
             Action::ToggleUiRecording => "toggle-ui-recording",
+            Action::MarkUiRecording => "mark-ui-recording",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)

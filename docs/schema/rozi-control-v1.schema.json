@@ -1806,6 +1806,10 @@
               "description": "Replace an existing regular file at `output`.",
               "type": "boolean"
             },
+            "hide_indicator": {
+              "description": "Leave the `REC` chip off the screen while this recording runs, and so out of it. Off,\n`[recording] ui_indicator` decides.",
+              "type": "boolean"
+            },
             "max_bytes": {
               "format": "uint64",
               "minimum": 0,
@@ -3128,6 +3132,10 @@
             },
             "force": {
               "description": "Replace an existing regular file at `output`.",
+              "type": "boolean"
+            },
+            "hide_indicator": {
+              "description": "Leave the `REC` chip off the screen while this recording runs, and so out of it. Off,\n`[recording] ui_indicator` decides.",
               "type": "boolean"
             },
             "max_bytes": {
@@ -5874,5 +5882,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 12
+  "x-rozi-schema-version": 13
 }

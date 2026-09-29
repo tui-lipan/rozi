@@ -1,4 +1,5 @@
-//! The Start/Stop pane recording and Mark pane recording commands.
+//! The Start/Stop pane recording and Mark pane recording commands, and the mark prompt Mark UI
+//! recording shares.
 //!
 //! A recording lives in the session server, so these send `record-*` down this UI's own attachment
 //! ([`crate::ops::attached_control`]) and show the server's answer as a toast. They name no file:
@@ -12,11 +13,15 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::control::{
     ControlCommand, ControlRequest, ControlResponse, RecordingInfo, RecordingStopList,
+    RecordingStopped,
 };
 use crate::ops::focus::{request_current_pane_focus, request_recording_mark_focus};
 use crate::pane::lifecycle::{find_pane, pane_is_local};
-use crate::pane::pty_events::{notify_error, notify_info, notify_path_info};
-use crate::state::{AttachedReply, Mode, PaneId, RecordingAction, RecordingMarkPrompt, State};
+use crate::pane::pty_events::{notify_error, notify_info, notify_path_error, notify_path_info};
+use crate::recording::EndReason;
+use crate::state::{
+    AttachedReply, Mode, PaneId, RecordingAction, RecordingMarkPrompt, RecordingMarkTarget, State,
+};
 
 /// How long a mark's blink holds the dot highlighted.
 const MARK_BLINK: Duration = Duration::from_millis(300);
@@ -116,6 +121,19 @@ pub(crate) fn open_mark_prompt(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = recording_command_target(&ctx.state) else {
         return Update::none();
     };
+    open_prompt(ctx, RecordingMarkTarget::Pane(target))
+}
+
+/// The Mark UI recording command. The UI recording is this client's own, so the mark needs no
+/// session.
+pub(crate) fn open_ui_mark_prompt(ctx: &mut Context<AppRoot>) -> Update {
+    if !crate::ops::ui_recording::is_recording(&ctx.state) {
+        return Update::none();
+    }
+    open_prompt(ctx, RecordingMarkTarget::Ui)
+}
+
+fn open_prompt(ctx: &mut Context<AppRoot>, target: RecordingMarkTarget) -> Update {
     ctx.state.recording_mark = Some(RecordingMarkPrompt {
         target,
         input: TextInput::new(""),
@@ -154,6 +172,18 @@ pub(crate) fn submit_mark_prompt(ctx: &mut Context<AppRoot>) -> Update {
     }
     let target = prompt.target;
     let update = close_mark_prompt(ctx);
+    let target = match target {
+        RecordingMarkTarget::Pane(pane) => pane,
+        RecordingMarkTarget::Ui => {
+            let response = crate::ops::ui_recording::mark_command(ctx, &label);
+            if response.ok {
+                notify_info(ctx, "UI recording marked");
+            } else {
+                notify_error(ctx, "Mark failed", response.error.unwrap_or_default());
+            }
+            return Update::full();
+        }
+    };
     send(
         ctx,
         ControlCommand::RecordMark {
@@ -206,19 +236,7 @@ pub(crate) fn answered(
         notify_error(ctx, title, response.error.unwrap_or_default());
         return Update::full();
     }
-    // A path on another host is shown as that host spells it; `~` would name this user's home.
-    let host = ctx
-        .state
-        .attachment_for_epoch(epoch)
-        .and_then(|attachment| attachment.remote_host.clone());
-    let shown = |path: &str| match host {
-        Some(_) => path.to_string(),
-        None => crate::platform::paths::compress_home(path),
-    };
-    let on_host = host
-        .as_deref()
-        .map(|host| format!(" on {host}"))
-        .unwrap_or_default();
+    let (shown, on_host) = where_shown(&ctx.state, epoch);
     match action {
         RecordingAction::Start(_) => {
             let path = response
@@ -238,16 +256,35 @@ pub(crate) fn answered(
             }
         }
         RecordingAction::Stop(_) => {
-            let paths = response
+            let stopped = response
                 .data
                 .and_then(|data| serde_json::from_value::<RecordingStopList>(data).ok())
-                .map(|list| {
-                    list.stopped
-                        .into_iter()
-                        .map(|stopped| stopped.path)
-                        .collect::<Vec<_>>()
-                })
+                .map(|list| list.stopped)
                 .unwrap_or_default();
+            // Finishing a stopped file can still fail, and that must not read as a clean stop.
+            let (failed, stopped): (Vec<_>, Vec<_>) = stopped
+                .into_iter()
+                .partition(|stopped| stopped.reason == EndReason::WriteFailed);
+            if !failed.is_empty() {
+                let message = failed
+                    .iter()
+                    .map(|failed| {
+                        let error = failed.error.as_deref().unwrap_or_default();
+                        format!("{error}\n{}", shown(&failed.path))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let paths = failed
+                    .iter()
+                    .map(|failed| failed.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                notify_path_error(ctx, format!("Recording failed{on_host}"), message, paths);
+                if stopped.is_empty() {
+                    return Update::full();
+                }
+            }
+            let paths: Vec<String> = stopped.into_iter().map(|stopped| stopped.path).collect();
             if paths.is_empty() {
                 notify_info(ctx, format!("Recording stopped{on_host}"));
             } else {
@@ -272,6 +309,61 @@ pub(crate) fn answered(
         }
     }
     Update::full()
+}
+
+/// A pane recording of attachment `epoch` ended on its own. Its `REC` would otherwise just
+/// disappear, so say how it ended and where the file is.
+pub(crate) fn ended(ctx: &mut Context<AppRoot>, epoch: u64, stopped: RecordingStopped) -> Update {
+    if ctx.state.attachment_for_epoch(epoch).is_none() {
+        return Update::none();
+    }
+    let (shown, on_host) = where_shown(&ctx.state, epoch);
+    let what = match stopped.reason {
+        EndReason::Stopped => return Update::none(),
+        EndReason::WriteFailed => {
+            let error = stopped.error.unwrap_or_default();
+            notify_path_error(
+                ctx,
+                format!("Recording failed{on_host}"),
+                format!("{error}\n{}", shown(&stopped.path)),
+                stopped.path,
+            );
+            return Update::full();
+        }
+        EndReason::Duration => "reached its duration",
+        EndReason::MaxBytes => "reached its size limit",
+        EndReason::PaneExited => "ended as its pane exited",
+        EndReason::PaneClosed => "ended as its pane closed",
+        _ => "ended",
+    };
+    notify_path_info(
+        ctx,
+        format!("Recording {what}{on_host}"),
+        shown(&stopped.path),
+        stopped.path,
+    );
+    Update::full()
+}
+
+/// How to show a path of attachment `epoch`'s session, and the ` on <host>` naming where it is. A
+/// path on another host is shown as that host spells it; `~` would name this user's home.
+fn where_shown(state: &State, epoch: u64) -> (impl Fn(&str) -> String + use<>, String) {
+    let host = state
+        .attachment_for_epoch(epoch)
+        .and_then(|attachment| attachment.remote_host.clone());
+    let on_host = host
+        .as_deref()
+        .map(|host| format!(" on {host}"))
+        .unwrap_or_default();
+    let remote = host.is_some();
+    let shown = move |path: &str| {
+        if remote {
+            path.to_string()
+        } else {
+            crate::platform::paths::compress_home(path)
+        }
+    };
+    (shown, on_host)
 }
 
 /// Highlight `pane`'s recording dot for a moment. The blink is chrome feedback, so it follows the
@@ -560,6 +652,84 @@ mod tests {
         });
     }
 
+    fn self_ended(
+        backend: &mut TestBackend<AppRoot>,
+        reason: crate::recording::EndReason,
+        error: Option<&str>,
+    ) {
+        let epoch = backend.state().runtime_epoch;
+        let pane = backend.state().focused_pane().unwrap();
+        backend
+            .dispatch(Msg::SessionRecordingEnded {
+                epoch,
+                stopped: RecordingStopped {
+                    id: 1,
+                    pane,
+                    path: "/srv/rec/work-pane-1.rozirec".into(),
+                    reason,
+                    elapsed_ms: 5,
+                    error: error.map(str::to_string),
+                    totals: Default::default(),
+                },
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_recording_ending_by_itself_says_how_and_where() {
+        on_large_stack(|| {
+            let (mut backend, _outbound) = attached(Some("devbox"));
+            self_ended(&mut backend, crate::recording::EndReason::MaxBytes, None);
+            self_ended(
+                &mut backend,
+                crate::recording::EndReason::WriteFailed,
+                Some("No space left on device"),
+            );
+            self_ended(&mut backend, crate::recording::EndReason::Stopped, None);
+            let mut shown = toasts(&backend);
+            shown.sort();
+            assert_eq!(
+                shown,
+                [
+                    "Recording failed on devbox No space left on device /srv/rec/work-pane-1.rozirec",
+                    "Recording reached its size limit on devbox /srv/rec/work-pane-1.rozirec",
+                ],
+                "a stop already answered whoever asked for it"
+            );
+        });
+    }
+
+    #[test]
+    fn a_stop_whose_file_failed_says_so_instead_of_stopped() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = attached(None);
+            let pane = set_recording(&mut backend, true);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePaneRecording))
+                .unwrap();
+            let [(request_id, _)] = sent(&outbound).try_into().unwrap();
+            answer(
+                &mut backend,
+                request_id,
+                RecordingStopList {
+                    stopped: vec![RecordingStopped {
+                        id: 1,
+                        pane,
+                        path: "/srv/rec/a.rozirec".into(),
+                        reason: EndReason::WriteFailed,
+                        elapsed_ms: 5,
+                        error: Some("No space left on device".into()),
+                        totals: Default::default(),
+                    }],
+                },
+            );
+            assert_eq!(
+                toasts(&backend),
+                ["Recording failed No space left on device /srv/rec/a.rozirec"]
+            );
+        });
+    }
+
     #[test]
     fn a_refused_start_says_why() {
         on_large_stack(|| {
@@ -612,7 +782,7 @@ mod tests {
                     .recording_mark
                     .as_ref()
                     .map(|prompt| prompt.target),
-                Some(focused)
+                Some(RecordingMarkTarget::Pane(focused))
             );
             backend.dispatch(Msg::SubmitRecordingMark).unwrap();
             assert!(sent(&outbound).is_empty(), "a mark needs a label");

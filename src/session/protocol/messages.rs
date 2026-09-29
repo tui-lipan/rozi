@@ -647,4 +647,10 @@ pub enum ServerMessage {
     RuntimeMetrics {
         metrics: ServerRuntimeMetrics,
     },
+    /// A pane recording ended without being stopped: it reached a limit, writing failed, or its
+    /// pane exited or closed. Broadcast so a UI can say so; a stopped recording already answered
+    /// whoever stopped it.
+    RecordingEnded {
+        stopped: crate::control::RecordingStopped,
+    },
 }

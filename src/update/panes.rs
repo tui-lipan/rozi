@@ -379,7 +379,7 @@ fn alert_pulse_should_run(state: &State) -> bool {
 /// view, in the chrome of a fullscreen pane covering a recording, on a workspace tab, or in the
 /// chip of a UI recording itself.
 fn visible_recording_dot(state: &State) -> bool {
-    if crate::ops::ui_recording::is_recording(state) {
+    if crate::ops::ui_recording::shows_indicator(state) {
         return true;
     }
     let workspace = state.active_workspace_ref();

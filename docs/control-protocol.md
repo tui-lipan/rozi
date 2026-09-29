@@ -360,8 +360,10 @@ refuses them with `unsupported`. `record-ui` in `rozi api describe` advertises t
 
 `record-ui-start` takes the `output`, `max_fps`, `duration_ms`, `max_bytes`, and `force` fields of
 `record-start`, with the UI's own `[recording]` settings for the ones left out and its own host for
-the file. It answers once the first frame is in the file, with `path`, `started_at_unix_ms`,
-`max_fps`, `duration_ms`, and `max_bytes`. A UI already recording itself fails with `conflict`.
+the file. `hide_indicator: true` keeps the `REC` chip off the screen, and so out of the recording;
+left out, `[recording] ui_indicator` decides. It answers once the first frame is in the file, with
+`path`, `started_at_unix_ms`, `max_fps`, `duration_ms`, and `max_bytes`. A UI already recording
+itself fails with `conflict`.
 
 `record-ui-stop` answers once the file is complete, with one stopped recording as described for
 `record-stop`, without `id` or `pane`. `record-ui-mark` takes a `label` and answers with no data.
@@ -579,12 +581,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":19,"min_protocol_version":19,
+{"type":"session-control","session":"dev","protocol_version":20,"min_protocol_version":20,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":19,
+{"type":"session-control-result","effective_protocol":20,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 

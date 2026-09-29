@@ -27,7 +27,7 @@ use tui_lipan::PaintedFrame;
 use tui_lipan::prelude::*;
 
 use crate::control::{ControlErrorCode, ControlResponse, UiRecordingInfo, UiRecordingStopped};
-use crate::pane::pty_events::{notify_error, notify_path_info};
+use crate::pane::pty_events::{notify_error, notify_path_error, notify_path_info};
 use crate::recording::start::{Limits, Output, frame_interval};
 use crate::recording::{EndReason, RecordingEvent, RecordingMeta, RecordingTarget};
 use crate::state::{
@@ -53,10 +53,19 @@ pub(crate) struct StartRequest {
     pub duration_ms: Option<u64>,
     pub max_bytes: Option<u64>,
     pub force: bool,
+    pub hide_indicator: bool,
 }
 
 pub(crate) fn is_recording(state: &State) -> bool {
     state.ui_recording.is_some()
+}
+
+/// Whether the UI is recording and says so on screen, and so in the recording.
+pub(crate) fn shows_indicator(state: &State) -> bool {
+    state
+        .ui_recording
+        .as_ref()
+        .is_some_and(|recording| !recording.hide_indicator)
 }
 
 /// Serve `record-ui-start`. The reply goes out once the first frame is in the file.
@@ -158,7 +167,8 @@ fn not_recording() -> ControlResponse {
 }
 
 /// Check the request, subscribe to painted frames, and wait for the first one. The caller's update
-/// repaints the UI, which now shows the recording indicator, and that paint is the first frame.
+/// repaints the UI, which now shows the recording indicator unless it is hidden, and that paint is
+/// the first frame: a full update is delivered even when it changes nothing on screen.
 fn start(
     ctx: &mut Context<AppRoot>,
     request: StartRequest,
@@ -223,6 +233,7 @@ fn start(
         max_fps: limits.max_fps,
         duration_ms: limits.duration_ms,
         max_bytes: limits.max_bytes,
+        hide_indicator: request.hide_indicator || !ctx.state.config.recording.ui_indicator,
         phase: UiRecordingPhase::Starting {
             output,
             force: request.force,
@@ -636,7 +647,12 @@ pub(crate) fn finished(
     let what = match stopped.reason {
         EndReason::WriteFailed => {
             let error = stopped.error.unwrap_or_default();
-            notify_error(ctx, "UI recording failed", format!("{error}\n{shown}"));
+            notify_path_error(
+                ctx,
+                "UI recording failed",
+                format!("{error}\n{shown}"),
+                stopped.path,
+            );
             return Update::full();
         }
         EndReason::Duration => "reached its duration",
@@ -793,6 +809,7 @@ mod tests {
             duration_ms: None,
             max_bytes: None,
             force: false,
+            hide_indicator: false,
         }
     }
 
@@ -950,6 +967,34 @@ mod tests {
             }));
             assert_eq!(replayed.marks, ["palette open"]);
             assert_eq!(replayed.end.unwrap().reason, EndReason::Stopped);
+        });
+    }
+
+    #[test]
+    fn a_hidden_indicator_stays_off_the_screen_and_out_of_the_recording() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut backend = backend();
+            let flagged = dir.path().join("flag.rozirec");
+            let mut command = start_command(&flagged, None);
+            if let ControlCommand::RecordUiStart { hide_indicator, .. } = &mut command {
+                *hide_indicator = true;
+            }
+            let response = ask(&mut backend, command);
+            assert!(response.ok, "{:?}", response.error);
+            assert!(is_recording(backend.state()));
+            assert_eq!(crate::view::ui_recording_label(backend.state()), None);
+            stopped(&mut backend);
+            let (_, first) = &replay(&flagged).frames[0];
+            assert!(!first.contains("REC"), "{first}");
+
+            backend.state_mut().config.recording.ui_indicator = false;
+            let configured = dir.path().join("config.rozirec");
+            started(&mut backend, &configured, None);
+            assert_eq!(crate::view::ui_recording_label(backend.state()), None);
+            stopped(&mut backend);
+            let (_, first) = &replay(&configured).frames[0];
+            assert!(!first.contains("REC"), "{first}");
         });
     }
 
@@ -1269,6 +1314,7 @@ mod tests {
                         duration_ms: None,
                         max_bytes: None,
                         force: false,
+                        hide_indicator: false,
                     },
                     "must be absolute",
                 ),
@@ -1279,6 +1325,7 @@ mod tests {
                         duration_ms: None,
                         max_bytes: None,
                         force: true,
+                        hide_indicator: false,
                     },
                     "--force",
                 ),
@@ -1389,6 +1436,38 @@ mod tests {
                 replay(&dir.path().join(name)).end.unwrap().reason,
                 EndReason::Stopped
             );
+        });
+    }
+
+    #[test]
+    fn the_mark_prompt_marks_the_ui_recording() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("marked.rozirec");
+            let mut backend = backend();
+            let available = |backend: &TestBackend<AppRoot>| {
+                crate::commands::command_available(Action::MarkUiRecording, backend.state())
+            };
+            assert!(!available(&backend), "nothing to mark yet");
+            started(&mut backend, &path, None);
+            assert!(available(&backend));
+
+            backend
+                .dispatch(Msg::RunAction(Action::MarkUiRecording))
+                .unwrap();
+            let prompt = backend.state_mut().recording_mark.as_mut().unwrap();
+            assert_eq!(prompt.target, crate::state::RecordingMarkTarget::Ui);
+            prompt.input = TextInput::new(" bug happens here ");
+            backend.dispatch(Msg::SubmitRecordingMark).unwrap();
+            assert!(backend.state().recording_mark.is_none());
+            assert!(
+                toasts(&backend).contains(&"UI recording marked".to_string()),
+                "{:?}",
+                toasts(&backend)
+            );
+
+            stopped(&mut backend);
+            assert_eq!(replay(&path).marks, ["bug happens here"]);
         });
     }
 

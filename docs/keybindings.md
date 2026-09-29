@@ -149,6 +149,7 @@ These actions are available in the command palette, and you can bind them under 
 - `toggle-pane-recording` (listed when the focused pane can be recorded)
 - `mark-pane-recording` (listed while the focused pane records)
 - `toggle-ui-recording`
+- `mark-ui-recording` (listed while the UI records)
 
 Appearance actions live in **Settings** and can also be bound by their action ids.
 

@@ -582,6 +582,30 @@ pub(crate) fn scrollable_close_neighbor(workspace: &Workspace, id: PaneId) -> Op
     })
 }
 
+/// Choose the pane that inherits a closing Dwindle tile's space: its tree sibling, or the sibling
+/// subtree's pane nearest the closing tile. Call this before the pane is marked closing, while the
+/// tree and placements still describe the pre-close layout.
+pub(crate) fn dwindle_close_neighbor(
+    state: &State,
+    workspace: &Workspace,
+    id: PaneId,
+) -> Option<PaneId> {
+    if workspace.layout_kind != LayoutKind::Dwindle {
+        return None;
+    }
+    let tree = crate::layout::effective_tile_tree(workspace, None)?;
+    let leaves = tiling::sibling_leaves(&tree, id)?;
+    if let [only] = leaves.as_slice() {
+        return Some(*only);
+    }
+    let reference = reference_pane_rect(state, workspace, id, None)?;
+    let candidates: Vec<_> = visible_pane_placements(state, workspace)
+        .into_iter()
+        .filter(|(pane, _)| leaves.contains(pane))
+        .collect();
+    closest_pane_to_rect(reference, &candidates)
+}
+
 /// Move focus to the next/previous tiled pane in `tiled_ids()` order, wrapping around. If
 /// the current focus is floating (not part of the tiled order) it falls back to the first
 /// tiled pane. Returns the newly focused id, or `None` when there are no tiled panes.

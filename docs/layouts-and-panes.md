@@ -68,6 +68,7 @@ The same five panes in each layout:
 Dwindle picks the split direction from the focused tile's shape: wide tiles split side by side, and
 tall tiles split top and bottom. Terminal cells are taller than they are wide, so
 `[layout].split_width_multiplier` (default `2.3`) corrects for that when comparing width and height.
+Closing the focused pane moves focus to the pane that takes over its space.
 
 Press `Space` to flip the focused split's direction. To change ratios, use `=` and `-`, resize mode,
 or drag a split boundary.

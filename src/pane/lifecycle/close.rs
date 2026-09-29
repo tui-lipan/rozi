@@ -4,8 +4,8 @@ use tui_lipan::prelude::*;
 use crate::layout::anim::{self, GeometryAnimation};
 use crate::layout::tiling::remove_tiled_window;
 use crate::ops::focus::{
-    choose_fallback_focus, choose_fallback_focus_near, focus_pane, request_current_pane_focus,
-    scrollable_close_neighbor,
+    choose_fallback_focus, choose_fallback_focus_near, dwindle_close_neighbor, focus_pane,
+    request_current_pane_focus, scrollable_close_neighbor,
 };
 use crate::pane::lifecycle::namespace::{
     clear_pane_local_state, find_pane, find_pane_in_namespace_mut, find_pane_mut, pane_is_local,
@@ -120,10 +120,8 @@ fn close_scratch_pane(
     let client = ctx.state.scratch_client();
     let animations = ctx.state.config.animations;
     let was_focused = ctx.state.scratch.focused_pane == Some(id);
-    let scrollable_neighbor = (ctx.state.scratch.layout_kind
-        == crate::state::LayoutKind::Scrollable)
-        .then(|| scrollable_close_neighbor(&ctx.state.scratch, id))
-        .flatten();
+    let close_neighbor = scrollable_close_neighbor(&ctx.state.scratch, id)
+        .or_else(|| dwindle_close_neighbor(&ctx.state, &ctx.state.scratch, id));
     let pane = ctx
         .state
         .scratch
@@ -143,7 +141,7 @@ fn close_scratch_pane(
     remove_tiled_window(&mut ctx.state.scratch, id);
 
     if was_focused {
-        match scrollable_neighbor {
+        match close_neighbor {
             Some(target) => focus_pane(&mut ctx.state, target),
             None => choose_fallback_focus_near(&mut ctx.state, Some(id), None),
         }
@@ -180,13 +178,22 @@ fn plan_workspace_close_focus(
         .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id));
     let active_pane =
         owner_workspace == Some(active_workspace) && attachment.focused_pane == Some(id);
-    let neighbor = owner_workspace
+    let scrollable_neighbor = owner_workspace
         .and_then(|workspace| scrollable_close_neighbor(&attachment.workspaces[workspace], id));
     let anchor_remap = owner_workspace.and_then(|workspace_index| {
         let workspace = &attachment.workspaces[workspace_index];
         (workspace.layout_kind == crate::state::LayoutKind::Scrollable
             && workspace.scrollable_anchor == Some(id))
-        .then_some((workspace_index, neighbor, workspace.scrollable_reveal_edge))
+        .then_some((
+            workspace_index,
+            scrollable_neighbor,
+            workspace.scrollable_reveal_edge,
+        ))
+    });
+    let neighbor = scrollable_neighbor.or_else(|| {
+        owner_workspace.and_then(|workspace| {
+            dwindle_close_neighbor(state, &attachment.workspaces[workspace], id)
+        })
     });
     WorkspaceCloseFocus {
         active_pane,

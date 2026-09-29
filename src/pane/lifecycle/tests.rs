@@ -243,6 +243,75 @@ fn close_keeps_the_pane_described_while_it_animates_out() {
     });
 }
 
+/// `1 | 4` over `2 | 3`: closing the focused 4 hands its space, and focus, back to its sibling 1
+/// rather than to 3, which merely sits closest to the vacated rectangle.
+#[test]
+fn closing_a_dwindle_pane_focuses_the_sibling_that_inherits_its_space() {
+    use crate::layout::tiling::DwindleTree;
+    use crate::state::SplitAxis;
+
+    in_stack(|| {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.confirm.close_pane = false;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = crate::state::LayoutKind::Dwindle;
+            workspace.panes.clear();
+            let row = |first, second| DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(first)),
+                second: Box::new(DwindleTree::Leaf(second)),
+            };
+            workspace.tile_tree = Some(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(row(1, 4)),
+                second: Box::new(row(2, 3)),
+            });
+            for id in [1, 2, 3, 4] {
+                let mut pane = Pane::new(
+                    id,
+                    100,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    },
+                );
+                pane.opening = false;
+                pane.terminal_active = true;
+                workspace.panes.push(pane);
+            }
+            workspace.focused_pane = Some(4);
+            state.current_mut().focused_pane = Some(4);
+        }
+        backend.render();
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+            .expect("close pane 4");
+
+        let workspace = &backend.state().current().workspaces[0];
+        assert!(
+            workspace
+                .panes
+                .iter()
+                .any(|pane| pane.id == 4 && pane.closing)
+        );
+        assert_eq!(backend.state().current().focused_pane, Some(1));
+        assert_eq!(workspace.focused_pane, Some(1));
+    });
+}
+
 #[test]
 fn closing_middle_scrollable_pane_focuses_next_tree_neighbor_and_prunes_cleanly() {
     in_stack(|| {

@@ -93,6 +93,27 @@ pub fn collect_tree_leaves(tree: &DwindleTree, out: &mut Vec<PaneId>) {
     }
 }
 
+/// Leaves of the subtree that shares a split with `id`'s leaf: the panes that inherit its space
+/// when it leaves the tree. `None` when `id` is absent or is the whole tree.
+pub fn sibling_leaves(tree: &DwindleTree, id: PaneId) -> Option<Vec<PaneId>> {
+    let DwindleTree::Split { first, second, .. } = tree else {
+        return None;
+    };
+    let (own, sibling) = if tree_contains(first, id) {
+        (first, second)
+    } else if tree_contains(second, id) {
+        (second, first)
+    } else {
+        return None;
+    };
+    if matches!(own.as_ref(), DwindleTree::Leaf(_)) {
+        let mut leaves = Vec::new();
+        collect_tree_leaves(sibling, &mut leaves);
+        return Some(leaves);
+    }
+    sibling_leaves(own, id)
+}
+
 /// Exchange the screen positions of two tiled leaves by swapping their pane ids in place.
 /// The split structure (axes and ratios) is untouched - only the leaf payloads move - so
 /// the two panes trade slots. Returns `true` only when both ids were present.
@@ -1453,6 +1474,16 @@ mod tests {
             (actual - expected).abs() < EPSILON,
             "{actual} != {expected}"
         );
+    }
+
+    #[test]
+    fn sibling_leaves_name_the_subtree_that_inherits_a_leaf() {
+        let tree =
+            build_dwindle_tree(&[1, 2, 3], SplitAxis::Horizontal, &[0.5, 0.5]).expect("tree");
+        assert_eq!(sibling_leaves(&tree, 1), Some(vec![2, 3]));
+        assert_eq!(sibling_leaves(&tree, 3), Some(vec![2]));
+        assert_eq!(sibling_leaves(&tree, 9), None);
+        assert_eq!(sibling_leaves(&DwindleTree::Leaf(1), 1), None);
     }
 
     #[test]

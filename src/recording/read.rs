@@ -4,7 +4,7 @@
 //! a frame, an image, and the images kept for later frames each have a ceiling well above anything
 //! rozi writes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, Read as _};
 
 use base64::Engine as _;
@@ -29,6 +29,10 @@ pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 /// bookkeeping too. Past it the oldest images are forgotten, and a later frame showing one shows
 /// its half-block stand-in.
 pub const MAX_RETAINED_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+/// The most bytes the decoded images of one frame may take together. Images past it are left
+/// out, and show as their half-block stand-ins: a frame can name many images, each cheap to store
+/// compressed and within [`MAX_IMAGE_BYTES`] decoded.
+pub const MAX_DECODED_FRAME_BYTES: usize = 256 * 1024 * 1024;
 /// The longest image id a reader takes. rozi writes 32 hex digits.
 const MAX_IMAGE_ID_LEN: usize = 64;
 /// What keeping one image costs besides its id and pixels: its entry in the map and the queue.
@@ -193,6 +197,7 @@ pub struct Replay<R> {
     image_budget: usize,
     /// Pixels of the images the last drawn frame showed.
     decoded: HashMap<String, DecodedImage>,
+    decoded_budget: usize,
     /// The time of the last event with one, so an ended recording's length is known without an
     /// `end` event.
     last_t: u64,
@@ -207,6 +212,7 @@ impl<R: BufRead> Replay<R> {
             image_order: VecDeque::new(),
             image_bytes: 0,
             image_budget: MAX_RETAINED_IMAGE_BYTES,
+            decoded_budget: MAX_DECODED_FRAME_BYTES,
             decoded: HashMap::new(),
             last_t: 0,
         })
@@ -219,6 +225,12 @@ impl<R: BufRead> Replay<R> {
     #[cfg(test)]
     pub(crate) fn with_image_budget(mut self, bytes: usize) -> Self {
         self.image_budget = bytes;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_decoded_budget(mut self, bytes: usize) -> Self {
+        self.decoded_budget = bytes;
         self
     }
 
@@ -258,9 +270,12 @@ impl<R: BufRead> Replay<R> {
         Ok(super::frame::captured_frame(frame, &self.decoded))
     }
 
-    /// Decode the images `ids` names, and let go of the pixels of any other.
+    /// Decode the images `ids` names, and let go of the pixels of any other. Together they stay
+    /// within the decoded budget; an image past it is left undecoded.
     fn decode(&mut self, ids: &[String]) -> Result<(), String> {
-        self.decoded.retain(|id, _| ids.contains(id));
+        let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        self.decoded.retain(|id, _| wanted.contains(id.as_str()));
+        let mut used: usize = self.decoded.values().map(|image| image.rgba.len()).sum();
         for id in ids {
             if self.decoded.contains_key(id) {
                 continue;
@@ -268,11 +283,20 @@ impl<R: BufRead> Replay<R> {
             let Some(image) = self.images.get(id) else {
                 continue;
             };
+            let declared = u128::from(image.pixel_width) * u128::from(image.pixel_height) * 4;
+            if used as u128 + declared > self.decoded_budget as u128 {
+                continue;
+            }
             let png = base64::engine::general_purpose::STANDARD
                 .decode(&image.png_base64)
                 .map_err(|error| format!("image {id}: {error}"))?;
             let decoded = DecodedImage::from_png(&png, MAX_IMAGE_BYTES)
                 .map_err(|error| format!("image {id}: {error}"))?;
+            // The declared size is the file's word; the pixels are what count.
+            if used + decoded.rgba.len() > self.decoded_budget {
+                continue;
+            }
+            used += decoded.rgba.len();
             self.decoded.insert(id.clone(), decoded);
         }
         Ok(())

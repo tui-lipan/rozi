@@ -17,7 +17,7 @@ use crate::control::{
 };
 use crate::ops::focus::{request_current_pane_focus, request_recording_mark_focus};
 use crate::pane::lifecycle::{find_pane, pane_is_local};
-use crate::pane::pty_events::{notify_error, notify_info, notify_path_info};
+use crate::pane::pty_events::{notify_error, notify_info, notify_path_error, notify_path_info};
 use crate::recording::EndReason;
 use crate::state::{
     AttachedReply, Mode, PaneId, RecordingAction, RecordingMarkPrompt, RecordingMarkTarget, State,
@@ -274,7 +274,12 @@ pub(crate) fn answered(
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                notify_error(ctx, format!("Recording failed{on_host}"), message);
+                let paths = failed
+                    .iter()
+                    .map(|failed| failed.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                notify_path_error(ctx, format!("Recording failed{on_host}"), message, paths);
                 if stopped.is_empty() {
                     return Update::full();
                 }
@@ -317,10 +322,11 @@ pub(crate) fn ended(ctx: &mut Context<AppRoot>, epoch: u64, stopped: RecordingSt
         EndReason::Stopped => return Update::none(),
         EndReason::WriteFailed => {
             let error = stopped.error.unwrap_or_default();
-            notify_error(
+            notify_path_error(
                 ctx,
                 format!("Recording failed{on_host}"),
                 format!("{error}\n{}", shown(&stopped.path)),
+                stopped.path,
             );
             return Update::full();
         }

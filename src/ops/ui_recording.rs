@@ -27,7 +27,7 @@ use tui_lipan::PaintedFrame;
 use tui_lipan::prelude::*;
 
 use crate::control::{ControlErrorCode, ControlResponse, UiRecordingInfo, UiRecordingStopped};
-use crate::pane::pty_events::{notify_error, notify_path_info};
+use crate::pane::pty_events::{notify_error, notify_path_error, notify_path_info};
 use crate::recording::start::{Limits, Output, frame_interval};
 use crate::recording::{EndReason, RecordingEvent, RecordingMeta, RecordingTarget};
 use crate::state::{
@@ -647,7 +647,12 @@ pub(crate) fn finished(
     let what = match stopped.reason {
         EndReason::WriteFailed => {
             let error = stopped.error.unwrap_or_default();
-            notify_error(ctx, "UI recording failed", format!("{error}\n{shown}"));
+            notify_path_error(
+                ctx,
+                "UI recording failed",
+                format!("{error}\n{shown}"),
+                stopped.path,
+            );
             return Update::full();
         }
         EndReason::Duration => "reached its duration",

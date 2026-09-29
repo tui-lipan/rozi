@@ -925,6 +925,71 @@ fn images_with_no_pixels_still_count_against_the_image_budget() {
     assert!(refused.contains("larger than rozi reads"), "{refused}");
 }
 
+/// A `side`×`side` RGBA PNG of one color, as base64: tiny compressed, `side² × 4` bytes decoded.
+fn flat_png(side: u32) -> String {
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, side, side);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&vec![7; (side * side * 4) as usize])
+        .unwrap();
+    writer.finish().unwrap();
+    base64::engine::general_purpose::STANDARD.encode(png)
+}
+
+#[test]
+fn the_images_of_one_frame_decode_within_one_budget() {
+    let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
+    file.push(b'\n');
+    let ids = ["a", "b", "c", "d"];
+    let pixels = flat_png(64);
+    for id in ids {
+        let image = RecordingEvent::Image(format::RecordedImage {
+            t: 0,
+            id: id.to_string(),
+            pixel_width: 64,
+            pixel_height: 64,
+            png_base64: pixels.clone(),
+        });
+        file.extend_from_slice(&serde_json::to_vec(&image).unwrap());
+        file.push(b'\n');
+    }
+    // Every image on the same cell.
+    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    frame.images = ids
+        .map(|id| crate::control::SpanImage {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            pixel_width: 64,
+            pixel_height: 64,
+            visible: None,
+            png_base64: None,
+            id: Some(id.to_string()),
+        })
+        .to_vec();
+    file.extend_from_slice(&serde_json::to_vec(&RecordingEvent::Keyframe { t: 0, frame }).unwrap());
+    file.push(b'\n');
+
+    // Each decodes to 16 KiB; the budget holds two and a half.
+    let mut replay = Replay::new(BufReader::new(file.as_slice()))
+        .unwrap()
+        .with_decoded_budget(40 * 1024);
+    assert!(matches!(replay.step(), Ok(Some(ReplayStep::Frame { .. }))));
+    let decoded = replay.frame_images().unwrap();
+    assert_eq!(decoded.len(), 2, "the rest are left to their half-blocks");
+    assert!(
+        decoded
+            .values()
+            .map(|image| image.rgba.len())
+            .sum::<usize>()
+            <= 40 * 1024
+    );
+}
+
 #[test]
 fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
     let mut file = serde_json::to_vec(&header(2, 1)).unwrap();

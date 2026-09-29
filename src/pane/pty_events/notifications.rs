@@ -240,6 +240,31 @@ pub(crate) fn notify_error(
     )
 }
 
+/// Report a failure that left files behind, such as a recording that could not be finished,
+/// copying their exact paths (newline-separated) rather than the whole message.
+pub(crate) fn notify_path_error(
+    ctx: &mut Context<AppRoot>,
+    title: impl Into<String>,
+    message: impl Into<String>,
+    copy_paths: impl Into<String>,
+) -> Notified {
+    let (title, message, copy_paths) = (title.into(), message.into(), copy_paths.into());
+    let content = toast_content(Some(&title), &message);
+    let toast = error_toast(
+        &ctx.state.theme,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        message,
+    )
+    .copy_text(copy_paths);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
 /// Report a compatibility or other non-fatal risk with warning-colored chrome.
 pub(crate) fn notify_warning(
     ctx: &mut Context<AppRoot>,

@@ -298,6 +298,26 @@ fn file_tree_messages_round_trip() {
 }
 
 #[test]
+fn a_session_server_that_would_drop_a_pane_size_is_refused_before_it_spawns() {
+    const {
+        assert!(MIN_SUPPORTED_PROTOCOL >= PANE_SIZE_PROTOCOL);
+    }
+    // A server from before `size` deserializes a sized `new-pane` without it and reports success
+    // for a pane at its default size. Refusing it at the handshake turns `split --size` against a
+    // stale persistent server into an error instead.
+    assert!(
+        negotiate_protocol(
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL,
+            PANE_SIZE_PROTOCOL - 1,
+            PANE_SIZE_PROTOCOL - 1,
+        )
+        .is_err(),
+        "a server that ignores `size` must not accept this build's control requests"
+    );
+}
+
+#[test]
 fn only_the_exact_version_negotiates() {
     const {
         assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION);

@@ -523,7 +523,9 @@ The response waits up to five seconds for the pane's terminal to be ready, then 
 `accepted`, and `pty_ready`.
 
 A binary advertises `size` with the `split-size` capability in
-[`rozi api describe`](control.md#check-the-installed-api). An older binary ignores the field.
+[`rozi api describe`](control.md#check-the-installed-api). A UI running an older binary ignores the
+field. A session server from before session protocol 20 would ignore it too, so a newer client is
+refused at the handshake instead.
 
 ### Actions, workspaces, status, and notifications
 

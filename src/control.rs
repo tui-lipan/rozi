@@ -1697,7 +1697,9 @@ pub const MAX_PANE_SIZE_CELLS: u16 = 1000;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneSize {
+    #[cfg_attr(feature = "schema-gen", schemars(range(min = 1, max = MAX_PANE_SIZE_CELLS)))]
     pub cols: u16,
+    #[cfg_attr(feature = "schema-gen", schemars(range(min = 1, max = MAX_PANE_SIZE_CELLS)))]
     pub rows: u16,
 }
 

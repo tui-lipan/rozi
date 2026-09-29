@@ -4094,14 +4094,14 @@
       "properties": {
         "cols": {
           "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
+          "maximum": 1000,
+          "minimum": 1,
           "type": "integer"
         },
         "rows": {
           "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
+          "maximum": 1000,
+          "minimum": 1,
           "type": "integer"
         }
       },

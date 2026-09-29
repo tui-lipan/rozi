@@ -8,10 +8,17 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
+
+/// First protocol whose session servers honor `new-pane`'s `size`.
+///
+/// An older server deserializes the request without the field and spawns at its default size, then
+/// reports success. Refusing it at the handshake is the only way a sized headless `split` can fail
+/// loudly, so [`MIN_SUPPORTED_PROTOCOL`] must never drop below this.
+pub const PANE_SIZE_PROTOCOL: u32 = 20;
 
 /// `code` on the [`super::ServerMessage::Error`] a client receives just before the server closes it for
 /// being evicted. Distinguishes a removal from a dropped connection, which the client would

@@ -220,7 +220,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 13,
-  "session_protocol": 19,
+  "session_protocol": 20,
   "capabilities": [
     "agent-waits",
     "attached-control",
@@ -343,9 +343,12 @@ rozi capture-pane --target "$pane" --settle 500ms --timeout 10s
 ```
 
 The size holds until a UI draws the pane. Opening it in the workspace on screen, or switching to
-its workspace later, resizes it to its tile like any other pane. A rozi without the `split-size`
-capability in [`rozi api describe`](#check-the-installed-api) ignores `--size` and opens the pane
-at its default size.
+its workspace later, resizes it to its tile like any other pane.
+
+A session server started by an older rozi refuses `rozi --session <NAME> split` with
+`protocol-mismatch`, so a sized pane never silently opens at the wrong size. A UI that is still
+running an older rozi does not know the field, and opens the pane at its default size; restart it
+after upgrading.
 
 ### Open a pane in a detached session
 

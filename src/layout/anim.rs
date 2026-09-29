@@ -219,13 +219,9 @@ pub(crate) fn snapshot_for_close(
 pub enum SessionAnimationStyle {
     /// The incoming session appears at once.
     Off,
-    /// The incoming session resolves in place from slightly dimmed.
+    /// The outgoing session crossfades in place into the incoming one.
     Fade,
     /// A portal opens from the centre, revealing the incoming session over the outgoing one.
-    ///
-    /// The default: the fade takes the incoming layer over at once and only eases its dim, so the
-    /// outgoing screen cuts away. Leaving the launcher for a mostly empty new session, that reads
-    /// as no animation at all; the portal keeps the outgoing screen visible while it opens.
     #[default]
     Portal,
 }
@@ -783,18 +779,13 @@ pub fn sidebar_transition(animations: WindowAnimationConfig) -> TransitionConfig
     slide_transition(scratch_transition_duration(animations.geometry_duration))
 }
 
-/// Opacity the incoming session's content starts from when it replaces another session.
-///
-/// Deliberately high: the reveal is a delimiter between two unrelated screens, felt more than
-/// watched. The attachment itself has already swapped, so there is nothing to crossfade from.
-pub const SESSION_REVEAL_FROM: f32 = 0.8;
-
 /// Curve for the incoming session's reveal, or `None` when the switch should snap.
 ///
 /// Only presentation moves, never geometry: see [`SessionAnimationStyle`]. Both styles are tied
 /// to `geometry_ms`, so retuning it keeps the whole motion vocabulary in proportion.
 ///
-/// The fade must read as its own beat. A switch made from the Sessions picker starts it on the
+/// The fade crossfades over the outgoing session, held whole beneath it (see
+/// `view::animation::session_layer_exit`), and must read as its own beat. A switch made from the Sessions picker starts it on the
 /// same frame the picker's backdrop begins to undim, over the scratchpad's two-thirds of
 /// `geometry_ms`; a fade on that duration and an ease-out curve finished alongside it and was
 /// indistinguishable from it, so switching looked animated even with the fade off. It takes one

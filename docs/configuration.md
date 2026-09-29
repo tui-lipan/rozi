@@ -284,8 +284,9 @@ switch sessions, when a session finishes connecting, or when you drop to the lau
 
 - `"portal"` opens a portal from the center onto the new session while the previous one recedes
   behind it, over `geometry_ms`. The ring uses the theme's accent colors.
-- `"fade"` brings in the new session in place from slightly dimmed, over one and a half times
-  `geometry_ms` (330 ms by default). The previous session disappears at once.
+- `"fade"` crossfades from the previous session to the new one in place, over one and a half
+  times `geometry_ms` (330 ms by default). Images in panes appear at full strength rather than
+  fading with the text.
 - `"off"` switches at once.
 
 Pane geometry always snaps and the sidebar stays still. The value is case-insensitive; an unknown

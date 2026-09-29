@@ -227,16 +227,19 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         )),
         _ => None,
     };
-    // Keyed by attachment so a switch replaces the whole layer, and the outgoing one is retained
+    // Keyed by the view so a switch replaces the whole layer, and the outgoing one is retained
     // frozen beneath its successor (see `animation::session_layer_exit`). A fresh attach still in
-    // its grace period draws nothing, so the previous session's last picture stands in for it.
+    // its grace period draws nothing, so the previous session's last picture stands in for it. The
+    // view is the attachment, and whether it is the launcher: leaving the launcher for a shell
+    // keeps the launcher's attachment, and the launcher still has to be what the shell replaces.
+    let view = (ctx.state.runtime_epoch, ctx.state.is_launcher());
     let holding = crate::ops::session::holding_previous_view(&ctx.state);
     // The dim layer around the session content is new on a switch, and when a hold gives way to
     // the content: a new `Animated` takes the opacity it is given at once, so it starts where the
     // dim is and is handed where the dim ends on the next frame. Switching from the picker is the
     // usual case, and its backdrop is still undimming.
     let content_dim = {
-        let shown = (!holding).then_some(ctx.state.runtime_epoch);
+        let shown = (!holding).then_some(view);
         let (previous, previous_stage) = ctx.state.session_dim_layer.get();
         let mounted = shown.is_some() && previous != shown;
         let stage = match crate::layout::anim::FadeStage::next(mounted, previous_stage) {
@@ -292,15 +295,14 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let layer = if holding {
             Animated::new(empty()).transition(crate::layout::anim::instant_transition())
         } else {
-            animation::LayerFade::new(reveal.opacity, theme.surface.backdrop)
-                .apply(Animated::new(dimmed_content()))
+            animation::crossfade(reveal.opacity, Animated::new(dimmed_content()))
         };
         layer.height(Length::Flex(1)).auto_exit(exit).into()
     };
     // Alone in its own stack so a retained layer has no live sibling to be ordered against and
     // lands beneath the live one; in the root stack it would sit above it, over the new session.
     let workspace_layer: Element = ZStack::new()
-        .child(session_layer.key(format!("rozi-session-view-{}", ctx.state.runtime_epoch)))
+        .child(session_layer.key(format!("rozi-session-view-{}-{}", view.0, view.1)))
         .key("rozi-session-views");
     let mut root = ZStack::new()
         // The always-mounted popup host is intentionally empty while no popup is open. Let an

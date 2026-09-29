@@ -306,8 +306,8 @@ pub(crate) fn chrome_paint_with_frame_rate(
 /// How far a newly shown session has taken over the screen.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SessionReveal {
-    /// Opacity of the session content layer (workbar and workspace), heading for `1.0`. Below 1
-    /// only while a fade reveal is running.
+    /// Opacity of the session content layer (workbar and workspace) over the outgoing session
+    /// beneath it, heading for `1.0`. Below 1 only while a fade reveal is running.
     pub(crate) opacity: Fade,
     /// How far the portal has opened, `1.0` when there is no portal to draw.
     pub(crate) portal: f32,
@@ -317,7 +317,7 @@ pub(crate) struct SessionReveal {
 ///
 /// The attachment has already swapped by the time this runs; only its presentation moves. The
 /// first frame after [`State::session_view_revision`] moves restarts the reveal from its beginning:
-/// the layer at [`anim::SESSION_REVEAL_FROM`] for a fade, a closed portal for a portal. The very
+/// a transparent layer for a fade, a closed portal for a portal. The very
 /// first render has no previous session to delimit from, so the client's initial frame never
 /// animates.
 ///
@@ -349,7 +349,7 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
     match animations.session {
         anim::SessionAnimationStyle::Off | anim::SessionAnimationStyle::Fade => SessionReveal {
             opacity: Fade {
-                current: anim::SESSION_REVEAL_FROM + (1.0 - anim::SESSION_REVEAL_FROM) * progress,
+                current: progress,
                 target: 1.0,
                 transition: config,
                 stage,
@@ -460,11 +460,7 @@ pub(crate) struct LayerFade {
 impl LayerFade {
     /// `fade` as a layer's fade toward `color`.
     pub(crate) fn new(fade: Fade, color: Color) -> Self {
-        let (opacity, transition) = match fade.stage {
-            anim::FadeStage::Restart => (fade.current, anim::instant_transition()),
-            anim::FadeStage::Handoff => (fade.target, fade.transition),
-            anim::FadeStage::Running => (fade.target, anim::instant_transition()),
-        };
+        let (opacity, transition) = fade.staged();
         Self {
             opacity,
             shown: fade.current,
@@ -478,6 +474,25 @@ impl LayerFade {
             .opacity(self.opacity)
             .opacity_target(self.color)
             .transition(self.transition)
+    }
+}
+
+/// `fade` as a layer's fade over whatever is painted beneath it, rather than toward a colour:
+/// colours blend with it and glyphs crossfade with the layer's. Handed to the `Animated` the way
+/// [`LayerFade`] hands it. Image pixels under the layer take no part in it.
+pub(crate) fn crossfade(fade: Fade, animated: Animated) -> Animated {
+    let (opacity, transition) = fade.staged();
+    animated.opacity(opacity).transition(transition)
+}
+
+impl Fade {
+    /// The opacity and timing an `Animated` is given this frame; see [`LayerFade`].
+    fn staged(self) -> (f32, TransitionConfig) {
+        match self.stage {
+            anim::FadeStage::Restart => (self.current, anim::instant_transition()),
+            anim::FadeStage::Handoff => (self.target, self.transition),
+            anim::FadeStage::Running => (self.target, anim::instant_transition()),
+        }
     }
 }
 
@@ -497,10 +512,11 @@ pub(crate) fn layer_fade(dim: Fade, backdrop: Color, flash: Option<(Color, Fade)
 ///
 /// It stays painted beneath its successor, so an opaque successor covers it at once. It matters
 /// in two places. During a fresh attach's grace period it stands in for a Connecting scene that
-/// would only flash; ease-in keeps it nearly whole for a local attach, which lands in tens of
-/// milliseconds, and only a slow one watches it fade into Connecting. Under a portal it is what the
-/// portal opens over, so it has to outlast both the grace period and the portal, and it only
-/// recedes rather than fading away.
+/// would only flash. And it is what the reveal plays over, so under a reveal it has to outlast
+/// both the grace period and the reveal: a portal opens over it as it recedes, and a fade
+/// crossfades from it, so it holds whole until the incoming session has covered it. With no
+/// reveal, ease-in keeps it nearly whole for a local attach, which lands in tens of
+/// milliseconds, and only a slow one watches it fade into Connecting.
 pub(crate) fn session_layer_exit(animations: anim::WindowAnimationConfig) -> ExitAnimation {
     let hold = crate::ops::session::CONNECT_HOLD;
     let millis = |duration: std::time::Duration| duration.as_millis() as u64;
@@ -510,7 +526,8 @@ pub(crate) fn session_layer_exit(animations: anim::WindowAnimationConfig) -> Exi
                 .opacity(anim::SESSION_PORTAL_RECEDE)
                 .easing(Easing::EaseInQuad)
         }
-        _ => ExitAnimation::new(millis(hold)).easing(Easing::EaseInQuad),
+        Some(fade) => ExitAnimation::new(millis(hold + fade.duration)).keep_opacity(),
+        None => ExitAnimation::new(millis(hold)).easing(Easing::EaseInQuad),
     }
 }
 
@@ -651,11 +668,12 @@ mod tests {
             assert_ne!(
                 backgrounds(&backend),
                 settled,
-                "the incoming session should start dimmed toward the backdrop"
+                "the incoming session should start crossfading from what was beneath it"
             );
 
+            // The layer is handed the fade on the frame after the restart, a test tick later.
             let duration = reveal_duration(&backend);
-            backend.advance(duration + Duration::from_millis(20));
+            backend.advance(duration + Duration::from_millis(80));
             assert_eq!(backgrounds(&backend), settled);
 
             // Nothing new to reveal: a redraw of the same session must not fade again.
@@ -804,6 +822,47 @@ mod tests {
         });
     }
 
+    /// The real layer stack under a fade switch: the outgoing session is held beneath the incoming
+    /// one, which crossfades in over it. Early on, the old session's text still shows wherever the
+    /// two differ, rather than cutting straight to the new one.
+    #[test]
+    fn a_fade_switch_crossfades_from_the_old_session() {
+        in_stack(|| {
+            let mut old = two_panes(1);
+            old.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
+            old.render();
+            let before = symbols(&old);
+
+            // Another session takes the foreground: a different attachment under a new id.
+            {
+                let state = old.state_mut();
+                state.attachment = crate::state::Attachment::new();
+                state.runtime_epoch = 99;
+                state.current_mut().epoch = 99;
+                state.session_view_revision += 1;
+            }
+            old.render();
+            let duration = anim::session_reveal_transition(old.state().config.animations)
+                .expect("fade enabled")
+                .duration;
+            old.advance(duration / 5);
+            let early = symbols(&old);
+            old.advance(duration + Duration::from_secs(1));
+            let after = symbols(&old);
+
+            let old_text: Vec<usize> = (0..before.len())
+                .filter(|&index| before[index] != after[index] && before[index] != " ")
+                .collect();
+            assert!(!old_text.is_empty(), "the two sessions must differ");
+            for index in old_text {
+                assert_eq!(
+                    early[index], before[index],
+                    "cell {index} still shows the old session early in the fade"
+                );
+            }
+        });
+    }
+
     #[test]
     fn a_disabled_session_reveal_snaps() {
         in_stack(|| {
@@ -901,14 +960,15 @@ mod tests {
     }
 
     /// Switching sessions from the picker is two beats: its backdrop undims on its own short
-    /// transition while the session it opened resolves in on the longer reveal. Once the
-    /// backdrop's time has passed, the switch looks exactly like one made with nothing open.
+    /// transition while the session it opened resolves in on the longer reveal. With no reveal,
+    /// once the backdrop's time has passed the switch looks exactly like one made with nothing
+    /// open; a fade is still crossfading then.
     #[test]
     fn a_switch_from_the_picker_undims_before_the_session_resolves_in() {
         in_stack(|| {
-            let switch = |from_picker: bool| {
+            let switch = |from_picker: bool, style: anim::SessionAnimationStyle| {
                 let mut backend = backend();
-                backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
+                backend.state_mut().config.animations.session = style;
                 let rest = backgrounds(&backend);
                 if from_picker {
                     backend.state_mut().show_palette = true;
@@ -923,7 +983,6 @@ mod tests {
                     );
                     backend.state_mut().show_palette = false;
                 }
-                let settled = backgrounds(&backend);
                 let state = backend.state_mut();
                 state.runtime_epoch += 1;
                 state.session_view_revision += 1;
@@ -931,16 +990,18 @@ mod tests {
                 let animations = backend.state().config.animations;
                 let backdrop = anim::scratch_transition_duration(animations.geometry_duration);
                 backend.advance(backdrop + Duration::from_millis(40));
-                assert!(backdrop + Duration::from_millis(40) < reveal_duration(&backend));
-                (settled, backgrounds(&backend))
+                if let Some(reveal) = anim::session_reveal_transition(animations) {
+                    assert!(backdrop + Duration::from_millis(40) < reveal.duration);
+                }
+                (rest, backgrounds(&backend))
             };
-            let (_, from_picker) = switch(true);
-            let (settled, plain) = switch(false);
-            assert_ne!(plain, settled, "the session is still resolving in");
+            let (settled, from_picker) = switch(true, anim::SessionAnimationStyle::Off);
             assert_eq!(
-                from_picker, plain,
-                "the picker's backdrop has undimmed on its own, leaving only the reveal"
+                from_picker, settled,
+                "the picker's backdrop has undimmed on its own"
             );
+            let (settled, fading) = switch(false, anim::SessionAnimationStyle::Fade);
+            assert_ne!(fading, settled, "the session is still resolving in");
         });
     }
 }

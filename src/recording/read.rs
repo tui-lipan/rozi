@@ -276,8 +276,11 @@ impl<R: BufRead> Replay<R> {
         let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
         self.decoded.retain(|id, _| wanted.contains(id.as_str()));
         let mut used: usize = self.decoded.values().map(|image| image.rgba.len()).sum();
+        // Each id once: one that decoded and then did not fit must not be decoded again for every
+        // time the frame names it.
+        let mut attempted = HashSet::new();
         for id in ids {
-            if self.decoded.contains_key(id) {
+            if !attempted.insert(id.as_str()) || self.decoded.contains_key(id) {
                 continue;
             }
             let Some(image) = self.images.get(id) else {

@@ -25,7 +25,7 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
-    /// Decode an 8-bit RGB or RGBA PNG, allocating at most `max_bytes` for it.
+    /// Decode an 8-bit RGB or RGBA PNG whose RGBA pixels take at most `max_bytes`.
     pub fn from_png(bytes: &[u8], max_bytes: usize) -> std::result::Result<Self, String> {
         let decoder = png::Decoder::new_with_limits(
             std::io::Cursor::new(bytes),
@@ -34,6 +34,11 @@ impl DecodedImage {
         let mut reader = decoder
             .read_info()
             .map_err(|error| format!("invalid image: {error}"))?;
+        // Measured as RGBA, what an RGB image grows to, before anything is allocated.
+        let (width, height) = reader.info().size();
+        if u128::from(width) * u128::from(height) * 4 > max_bytes as u128 {
+            return Err(format!("image of {width}x{height} pixels is too large"));
+        }
         let size = reader
             .output_buffer_size()
             .ok_or_else(|| "image too large".to_string())?;

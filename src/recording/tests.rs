@@ -925,18 +925,33 @@ fn images_with_no_pixels_still_count_against_the_image_budget() {
     assert!(refused.contains("larger than rozi reads"), "{refused}");
 }
 
-/// A `side`×`side` RGBA PNG of one color, as base64: tiny compressed, `side² × 4` bytes decoded.
-fn flat_png(side: u32) -> String {
+/// A `side`×`side` PNG of one color with `channels` bytes a pixel: tiny compressed.
+fn flat_png_bytes(side: u32, color: png::ColorType, channels: u32) -> Vec<u8> {
     let mut png = Vec::new();
     let mut encoder = png::Encoder::new(&mut png, side, side);
-    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_color(color);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().unwrap();
     writer
-        .write_image_data(&vec![7; (side * side * 4) as usize])
+        .write_image_data(&vec![7; (side * side * channels) as usize])
         .unwrap();
     writer.finish().unwrap();
-    base64::engine::general_purpose::STANDARD.encode(png)
+    png
+}
+
+/// A `side`×`side` RGBA PNG of one color, as base64: tiny compressed, `side² × 4` bytes decoded.
+fn flat_png(side: u32) -> String {
+    base64::engine::general_purpose::STANDARD.encode(flat_png_bytes(side, png::ColorType::Rgba, 4))
+}
+
+#[test]
+fn an_image_is_measured_as_the_rgba_it_becomes() {
+    // 12 KiB as RGB, 16 KiB once it gains alpha.
+    let rgb = flat_png_bytes(64, png::ColorType::Rgb, 3);
+    let refused = frame::DecodedImage::from_png(&rgb, 14 * 1024).unwrap_err();
+    assert!(refused.contains("64x64"), "{refused}");
+    let decoded = frame::DecodedImage::from_png(&rgb, 16 * 1024).unwrap();
+    assert_eq!(decoded.rgba.len(), 16 * 1024);
 }
 
 #[test]

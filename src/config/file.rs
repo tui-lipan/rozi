@@ -2433,13 +2433,13 @@ mod file_tests {
         let defaults = load_config_from_text("", Path::new("test.toml"));
         assert_eq!(
             defaults.config.animations.session,
-            SessionAnimationStyle::Fade
+            SessionAnimationStyle::Portal
         );
         for (value, expected) in [
-            ("\"Portal\"", SessionAnimationStyle::Portal),
+            ("\"Fade\"", SessionAnimationStyle::Fade),
             ("\"off\"", SessionAnimationStyle::Off),
             ("false", SessionAnimationStyle::Off),
-            ("true", SessionAnimationStyle::Fade),
+            ("true", SessionAnimationStyle::Portal),
         ] {
             let loaded = load_config_from_text(
                 &format!("[animations]\nsession = {value}\n"),
@@ -2452,7 +2452,7 @@ mod file_tests {
             load_config_from_text("[animations]\nsession = \"iris\"\n", Path::new("test.toml"));
         assert_eq!(
             unknown.config.animations.session,
-            SessionAnimationStyle::Fade
+            SessionAnimationStyle::Portal
         );
         assert!(
             unknown

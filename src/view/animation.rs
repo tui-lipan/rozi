@@ -635,7 +635,7 @@ mod tests {
 
     fn reveal_duration(backend: &TestBackend<AppRoot>) -> Duration {
         crate::layout::anim::session_reveal_transition(backend.state().config.animations)
-            .expect("session reveal enabled by default")
+            .expect("session reveal enabled")
             .duration
     }
 
@@ -643,6 +643,7 @@ mod tests {
     fn a_new_session_view_resolves_in_and_then_settles() {
         in_stack(|| {
             let mut backend = backend();
+            backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
             let settled = backgrounds(&backend);
 
             backend.state_mut().session_view_revision += 1;
@@ -907,6 +908,7 @@ mod tests {
         in_stack(|| {
             let switch = |from_picker: bool| {
                 let mut backend = backend();
+                backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
                 let rest = backgrounds(&backend);
                 if from_picker {
                     backend.state_mut().show_palette = true;

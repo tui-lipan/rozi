@@ -125,7 +125,7 @@ stays in the background.
 
 When you switch to a session this client has not opened yet, the previous session stays on screen
 for a quarter of a second, and the Connecting screen appears only if the connection takes longer.
-The incoming session then fades in. To use the portal effect or turn the effect off, change
+A portal then opens onto the incoming session. To use a fade instead or turn the effect off, change
 **Settings** › General › Animations › Session switching, or `session` in
 [`[animations]`](configuration.md#animations).
 

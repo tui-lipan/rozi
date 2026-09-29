@@ -220,9 +220,13 @@ pub enum SessionAnimationStyle {
     /// The incoming session appears at once.
     Off,
     /// The incoming session resolves in place from slightly dimmed.
-    #[default]
     Fade,
     /// A portal opens from the centre, revealing the incoming session over the outgoing one.
+    ///
+    /// The default: the fade takes the incoming layer over at once and only eases its dim, so the
+    /// outgoing screen cuts away. Leaving the launcher for a mostly empty new session, that reads
+    /// as no animation at all; the portal keeps the outgoing screen visible while it opens.
+    #[default]
     Portal,
 }
 
@@ -602,7 +606,7 @@ impl Default for WindowAnimationConfig {
             sidebar: true,
             workspace: true,
             workspace_duration: Duration::from_millis(GEOMETRY_MS),
-            session: SessionAnimationStyle::Fade,
+            session: SessionAnimationStyle::default(),
             focus_chrome: true,
             pane_style: PaneAnimationStyle::Scale,
             pane_overrides: PaneAnimationOverrides::default(),
@@ -1060,9 +1064,10 @@ mod tests {
         for geometry_ms in [220, 90, 600] {
             let animations = WindowAnimationConfig {
                 geometry_duration: Duration::from_millis(geometry_ms),
+                session: SessionAnimationStyle::Fade,
                 ..WindowAnimationConfig::default()
             };
-            let fade = session_reveal_transition(animations).expect("the fade is on by default");
+            let fade = session_reveal_transition(animations).expect("the fade is on");
             let backdrop = scratch_transition_duration(animations.geometry_duration);
             assert!(
                 fade.duration >= backdrop * 2,

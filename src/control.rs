@@ -33,8 +33,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
 /// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
-/// meta events, and the `ui-exited` end reason, and version 12 with `pane-reveal`.
-pub const API_SCHEMA_VERSION: u32 = 12;
+/// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, and version 13
+/// with `new-pane`'s `size`.
+pub const API_SCHEMA_VERSION: u32 = 13;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -71,6 +72,9 @@ pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
 pub const RECORD_UI_CAPABILITY: &str = "record-ui";
 /// A UI answers `pane-reveal`, scrolling a Scrollable strip to a pane without moving focus.
 pub const PANE_REVEAL_CAPABILITY: &str = "pane-reveal";
+/// `new-pane` honors `size`, starting the pane at that terminal size. An older binary ignores the
+/// field and starts the pane at its default size.
+pub const SPLIT_SIZE_CAPABILITY: &str = "split-size";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -106,6 +110,7 @@ impl ApiDescription {
                 RECORD_UI_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
+                SPLIT_SIZE_CAPABILITY,
             ],
         }
     }
@@ -482,6 +487,14 @@ pub enum ControlCommand {
         /// entirely out of the way, and gives each pane the same geometry as the last.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<usize>,
+        /// The terminal size the pane starts at, instead of the size its tile will get.
+        ///
+        /// What this is for: a pane no UI draws - one in a workspace nobody is looking at, or one a
+        /// detached session opened - never gets a tile to measure, so it keeps its spawn size. A
+        /// script that captures such a pane chooses that size here, including sizes no window
+        /// could show. Once a UI draws the pane, the tile decides its size as it does for any other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<PaneSize>,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
     RunAction {
@@ -1672,6 +1685,48 @@ pub struct NewPaneAccepted {
     pub id: PaneId,
     pub accepted: bool,
     pub pty_ready: bool,
+}
+
+/// Largest width or height `split --size` accepts, in cells.
+///
+/// Far beyond any screen, so a script can lay out everything it wants to capture at once, but
+/// bounded because every cell is allocated up front in both the server's and each client's parser.
+pub const MAX_PANE_SIZE_CELLS: u16 = 1000;
+
+/// A terminal size in cells, as `split --size COLSxROWS` spells it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+impl PaneSize {
+    /// Parse `COLSxROWS`, for example `100x220`.
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        let invalid = || format!("--size takes COLSxROWS, for example 100x220, not `{value}`");
+        let (cols, rows) = value.split_once(['x', 'X']).ok_or_else(invalid)?;
+        let size = Self {
+            cols: cols.parse().map_err(|_| invalid())?,
+            rows: rows.parse().map_err(|_| invalid())?,
+        };
+        size.validate()?;
+        Ok(size)
+    }
+
+    /// Refuse a size with an empty or oversized side. Checked again where the pane is spawned,
+    /// because a request can arrive as raw JSON without passing through [`PaneSize::parse`].
+    pub fn validate(self) -> std::result::Result<(), String> {
+        let range = 1..=MAX_PANE_SIZE_CELLS;
+        if range.contains(&self.cols) && range.contains(&self.rows) {
+            Ok(())
+        } else {
+            Err(format!(
+                "pane size {}x{} is out of range; each side must be 1 to {MAX_PANE_SIZE_CELLS} cells",
+                self.cols, self.rows
+            ))
+        }
+    }
 }
 
 /// What `pane-logging` answers with.

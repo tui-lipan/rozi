@@ -59,6 +59,7 @@ fn spawn(session: &str, script: &str) -> u32 {
             keep_open: false,
             focus: false,
             workspace: None,
+            size: None,
         },
     );
     spawned["id"].as_u64().expect("a pane id") as u32

@@ -541,6 +541,7 @@ impl SessionServer {
                 keep_open,
                 focus,
                 workspace,
+                size,
             } => self.session_new_pane(
                 SessionSpawn {
                     command,
@@ -550,6 +551,7 @@ impl SessionServer {
                     keep_open,
                     focus,
                     workspace,
+                    size,
                 },
                 broadcasts,
             ),
@@ -1496,6 +1498,9 @@ impl SessionServer {
         // before this ran - see the `SessionControl` arm in `connection.rs`, which does it for
         // every request that opens a pane. They describe the pane about to exist, not the ones
         // this server opened when it started.
+        if let Some(Err(error)) = spawn.size.map(crate::control::PaneSize::validate) {
+            return ControlResponse::error(error);
+        }
         let launch = match crate::pane::spawn_policy::requested_launch(spawn.command, spawn.argv) {
             Ok(launch) => launch,
             Err(error) => return ControlResponse::error(error),
@@ -1562,7 +1567,9 @@ impl SessionServer {
             ));
         };
 
-        let (cols, rows) = self.headless_spawn_size();
+        let (cols, rows) = spawn
+            .size
+            .map_or_else(|| self.headless_spawn_size(), |size| (size.cols, size.rows));
         let palette = self
             .panes
             .values()
@@ -1765,6 +1772,7 @@ struct SessionSpawn {
     keep_open: bool,
     focus: bool,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
 }
 
 #[cfg(all(test, unix))]
@@ -2811,6 +2819,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -2852,6 +2861,45 @@ mod tests {
     }
 
     #[test]
+    fn a_headless_spawn_starts_at_the_size_it_asked_for_and_refuses_one_out_of_range() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 4, b"");
+        server.layout = Some(one_pane_layout(4));
+        let spawn = |size| ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+            size: Some(size),
+        };
+
+        let (response, _) = control(
+            &mut server,
+            spawn(crate::control::PaneSize {
+                cols: 100,
+                rows: 220,
+            }),
+        );
+        assert!(response.ok, "{:?}", response.error);
+        let id = response.data.expect("spawn data")["id"]
+            .as_u64()
+            .expect("spawn reports an id") as PaneId;
+        let pane = &server.panes[&id];
+        assert_eq!((pane.cols, pane.rows), (100, 220));
+
+        // Raw JSON never went through `PaneSize::parse`, so the server checks the range itself.
+        let (refused, broadcasts) = control(
+            &mut server,
+            spawn(crate::control::PaneSize { cols: 0, rows: 40 }),
+        );
+        assert!(!refused.ok);
+        assert!(broadcasts.is_empty(), "a refused spawn commits nothing");
+    }
+
+    #[test]
     fn a_headless_spawn_is_refused_when_the_session_has_panes_but_no_layout_to_place_them_in() {
         let mut server = SessionServer::new_named("dev");
         pane_with_screen(&mut server, 2, b"");
@@ -2867,6 +2915,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(!response.ok);
@@ -2906,6 +2955,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(!response.ok);
@@ -2937,6 +2987,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(!response.ok);
@@ -2963,6 +3014,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(allowed.ok, "{:?}", allowed.error);
@@ -3164,6 +3216,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -3209,6 +3262,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             },
         );
         assert!(!response.ok);

@@ -137,6 +137,7 @@ pub(crate) fn handle_control_request(
             keep_open,
             focus,
             workspace,
+            size,
         } => {
             return new_pane(
                 ctx,
@@ -148,6 +149,7 @@ pub(crate) fn handle_control_request(
                 keep_open,
                 focus,
                 workspace,
+                size,
                 envelope.reply,
             );
         }
@@ -1644,7 +1646,11 @@ fn prepare_new_pane(
     command: Option<String>,
     argv: Option<Vec<String>>,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
 ) -> std::result::Result<PreparedNewPane, ControlResponse> {
+    if let Some(size) = size {
+        size.validate().map_err(ControlResponse::error)?;
+    }
     let workspace = match workspace {
         Some(index) => Some(
             crate::pane::spawn_policy::workspace_index(index).map_err(ControlResponse::error)?,
@@ -1683,13 +1689,14 @@ fn new_pane(
     keep_open: bool,
     focus: bool,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
     let PreparedNewPane {
         workspace,
         launch,
         scratch_source,
-    } = match prepare_new_pane(&ctx.state, source, command, argv, workspace) {
+    } = match prepare_new_pane(&ctx.state, source, command, argv, workspace, size) {
         Ok(prepared) => prepared,
         Err(response) => {
             let _ = reply.send(response);
@@ -1706,6 +1713,7 @@ fn new_pane(
             keep_open,
             focus,
             workspace,
+            size,
         },
     ) {
         ctx.state.pending_control_reply = Some(reply);
@@ -1746,6 +1754,7 @@ fn new_pane(
         keep_open,
         focus,
         workspace,
+        size,
     );
     hold_spawn_reply(ctx, id, reply);
     update
@@ -1833,6 +1842,7 @@ pub(crate) fn new_pane_after_session(
     keep_open: bool,
     focus: bool,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
     if !ctx.state.is_controller() {
         return (0, Update::full());
@@ -1850,6 +1860,7 @@ pub(crate) fn new_pane_after_session(
         keep_open,
         focus,
         workspace,
+        size,
     )
 }
 
@@ -1864,6 +1875,7 @@ fn spawn_new_pane(
     keep_open: bool,
     focus: bool,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
         launch,
@@ -1881,6 +1893,7 @@ fn spawn_new_pane(
         identity,
         Some(focus),
         workspace,
+        size,
     )
 }
 
@@ -2394,6 +2407,7 @@ mod tests {
                         keep_open: false,
                         focus,
                         workspace: None,
+                        size: None,
                     },
                     source_pane: None,
                     source_session: None,
@@ -2464,6 +2478,51 @@ mod tests {
             .expect("spawn new-pane readiness test thread")
             .join()
             .expect("new-pane readiness test thread completes");
+    }
+
+    #[test]
+    fn new_pane_with_a_size_spawns_the_pty_and_the_parser_at_that_size() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                let outbound = attach_test_session(&mut backend);
+                let (mut envelope, _response) = new_pane_request(false);
+                let ControlCommand::NewPane {
+                    workspace, size, ..
+                } = &mut envelope.request.command
+                else {
+                    unreachable!("new_pane_request builds a NewPane");
+                };
+                // Off screen, so no tile ever reports a size that would replace this one.
+                *workspace = Some(9);
+                *size = Some(crate::control::PaneSize {
+                    cols: 100,
+                    rows: 220,
+                });
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .expect("dispatch new-pane --size");
+
+                let spawned = outbound
+                    .try_iter()
+                    .find_map(|message| match message {
+                        ClientOutbound::Control(ClientMessage::SpawnPane {
+                            cols, rows, ..
+                        }) => Some((cols, rows)),
+                        _ => None,
+                    })
+                    .expect("the pane was spawned on the server");
+                assert_eq!(spawned, (100, 220));
+                let pane = backend.state().current().workspaces[8]
+                    .panes
+                    .last()
+                    .expect("the pane landed in workspace 9");
+                assert_eq!((pane.terminal.cols, pane.terminal.rows), (100, 220));
+            })
+            .expect("spawn new-pane size test thread")
+            .join()
+            .expect("new-pane size test thread completes");
     }
 
     #[test]

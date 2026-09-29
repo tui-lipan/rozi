@@ -861,11 +861,22 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut keep_open = false;
                 let mut focus = false;
                 let mut workspace = None;
+                let mut size = None;
                 let mut passthrough = false;
                 while let Some(arg) = iter.next() {
                     match arg.as_str() {
                         "--" if !passthrough => passthrough = true,
                         "--focus" if !passthrough => focus = true,
+                        "--size" if !passthrough && size.is_none() => {
+                            let value = require_value(
+                                &mut iter,
+                                "split --size requires COLSxROWS, for example 100x220",
+                            )?;
+                            size = Some(control::PaneSize::parse(&value)?);
+                        }
+                        "--size" if !passthrough => {
+                            return Err("split --size specified more than once".to_string());
+                        }
                         "--keep-open" if !passthrough => keep_open = true,
                         "--argv" if !passthrough && command.is_none() => {
                             let direct: Vec<String> = iter.by_ref().collect();
@@ -924,6 +935,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     keep_open,
                     focus,
                     workspace,
+                    size,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -2530,11 +2542,51 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: Some(9),
+                size: None,
             }
         );
         assert!(parse_cli_args(vec!["split".into(), "--workspace".into()]).is_err());
         assert!(
             parse_cli_args(vec!["split".into(), "--workspace".into(), "later".into()]).is_err()
+        );
+
+        let ParsedCli::Control(sized) = parse_cli_args(vec![
+            "split".into(),
+            "--size".into(),
+            "100x220".into(),
+            "--argv".into(),
+            "grok".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert!(matches!(
+            sized.request.command,
+            control::ControlCommand::NewPane {
+                size: Some(control::PaneSize {
+                    cols: 100,
+                    rows: 220
+                }),
+                ..
+            }
+        ));
+        for bad in [
+            "100", "100x", "x40", "0x40", "100x0", "1001x40", "-1x40", "ax40",
+        ] {
+            assert!(
+                parse_cli_args(vec!["split".into(), "--size".into(), bad.into()]).is_err(),
+                "--size {bad} should be refused"
+            );
+        }
+        assert!(
+            parse_cli_args(vec![
+                "split".into(),
+                "--size".into(),
+                "80x24".into(),
+                "--size".into(),
+                "80x24".into(),
+            ])
+            .is_err()
         );
 
         // Order-independent, like every other control command's flags.
@@ -2638,6 +2690,7 @@ mod tests {
             keep_open: false,
             focus,
             workspace: None,
+            size: None,
         };
 
         assert_eq!(
@@ -2672,6 +2725,7 @@ mod tests {
                 keep_open: true,
                 focus: true,
                 workspace: None,
+                size: None,
             }
         );
         assert_eq!(
@@ -2714,6 +2768,7 @@ mod tests {
                 keep_open: false,
                 focus: true,
                 workspace: None,
+                size: None,
             }
         );
         assert!(parse_cli_args(vec!["split".into(), "--argv".into()]).is_err());
@@ -3261,6 +3316,7 @@ mod tests {
                 keep_open: false,
                 focus: false,
                 workspace: None,
+                size: None,
             }
         );
     }

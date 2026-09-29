@@ -505,6 +505,7 @@ Set at most one of `command` or `argv`. Omit both for an interactive shell.
 ```json
 {"cmd":"new-pane","command":"cargo test","cwd":"/repo","title":"tests","keep_open":true}
 {"cmd":"new-pane","argv":["cargo","test","--","path with spaces"],"workspace":9,"focus":false}
+{"cmd":"new-pane","argv":["my-tui"],"workspace":9,"size":{"cols":100,"rows":220}}
 ```
 
 | Field | Type | Default | Meaning |
@@ -516,9 +517,13 @@ Set at most one of `command` or `argv`. Omit both for an interactive shell.
 | `keep_open` | bool | `false` | Replaces a finished command with a shell. |
 | `focus` | bool | `false` | Focuses the new pane and its workspace. |
 | `workspace` | integer or null | rule or current workspace | One-based workspace, `1..=9`. |
+| `size` | object or null | tile size | `{ "cols": number, "rows": number }`, each `1..=1000`. The size the pane starts at; see [Choose the size of a pane](control.md#choose-the-size-of-a-pane). |
 
 The response waits up to five seconds for the pane's terminal to be ready, then returns `id`,
 `accepted`, and `pty_ready`.
+
+A binary advertises `size` with the `split-size` capability in
+[`rozi api describe`](control.md#check-the-installed-api). An older binary ignores the field.
 
 ### Actions, workspaces, status, and notifications
 

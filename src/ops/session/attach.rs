@@ -1018,9 +1018,10 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
             keep_open,
             focus,
             workspace,
+            size,
         } => {
             let (id, update) = crate::ops::control::new_pane_after_session(
-                ctx, source, launch, cwd, title, keep_open, focus, workspace,
+                ctx, source, launch, cwd, title, keep_open, focus, workspace, size,
             );
             if let Some(reply) = ctx.state.pending_control_reply.take() {
                 crate::ops::control::hold_spawn_reply(ctx, id, reply);

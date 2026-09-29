@@ -143,6 +143,7 @@ pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Updat
             fullscreen: false,
             focus: true,
         },
+        None,
     )
     .1
 }
@@ -331,7 +332,7 @@ pub(crate) fn spawn_interactive_pane(
     source: Option<PaneId>,
     identity: PaneIdentity,
 ) -> (PaneId, Update) {
-    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None, None)
+    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None, None, None)
 }
 
 /// Spawn like [`spawn_interactive_pane`], but let the caller decide whether the new pane takes
@@ -342,6 +343,8 @@ pub(crate) fn spawn_interactive_pane(
 /// would send their next keystrokes somewhere they never looked. A rule's `focus` still describes
 /// what an interactive spawn of that command should do, so the override applies only to the
 /// automation path and leaves workspace/float/fullscreen placement alone.
+///
+/// `size` is the terminal size the pane starts at; see [`spawn_pane_in_workspace`].
 pub(crate) fn spawn_interactive_pane_with_focus(
     ctx: &mut Context<AppRoot>,
     source_workspace: usize,
@@ -349,6 +352,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     identity: PaneIdentity,
     focus: Option<bool>,
     workspace: Option<usize>,
+    size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
     let rule_command = identity
         .launch
@@ -362,7 +366,14 @@ pub(crate) fn spawn_interactive_pane_with_focus(
         focus,
         workspace,
     );
-    spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement)
+    spawn_pane_in_workspace(
+        ctx,
+        workspace_index,
+        previous_focused,
+        identity,
+        placement,
+        size,
+    )
 }
 
 pub(crate) fn interactive_spawn_target(
@@ -384,12 +395,18 @@ pub(crate) fn interactive_spawn_target(
     (workspace_index, previous_focused, placement)
 }
 
+/// Spawn a pane into `workspace_index`.
+///
+/// `size` replaces the fallback size a pane's terminal is built with. The PTY and this client's
+/// parser both start at it, and it holds until the pane is drawn: a tile reports its own size then,
+/// exactly as it would have for the fallback.
 pub(crate) fn spawn_pane_in_workspace(
     ctx: &mut Context<AppRoot>,
     workspace_index: usize,
     previous_focused: Option<PaneId>,
     identity: PaneIdentity,
     placement: SpawnPlacement,
+    size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
     let bounds = ctx
         .state
@@ -417,6 +434,10 @@ pub(crate) fn spawn_pane_in_workspace(
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.pty_generation = generation;
     pane.terminal.bind_server_backend(id, generation);
+    if let Some(size) = size {
+        // Nothing has been parsed yet, so this rebuilds the empty screen rather than reflowing it.
+        pane.terminal.apply_server_resize(size.cols, size.rows);
+    }
     pane.identity = identity;
     pane.fullscreen = placement.fullscreen || takes_over_fullscreen;
     if let Some(mut float) = placement.float {

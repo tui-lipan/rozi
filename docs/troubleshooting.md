@@ -211,15 +211,14 @@ On **session lost**, `Enter` recreates the session from the panes on screen. See
 
 ### `SSH login rejected`, a host-key error, or no password prompt
 
-SSH runs in batch mode by default, so authentication must finish without a prompt. Load your key
-into the SSH agent, or set `identity_file` under `[remote.hosts.<alias>]`.
-
-To answer password, passphrase, and host-key prompts inside rozi, set `[remote] batch_mode = false`.
-This needs OpenSSH 8.4 or newer on the client; older versions prompt on the terminal, over the rozi
-window.
+rozi shows password, passphrase, and host-key prompts in a dialog by default. If you configured
+`[remote] batch_mode = true`, remove that setting or set it to `false` to allow prompts.
+Dialogs need OpenSSH 8.4 or newer on the client; older versions prompt on the terminal, over the
+rozi window. Unattended CLI commands always refuse prompts; load your key into the SSH agent or
+set `identity_file` under `[remote.hosts.<alias>]` for those commands.
 
 `Host key not trusted` means OpenSSH could not verify the host's key. Connect once with
-`ssh <HOST>` and accept it, or answer the prompt in rozi with `batch_mode = false`.
+`ssh <HOST>` and verify it, or reconnect and answer the host-key dialog in rozi.
 `Host key changed` means the host no longer matches its recorded key, and OpenSSH refuses to
 connect; verify the new key out of band before you remove the old entry.
 

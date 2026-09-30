@@ -474,7 +474,10 @@ mod tests {
 
     #[test]
     fn reconnect_budget_caps_ssh_connect_and_preamble_timeouts() {
-        let config = RemoteConfig::default();
+        let config = RemoteConfig {
+            batch_mode: true,
+            ..RemoteConfig::default()
+        };
         assert_eq!(
             capped_connect_timeout_secs(&config, Duration::from_secs(120)),
             15
@@ -496,10 +499,7 @@ mod tests {
             Duration::from_millis(1)
         );
 
-        let interactive = RemoteConfig {
-            batch_mode: false,
-            ..RemoteConfig::default()
-        };
+        let interactive = RemoteConfig::default();
         let remaining = Duration::from_secs(120);
         assert_eq!(
             preamble_timeout_for(&interactive, true),

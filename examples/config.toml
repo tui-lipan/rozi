@@ -332,9 +332,9 @@
 # to ~/.local/bin/rozi on the remote when none is found. Non-interactive runs never
 # mutate the remote.
 #install = "prompt"
-# Pass ssh BatchMode=yes, refusing every interactive prompt. Set false to allow password
-# and key-passphrase prompts.
-#batch_mode = true
+# Set true to refuse SSH prompts. By default, prompts use the app dialog or CLI terminal.
+# Unattended CLI commands always refuse prompts.
+#batch_mode = false
 
 [scratchpad]
 # The dropdown scratchpad. Its shell stays alive while hidden.

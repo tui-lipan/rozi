@@ -1,6 +1,6 @@
 //! Probe and optionally install rozi on a remote host before attach.
 
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
@@ -1012,9 +1012,7 @@ fn scp_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command
     super::askpass::configure(&mut command);
     // Same control socket as ssh: an upload rides the connection the probe already authenticated.
     apply_multiplexing(&mut command);
-    if config.batch_mode {
-        command.arg("-o").arg("BatchMode=yes");
-    }
+    configure_batch_mode(&mut command, config);
     if config.connection_timeout_secs > 0 {
         command
             .arg("-o")
@@ -1163,15 +1161,25 @@ fn download_release_binary_from_base_with(
     Ok((download_dir, binary))
 }
 
-/// Common ssh argv for every remote invocation: no tty, timeouts, and the per-host options.
-///
-/// `BatchMode` comes from `[remote] batch_mode` (default on). It is the single place that decides
-/// whether ssh may prompt, so probe, install, attach, list, and kill all agree — a mix would mean
-/// a host that lists fine but hangs on attach.
-///
-/// Being that single place is also why the askpass redirect is installed here: a prompt that
-/// escaped even one of those invocations would land on the terminal the TUI is drawing on. See
-/// [`super::askpass`].
+/// Refuse prompts when explicitly requested or when nobody can answer them.
+fn ssh_batch_mode(configured: bool, ui_available: bool, terminal_available: bool) -> bool {
+    configured || !(ui_available || terminal_available)
+}
+
+fn configure_batch_mode(command: &mut Command, config: &RemoteConfig) {
+    let batch = ssh_batch_mode(
+        config.batch_mode,
+        super::askpass::may_prompt(),
+        io::stdin().is_terminal(),
+    );
+    command.arg("-o").arg(if batch {
+        "BatchMode=yes"
+    } else {
+        "BatchMode=no"
+    });
+}
+
+/// Common ssh argv for probe, install, attach, list, and kill, including the UI askpass redirect.
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     ssh_base_command_with_connect_timeout(resolved, config, config.connection_timeout_secs)
 }
@@ -1202,9 +1210,7 @@ pub(crate) fn ssh_base_command_with_connect_timeout(
             "ServerAliveCountMax={}",
             config.server_alive_count_max
         ));
-    if config.batch_mode {
-        command.arg("-o").arg("BatchMode=yes");
-    }
+    configure_batch_mode(&mut command, config);
     if connection_timeout_secs > 0 {
         command
             .arg("-o")
@@ -2253,16 +2259,22 @@ protocol_max={beyond}
         };
 
         let mut config = RemoteConfig::default();
-        assert!(config.batch_mode, "batch mode must default on");
+        assert!(!config.batch_mode, "interactive prompts must default on");
+        config.batch_mode = true;
         assert!(
             args(&config).iter().any(|arg| arg == "BatchMode=yes"),
-            "default config must refuse interactive ssh prompts"
+            "explicit batch mode must refuse interactive ssh prompts"
         );
 
         config.batch_mode = false;
         assert!(
-            !args(&config).iter().any(|arg| arg == "BatchMode=yes"),
-            "batch_mode = false must let ssh prompt"
+            args(&config).iter().any(|arg| arg == "BatchMode=yes")
+                == ssh_batch_mode(
+                    false,
+                    super::super::askpass::may_prompt(),
+                    io::stdin().is_terminal()
+                ),
+            "unattended commands must still refuse prompts"
         );
         // Everything else is unaffected by the switch.
         assert!(args(&config).iter().any(|arg| arg == "-T"));
@@ -2271,6 +2283,16 @@ protocol_max={beyond}
                 .iter()
                 .any(|arg| arg.starts_with("ConnectTimeout="))
         );
+    }
+
+    #[test]
+    fn ssh_prompts_require_a_ui_or_terminal_and_respect_explicit_batch_mode() {
+        for ui in [false, true] {
+            for terminal in [false, true] {
+                assert!(ssh_batch_mode(true, ui, terminal));
+                assert_eq!(ssh_batch_mode(false, ui, terminal), !ui && !terminal);
+            }
+        }
     }
 
     #[test]
@@ -2311,7 +2333,10 @@ protocol_max={beyond}
             ssh_args: vec!["-o".into(), "UserKnownHostsFile=/tmp/kh".into()],
             binary_path: None,
         };
-        let config = RemoteConfig::default();
+        let config = RemoteConfig {
+            batch_mode: true,
+            ..RemoteConfig::default()
+        };
         let args: Vec<String> = scp_base_command(&resolved, &config)
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())

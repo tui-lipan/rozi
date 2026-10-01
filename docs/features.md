@@ -31,7 +31,7 @@ See [Terminal features](terminal.md).
 - Use temporary sessions for work that does not need a durable name.
 - Save reusable launch setups as profiles.
 - Create Git worktrees and open each in its own session, from the sidebar's Worktrees tab, a picker,
-  or `rozi worktrees`.
+  or `rozi worktrees`. Spot and clear locks left behind by agents that have exited.
 
 See [Sessions](sessions.md), [Remote sessions](remote.md), [Profiles](profiles.md), and
 [Worktrees](worktrees.md).

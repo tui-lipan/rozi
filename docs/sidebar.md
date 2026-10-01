@@ -159,8 +159,9 @@ markers as the Sessions tab:
 | `●` | Running on the host; activating attaches to it |
 | `○` | Saved; activating restores it |
 
-A number after the marker counts the sessions using the checkout. `primary`, `locked`, or `prunable`
-appears to its left when it applies. When you hover the row, the marker changes to what activating
+A number after the marker counts the sessions using the checkout. `primary`, `locked`,
+`stale lock`, or `prunable` appears to its left when it applies; see
+[Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to what activating
 it does: `attach`, `switch`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
@@ -171,8 +172,9 @@ opens when Git finishes.
 
 To remove a linked checkout, hover it and click `x` twice, or select it in a focused sidebar and
 press `x` twice. The branch is kept. If Git refuses because the checkout has uncommitted changes,
-the row asks once more before forcing the removal. The primary checkout, locked checkouts, and
-checkouts a session uses have no `x`.
+the row asks once more before forcing the removal. A checkout with a stale lock has an `x` too;
+confirming it unlocks the checkout and removes it. The primary checkout, checkouts with any other
+lock, and checkouts a session uses have no `x`.
 
 The list follows the focused pane and refreshes along with the Git tab, so a checkout you add from
 a shell appears without further action. See [Worktrees](worktrees.md) for the picker, the CLI, and

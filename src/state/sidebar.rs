@@ -643,7 +643,7 @@ pub struct WorktreeTabRow {
     pub current: bool,
     /// A removal of this checkout is running.
     pub removing: bool,
-    /// Whether its ✕ is offered: a linked, unlocked checkout no session uses.
+    /// Whether its ✕ is offered: a linked checkout no session uses, unlocked or with a stale lock.
     pub closable: bool,
     /// Git refused to remove it as dirty, so its ✕ forces the removal.
     pub force: bool,
@@ -696,7 +696,7 @@ impl crate::state::State {
                     current: &tree.path == cwd,
                     closable: tree.linked
                         && !tree.bare
-                        && !tree.locked
+                        && tree.lock.as_ref().is_none_or(|lock| lock.stale)
                         && sessions.is_empty()
                         && !removing,
                     force: listing.force_remove.as_ref() == Some(&tree.path),

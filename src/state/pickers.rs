@@ -35,7 +35,8 @@ pub struct WorktreePickerState {
     pub input: TextInput,
     pub selected: usize,
     pub pending_list: Option<u64>,
-    pub pending_remove: Option<String>,
+    /// A checkout whose removal waits for a second Ctrl+K.
+    pub pending_remove: Option<PendingWorktreeRemove>,
     pub form: Option<WorktreeFormState>,
     pub error: Option<String>,
     /// Opened from the sidebar straight into the new-worktree form: there is no list behind the
@@ -59,6 +60,21 @@ impl WorktreePickerState {
             standalone_form: false,
         }
     }
+}
+
+/// A checkout armed for removal in the Worktrees picker, and what the confirming press adds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingWorktreeRemove {
+    pub path: String,
+    pub kind: PendingWorktreeRemoveKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingWorktreeRemoveKind {
+    /// Git refused a dirty checkout; the next press forces it.
+    Dirty,
+    /// The checkout's lock is stale; the next press lifts it and removes the checkout.
+    StaleLock,
 }
 
 /// The last checkouts listed for each repository, per host, so the Worktrees picker opens with
@@ -230,6 +246,7 @@ pub struct WorktreeOperation {
 pub enum WorktreeOperationKind {
     Create { branch: String },
     Remove { path: String, force: bool },
+    Unlock { path: String },
 }
 
 pub struct SessionPickerState {
@@ -1597,7 +1614,7 @@ mod worktree_cache_tests {
             bare: false,
             prunable: false,
             linked: true,
-            locked: false,
+            lock: None,
         }
     }
 

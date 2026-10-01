@@ -11,6 +11,9 @@
 //!   checked only): `proc_pidvnodepathinfo` for cwd and `libproc` foreground-group enumeration.
 //! - [`windows`] - **implemented as explicit unavailable**, per the plan (no PEB/process-tree
 //!   probing on Windows).
+//!
+//! [`process_gone`] is separate from pane inspection: it asks whether one recorded process ID has
+//! exited, as a lock or pidfile left behind by another program names it.
 
 use std::path::PathBuf;
 
@@ -73,6 +76,45 @@ impl LazyProcessScan {
     /// Whether the walk actually happened, for tests and diagnostics.
     pub fn captured(&self) -> bool {
         self.0.is_some()
+    }
+}
+
+/// Whether the process `pid` has certainly exited on this host.
+///
+/// `started` is the start time recorded alongside the PID, in this platform's units: on Linux the
+/// clock ticks since boot of `/proc/<pid>/stat`, which tells a reused PID from the original. Other
+/// platforms only check that the PID exists. Any doubt, such as a process this user may not
+/// signal, answers `false`.
+pub fn process_gone(pid: u32, started: Option<u64>) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(raw) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        if raw <= 0 {
+            return false;
+        }
+        // SAFETY: signal 0 performs only the existence and permission checks.
+        if unsafe { libc::kill(raw, 0) } != 0 {
+            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(started) = started {
+            return linux::start_time(pid).is_some_and(|now| now != started);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = started;
+        false
+    }
+    #[cfg(windows)]
+    {
+        let _ = started;
+        windows::process_gone(pid)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (pid, started);
+        false
     }
 }
 

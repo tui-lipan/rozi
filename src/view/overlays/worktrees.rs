@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::state::{WorktreeFormField, WorktreeFormState};
+use crate::state::{PendingWorktreeRemoveKind, WorktreeFormField, WorktreeFormState};
 
 pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.worktree_picker.as_ref() else {
@@ -25,8 +25,25 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .as_ref()
         .is_none_or(|shared| !shared.read_only);
     let busy = ctx.state.worktree_operation_reachable();
-    let armed =
-        selected.is_some_and(|tree| picker.pending_remove.as_deref() == Some(tree.path.as_str()));
+    let armed = picker
+        .pending_remove
+        .as_ref()
+        .filter(|pending| selected.is_some_and(|tree| tree.path == pending.path))
+        .map(|pending| pending.kind);
+    let (remove_label, confirm) = match armed {
+        Some(PendingWorktreeRemoveKind::Dirty) => {
+            ("force remove", "again to force (dirty checkout)")
+        }
+        Some(PendingWorktreeRemoveKind::StaleLock) => (
+            "unlock & remove",
+            "again to unlock and remove (lock owner gone)",
+        ),
+        None => ("remove", ""),
+    };
+    let removable = selected.is_some_and(|tree| {
+        tree.linked && !tree.bare && tree.lock.as_ref().is_none_or(|lock| lock.stale)
+    });
+    let armed = armed.is_some();
     let actions = vec![
         OverlayAction::new(
             "enter",
@@ -39,17 +56,16 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         OverlayAction::new("ctrl-r", "refresh", Msg::WorktreeRefresh, !busy),
         OverlayAction::new(
             "ctrl-k",
-            if armed { "force remove" } else { "remove" },
+            remove_label,
             Msg::WorktreeRemoveSelected,
-            writable
-                && !busy
-                && selected.is_some_and(|tree| tree.linked && !tree.bare && !tree.locked),
+            writable && !busy && removable,
         )
-        .confirm_if(
-            armed,
-            "again to force (dirty checkout)",
-            ctx.state.theme.status.error,
-            true,
+        .confirm_if(armed, confirm, ctx.state.theme.status.error, true),
+        OverlayAction::new(
+            "ctrl-u",
+            "unlock",
+            Msg::WorktreeUnlockSelected,
+            writable && !busy && selected.is_some_and(|tree| tree.lock.is_some()),
         ),
         OverlayAction::new("esc", "close", Msg::CloseWorktrees, true),
     ];
@@ -336,7 +352,8 @@ impl WorktreeRow {
             .collect();
         let state = match sessions.as_slice() {
             [] if !tree.linked => "primary".to_string(),
-            [] if tree.locked => "locked".to_string(),
+            [] if tree.lock.as_ref().is_some_and(|lock| lock.stale) => "stale lock".to_string(),
+            [] if tree.lock.is_some() => "locked".to_string(),
             [] if tree.prunable => "prunable".to_string(),
             [] => String::new(),
             [only] => (*only).to_string(),

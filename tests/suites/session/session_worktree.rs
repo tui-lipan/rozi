@@ -227,6 +227,14 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
             cwd: cwd.clone(),
             path: removable_path.clone(),
             force: false,
+            unlock_stale: false,
+        }),
+        WorktreeResult::Failed { message } if message.contains("writable")
+    ));
+    assert!(matches!(
+        worktree(&mut read_only, 19, WorktreeRequest::Unlock {
+            cwd: cwd.clone(),
+            path: removable_path.clone(),
         }),
         WorktreeResult::Failed { message } if message.contains("writable")
     ));
@@ -259,6 +267,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
                 cwd: cwd.clone(),
                 path: removable_path.clone(),
                 force: true,
+                unlock_stale: false,
             }
         ),
         WorktreeResult::Failed { message } if message.contains("saved-worktree")
@@ -273,6 +282,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
                 cwd: cwd.clone(),
                 path: removable_path,
                 force: false,
+                unlock_stale: false,
             }
         ),
         WorktreeResult::Removed { .. }
@@ -332,6 +342,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
             cwd: cwd.clone(),
             path: checkout_path.clone(),
             force: true,
+            unlock_stale: true,
         }),
         WorktreeResult::Failed { message } if message.contains(&session)
     ));

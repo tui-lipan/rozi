@@ -345,6 +345,13 @@ pub enum WorktreeRequest {
         cwd: String,
         path: String,
         force: bool,
+        /// Lift a lock whose owning process is gone first. The server checks that itself.
+        unlock_stale: bool,
+    },
+    /// Lift a linked checkout's Git lock.
+    Unlock {
+        cwd: String,
+        path: String,
     },
     /// Add a top-level directory of the repository to its `.git/info/exclude`.
     Exclude {
@@ -385,6 +392,9 @@ pub enum WorktreeResult {
         unignored: Option<String>,
     },
     Removed {
+        path: String,
+    },
+    Unlocked {
         path: String,
     },
     Excluded {

@@ -378,8 +378,9 @@ own, waiting between 500 ms and 30 seconds between attempts. While a host is unr
 session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `last seen` row forgets
 it without contacting the host; if the host still reports the session later, it is listed again.
 
-Background reconnects never prompt. If a host needs a password or host-key approval, select it and
-reconnect with `Enter`; unless `[remote] batch_mode = true`, the SSH dialog then handles the prompt.
+Background reconnects never prompt. If a host needs a password or host-key approval, select it in
+Remote hosts and reconnect with `Enter`, or `Ctrl+R` if it still shows connected; unless
+`[remote] batch_mode = true`, the SSH dialog then handles the prompt.
 
 Monitoring runs `rozi sessions watch` on the host, a protocol meant only for rozi clients. It is
 versioned separately from session attachment. If the host's rozi lacks a required feature

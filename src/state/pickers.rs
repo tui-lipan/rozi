@@ -844,7 +844,7 @@ pub enum OverlayOrigin {
     },
     SessionPicker {
         query: String,
-        selected: usize,
+        selected_session: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
         tab: Option<crate::session::remote::RemoteTarget>,
     },
     RemoteHosts {

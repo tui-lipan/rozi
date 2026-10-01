@@ -71,8 +71,9 @@ session you are in, or in the launcher on the tab of the host it is scoped to.
 The tab decides where every key acts. Each tab lists only its own host's sessions, and `Ctrl+N`,
 `Ctrl+T`, and `Enter` on an empty tab create sessions on that host.
 
-Canceling a create-session prompt or returning from Remote hosts restores the tab and search you
-were browsing. In the launcher, disconnecting the active remote host with `Ctrl+X` moves both
+Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
+highlighted session you were browsing. If that session is gone, Sessions highlights the first row
+on the restored tab. In the launcher, disconnecting the active remote host with `Ctrl+X` moves both
 Sessions and the launcher to **Local**.
 
 | Key | Action |

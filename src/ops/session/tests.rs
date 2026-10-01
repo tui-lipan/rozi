@@ -932,7 +932,7 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                 state.current_mut().pending_session_attach = None;
                 state.overlay_return = Some(crate::state::OverlayOrigin::SessionPicker {
                     query: String::new(),
-                    selected: 0,
+                    selected_session: None,
                     tab: None,
                 });
                 state.rename_session =

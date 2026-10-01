@@ -49,7 +49,11 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
         .filter(|_| state.show_session_picker)
         .map(|picker| OverlayOrigin::SessionPicker {
             query: picker.input.text().to_string(),
-            selected: picker.selected,
+            selected_session: picker
+                .entries
+                .get(picker.selected)
+                .filter(|entry| picker.in_tab(entry))
+                .map(|entry| (entry.name.clone(), entry.remote_target.clone())),
             tab: picker.tab.clone(),
         })
 }
@@ -95,7 +99,7 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
         }
         OverlayOrigin::SessionPicker {
             query,
-            selected,
+            selected_session,
             tab,
         } => {
             let update = crate::ops::session::open_session_picker(ctx);
@@ -108,7 +112,14 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
                 picker.input.set_cursor(cursor);
                 picker.input.set_anchor(None);
                 picker.tab = tab;
-                picker.selected = selected.min(picker.entries.len().saturating_sub(1));
+                picker.selected = selected_session
+                    .and_then(|(name, target)| {
+                        picker
+                            .entries
+                            .iter()
+                            .position(|entry| entry.name == name && entry.remote_target == target)
+                    })
+                    .unwrap_or_else(|| picker.first_in_tab().unwrap_or(0));
                 picker.keep_selection_in_tab();
             }
             Some(update)
@@ -324,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_hosts_returns_to_the_browsed_session_tab_instead_of_the_attached_host() {
+    fn remote_hosts_restores_the_browsed_session_identity_after_rows_change() {
         with_backend(|backend| {
             let attached = crate::session::remote::RemoteTarget::Alias("host-a".into());
             let browsed = crate::session::remote::RemoteTarget::Alias("host-b".into());
@@ -346,7 +357,8 @@ mod tests {
                 },
             };
             backend.state_mut().remote.live_sessions = vec![row.clone()];
-            let mut picker = SessionPickerState::new(vec![row]).on_tab(Some(browsed.clone()));
+            let mut picker =
+                SessionPickerState::new(vec![row.clone()]).on_tab(Some(browsed.clone()));
             picker.input.set_text("backend");
             backend.state_mut().session_picker = Some(picker);
             backend.state_mut().show_session_picker = true;
@@ -354,6 +366,15 @@ mod tests {
             backend
                 .dispatch(Msg::SessionPickerRemoteHosts)
                 .expect("open remote hosts");
+            // Discovery adds an earlier row on the browsed host and a same-name session on the
+            // attached host. Neither the old index nor the name alone identifies the selection.
+            let mut earlier = row.clone();
+            earlier.name = "alpha".into();
+            let mut other_host = row.clone();
+            other_host.host = Some("host-a".into());
+            other_host.remote_target = Some(attached.clone());
+            backend.state_mut().remote.live_sessions =
+                vec![earlier.clone(), other_host, row.clone()];
             backend
                 .dispatch(Msg::CloseRemotePicker)
                 .expect("return to sessions");
@@ -366,6 +387,20 @@ mod tests {
             let selected = &picker.entries[picker.selected];
             assert_eq!(selected.name, "backend");
             assert!(picker.in_tab(selected));
+
+            backend
+                .dispatch(Msg::SessionPickerRemoteHosts)
+                .expect("open remote hosts again");
+            // If the selected session disappears, fall back to the first row on the saved tab.
+            backend.state_mut().remote.live_sessions = vec![earlier];
+            backend
+                .dispatch(Msg::CloseRemotePicker)
+                .expect("return after the selected session disappears");
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(picker.tab, row.remote_target);
+            assert_eq!(picker.input.text(), "backend");
+            assert_eq!(picker.entries[picker.selected].name, "alpha");
+            assert!(picker.in_tab(&picker.entries[picker.selected]));
         });
     }
 

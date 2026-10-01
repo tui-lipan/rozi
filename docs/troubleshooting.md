@@ -213,8 +213,8 @@ On **session lost**, `Enter` recreates the session from the panes on screen. See
 
 rozi shows password, passphrase, and host-key prompts in a dialog by default. If you configured
 `[remote] batch_mode = true`, remove that setting or set it to `false` to allow prompts.
-Dialogs need OpenSSH 8.4 or newer on the client; older versions prompt on the terminal, over the
-rozi window. Unattended CLI commands always refuse prompts; load your key into the SSH agent or
+Dialogs need OpenSSH 8.4 or newer on the client; with an older `ssh`, which `ssh -V` shows, the
+running client refuses every prompt rather than let it draw over the window. Unattended CLI commands always refuse prompts; load your key into the SSH agent or
 set `identity_file` under `[remote.hosts.<alias>]` for those commands.
 
 `Host key not trusted` means OpenSSH could not verify the host's key. Connect once with

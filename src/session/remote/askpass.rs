@@ -14,9 +14,9 @@
 //! keeps ssh's ordinary terminal prompt, which is the right answer when there is no UI to cover.
 //!
 //! Which invocations may prompt at all is the caller's [`SshPrompts`] choice. Once the TUI has
-//! claimed the terminal, a prompt goes through the broker or nowhere: a bind failure is not fatal
-//! and is not reported, but it runs every ssh in batch mode rather than letting a prompt reach the
-//! terminal. A runtime directory rozi cannot bind in has already failed the session endpoints the
+//! claimed the terminal, a prompt goes through the broker or nowhere: a bind failure, or an `ssh`
+//! older than 8.4 that would ignore the redirect, runs every ssh in batch mode rather than letting a
+//! prompt reach the terminal. A bind failure is not fatal and is not reported; a runtime directory rozi cannot bind in has already failed the session endpoints the
 //! user will hear about first.
 
 use std::io::{self, IsTerminal};
@@ -170,17 +170,57 @@ impl SshPrompts {
 
     /// Whether ssh may prompt under this policy. `batch_mode` is `[remote] batch_mode`.
     pub(crate) fn allows_prompt(self, batch_mode: bool) -> bool {
-        self.allows_prompt_with(batch_mode, may_prompt())
+        self.allows_prompt_with(batch_mode, || may_prompt() && ssh_redirects_prompts())
     }
 
-    fn allows_prompt_with(self, batch_mode: bool, broker: bool) -> bool {
+    /// `ui_can_answer` is asked only for [`Ui`](Self::Ui), so a CLI run never spawns `ssh -V`.
+    fn allows_prompt_with(self, batch_mode: bool, ui_can_answer: impl FnOnce() -> bool) -> bool {
         !batch_mode
             && match self {
-                Self::Ui => broker,
+                Self::Ui => ui_can_answer(),
                 Self::Terminal => true,
                 Self::Never => false,
             }
     }
+}
+
+/// Whether the `ssh` on `PATH` honours `SSH_ASKPASS_REQUIRE=force`, which arrived in OpenSSH 8.4.
+/// An older client ignores it and asks on the terminal the UI is drawing on, so it gets no prompts
+/// at all. Asked once per process; an `ssh -V` that fails or names no OpenSSH version counts as
+/// too old.
+fn ssh_redirects_prompts() -> bool {
+    static REDIRECTS: OnceLock<bool> = OnceLock::new();
+    *REDIRECTS.get_or_init(|| {
+        crate::platform::command::run_bounded_argv_command(
+            "ssh",
+            &["-V"],
+            Duration::from_secs(5),
+            4096,
+        )
+        .ok()
+        .and_then(|output| {
+            // OpenSSH prints its version on stderr; read both in case a wrapper does otherwise.
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            );
+            openssh_version(&text)
+        })
+        .is_some_and(|version| version >= (8, 4))
+    })
+}
+
+/// `(major, minor)` from `ssh -V` output such as `OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13`
+/// or `OpenSSH_for_Windows_8.1p1, LibreSSL 3.0.2`.
+fn openssh_version(text: &str) -> Option<(u32, u32)> {
+    let rest = &text[text.find("OpenSSH_")? + "OpenSSH_".len()..];
+    let rest = rest.strip_prefix("for_Windows_").unwrap_or(rest);
+    let (major, rest) = rest.split_once('.')?;
+    let minor_len = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    Some((major.parse().ok()?, rest[..minor_len].parse().ok()?))
 }
 
 /// Record that the TUI is about to take the terminal. Called before mount, so even an ssh spawned
@@ -531,15 +571,39 @@ mod tests {
 
     #[test]
     fn ui_prompts_fail_closed_without_a_broker_and_batch_mode_always_wins() {
-        for broker in [false, true] {
+        for ui in [false, true] {
             for policy in [SshPrompts::Ui, SshPrompts::Terminal, SshPrompts::Never] {
-                assert!(!policy.allows_prompt_with(true, broker));
+                assert!(!policy.allows_prompt_with(true, || ui));
             }
-            assert!(!SshPrompts::Never.allows_prompt_with(false, broker));
-            assert!(SshPrompts::Terminal.allows_prompt_with(false, broker));
+            assert!(!SshPrompts::Never.allows_prompt_with(false, || ui));
+            assert!(SshPrompts::Terminal.allows_prompt_with(false, || ui));
         }
-        assert!(SshPrompts::Ui.allows_prompt_with(false, true));
-        assert!(!SshPrompts::Ui.allows_prompt_with(false, false));
+        assert!(SshPrompts::Ui.allows_prompt_with(false, || true));
+        assert!(!SshPrompts::Ui.allows_prompt_with(false, || false));
+        assert!(
+            SshPrompts::Terminal.allows_prompt_with(false, || panic!("CLI must not probe ssh")),
+            "only the UI policy depends on the broker and the ssh version"
+        );
+    }
+
+    #[test]
+    fn openssh_versions_parse_from_ssh_dash_v() {
+        assert_eq!(
+            openssh_version("OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13 30 Jan 2024\n"),
+            Some((9, 6))
+        );
+        assert_eq!(
+            openssh_version("OpenSSH_for_Windows_8.1p1, LibreSSL 3.0.2"),
+            Some((8, 1))
+        );
+        assert_eq!(openssh_version("OpenSSH_8.4, LibreSSL 3.3.6"), Some((8, 4)));
+        assert_eq!(
+            openssh_version("OpenSSH_10.0p2, OpenSSL 3.5.0"),
+            Some((10, 0))
+        );
+        assert_eq!(openssh_version("Dropbear v2022.83"), None);
+        assert_eq!(openssh_version(""), None);
+        assert!((8, 1) < (8, 4) && (10, 0) >= (8, 4));
     }
 
     /// The prompt that keeps its field: it names its own answers, and one of them is a string only

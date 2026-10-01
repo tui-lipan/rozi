@@ -185,8 +185,9 @@ A running rozi client shows SSH prompts in a dialog by default:
 
 To do this, rozi sets `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force`, and its own variables on every
 `ssh` and `scp` it runs, overriding a desktop `SSH_ASKPASS` for those commands only. This needs
-OpenSSH 8.4 or newer on the client; older versions prompt on the terminal, and the prompt draws
-over the rozi window.
+OpenSSH 8.4 or newer on the client, which rozi checks with `ssh -V`. An older client would prompt
+on the terminal, over the rozi window, so with one rozi runs SSH in batch mode instead: load a key
+into your agent, or connect once with `ssh <HOST>` to accept its host key.
 
 Interactive command-line runs keep SSH's ordinary terminal prompt: `rozi sessions list --remote`,
 `rozi sessions kill --remote`, and the install prompt shown before launch.

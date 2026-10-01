@@ -293,10 +293,16 @@ told apart.
 
 ### Claude Code background sessions
 
-Claude Code can run several background sessions from one client, each often in its own worktree.
-rozi sees that client as one pane. The
+Claude Code can run several conversations from one client, each often in its own worktree. rozi
+sees that client as one pane. The
 [claude-rozi-sessions](https://github.com/tui-lipan/claude-rozi-sessions) extension lists every
-background session as its own row in that pane, under the repository and branch it works in. It
-reads `claude agents --json` and needs no Claude Code plugin. Install it from the **Discover** tab
-of **Extensions…**, or with
+conversation as its own row in that pane, under the repository and branch it works in. Selecting a
+row switches the client to that conversation with Claude's `/resume`. The extension never types over
+unsent text, a dialog, or a streaming response. Install it from the **Discover** tab of
+**Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/claude-rozi-sessions.git`.
+
+It works with or without a Claude Code hook integration. With one, the hooks' state drives the row
+for the conversation they report on, matched by `native_session`, and the other rows stay listed.
+The extension needs a readable foreground process group, so it covers local panes on Linux and
+macOS, not Windows or remote panes.

@@ -3868,7 +3868,7 @@
           "type": "array"
         },
         "foreground_pid": {
-          "description": "Process group id of the running foreground job on the pane's host, while one runs and\nwhere the platform can read it. A program that lists its own processes by pid matches\nthem against this to find the one in a pane.",
+          "description": "Process group id of the running foreground job, while one runs and where the platform can\nread it. A program that lists its own processes by pid matches them against this to find\nthe one in a pane. A UI endpoint omits it for a remote attachment, whose processes are on\nanother machine; a session endpoint answers for its own host.",
           "format": "uint32",
           "minimum": 0,
           "type": [

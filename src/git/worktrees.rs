@@ -480,9 +480,19 @@ mod tests {
 
     #[test]
     fn a_lock_reason_names_its_owner_by_pid_and_start_time() {
+        // Claude Code on Linux, verbatim: the start is `/proc/<pid>/stat` field 22.
         assert_eq!(
             lock_owner("claude session fix-x (pid 538630 start 34095030)"),
             Some((538_630, Some(34_095_030)))
+        );
+        // Claude Code on macOS writes a date, which only the PID is read from.
+        assert_eq!(
+            lock_owner("claude session wt-lock (pid 72411 start Tue Sep 8 13:50:41 2026)"),
+            Some((72_411, None))
+        );
+        assert_eq!(
+            lock_owner("claude session wt-lock (pid 72411)"),
+            Some((72_411, None))
         );
         assert_eq!(lock_owner("held by pid 42"), Some((42, None)));
         assert_eq!(lock_owner("pid 42, start soon"), Some((42, None)));
@@ -492,6 +502,18 @@ mod tests {
         // A lock naming no process, or a running one, is not stale.
         assert!(!WorktreeLock::new("initializing").stale);
         assert!(!WorktreeLock::new(&format!("pid {}", std::process::id())).stale);
+    }
+
+    /// The exact reason Claude Code writes on Linux, for this process: its own start time reads as
+    /// live, and any other start time as a reused PID.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_claude_lock_on_linux_tells_a_reused_pid_from_its_owner() {
+        let pid = std::process::id();
+        let start = crate::platform::process::linux::start_time(pid).expect("own start time");
+        let reason = |start: u64| format!("claude session wt-x (pid {pid} start {start})");
+        assert!(!WorktreeLock::new(&reason(start)).stale);
+        assert!(WorktreeLock::new(&reason(start + 1)).stale);
     }
 
     fn git(cwd: &Path, args: &[&str]) {

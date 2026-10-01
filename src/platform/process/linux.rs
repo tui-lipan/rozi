@@ -225,7 +225,7 @@ fn parse_process_stat(stat: &str) -> Option<(u32, String)> {
 }
 
 /// When the process started, in clock ticks since boot: field 22 of `/proc/<pid>/stat`.
-pub(super) fn start_time(pid: u32) -> Option<u64> {
+pub fn start_time(pid: u32) -> Option<u64> {
     parse_start_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
 

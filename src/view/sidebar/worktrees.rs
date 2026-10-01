@@ -209,8 +209,9 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     if row.force {
         item = item.armed_prompt("Dirty · again to force");
     } else if tree.lock.is_some() {
-        // Only a stale lock leaves the row closable; the removal lifts it first.
-        item = item.armed_prompt("Stale lock · again to unlock");
+        // Only a stale lock leaves the row closable. The prompt names the removal, the destructive
+        // part; the lock is lifted on the way.
+        item = item.armed_prompt("Stale lock · again to remove");
     }
     let sidebar_row = SidebarRow::item(item, RowTarget::Worktree(tree.path.clone()));
     if row.closable {

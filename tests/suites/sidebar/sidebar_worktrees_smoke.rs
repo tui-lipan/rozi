@@ -234,7 +234,7 @@ fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
         assert!(
             lines[row..=row + 1]
                 .iter()
-                .any(|line| line.contains("Stale lock")),
+                .any(|line| line.contains("Stale lock · again to remove")),
             "{text}"
         );
     });

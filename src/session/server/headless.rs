@@ -970,6 +970,7 @@ impl SessionServer {
                     foreground_program: pane.runtime.foreground_program.clone(),
                     foreground_programs: pane.runtime.foreground_programs.to_vec(),
                     foreground_arguments: pane.runtime.foreground_arguments.clone(),
+                    foreground_pid: pane.runtime.foreground_pid,
                     cwd: pane.runtime.cwd.clone().or_else(|| pane.cwd.clone()),
                     status: match pane.exited {
                         None => "ready".to_string(),
@@ -1014,12 +1015,16 @@ impl SessionServer {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
-                    cwd: pane.runtime.cwd.clone(),
-                    native_session: pane
-                        .runtime
-                        .integration
-                        .as_ref()
-                        .and_then(|report| report.native_session.clone()),
+                    cwd: protocol::occupant_cwd(
+                        &pane.runtime.rows,
+                        runtime.reference.slot.as_deref(),
+                        pane.runtime.cwd.clone(),
+                    ),
+                    native_session: protocol::occupant_native_session(
+                        &pane.runtime.rows,
+                        pane.runtime.integration.as_deref(),
+                        runtime.reference.slot.as_deref(),
+                    ),
                     reference: runtime.reference,
                     source: runtime.source,
                 });
@@ -2508,6 +2513,9 @@ mod tests {
                 reason: None,
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             },
             protocol::PublishedRow {
                 id: "hidden".into(),
@@ -2516,6 +2524,9 @@ mod tests {
                 reason: None,
                 active: false,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             },
         ];
         pane.agent.sync_references(&pane.runtime);
@@ -2587,6 +2598,9 @@ mod tests {
                 reason: None,
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             });
             pane.agent.sync_references(&pane.runtime);
         }
@@ -2607,7 +2621,14 @@ mod tests {
         assert_eq!(bound.identity.id, "claude");
         assert!(bound.reference.incarnation > 0);
         assert_eq!(bound.seq, 13);
-        assert!(server.panes[&7].runtime.rows.is_empty());
+        // A claim no longer withdraws published rows: they belong to the publisher's stream, and
+        // go when it closes. The rest of this test is about the claim alone.
+        assert_eq!(server.panes[&7].runtime.rows.len(), 1);
+        {
+            let pane = server.panes.get_mut(&7).unwrap();
+            pane.runtime.rows.clear();
+            pane.agent.sync_references(&pane.runtime);
+        }
 
         let (stale, _) = control(
             &mut server,
@@ -2740,6 +2761,204 @@ mod tests {
             .ok
         );
         assert_eq!(server.panes[&7].runtime.work_started_at, None);
+    }
+
+    /// One Claude client runs several conversations: a publisher lists them as rows while the
+    /// client's hooks report on the one they follow. Both must hold at once, without the hooks
+    /// losing their stale-token and sequence fence.
+    #[test]
+    fn hook_reports_and_published_session_rows_coexist() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let session_row = |id: &str, status: &str, active: bool| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            // `b` works in its own worktree; `a` in the pane's directory.
+            cwd: (id == "b").then(|| "/repo/.claude/worktrees/b".to_string()),
+            project: None,
+            native_session: Some(format!("native-{id}")),
+        };
+        let publish = |server: &mut SessionServer, rows: Vec<protocol::PublishedRow>| {
+            let pane = server.panes.get_mut(&7).unwrap();
+            pane.runtime.rows = rows;
+            pane.agent.sync_references(&pane.runtime);
+        };
+        let report = |server: &mut SessionServer, token: &str, state, native: &str, seq| {
+            control(
+                server,
+                ControlCommand::AgentReport {
+                    target: Some(7),
+                    agent: "claude".into(),
+                    integration: token.into(),
+                    state,
+                    reason: None,
+                    native_session: Some(native.into()),
+                    seq,
+                },
+            )
+            .0
+        };
+        let listed = |server: &SessionServer| {
+            server
+                .session_agent_report()
+                .into_iter()
+                .map(|agent| {
+                    (
+                        agent.reference.slot.unwrap_or_default(),
+                        agent.state,
+                        agent.source,
+                        agent.native_session,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        publish(
+            &mut server,
+            vec![
+                session_row("a", "idle", true),
+                session_row("b", "done", false),
+            ],
+        );
+        assert!(
+            report(
+                &mut server,
+                "hook-1",
+                protocol::AgentState::Working,
+                "native-a",
+                1
+            )
+            .ok
+        );
+        assert_eq!(
+            listed(&server),
+            vec![
+                (
+                    "a".into(),
+                    protocol::AgentState::Working,
+                    protocol::AgentAuthority::Reported,
+                    Some("native-a".into())
+                ),
+                (
+                    "b".into(),
+                    protocol::AgentState::Done,
+                    protocol::AgentAuthority::Published,
+                    Some("native-b".into())
+                ),
+            ]
+        );
+        // Each occupant reports where it works: its row's own directory, or the pane's.
+        assert_eq!(
+            server
+                .session_agent_report()
+                .into_iter()
+                .map(|agent| agent.cwd)
+                .collect::<Vec<_>>(),
+            vec![
+                Some("/repo".to_string()),
+                Some("/repo/.claude/worktrees/b".to_string())
+            ]
+        );
+
+        // A publisher update keeps the claim, and the claim keeps its fence.
+        publish(
+            &mut server,
+            vec![
+                session_row("a", "idle", true),
+                session_row("b", "working", false),
+            ],
+        );
+        let stale = report(
+            &mut server,
+            "hook-1",
+            protocol::AgentState::Idle,
+            "native-a",
+            1,
+        );
+        assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
+        assert!(
+            report(
+                &mut server,
+                "hook-1",
+                protocol::AgentState::Blocked,
+                "native-a",
+                2
+            )
+            .ok
+        );
+        assert_eq!(listed(&server)[0].1, protocol::AgentState::Blocked);
+        assert_eq!(listed(&server)[1].1, protocol::AgentState::Working);
+        let foreign = report(
+            &mut server,
+            "hook-2",
+            protocol::AgentState::Idle,
+            "native-b",
+            1,
+        );
+        assert_eq!(foreign.code, Some(ControlErrorCode::Conflict));
+
+        // The client switched to `b` and its hooks went quiet: the report about `a` no longer
+        // matches any row, so the rows alone describe the pane.
+        publish(&mut server, vec![session_row("b", "idle", true)]);
+        assert_eq!(
+            listed(&server),
+            vec![(
+                "b".into(),
+                protocol::AgentState::Idle,
+                protocol::AgentAuthority::Published,
+                Some("native-b".into())
+            )]
+        );
+
+        // Releasing the claim leaves the rows; a retired token can never claim again.
+        assert!(
+            control(
+                &mut server,
+                ControlCommand::AgentRelease {
+                    target: Some(7),
+                    integration: "hook-1".into(),
+                    seq: 3,
+                },
+            )
+            .0
+            .ok
+        );
+        assert!(server.panes[&7].runtime.integration.is_none());
+        assert_eq!(server.panes[&7].runtime.rows.len(), 1);
+        let retired = report(
+            &mut server,
+            "hook-1",
+            protocol::AgentState::Idle,
+            "native-b",
+            4,
+        );
+        assert_eq!(retired.code, Some(ControlErrorCode::Conflict));
+
+        // Withdrawing the rows hands the pane back to a fresh claim alone.
+        publish(&mut server, Vec::new());
+        assert!(
+            report(
+                &mut server,
+                "hook-3",
+                protocol::AgentState::Working,
+                "native-c",
+                1
+            )
+            .ok
+        );
+        assert_eq!(
+            listed(&server),
+            vec![(
+                String::new(),
+                protocol::AgentState::Working,
+                protocol::AgentAuthority::Reported,
+                Some("native-c".into())
+            )]
+        );
     }
 
     #[test]

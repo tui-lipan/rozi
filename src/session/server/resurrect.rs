@@ -315,6 +315,48 @@ struct SnapshotAgentResume {
     reported_at: u64,
 }
 
+/// The conversation a restored pane resumes.
+///
+/// The active published row wins when it names one: a client running several conversations
+/// shows that one, and its hooks may still be reporting on a conversation it has since switched
+/// away from. Otherwise the pane's integration report decides, as it always has.
+fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
+    let report = pane.runtime.integration.as_deref();
+    let active = pane
+        .runtime
+        .rows
+        .iter()
+        .find(|row| row.active)
+        .and_then(|row| row.native_session.clone());
+    if let Some(session) = active {
+        let agent = report
+            .map(|report| report.identity.id.clone())
+            .or_else(|| {
+                pane.runtime
+                    .detected_agent
+                    .as_ref()
+                    .map(|detected| detected.agent.id.clone())
+            })?;
+        let reported_at = report
+            .filter(|report| report.native_session.as_deref() == Some(session.as_str()))
+            .map_or_else(crate::runtime_metrics::unix_time_millis, |report| {
+                report.reported_at_unix_ms
+            });
+        return Some(SnapshotAgentResume {
+            agent,
+            session,
+            reported_at,
+        });
+    }
+    report.and_then(|report| {
+        Some(SnapshotAgentResume {
+            agent: report.identity.id.clone(),
+            session: report.native_session.clone()?,
+            reported_at: report.reported_at_unix_ms,
+        })
+    })
+}
+
 /// What a restored pane does beyond coming back with its scrollback, in the one precedence order:
 /// a native agent conversation outranks a replayed foreground command, which outranks leaving the
 /// pane to whatever its own launch intent starts.
@@ -583,17 +625,7 @@ impl SessionServer {
                 generation: pane.generation,
                 launch: pane.launch.clone(),
                 foreground,
-                agent_resume: record_agents
-                    .then(|| {
-                        pane.runtime.integration.as_ref().and_then(|report| {
-                            Some(SnapshotAgentResume {
-                                agent: report.identity.id.clone(),
-                                session: report.native_session.clone()?,
-                                reported_at: report.reported_at_unix_ms,
-                            })
-                        })
-                    })
-                    .flatten(),
+                agent_resume: record_agents.then(|| agent_resume(pane)).flatten(),
                 cwd: pane.spawnable_cwd(),
                 keep_open: pane.keep_open,
                 title: pane.effective_title(),
@@ -1664,6 +1696,28 @@ mod tests {
         assert_eq!(resume.agent, "claude");
         assert_eq!(resume.session, "opaque-session-123");
         assert_eq!(resume.reported_at, 42);
+
+        // A client that switched conversations shows its active row's; the hooks' report still
+        // names the one it left, so it must not decide what comes back.
+        let pane = server.panes.get_mut(&1).unwrap();
+        pane.runtime.rows = ["left-behind", "on-screen"]
+            .into_iter()
+            .map(|id| protocol::PublishedRow {
+                id: id.into(),
+                title: id.into(),
+                status: "idle".into(),
+                reason: None,
+                active: id == "on-screen",
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: Some(format!("native-{id}")),
+            })
+            .collect();
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let resume = job.meta.panes[0].agent_resume.as_ref().expect("row fact");
+        assert_eq!(resume.agent, "claude");
+        assert_eq!(resume.session, "native-on-screen");
 
         server.settings.resurrect_agents = false;
         let private_job = server.capture_snapshot(Instant::now()).expect("capture");

@@ -120,6 +120,33 @@ impl PaneKeys {
     }
 }
 
+/// Where an agent works, as the Activity sidebar and Agents view group and label it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AgentPlace {
+    pub cwd: Option<String>,
+    /// Host of a remote `cwd`; `None` for this machine.
+    pub host: Option<String>,
+    /// Git project containing `cwd`: the grouping key wherever it exists.
+    pub project_root: Option<String>,
+    /// Primary checkout when `project_root` is a linked worktree; the group is named after it.
+    pub repository: Option<String>,
+    pub branch: Option<String>,
+}
+
+impl AgentPlace {
+    /// What the agent groups under: the project root, else the bare cwd.
+    pub fn group_path(&self) -> Option<&str> {
+        self.project_root.as_deref().or(self.cwd.as_deref())
+    }
+
+    /// The path a group is named after. A linked worktree takes its repository's name, so
+    /// `.claude/worktrees/fix-login` reads as `rozi` beside the branch it has checked out rather
+    /// than as an unrelated project called `fix-login`.
+    pub fn label_path(&self) -> Option<&str> {
+        self.repository.as_deref().or(self.group_path())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PaneActivity {
     pub last_activity: Option<Instant>,
@@ -169,6 +196,48 @@ impl Pane {
             },
             &self.agent_refs,
         )
+    }
+
+    /// Where one of this pane's agent occupants is working.
+    ///
+    /// A published row that names its own `cwd` is somewhere else than the pane: a program that
+    /// runs several sessions behind one terminal typically gives each its own Git worktree. Every
+    /// other occupant is wherever the pane is.
+    pub(crate) fn agent_place(
+        &self,
+        runtime: &crate::session::protocol::AgentRuntime,
+    ) -> AgentPlace {
+        let host = self.terminal.cwd_host.clone();
+        let row = runtime
+            .reference
+            .slot
+            .as_deref()
+            .and_then(|id| self.terminal.published_rows.iter().find(|row| row.id == id));
+        if let Some(row) = row
+            && let Some(cwd) = row.cwd.clone()
+        {
+            let project = row.project.as_ref();
+            return AgentPlace {
+                cwd: Some(cwd),
+                host,
+                project_root: project.map(|project| project.root.clone()),
+                repository: project.and_then(|project| project.repository.clone()),
+                branch: project.and_then(|project| project.branch.clone()),
+            };
+        }
+        let cwd = self
+            .terminal
+            .cwd
+            .clone()
+            .filter(|cwd| !cwd.trim().is_empty());
+        let known = cwd.is_some();
+        AgentPlace {
+            host: known.then_some(host).flatten(),
+            project_root: known.then(|| self.terminal.project_root.clone()).flatten(),
+            repository: known.then(|| self.terminal.repository.clone()).flatten(),
+            branch: known.then(|| self.terminal.git_branch.clone()).flatten(),
+            cwd,
+        }
     }
 
     pub(crate) fn begin_open_animation(

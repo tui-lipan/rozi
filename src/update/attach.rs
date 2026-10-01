@@ -43,20 +43,23 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.display_path = meta.runtime.display_path.clone();
     pane.terminal.project_root = meta.runtime.project_root.clone();
     pane.terminal.git_branch = meta.runtime.git_branch.clone();
+    pane.terminal.repository = meta.runtime.repository.clone();
     pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
     pane.terminal.foreground_programs = meta.runtime.foreground_programs.to_vec();
     pane.terminal.foreground_executable = meta.runtime.foreground_executable.clone();
     pane.terminal.foreground_arguments = meta.runtime.foreground_arguments.clone();
+    pane.terminal.foreground_pid = meta.runtime.foreground_pid;
     pane.terminal.reported_status = meta.runtime.status.clone();
     pane.terminal.recording = meta.runtime.recording;
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
-    pane.terminal.agent_integration = meta.runtime.integration.clone();
     pane.terminal.work_started_at = meta.runtime.work_started_at;
     pane.terminal.command_phase = meta.runtime.command_phase;
     pane.terminal.last_exit_status = meta.runtime.last_exit_status;
     pane.terminal.runtime_sequence = meta.runtime.sequence;
     pane.terminal.child_pid = meta.pid;
-    let _ = pane.terminal.apply_rows(meta.runtime.rows.clone());
+    let _ = pane
+        .terminal
+        .apply_rows(meta.runtime.rows.clone(), meta.runtime.integration.clone());
     pane.logging = meta.logging;
     pane.terminal.status = ManagedTerminalStatus::Ready;
 }

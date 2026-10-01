@@ -28,6 +28,9 @@ pub(crate) struct AgentRow {
     /// monorepo this is the only thing telling two rows of the same project apart.
     pub subpath: Option<String>,
     pub branch: Option<String>,
+    /// Primary checkout when `project_root` is a linked worktree of it. Names the group, so a
+    /// worktree reads as the repository it belongs to; `branch` then tells the groups apart.
+    pub repository: Option<String>,
     /// The agent finished a run (went quiescent) since the pane was last focused; drives the filled
     /// attention pulse until the pane is looked at.
     pub finished_unseen: bool,
@@ -198,30 +201,20 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         && !pane.agent_runtimes().is_empty()
                 })
                 .flat_map(move |(pane_index, pane)| {
-                    let cwd = pane
-                        .terminal
-                        .cwd
-                        .clone()
-                        .filter(|cwd| !cwd.trim().is_empty());
-                    let project_root = cwd
-                        .is_some()
-                        .then(|| pane.terminal.project_root.clone())
-                        .flatten();
-                    let subpath =
-                        project_root
+                    // Presented as merged with the hooks' report, the same as `runtime.state`, so
+                    // the status, activity, age, and sort order never disagree with automation.
+                    let effective = pane.terminal.effective_rows();
+                    pane.agent_runtimes().into_iter().map(move |runtime| {
+                        let place = pane.agent_place(&runtime);
+                        let subpath = place
+                            .project_root
                             .as_deref()
-                            .zip(cwd.as_deref())
+                            .zip(place.cwd.as_deref())
                             .and_then(|(root, cwd)| {
                                 crate::platform::paths::project_relative_path(root, cwd)
                             });
-
-                    pane.agent_runtimes().into_iter().map(move |runtime| {
                         let slot = runtime.reference.slot.as_deref().and_then(|id| {
-                            pane.terminal
-                                .published_rows
-                                .iter()
-                                .enumerate()
-                                .find(|(_, row)| row.id == id)
+                            effective.iter().enumerate().find(|(_, row)| row.id == id)
                         });
                         let (title, status, activity, age, run, finished_unseen, slot) =
                             if let Some((index, published_row)) = slot {
@@ -275,17 +268,12 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                             activity,
                             age,
                             run,
-                            cwd_host: cwd
-                                .is_some()
-                                .then(|| pane.terminal.cwd_host.clone())
-                                .flatten(),
-                            cwd: cwd.clone(),
-                            branch: project_root
-                                .is_some()
-                                .then(|| pane.terminal.git_branch.clone())
-                                .flatten(),
-                            project_root: project_root.clone(),
-                            subpath: subpath.clone(),
+                            cwd_host: place.host,
+                            cwd: place.cwd,
+                            branch: place.project_root.as_ref().and(place.branch),
+                            repository: place.project_root.as_ref().and(place.repository),
+                            project_root: place.project_root,
+                            subpath,
                             finished_unseen,
                             slot,
                         }
@@ -318,6 +306,9 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
         /// Project root where there is one, else the raw cwd: what the label is derived from and
         /// what rows are matched against.
         path: String,
+        /// The repository a linked worktree belongs to, else `path`: what the label names, and
+        /// what tells a worktree of `rozi` apart from an unrelated project that is also `rozi`.
+        repository: String,
         rows: Vec<AgentRow>,
     }
     let mut known: Vec<Keyed> = Vec::new();
@@ -333,6 +324,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
                 } else {
                     known.push(Keyed {
                         host,
+                        repository: row.repository.clone().unwrap_or_else(|| path.clone()),
                         path,
                         rows: vec![row],
                     });
@@ -344,23 +336,29 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
 
     let mut labels: Vec<String> = known
         .iter()
-        .map(|group| project_label(&group.path, group.host.as_deref(), false))
+        .map(|group| project_label(&group.repository, group.host.as_deref(), false))
         .collect();
     // Disambiguate duplicate final labels with one parent segment (VS Code-style); a residual
     // collision after that is accepted — group identity is the full path, the label is display.
-    let ambiguous: Vec<bool> = labels
+    // Checkouts of one repository share a name on purpose: the branch on each header is what
+    // tells them apart, and a parent segment would only name the worktree directory again.
+    let ambiguous: Vec<bool> = known
         .iter()
-        .map(|label| {
-            labels
-                .iter()
-                .filter(|other| other.eq_ignore_ascii_case(label))
-                .count()
-                > 1
+        .zip(&labels)
+        .map(|(group, label)| {
+            known.iter().zip(&labels).any(|(other, other_label)| {
+                other_label.eq_ignore_ascii_case(label)
+                    && (other.host != group.host
+                        || !crate::platform::paths::paths_equal(
+                            &other.repository,
+                            &group.repository,
+                        ))
+            })
         })
         .collect();
     for (index, group) in known.iter().enumerate() {
         if ambiguous[index] {
-            labels[index] = project_label(&group.path, group.host.as_deref(), true);
+            labels[index] = project_label(&group.repository, group.host.as_deref(), true);
         }
     }
 
@@ -615,10 +613,10 @@ pub(crate) fn row_glyph(
 /// One-line project header: the project label at the same column every other tab's headers use,
 /// with the branch it has checked out pinned to the right edge.
 ///
-/// The branch earns that space because the group is a *directory*: a worktree of the same
-/// repository is its own group under a name that says nothing about which line of work it holds
-/// (`api` and `api-2`), and knowing which branch an agent is committing to is the difference
-/// between reading its output and trusting it. Nothing else about the repository is here — how far
+/// The branch earns that space because the group is a *directory*: a linked worktree is its own
+/// group, labelled with the repository it belongs to, so two checkouts of `api` both read `api` and
+/// only the branch says which line of work each holds. Knowing which branch an agent is committing
+/// to is the difference between reading its output and trusting it. Nothing else about the repository is here — how far
 /// the branch has diverged from its upstream cannot be known without a fetch, and a stale number
 /// presented as current is worse than no number.
 ///
@@ -894,6 +892,9 @@ mod tests {
             reason: None,
             active,
             work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
         }
     }
 
@@ -949,6 +950,9 @@ mod tests {
                 reason: Some("compiling crates".into()),
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             },
             crate::session::protocol::PublishedRow {
                 id: "test".into(),
@@ -957,6 +961,9 @@ mod tests {
                 reason: Some("assertion failed".into()),
                 active: false,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             },
         ];
         sync_published_refs(&mut publisher);
@@ -1296,6 +1303,217 @@ mod tests {
         );
     }
 
+    /// A linked worktree is named after its repository, not its directory: `.claude/worktrees/x`
+    /// is `rozi` on another branch, not a project called `x`. Sharing that name is not ambiguity
+    /// worth a parent segment — the branch already separates them — while an unrelated project
+    /// that happens to share the name still gets one.
+    #[test]
+    fn linked_worktrees_take_their_repositorys_name() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut worktree = pane_in_project(
+            2,
+            Some("idle"),
+            "/home/x/rozi/.claude/worktrees/fix-login",
+            "/home/x/rozi/.claude/worktrees/fix-login",
+            Some("worktree-fix-login"),
+        );
+        worktree.terminal.repository = Some("/home/x/rozi".into());
+        state.current_mut().workspaces[0].panes = vec![
+            worktree,
+            pane_in_project(
+                1,
+                Some("idle"),
+                "/home/x/rozi",
+                "/home/x/rozi",
+                Some("master"),
+            ),
+        ];
+        assert_eq!(
+            agent_groups(&state)
+                .iter()
+                .map(|group| (group.project.clone(), group.branch.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some("rozi".into()), Some("master".into())),
+                (Some("rozi".into()), Some("worktree-fix-login".into())),
+            ]
+        );
+
+        state.current_mut().workspaces[0]
+            .panes
+            .push(pane_in_project(
+                3,
+                Some("idle"),
+                "/srv/rozi",
+                "/srv/rozi",
+                Some("master"),
+            ));
+        assert_eq!(
+            agent_groups(&state)
+                .iter()
+                .filter_map(|group| group.project.clone())
+                .collect::<Vec<_>>(),
+            vec!["srv/rozi", "x/rozi", "x/rozi"]
+        );
+    }
+
+    /// One terminal running several sessions, each in its own worktree: a row that names its own
+    /// directory is grouped there, and one that names none stays with its pane.
+    fn hook_report(
+        native: &str,
+        state: crate::session::protocol::AgentState,
+    ) -> Box<crate::session::protocol::AgentIntegrationReport> {
+        Box::new(crate::session::protocol::AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            reference: crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "server",
+                    ),
+                    pane_id: 1,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 99,
+            },
+            state,
+            reason: Some("Permission required".into()),
+            native_session: Some(native.into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        })
+    }
+
+    /// The publisher still calls a conversation idle while its hooks report it blocked: every
+    /// surface - status, activity, and sort order - must show the hooks' word, as automation does.
+    #[test]
+    fn a_hook_report_drives_how_its_row_is_presented_and_sorted() {
+        use crate::session::protocol::AgentState;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut host = pane(1, None, false);
+        let mut quiet = row("quiet", "idle", false);
+        quiet.native_session = Some("native-quiet".into());
+        let mut busy = row("busy", "working", false);
+        busy.native_session = Some("native-busy".into());
+        let _ = host.terminal.apply_rows(
+            vec![busy.clone(), quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Blocked)),
+        );
+        sync_published_refs(&mut host);
+        state.current_mut().workspaces[0].panes = vec![host];
+
+        let rows = agent_rows(&state);
+        let presented = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.slot.as_ref().unwrap().id.clone(),
+                    row.status.clone().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // Blocked outranks working, so the hooks' state also decides the order.
+        assert_eq!(
+            presented,
+            vec![
+                ("quiet".to_string(), "blocked".to_string()),
+                ("busy".to_string(), "working".to_string()),
+            ]
+        );
+        let runtimes = state.current().workspaces[0].panes[0].agent_runtimes();
+        let quiet_runtime = runtimes
+            .iter()
+            .find(|runtime| runtime.reference.slot.as_deref() == Some("quiet"))
+            .unwrap();
+        assert_eq!(
+            rows[0].status.as_deref(),
+            Some(quiet_runtime.state.as_str())
+        );
+    }
+
+    /// A run the hooks report finishing, on a row the publisher never called working, still banks
+    /// its length and raises the finish pulse.
+    #[test]
+    fn a_hook_reported_finish_raises_the_rows_finish_edge() {
+        use crate::session::protocol::AgentState;
+        let mut terminal = crate::pane::TerminalPane::new(100);
+        let mut quiet = row("quiet", "idle", false);
+        quiet.native_session = Some("native-quiet".into());
+        assert!(
+            terminal
+                .apply_rows(
+                    vec![quiet.clone()],
+                    Some(hook_report("native-quiet", AgentState::Working))
+                )
+                .is_empty()
+        );
+        let finished = terminal.apply_rows(
+            vec![quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Done)),
+        );
+        assert_eq!(finished, vec!["quiet".to_string()]);
+        assert!(terminal.published_row_ui["quiet"].finished_unseen);
+        // Releasing the claim with the publisher still saying idle is not a second finish.
+        assert!(terminal.apply_rows(vec![quiet], None).is_empty());
+    }
+
+    #[test]
+    fn published_rows_with_their_own_cwd_group_where_they_work() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut host = pane_in_project(1, None, "/home/x/rozi", "/home/x/rozi", Some("master"));
+        let mut elsewhere = row("fix", "working", false);
+        elsewhere.title = "fix login redirect".into();
+        elsewhere.cwd = Some("/home/x/rozi/.claude/worktrees/fix".into());
+        elsewhere.project = Some(crate::session::protocol::RowProject {
+            root: "/home/x/rozi/.claude/worktrees/fix".into(),
+            repository: Some("/home/x/rozi".into()),
+            branch: Some("worktree-fix".into()),
+        });
+        host.terminal.published_rows = vec![row("here", "idle", true), elsewhere];
+        sync_published_refs(&mut host);
+        state.current_mut().workspaces[0].panes = vec![host];
+
+        let groups = agent_groups(&state);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| (
+                    group.project.clone(),
+                    group.branch.clone(),
+                    group
+                        .rows
+                        .iter()
+                        .map(|row| row.slot.as_ref().unwrap().id.clone())
+                        .collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    Some("rozi".into()),
+                    Some("master".into()),
+                    vec!["here".to_string()]
+                ),
+                (
+                    Some("rozi".into()),
+                    Some("worktree-fix".into()),
+                    vec!["fix".to_string()]
+                ),
+            ]
+        );
+
+        // Keyboard navigation walks the same groups in the same order the view draws.
+        let targets = state
+            .activity_item_projections()
+            .into_iter()
+            .filter_map(|item| match item.target {
+                RowTarget::PublishedRow { row_id, .. } => Some(row_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, vec!["here", "fix"]);
+    }
+
     /// A client can see a project before the server has read its branch, and a pane can be in no
     /// project at all. Neither may lose the group or invent a branch for it.
     #[test]
@@ -1455,6 +1673,7 @@ mod tests {
             project_root: None,
             subpath: None,
             branch: None,
+            repository: None,
             finished_unseen,
             slot: None,
         };
@@ -1499,6 +1718,7 @@ mod tests {
             project_root: None,
             subpath: None,
             branch: None,
+            repository: None,
             finished_unseen: false,
             slot: None,
         };

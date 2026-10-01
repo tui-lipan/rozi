@@ -74,7 +74,9 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
-        if let Some(integration) = &runtime.integration {
+        if let Some(integration) = &runtime.integration
+            && runtime.rows.is_empty()
+        {
             self.references.clear();
             self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
             self.references.insert(
@@ -102,6 +104,18 @@ impl AgentScratch {
                 TrackedAgentReference {
                     identity: identity.to_string(),
                     incarnation: self.next_incarnation,
+                },
+            );
+        }
+        // A claim beside published rows keeps its own reference, so it is the same agent - not a
+        // replacement - when the rows are withdrawn and it speaks for the pane alone again.
+        if let Some(integration) = &runtime.integration {
+            self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
+            self.references.insert(
+                None,
+                TrackedAgentReference {
+                    identity: integration.identity.id.clone(),
+                    incarnation: integration.reference.incarnation,
                 },
             );
         }
@@ -272,10 +286,15 @@ fn validate_integration_update(
     }
 }
 
+/// Whether `value` is an acceptable native session reference: an opaque identifier, kept exactly as
+/// given, so it is validated rather than cleaned. The one rule for a hook report and a published row,
+/// which are matched to each other by exact equality.
+fn native_session_is_valid(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+}
+
 fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()> {
-    if native_session.is_some_and(|value| {
-        value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
-    }) {
+    if native_session.is_some_and(|value| !native_session_is_valid(value)) {
         Err((
             "invalid-argument",
             "native session reference must be 1-4096 characters without control characters"
@@ -503,17 +522,20 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
-        if pane.runtime.integration.is_some() {
-            // Integration authority invalidates the previous published-slot snapshot. Do not
-            // retain concurrent publisher updates behind it and resurrect them on release.
-            return Ok(None);
-        }
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let rows = sanitize_rows(rows, &pane.runtime.rows, now);
+        // Rows and a live integration report coexist: one client can run several conversations,
+        // and the report speaks for the row whose `native_session` it names. See
+        // [`protocol::effective_agent_runtimes`].
+        let now = unix_now_secs();
+        // A pane whose shell reports another host's cwd is running its publisher there too, so
+        // its rows name a filesystem this server cannot read.
+        let local = pane.runtime.cwd_host.is_none();
+        let mut rows = sanitize_rows(rows, &pane.runtime.rows, now, local);
+        restamp_row_clocks(
+            &mut rows,
+            &protocol::rows_with_integration(&pane.runtime),
+            pane.runtime.integration.as_deref(),
+            now,
+        );
         if rows == pane.runtime.rows {
             return Ok(None);
         }
@@ -580,13 +602,20 @@ impl SessionServer {
                 seq,
                 previous.as_deref(),
             )?));
-            // Pane-level integration owns the same semantic slot as published activity. Keeping
-            // the old rows would resurrect stale logical agents as soon as this claim releases.
-            pane.runtime.rows.clear();
+            // Published rows stay. A program listing several conversations keeps listing them
+            // while hooks report on one; the publisher's stream, not this claim, owns their
+            // lifetime, and withdraws them when it closes.
         } else {
             pane.agent.retire_integration(integration);
             pane.runtime.integration = None;
         }
+        // The row the report speaks for runs on the report's clock.
+        restamp_row_clocks(
+            &mut pane.runtime.rows,
+            &protocol::rows_with_integration(&previous_runtime),
+            pane.runtime.integration.as_deref(),
+            unix_now_secs(),
+        );
         pane.runtime.work_started_at = next_work_started_at(
             &previous_runtime,
             pane.runtime.status.as_ref(),
@@ -840,7 +869,20 @@ struct PathRuntime {
     display_path: Option<String>,
     project_root: Option<String>,
     git_branch: Option<String>,
+    repository: Option<String>,
     cwd_source: PaneCwdSource,
+}
+
+/// The Git project holding a server-local `cwd`: its root, the primary checkout when that root is
+/// a linked worktree, and the branch it has checked out. Reads a handful of small files, so it is
+/// cheap enough to run on every poll that asks.
+fn local_project(cwd: &str) -> Option<protocol::RowProject> {
+    let root = crate::platform::paths::discover_project_root(cwd)?;
+    Some(protocol::RowProject {
+        repository: crate::platform::paths::primary_checkout(&root),
+        branch: crate::platform::paths::head_branch(&root),
+        root,
+    })
 }
 
 fn derive_path_runtime(
@@ -866,22 +908,20 @@ fn derive_path_runtime(
     let git_stale = pane
         .last_git_read
         .is_none_or(|at| at.elapsed() >= GIT_REFRESH);
-    let (project_root, git_branch) = if cwd_changed || git_stale {
+    let (project_root, git_branch, repository) = if cwd_changed || git_stale {
         pane.last_git_read = Some(Instant::now());
         match (cwd.as_deref(), cwd_host.as_deref()) {
-            (Some(cwd), None) => {
-                let root = crate::platform::paths::discover_project_root(cwd);
-                let branch = root
-                    .as_deref()
-                    .and_then(crate::platform::paths::head_branch);
-                (root, branch)
-            }
-            _ => (None, None),
+            (Some(cwd), None) => match local_project(cwd) {
+                Some(project) => (Some(project.root), project.branch, project.repository),
+                None => (None, None, None),
+            },
+            _ => (None, None, None),
         }
     } else {
         (
             pane.runtime.project_root.clone(),
             pane.runtime.git_branch.clone(),
+            pane.runtime.repository.clone(),
         )
     };
 
@@ -891,6 +931,7 @@ fn derive_path_runtime(
         display_path,
         project_root,
         git_branch,
+        repository,
         cwd_source,
     }
 }
@@ -908,7 +949,9 @@ fn derive_detected_agent(
     if !pane.runtime.rows.is_empty() {
         pane.agent.hold = None;
         pane.agent.read = None;
-        let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
+        let aggregate = crate::session::protocol::aggregate_row_state(
+            &crate::session::protocol::rows_with_integration(&pane.runtime),
+        );
         return pane
             .runtime
             .detected_agent
@@ -939,12 +982,14 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.display_path != current.display_path
         || candidate.project_root != current.project_root
         || candidate.git_branch != current.git_branch
+        || candidate.repository != current.repository
         || candidate.cwd_source != current.cwd_source
         || candidate.command_phase != current.command_phase
         || candidate.foreground_program != current.foreground_program
         || candidate.foreground_programs != current.foreground_programs
         || candidate.foreground_executable != current.foreground_executable
         || candidate.foreground_arguments != current.foreground_arguments
+        || candidate.foreground_pid != current.foreground_pid
         || candidate.last_exit_status != current.last_exit_status
         || candidate.status != current.status
         || candidate.detected_agent != current.detected_agent
@@ -1012,6 +1057,12 @@ fn compute_runtime_state(
             (None, Vec::new())
         }
     };
+    let foreground_pid = matches!(
+        command_phase,
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown
+    )
+    .then(|| foreground_job.as_ref().map(|job| job.process_group_id))
+    .flatten();
     let detected_agent = derive_detected_agent(
         pane,
         agents,
@@ -1032,8 +1083,10 @@ fn compute_runtime_state(
         display_path: path.display_path,
         project_root: path.project_root,
         git_branch: path.git_branch,
+        repository: path.repository,
         cwd_source: path.cwd_source,
         command_phase,
+        foreground_pid,
         foreground_program: foreground.program,
         foreground_programs: foreground.programs.into_boxed_slice(),
         foreground_executable,
@@ -1477,10 +1530,14 @@ const MAX_PANE_ROWS: usize = 64;
 /// previous selves by `id`, so a run keeps one start across reorders, title changes, and
 /// block-then-resume; an id appearing for the first time starts a run, and one that disappears
 /// takes its clock with it.
+///
+/// A row's `cwd` must be absolute, and its project is resolved here rather than trusted from the
+/// publisher, the same way the pane's own is. `local` is whether that cwd is on this host.
 fn sanitize_rows(
     rows: Vec<protocol::PublishedRow>,
     previous: &[protocol::PublishedRow],
     now: u64,
+    local: bool,
 ) -> Vec<protocol::PublishedRow> {
     let mut active_seen = false;
     rows.into_iter()
@@ -1497,6 +1554,11 @@ fn sanitize_rows(
             // At most one row is the one on screen; a publisher that marks several keeps the
             // first, since the rest cannot also be in view.
             let active = row.active && !std::mem::replace(&mut active_seen, row.active);
+            let cwd = row
+                .cwd
+                .as_deref()
+                .and_then(crate::platform::paths::normalize_reported_cwd);
+            let project = cwd.as_deref().filter(|_| local).and_then(local_project);
             Some(protocol::PublishedRow {
                 // Left empty when the publisher has none yet - a session is often created, and
                 // can even ask its first question, before anything has titled it. The id is not a
@@ -1508,10 +1570,48 @@ fn sanitize_rows(
                 reason: clean_text(&row.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),
                 active,
                 work_started_at,
+                cwd,
+                project,
+                // Byte for byte, or not at all: a cleaned id would never match the hook report
+                // naming the same conversation, and would resume the wrong one.
+                native_session: row
+                    .native_session
+                    .filter(|session| native_session_is_valid(session)),
             })
         })
         .take(MAX_PANE_ROWS)
         .collect()
+}
+
+/// Give each row the run clock its *effective* status implies: the integration report's for the row
+/// whose native session it names, the publisher's otherwise. `previous` is the rows as they were
+/// last presented, with the integration report that was live then already merged in.
+///
+/// A hook that reports `working` for a row its publisher still calls `idle` starts that row's run,
+/// and the report going quiet ends it, exactly as the pane's own clock follows a report.
+fn restamp_row_clocks(
+    rows: &mut [protocol::PublishedRow],
+    previous: &[protocol::PublishedRow],
+    integration: Option<&protocol::AgentIntegrationReport>,
+    now: u64,
+) {
+    for row in rows {
+        let effective = protocol::effective_row(row, integration);
+        let before = previous.iter().find(|candidate| candidate.id == row.id);
+        row.work_started_at = next_run_start(
+            before.map(|before| before.status.as_str()),
+            before.and_then(|before| before.work_started_at),
+            Some(effective.status.as_str()),
+            now,
+        );
+    }
+}
+
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn clean_text(value: &str, limit: usize) -> Option<String> {
@@ -1954,6 +2054,166 @@ mod tests {
         ));
     }
 
+    /// A row's own cwd is validated and its project resolved by the server, from the filesystem,
+    /// whatever the publisher claimed. A cwd on another host is kept but never probed here.
+    #[test]
+    fn published_row_cwds_resolve_to_their_worktree_and_repository() {
+        let dir = std::env::temp_dir().join(format!("rozi-row-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("repo");
+        let gitdir = repo.join(".git").join("worktrees").join("fix");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), b"ref: refs/heads/master\n").unwrap();
+        std::fs::write(gitdir.join("HEAD"), b"ref: refs/heads/worktree-fix\n").unwrap();
+        std::fs::write(gitdir.join("commondir"), b"../..\n").unwrap();
+        let worktree = repo.join(".claude").join("worktrees").join("fix");
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", gitdir.to_string_lossy()).as_bytes(),
+        )
+        .unwrap();
+
+        let row = |id: &str, cwd: Option<String>| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "working".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd,
+            native_session: None,
+            project: Some(protocol::RowProject {
+                root: "/forged".into(),
+                repository: None,
+                branch: Some("forged".into()),
+            }),
+        };
+        let inside = worktree.join("src").to_string_lossy().into_owned();
+        let rows = vec![
+            row("worktree", Some(inside.clone())),
+            row("relative", Some("src".into())),
+            row("none", None),
+        ];
+
+        let local = sanitize_rows(rows.clone(), &[], 1, true);
+        let project = local[0].project.as_ref().expect("resolved project");
+        assert_eq!(local[0].cwd.as_deref(), Some(inside.as_str()));
+        assert_eq!(project.root, worktree.to_string_lossy());
+        assert_eq!(project.branch.as_deref(), Some("worktree-fix"));
+        assert_eq!(
+            project.repository.as_deref(),
+            Some(repo.to_string_lossy().as_ref())
+        );
+        // A relative path names no directory anyone else can resolve; nothing forged survives.
+        assert_eq!(
+            (local[1].cwd.as_deref(), local[1].project.as_ref()),
+            (None, None)
+        );
+        assert_eq!(
+            (local[2].cwd.as_deref(), local[2].project.as_ref()),
+            (None, None)
+        );
+
+        let remote = sanitize_rows(rows, &[], 1, false);
+        assert_eq!(remote[0].cwd.as_deref(), Some(inside.as_str()));
+        assert_eq!(remote[0].project, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A native session id is an opaque reference matched by exact equality against the hooks'
+    /// report: kept byte for byte, by the same rule `agents report` applies, or dropped.
+    #[test]
+    fn a_row_native_session_is_kept_exactly_or_not_at_all() {
+        let row = |id: &str, native: &str| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(native.into()),
+        };
+        let long = "x".repeat(4096);
+        let rows = sanitize_rows(
+            vec![
+                row("spaced", "  session id\u{200b} "),
+                row("long", &long),
+                row("control", "abc\u{7}def"),
+                row("too-long", &format!("{long}y")),
+            ],
+            &[],
+            1,
+            true,
+        );
+        let native = rows
+            .iter()
+            .map(|row| row.native_session.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            native,
+            vec![
+                Some("  session id\u{200b} "),
+                Some(long.as_str()),
+                None,
+                None
+            ]
+        );
+        assert!(validate_native_session(Some("  session id\u{200b} ")).is_ok());
+        assert!(validate_native_session(Some("abc\u{7}def")).is_err());
+    }
+
+    /// The row a hook report speaks for runs on the report's clock, whatever its publisher says.
+    #[test]
+    fn a_hook_report_starts_and_ends_its_rows_run() {
+        let quiet = protocol::PublishedRow {
+            id: "quiet".into(),
+            title: "quiet".into(),
+            status: "idle".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("native-quiet".into()),
+        };
+        let report = |state| protocol::AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: protocol::SessionInstanceId::for_test("server"),
+                    pane_id: 1,
+                    generation: 1,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state,
+            reason: None,
+            native_session: Some("native-quiet".into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        };
+        let mut rows = vec![quiet.clone()];
+        let working = report(protocol::AgentState::Working);
+        restamp_row_clocks(&mut rows, std::slice::from_ref(&quiet), Some(&working), 100);
+        assert_eq!(rows[0].work_started_at, Some(100));
+
+        // Still working later: one run, not a new one.
+        let previous = vec![protocol::effective_row(&rows[0], Some(&working))];
+        restamp_row_clocks(&mut rows, &previous, Some(&working), 160);
+        assert_eq!(rows[0].work_started_at, Some(100));
+
+        let previous = vec![protocol::effective_row(&rows[0], Some(&working))];
+        let done = report(protocol::AgentState::Done);
+        restamp_row_clocks(&mut rows, &previous, Some(&done), 200);
+        assert_eq!(rows[0].work_started_at, None);
+    }
+
     #[test]
     fn published_slots_keep_independent_incarnations() {
         let row = |id: &str| protocol::PublishedRow {
@@ -1963,6 +2223,9 @@ mod tests {
             reason: None,
             active: false,
             work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
         };
         let mut scratch = AgentScratch::default();
         let mut runtime = PaneRuntimeState {

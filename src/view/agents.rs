@@ -27,6 +27,11 @@ pub(crate) struct GlobalAgentRow {
     /// Live panes only. Local and remote summaries expose a change time, but the UI has no
     /// maintained elapsed timer for them; remote clocks may also differ from this client's.
     pub age: Option<std::time::Duration>,
+    /// What the agent is working on, when it said (`fix login redirect`). Live panes only.
+    pub activity: Option<String>,
+    /// The project and branch it works in (`rozi (fix-login)`). Live panes only: this is what
+    /// tells apart several sessions of one program, each in its own worktree.
+    pub place: Option<String>,
 }
 
 impl GlobalAgentRow {
@@ -48,23 +53,42 @@ impl GlobalAgentRow {
         } else {
             self.session.as_str()
         };
+        let agent = match self.activity.as_deref() {
+            Some(activity) => format!("{}: {activity}", self.agent),
+            None => self.agent.clone(),
+        };
         match self.host.as_deref() {
-            Some(host) => format!("{} · {host}/{session}", self.agent),
-            None => format!("{} · {session}", self.agent),
+            Some(host) => format!("{agent} · {host}/{session}"),
+            None => format!("{agent} · {session}"),
         }
     }
 
     pub fn description(&self) -> String {
-        let status =
-            crate::view::sidebar::agents::row_status_label(&self.status, self.finished_unseen);
-        match self.age {
-            Some(age) => format!(
-                "{status} · {}",
-                crate::view::sidebar::agents::format_age(age)
-            ),
-            None => status,
-        }
+        let mut parts = vec![crate::view::sidebar::agents::row_status_label(
+            &self.status,
+            self.finished_unseen,
+        )];
+        parts.extend(self.age.map(crate::view::sidebar::agents::format_age));
+        parts.extend(self.place.clone());
+        parts.join(" · ")
     }
+}
+
+/// `rozi (fix-login)`: the project an agent row works in, named after the repository when it is a
+/// linked worktree, with the branch it has checked out.
+fn row_place(row: &crate::view::sidebar::agents::AgentRow) -> Option<String> {
+    let path = row
+        .repository
+        .as_deref()
+        .or(row.project_root.as_deref())
+        .or(row.cwd.as_deref())?;
+    let name = crate::platform::paths::path_segments(path)
+        .last()
+        .map_or_else(|| path.to_string(), |name| (*name).to_string());
+    Some(match row.branch.as_deref() {
+        Some(branch) => format!("{name} ({branch})"),
+        None => name,
+    })
 }
 
 /// Every agent this client knows about, the ones most in need of attention first.
@@ -83,7 +107,14 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
     let mut rows = Vec::new();
     if let Some(session) = here_session.as_deref() {
         for row in crate::view::sidebar::agents::agent_rows(state) {
+            let place = row_place(&row);
+            // A published row's activity is its title, the one thing naming which of a pane's
+            // sessions it is. A lone agent's is its live terminal title, which only adds churn
+            // to a label that is meant to be typed.
+            let activity = row.slot.as_ref().and(row.activity.clone());
             rows.push(GlobalAgentRow {
+                activity,
+                place,
                 location: AgentLocation::Here {
                     pane: row.pane_id,
                     row: row.slot.as_ref().map(|slot| slot.id.clone()),
@@ -115,6 +146,8 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 status: agent.state.clone(),
                 finished_unseen: false,
                 age: None,
+                activity: None,
+                place: None,
             });
         }
     }
@@ -142,6 +175,8 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 status: agent.state.clone(),
                 finished_unseen: false,
                 age: None,
+                activity: None,
+                place: None,
             });
         }
     }
@@ -237,6 +272,51 @@ mod tests {
         let rows = global_agent_rows(&state);
         assert_eq!(rows[0].label(), "Codex · workbox/backend");
         assert_eq!(rows[0].description(), "Blocked");
+    }
+
+    /// Several sessions of one program in one pane differ only by what each works on and where:
+    /// the title joins the searchable label, the project and branch the description.
+    #[test]
+    fn a_published_session_names_its_work_and_its_worktree() {
+        let row = GlobalAgentRow {
+            location: AgentLocation::Here {
+                pane: 1,
+                row: Some("fix".into()),
+            },
+            agent: "Claude Code #2".into(),
+            host: None,
+            session: "dev".into(),
+            status: "working".into(),
+            finished_unseen: false,
+            age: Some(std::time::Duration::from_secs(240)),
+            activity: Some("fix login redirect".into()),
+            place: Some("rozi (worktree-fix)".into()),
+        };
+        assert_eq!(row.label(), "Claude Code #2: fix login redirect · dev");
+        assert_eq!(row.description(), "Working · 4m00s · rozi (worktree-fix)");
+
+        let agent_row = crate::view::sidebar::agents::AgentRow {
+            pane_id: 1,
+            workspace_index: 0,
+            pane_index: 0,
+            title: "Claude Code #2".into(),
+            status: None,
+            activity: None,
+            age: None,
+            run: None,
+            cwd: Some("/x/rozi/.claude/worktrees/fix".into()),
+            cwd_host: None,
+            project_root: Some("/x/rozi/.claude/worktrees/fix".into()),
+            subpath: None,
+            branch: Some("worktree-fix".into()),
+            repository: Some("/x/rozi".into()),
+            finished_unseen: false,
+            slot: None,
+        };
+        assert_eq!(
+            row_place(&agent_row).as_deref(),
+            Some("rozi (worktree-fix)")
+        );
     }
 
     /// An age is the field a reader trusts without checking, and the only timestamp a summary

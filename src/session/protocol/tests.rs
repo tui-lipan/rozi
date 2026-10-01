@@ -417,6 +417,9 @@ fn pane_rows_message_round_trips() {
                 reason: None,
                 active: true,
                 work_started_at: Some(120),
+                cwd: None,
+                project: None,
+                native_session: None,
             },
             PublishedRow {
                 id: "ses_def".into(),
@@ -425,6 +428,9 @@ fn pane_rows_message_round_trips() {
                 reason: Some("permission required".into()),
                 active: false,
                 work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
             },
         ],
     };
@@ -449,6 +455,9 @@ fn row_aggregation_is_by_severity_not_recency() {
         reason: None,
         active: false,
         work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: None,
     };
     assert_eq!(aggregate_row_state(&[]), None);
     assert_eq!(

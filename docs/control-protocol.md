@@ -133,6 +133,9 @@ A `list-panes` pane object has these fields; optional values are JSON null:
 - Scratch panes use workspace `0` and have no `reference`.
 - `foreground_programs` lists the basenames of the pane's foreground processes. Wrappers and
   pipelines can produce more than one entry.
+- `foreground_pid` is the process group ID of the command running in the pane, which is its first
+  process's ID. It is omitted when nothing runs, when the platform cannot read it, and for a remote
+  attachment, whose processes are on another machine.
 
 ### Metrics
 
@@ -837,7 +840,14 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `status` | string | required | Status value. |
 | `reason` | string or null | null | Supporting detail. |
 | `active` | bool | `false` | The row currently visible inside the publisher. At most one should be active. |
+| `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
+| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
+| `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
+
+A row with its own `cwd` is grouped in Activity under that directory's project and branch instead
+of its pane's. Use it when one program runs several activities in different checkouts, such as
+coding-agent sessions that each work in their own Git worktree. A relative `cwd` is dropped.
 
 - An empty `rows` list withdraws the rows. End of input or any stream failure also withdraws them.
 - IDs, titles, and statuses are sanitized for display and limited to 64 characters; reasons are
@@ -864,6 +874,14 @@ While a pane has published rows, they are the authoritative activity list for th
 detected an agent in the pane, it derives the agent's displayed state from the rows: blocked first,
 then any status other than `idle` or `done`, then the remaining rows. A publisher in a pane with no
 detected agent still gets Activity rows, but rozi does not treat it as an agent.
+
+Rows and a live [agent report](agents.md#report-state-from-agent-hooks) coexist. The report keeps its
+claim and its sequence fence, and its state and reason replace those of the row whose
+`native_session` exactly matches the report's, everywhere the row appears: Activity, the Agents
+view, `agents list`, and the row's run clock and finish alert. A report that matches no row is not
+listed while rows are published. When a
+session is restored, the active row's `native_session` is the conversation rozi resumes, ahead of
+the report's.
 
 CLI bridge:
 

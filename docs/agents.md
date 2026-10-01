@@ -229,6 +229,9 @@ rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 `rozi --help` shows only with `--advanced`. A help flag anywhere after `agents` prints help instead
 of running the command, so it is never sent as prompt text.
 
+Each published row is its own agent in `list`, with that row's own `cwd` and `native_session` when
+it names them.
+
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. `list` and
 `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
@@ -267,8 +270,11 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - A released token cannot claim the pane again. Late hooks from an old process fail with `conflict`,
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
-- A live report overrides screen detection and clears older published rows. Releasing it returns
-  the pane to screen detection or rows published later.
+- A live report overrides screen detection. Releasing it returns the pane to screen detection.
+- When the pane also publishes rows, the rows stay listed. The report drives only the row whose
+  `native_session` matches `--native-session`. A report about a conversation no row lists is kept
+  but not shown, so a client that switched conversations without its hooks noticing still lists
+  every conversation correctly.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). With `--session`, always pass `--target`, because an inherited pane number may belong
@@ -283,3 +289,23 @@ For those programs, use `rozi status` to report one state for the pane, or `rozi
 several activity rows. While a pane publishes rows, rozi shows them instead of screen detection.
 Selecting a published row can also bring that activity into view inside the program. See
 [Control](control.md#published-activity) for fields and lifecycle.
+
+A row can carry the directory its activity works in. Activity and the Agents view then show it
+under that directory's project and branch, so sessions that each run in their own Git worktree are
+told apart.
+
+### Claude Code background sessions
+
+Claude Code can run several conversations from one client, each often in its own worktree. rozi
+sees that client as one pane. The
+[claude-rozi-sessions](https://github.com/tui-lipan/claude-rozi-sessions) extension lists every
+conversation as its own row in that pane, under the repository and branch it works in. Selecting a
+row switches the client to that conversation with Claude's `/resume`. The extension never types over
+unsent text, a dialog, or a streaming response. Install it from the **Discover** tab of
+**Extensions…**, or with
+`rozi extensions install https://github.com/tui-lipan/claude-rozi-sessions.git`.
+
+It works with or without a Claude Code hook integration. With one, the hooks' state drives the row
+for the conversation they report on, matched by `native_session`, and the other rows stay listed.
+The extension needs a readable foreground process group, so it covers local panes on Linux and
+macOS, not Windows or remote panes.

@@ -673,6 +673,43 @@ pub fn head_branch(root: &str) -> Option<String> {
     parse_head(&std::fs::read_to_string(git_dir.join("HEAD")).ok()?)
 }
 
+/// The primary checkout a linked worktree at `root` belongs to, or `None` when `root` is not a
+/// linked worktree. That covers a primary checkout itself, a submodule, a worktree of a bare
+/// repository, and anything unreadable.
+///
+/// A linked worktree's `.git` file points at `<repo>/.git/worktrees/<name>`, whose `commondir`
+/// names the shared git directory. Only a common directory called `.git` has a checkout around it.
+/// Reads files rather than running `git`, for the same reason [`head_branch`] does.
+pub fn primary_checkout(root: &str) -> Option<String> {
+    let git = std::path::Path::new(root).join(".git");
+    if git.is_dir() {
+        return None;
+    }
+    let git_dir = resolve_gitdir_file(&git)?;
+    let common = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let common = common.trim();
+    if common.is_empty() {
+        return None;
+    }
+    // Resolved lexically rather than canonicalized, so the result is spelled the way the primary
+    // checkout's own root is (no `\\?\` prefix, no resolved `/var` symlink) and compares equal to it.
+    let mut resolved = std::path::PathBuf::new();
+    for part in git_dir.join(common).components() {
+        match part {
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => resolved.push(other),
+        }
+    }
+    let common = resolved;
+    if common.file_name()? != ".git" {
+        return None;
+    }
+    Some(common.parent()?.to_string_lossy().into_owned())
+}
+
 /// A linked worktree and a submodule have a `.git` *file* holding `gitdir: <path>`, pointing at the
 /// real git directory. A relative target is resolved against the directory holding the file.
 fn resolve_gitdir_file(git_file: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -830,6 +867,48 @@ mod tests {
 
         // Not a repository at all.
         assert_eq!(head_branch(&dir.to_string_lossy()), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn primary_checkout_follows_a_linked_worktree_home() {
+        let dir = std::env::temp_dir().join(format!("rozi-primary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("repo");
+        let gitdir = repo.join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(gitdir.join("commondir"), b"../..\n").unwrap();
+        let worktree = repo.join(".claude").join("worktrees").join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", gitdir.to_string_lossy()).as_bytes(),
+        )
+        .unwrap();
+        // Spelled exactly as the primary checkout's own project root is, so the two compare equal.
+        assert_eq!(
+            primary_checkout(&worktree.to_string_lossy()),
+            discover_project_root(&repo.to_string_lossy())
+        );
+        assert_eq!(
+            primary_checkout(&worktree.to_string_lossy()).as_deref(),
+            Some(repo.to_string_lossy().as_ref())
+        );
+        // The primary checkout is not a worktree of anything.
+        assert_eq!(primary_checkout(&repo.to_string_lossy()), None);
+
+        // A submodule's `.git` file points at a git directory with no `commondir`.
+        let module_dir = repo.join(".git").join("modules").join("sub");
+        std::fs::create_dir_all(&module_dir).unwrap();
+        let submodule = repo.join("sub");
+        std::fs::create_dir_all(&submodule).unwrap();
+        std::fs::write(
+            submodule.join(".git"),
+            format!("gitdir: {}\n", module_dir.to_string_lossy()).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(primary_checkout(&submodule.to_string_lossy()), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

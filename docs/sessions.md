@@ -139,22 +139,23 @@ then working, then done, then idle.
 ```text
 Agents
  !  Codex · workbox/backend                              Blocked
- ⠋  Claude #2 · dev                                 Working · 4m
- ✓  Claude · api                                            Done
+ ⠋  Claude #2: fix login · dev          Working · 4m · api (fix-login)
+ ✓  Claude · api                                     Done · api (main)
 ```
 
 Each row names the agent and where it runs: the session name alone for the session on screen, and
 `host/session` for anywhere else. Both parts are searchable, so typing a host name narrows the list
-to that machine.
+to that machine. For the session on screen, a row also shows the project and branch the agent
+works in, and a program running several agents adds each one's title after its name.
 
 `Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane.
 Anywhere else, rozi attaches to that session first and then focuses the pane — and, for a program
 running several agents, the agent's own row inside it. The host and session do not have to be open
 already. A session already in the background switches in immediately.
 
-Only agents in the session on screen show an age. Rows from other sessions show the agent's state
-but no running clock. The agent's current activity, project, and branch, as shown in the
-[Activity tab](sidebar.md#activity), need an attached session; see
+Only agents in the session on screen show an age, project, and branch. Rows from other sessions show
+the agent's state but no running clock. The agent's current activity, project, and branch, as shown
+in the [Activity tab](sidebar.md#activity), need an attached session; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
 ## Name or rename a session

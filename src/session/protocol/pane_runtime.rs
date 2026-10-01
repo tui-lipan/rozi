@@ -189,6 +189,36 @@ pub struct PublishedRow {
     /// a publisher sends here is overwritten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_started_at: Option<u64>,
+    /// Absolute directory this row's work happens in, on the pane's host. A program running
+    /// several sessions behind one terminal often runs each in its own Git worktree, so the pane's
+    /// own cwd says nothing about where any one of them is. Absent means the pane's cwd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Server-owned project of [`Self::cwd`]. Whatever a publisher sends here is overwritten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<RowProject>,
+    /// The agent's own conversation id for this row, when the row is one: what `--resume` takes.
+    ///
+    /// It ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks
+    /// for the row whose native session it names, so several conversations behind one client
+    /// stay listed while the one the hooks follow keeps their fresher state. It is also what
+    /// resurrection resumes when this row is the active one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session: Option<String>,
+}
+
+/// The Git project a published row's `cwd` lies in, as the session server resolved it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RowProject {
+    /// Project root containing the row's `cwd`: a linked worktree's own root, not its repository.
+    pub root: String,
+    /// Primary checkout `root` is a linked worktree of; see [`PaneRuntimeState::repository`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Branch checked out at `root`, or a short commit id when `HEAD` is detached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// The single state a pane shows for a set of published rows.
@@ -275,8 +305,21 @@ pub struct PaneRuntimeState {
     /// without the directory moving.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
+    /// Primary checkout when `project_root` is a linked Git worktree of it. A worktree is its own
+    /// project, but named after its directory (`.claude/worktrees/fix-login`) it reads as an
+    /// unrelated one; this is what lets it be labelled with the repository it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
     pub cwd_source: PaneCwdSource,
     pub command_phase: PaneCommandPhase,
+    /// Process group id of the job running in the foreground, on the session server's host:
+    /// its leader's pid. Set only while a command runs and where the platform can read it.
+    ///
+    /// The group, not each member, because a running program spawns and reaps children
+    /// constantly while its group stays put. This is what lets a program that enumerates its own
+    /// processes tell which of them is the one in this pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground_pid: Option<u32>,
     /// Reconciled logical foreground identity as a normalized executable basename, never a path or
     /// command line. Shell intent is retained for interpreted commands; native evidence replaces a
     /// shell alias or function when the platform can prove which executable took over.

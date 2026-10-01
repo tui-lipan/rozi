@@ -2230,6 +2230,9 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
             reason: None,
             active: true,
             work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
         },
         protocol::PublishedRow {
             id: "right".into(),
@@ -2238,6 +2241,9 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
             reason: None,
             active: false,
             work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
         },
     ];
     pane.agent.sync_references(&pane.runtime);

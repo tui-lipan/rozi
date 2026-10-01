@@ -217,6 +217,8 @@ pub struct TerminalPane {
     /// sidebar's Agents tab groups by the root and heads each group with the branch.
     pub project_root: Option<String>,
     pub git_branch: Option<String>,
+    /// Primary checkout when `project_root` is a linked worktree of it; labels the group.
+    pub repository: Option<String>,
     pub child_pid: Option<u32>,
     /// Normalized foreground-executable basename, server-authoritative (cross-platform plan
     /// Phase 6/7): pushed down via [`crate::session::protocol::PaneMeta::runtime`] and
@@ -234,6 +236,9 @@ pub struct TerminalPane {
     /// Arguments that program was launched with, `argv[0]` excluded, as read by the session
     /// server. Empty on platforms that cannot read another process's arguments.
     pub foreground_arguments: Vec<String>,
+    /// Server-side process group id of the running foreground job; see
+    /// [`crate::session::protocol::PaneRuntimeState::foreground_pid`].
+    pub foreground_pid: Option<u32>,
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
@@ -403,11 +408,13 @@ impl TerminalPane {
             display_path: None,
             project_root: None,
             git_branch: None,
+            repository: None,
             child_pid: None,
             foreground_program: None,
             foreground_programs: Vec::new(),
             foreground_executable: None,
             foreground_arguments: Vec::new(),
+            foreground_pid: None,
             reported_status: None,
             recording: false,
             detected_agent: None,
@@ -477,6 +484,7 @@ impl TerminalPane {
             self.display_path = None;
             self.project_root = None;
             self.git_branch = None;
+            self.repository = None;
             self.reported_status = None;
             self.recording = false;
             self.detected_agent = None;
@@ -903,16 +911,24 @@ impl TerminalPane {
     /// Returns the ids of rows that just finished a run. Their alerts are raised per row rather
     /// than per pane: a background tab finishing is news even while the pane is focused, because
     /// focusing the pane only ever showed the row the publisher had on screen.
-    pub fn apply_rows(&mut self, rows: Vec<crate::session::protocol::PublishedRow>) -> Vec<String> {
+    /// Edges are read from each row's *effective* status, with `integration` (the pane's report
+    /// arriving in the same update) merged in, so a run the hooks report finishing raises the same
+    /// pulse as one the publisher reports.
+    pub fn apply_rows(
+        &mut self,
+        rows: Vec<crate::session::protocol::PublishedRow>,
+        integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
+    ) -> Vec<String> {
+        let previous = self.effective_rows();
+        self.agent_integration = integration;
         let mut finished = Vec::new();
-        for row in &rows {
-            let previous = self
-                .published_rows
-                .iter()
-                .find(|candidate| candidate.id == row.id)
-                .map(|candidate| candidate.status.as_str());
-            let was_working = previous.is_some_and(|status| {
-                status
+        for raw in &rows {
+            let row =
+                crate::session::protocol::effective_row(raw, self.agent_integration.as_deref());
+            let before = previous.iter().find(|candidate| candidate.id == row.id);
+            let was_working = before.is_some_and(|before| {
+                before
+                    .status
                     .trim()
                     .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
             });
@@ -924,7 +940,7 @@ impl TerminalPane {
             if now_working {
                 entry.finished_unseen = false;
             } else if was_working && !status_is_blocked(&row.status) {
-                entry.last_run = row_run_age(previous_started(&self.published_rows, &row.id));
+                entry.last_run = row_run_age(previous_started(&previous, &row.id));
                 entry.finished_unseen = true;
                 finished.push(row.id.clone());
             }
@@ -934,6 +950,17 @@ impl TerminalPane {
             .retain(|id, _| rows.iter().any(|s| &s.id == id));
         self.published_rows = rows;
         finished
+    }
+
+    /// The published rows as they are presented: each with the status and reason of the
+    /// integration report that speaks for it. See [`crate::session::protocol::effective_row`].
+    pub fn effective_rows(&self) -> Vec<crate::session::protocol::PublishedRow> {
+        self.published_rows
+            .iter()
+            .map(|row| {
+                crate::session::protocol::effective_row(row, self.agent_integration.as_deref())
+            })
+            .collect()
     }
 
     /// How long a row's current run has lasted, by the same rule as [`Self::status_age`].

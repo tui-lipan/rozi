@@ -428,6 +428,8 @@ impl State {
             target: RowTarget,
             host: Option<String>,
             path: Option<String>,
+            /// What the group is named after; see [`crate::state::AgentPlace::label_path`].
+            label_path: Option<String>,
             rank: u8,
             workspace: usize,
             pane: usize,
@@ -478,14 +480,11 @@ impl State {
                 if pane.id == crate::state::POPUP_PANE_ID || pane.closing || runtimes.is_empty() {
                     continue;
                 }
-                let cwd = pane
-                    .terminal
-                    .cwd
-                    .clone()
-                    .filter(|cwd| !cwd.trim().is_empty());
-                let path = pane.terminal.project_root.clone().or_else(|| cwd.clone());
-                let host = cwd.as_ref().and_then(|_| pane.terminal.cwd_host.clone());
                 for (slot, runtime) in runtimes.into_iter().enumerate() {
+                    let place = pane.agent_place(&runtime);
+                    let path = place.group_path().map(str::to_string);
+                    let label_path = place.label_path().map(str::to_string);
+                    let host = place.host;
                     let row_id = runtime.reference.slot.as_deref();
                     let finished = row_id.map_or(pane.terminal.finished_unseen, |row_id| {
                         pane.terminal
@@ -502,8 +501,9 @@ impl State {
                     };
                     rows.push(ActivityItem {
                         target,
-                        host: host.clone(),
-                        path: path.clone(),
+                        host,
+                        path,
+                        label_path,
                         rank: rank(Some(runtime.state.as_str()), finished),
                         workspace,
                         pane: pane_index,
@@ -532,15 +532,16 @@ impl State {
                 groups.push((row.host.clone(), row.path.clone(), vec![row]));
             }
         }
-        groups.sort_by(|(host_a, path_a, _), (host_b, path_b, _)| {
+        // Every row of a group shares its root, and so the repository it is named after.
+        let label = |host: &Option<String>, items: &[ActivityItem]| {
+            let path = items.first().and_then(|item| item.label_path.as_deref());
+            group_label(path, host.as_deref()).to_lowercase()
+        };
+        groups.sort_by(|(host_a, path_a, items_a), (host_b, path_b, items_b)| {
             path_a
                 .is_none()
                 .cmp(&path_b.is_none())
-                .then_with(|| {
-                    group_label(path_a.as_deref(), host_a.as_deref())
-                        .to_lowercase()
-                        .cmp(&group_label(path_b.as_deref(), host_b.as_deref()).to_lowercase())
-                })
+                .then_with(|| label(host_a, items_a).cmp(&label(host_b, items_b)))
                 .then_with(|| path_a.cmp(path_b))
         });
 

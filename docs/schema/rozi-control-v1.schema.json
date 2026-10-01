@@ -3867,6 +3867,15 @@
           },
           "type": "array"
         },
+        "foreground_pid": {
+          "description": "Process group id of the running foreground job, while one runs and where the platform can\nread it. A program that lists its own processes by pid matches them against this to find\nthe one in a pane. A UI endpoint omits it for a remote attachment, whose processes are on\nanother machine; a session endpoint answers for its own host.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "foreground_program": {
           "description": "Live foreground process: what the pane is running now, rather than what launched it.",
           "type": [
@@ -4261,9 +4270,34 @@
           "description": "The row the publisher is currently displaying; at most one is true.\n\nThis is what lets a finish on a *background* row raise an alert even while the pane is\nfocused - looking at the pane only ever acknowledges the row on screen.",
           "type": "boolean"
         },
+        "cwd": {
+          "description": "Absolute directory this row's work happens in, on the pane's host. A program running\nseveral sessions behind one terminal often runs each in its own Git worktree, so the pane's\nown cwd says nothing about where any one of them is. Absent means the pane's cwd.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "description": "Publisher-chosen identity, opaque to rozi and stable across updates.\n\nNever a position: tabs are reordered and closed, and an index-keyed run clock would hand\none tab's elapsed time to whichever tab slid into its place.",
           "type": "string"
+        },
+        "native_session": {
+          "description": "The agent's own conversation id for this row, when the row is one: what `--resume` takes.\n\nIt ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks\nfor the row whose native session it names, so several conversations behind one client\nstay listed while the one the hooks follow keeps their fresher state. It is also what\nresurrection resumes when this row is the active one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RowProject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Server-owned project of [`Self::cwd`]. Whatever a publisher sends here is overwritten."
         },
         "reason": {
           "type": [
@@ -5298,6 +5332,33 @@
       ],
       "type": "object"
     },
+    "RowProject": {
+      "description": "The Git project a published row's `cwd` lies in, as the session server resolved it.",
+      "properties": {
+        "branch": {
+          "description": "Branch checked out at `root`, or a short commit id when `HEAD` is detached.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository": {
+          "description": "Primary checkout `root` is a linked worktree of; see [`PaneRuntimeState::repository`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "description": "Project root containing the row's `cwd`: a linked worktree's own root, not its repository.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "type": "object"
+    },
     "RuntimeMetrics": {
       "properties": {
         "client_inbound": {
@@ -5926,5 +5987,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 14
+  "x-rozi-schema-version": 15
 }

@@ -52,13 +52,14 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.reported_status = meta.runtime.status.clone();
     pane.terminal.recording = meta.runtime.recording;
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
-    pane.terminal.agent_integration = meta.runtime.integration.clone();
     pane.terminal.work_started_at = meta.runtime.work_started_at;
     pane.terminal.command_phase = meta.runtime.command_phase;
     pane.terminal.last_exit_status = meta.runtime.last_exit_status;
     pane.terminal.runtime_sequence = meta.runtime.sequence;
     pane.terminal.child_pid = meta.pid;
-    let _ = pane.terminal.apply_rows(meta.runtime.rows.clone());
+    let _ = pane
+        .terminal
+        .apply_rows(meta.runtime.rows.clone(), meta.runtime.integration.clone());
     pane.logging = meta.logging;
     pane.terminal.status = ManagedTerminalStatus::Ready;
 }

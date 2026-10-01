@@ -201,6 +201,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         && !pane.agent_runtimes().is_empty()
                 })
                 .flat_map(move |(pane_index, pane)| {
+                    // Presented as merged with the hooks' report, the same as `runtime.state`, so
+                    // the status, activity, age, and sort order never disagree with automation.
+                    let effective = pane.terminal.effective_rows();
                     pane.agent_runtimes().into_iter().map(move |runtime| {
                         let place = pane.agent_place(&runtime);
                         let subpath = place
@@ -211,11 +214,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 crate::platform::paths::project_relative_path(root, cwd)
                             });
                         let slot = runtime.reference.slot.as_deref().and_then(|id| {
-                            pane.terminal
-                                .published_rows
-                                .iter()
-                                .enumerate()
-                                .find(|(_, row)| row.id == id)
+                            effective.iter().enumerate().find(|(_, row)| row.id == id)
                         });
                         let (title, status, activity, age, run, finished_unseen, slot) =
                             if let Some((index, published_row)) = slot {
@@ -1360,6 +1359,105 @@ mod tests {
 
     /// One terminal running several sessions, each in its own worktree: a row that names its own
     /// directory is grouped there, and one that names none stays with its pane.
+    fn hook_report(
+        native: &str,
+        state: crate::session::protocol::AgentState,
+    ) -> Box<crate::session::protocol::AgentIntegrationReport> {
+        Box::new(crate::session::protocol::AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            reference: crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "server",
+                    ),
+                    pane_id: 1,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 99,
+            },
+            state,
+            reason: Some("Permission required".into()),
+            native_session: Some(native.into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        })
+    }
+
+    /// The publisher still calls a conversation idle while its hooks report it blocked: every
+    /// surface - status, activity, and sort order - must show the hooks' word, as automation does.
+    #[test]
+    fn a_hook_report_drives_how_its_row_is_presented_and_sorted() {
+        use crate::session::protocol::AgentState;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut host = pane(1, None, false);
+        let mut quiet = row("quiet", "idle", false);
+        quiet.native_session = Some("native-quiet".into());
+        let mut busy = row("busy", "working", false);
+        busy.native_session = Some("native-busy".into());
+        let _ = host.terminal.apply_rows(
+            vec![busy.clone(), quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Blocked)),
+        );
+        sync_published_refs(&mut host);
+        state.current_mut().workspaces[0].panes = vec![host];
+
+        let rows = agent_rows(&state);
+        let presented = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.slot.as_ref().unwrap().id.clone(),
+                    row.status.clone().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // Blocked outranks working, so the hooks' state also decides the order.
+        assert_eq!(
+            presented,
+            vec![
+                ("quiet".to_string(), "blocked".to_string()),
+                ("busy".to_string(), "working".to_string()),
+            ]
+        );
+        let runtimes = state.current().workspaces[0].panes[0].agent_runtimes();
+        let quiet_runtime = runtimes
+            .iter()
+            .find(|runtime| runtime.reference.slot.as_deref() == Some("quiet"))
+            .unwrap();
+        assert_eq!(
+            rows[0].status.as_deref(),
+            Some(quiet_runtime.state.as_str())
+        );
+    }
+
+    /// A run the hooks report finishing, on a row the publisher never called working, still banks
+    /// its length and raises the finish pulse.
+    #[test]
+    fn a_hook_reported_finish_raises_the_rows_finish_edge() {
+        use crate::session::protocol::AgentState;
+        let mut terminal = crate::pane::TerminalPane::new(100);
+        let mut quiet = row("quiet", "idle", false);
+        quiet.native_session = Some("native-quiet".into());
+        assert!(
+            terminal
+                .apply_rows(
+                    vec![quiet.clone()],
+                    Some(hook_report("native-quiet", AgentState::Working))
+                )
+                .is_empty()
+        );
+        let finished = terminal.apply_rows(
+            vec![quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Done)),
+        );
+        assert_eq!(finished, vec!["quiet".to_string()]);
+        assert!(terminal.published_row_ui["quiet"].finished_unseen);
+        // Releasing the claim with the publisher still saying idle is not a second finish.
+        assert!(terminal.apply_rows(vec![quiet], None).is_empty());
+    }
+
     #[test]
     fn published_rows_with_their_own_cwd_group_where_they_work() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());

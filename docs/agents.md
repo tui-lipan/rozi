@@ -229,6 +229,9 @@ rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 `rozi --help` shows only with `--advanced`. A help flag anywhere after `agents` prints help instead
 of running the command, so it is never sent as prompt text.
 
+Each published row is its own agent in `list`, with that row's own `cwd` and `native_session` when
+it names them.
+
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. `list` and
 `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.

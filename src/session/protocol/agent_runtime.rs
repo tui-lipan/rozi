@@ -81,7 +81,7 @@ pub fn effective_agent_runtimes(
             .iter()
             .filter_map(|row| {
                 let mut published = published_runtime(runtime, references, row)?;
-                if let Some(report) = row_integration(runtime, row) {
+                if let Some(report) = row_integration(runtime.integration.as_deref(), row) {
                     published.state = report.state;
                     published.reason = report.reason.clone();
                     published.source = AgentAuthority::Reported;
@@ -151,12 +151,32 @@ fn effective_single_status(
 /// The integration report that speaks for `row`: the pane's live report, when it names the row's
 /// native session.
 fn row_integration<'a>(
-    runtime: &'a PaneRuntimeState,
+    integration: Option<&'a AgentIntegrationReport>,
     row: &PublishedRow,
 ) -> Option<&'a AgentIntegrationReport> {
-    runtime.integration.as_deref().filter(|report| {
+    integration.filter(|report| {
         report.native_session.is_some() && report.native_session == row.native_session
     })
+}
+
+/// `row` as everything downstream of the protocol must present it: with the status and reason of
+/// the integration report that speaks for it, when one does.
+///
+/// The one merge rule, shared by [`effective_agent_runtimes`], pane chrome, the server's run
+/// clocks, and the client's rows and finish edges, so no surface shows the publisher's word where
+/// another shows the hooks'.
+pub fn effective_row(
+    row: &PublishedRow,
+    integration: Option<&AgentIntegrationReport>,
+) -> PublishedRow {
+    match row_integration(integration, row) {
+        Some(report) => PublishedRow {
+            status: report.state.as_str().to_string(),
+            reason: report.reason.clone(),
+            ..row.clone()
+        },
+        None => row.clone(),
+    }
 }
 
 /// The native conversation one agent occupant stands for: its row's own when it is a published
@@ -175,19 +195,24 @@ pub fn occupant_native_session(
     }
 }
 
-/// The pane's rows with each one's status as [`effective_agent_runtimes`] reports it, for the
-/// single state pane chrome shows.
+/// The directory one agent occupant works in: its row's own when it is a published row that names
+/// one, the pane's otherwise.
+pub fn occupant_cwd(
+    rows: &[PublishedRow],
+    slot: Option<&str>,
+    pane_cwd: Option<String>,
+) -> Option<String> {
+    slot.and_then(|slot| rows.iter().find(|row| row.id == slot))
+        .and_then(|row| row.cwd.clone())
+        .or(pane_cwd)
+}
+
+/// The pane's rows with each one's status as [`effective_agent_runtimes`] reports it.
 pub fn rows_with_integration(runtime: &PaneRuntimeState) -> Vec<PublishedRow> {
     runtime
         .rows
         .iter()
-        .map(|row| match row_integration(runtime, row) {
-            Some(report) => PublishedRow {
-                status: report.state.as_str().to_string(),
-                ..row.clone()
-            },
-            None => row.clone(),
-        })
+        .map(|row| effective_row(row, runtime.integration.as_deref()))
         .collect()
 }
 

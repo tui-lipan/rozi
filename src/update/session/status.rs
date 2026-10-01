@@ -118,9 +118,8 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.reported_status = state.status;
     pane.terminal.recording = state.recording;
     pane.terminal.detected_agent = state.detected_agent;
-    pane.terminal.agent_integration = state.integration;
     pane.terminal.work_started_at = state.work_started_at;
-    let finished_rows = pane.terminal.apply_rows(state.rows);
+    let finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
     let edges = update_agent_status_edge(
         &mut pane.terminal,
         previous_agent_status.as_deref(),

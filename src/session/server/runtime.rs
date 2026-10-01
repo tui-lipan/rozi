@@ -286,10 +286,15 @@ fn validate_integration_update(
     }
 }
 
+/// Whether `value` is an acceptable native session reference: an opaque identifier, kept exactly as
+/// given, so it is validated rather than cleaned. The one rule for a hook report and a published row,
+/// which are matched to each other by exact equality.
+fn native_session_is_valid(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+}
+
 fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()> {
-    if native_session.is_some_and(|value| {
-        value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
-    }) {
+    if native_session.is_some_and(|value| !native_session_is_valid(value)) {
         Err((
             "invalid-argument",
             "native session reference must be 1-4096 characters without control characters"
@@ -520,14 +525,17 @@ impl SessionServer {
         // Rows and a live integration report coexist: one client can run several conversations,
         // and the report speaks for the row whose `native_session` it names. See
         // [`protocol::effective_agent_runtimes`].
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = unix_now_secs();
         // A pane whose shell reports another host's cwd is running its publisher there too, so
         // its rows name a filesystem this server cannot read.
         let local = pane.runtime.cwd_host.is_none();
-        let rows = sanitize_rows(rows, &pane.runtime.rows, now, local);
+        let mut rows = sanitize_rows(rows, &pane.runtime.rows, now, local);
+        restamp_row_clocks(
+            &mut rows,
+            &protocol::rows_with_integration(&pane.runtime),
+            pane.runtime.integration.as_deref(),
+            now,
+        );
         if rows == pane.runtime.rows {
             return Ok(None);
         }
@@ -601,6 +609,13 @@ impl SessionServer {
             pane.agent.retire_integration(integration);
             pane.runtime.integration = None;
         }
+        // The row the report speaks for runs on the report's clock.
+        restamp_row_clocks(
+            &mut pane.runtime.rows,
+            &protocol::rows_with_integration(&previous_runtime),
+            pane.runtime.integration.as_deref(),
+            unix_now_secs(),
+        );
         pane.runtime.work_started_at = next_work_started_at(
             &previous_runtime,
             pane.runtime.status.as_ref(),
@@ -1557,14 +1572,46 @@ fn sanitize_rows(
                 work_started_at,
                 cwd,
                 project,
+                // Byte for byte, or not at all: a cleaned id would never match the hook report
+                // naming the same conversation, and would resume the wrong one.
                 native_session: row
                     .native_session
-                    .as_deref()
-                    .and_then(|session| clean_text(session, PANE_STATUS_REASON_MAX_LEN)),
+                    .filter(|session| native_session_is_valid(session)),
             })
         })
         .take(MAX_PANE_ROWS)
         .collect()
+}
+
+/// Give each row the run clock its *effective* status implies: the integration report's for the row
+/// whose native session it names, the publisher's otherwise. `previous` is the rows as they were
+/// last presented, with the integration report that was live then already merged in.
+///
+/// A hook that reports `working` for a row its publisher still calls `idle` starts that row's run,
+/// and the report going quiet ends it, exactly as the pane's own clock follows a report.
+fn restamp_row_clocks(
+    rows: &mut [protocol::PublishedRow],
+    previous: &[protocol::PublishedRow],
+    integration: Option<&protocol::AgentIntegrationReport>,
+    now: u64,
+) {
+    for row in rows {
+        let effective = protocol::effective_row(row, integration);
+        let before = previous.iter().find(|candidate| candidate.id == row.id);
+        row.work_started_at = next_run_start(
+            before.map(|before| before.status.as_str()),
+            before.and_then(|before| before.work_started_at),
+            Some(effective.status.as_str()),
+            now,
+        );
+    }
+}
+
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn clean_text(value: &str, limit: usize) -> Option<String> {
@@ -2073,6 +2120,98 @@ mod tests {
         assert_eq!(remote[0].project, None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A native session id is an opaque reference matched by exact equality against the hooks'
+    /// report: kept byte for byte, by the same rule `agents report` applies, or dropped.
+    #[test]
+    fn a_row_native_session_is_kept_exactly_or_not_at_all() {
+        let row = |id: &str, native: &str| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(native.into()),
+        };
+        let long = "x".repeat(4096);
+        let rows = sanitize_rows(
+            vec![
+                row("spaced", "  session id\u{200b} "),
+                row("long", &long),
+                row("control", "abc\u{7}def"),
+                row("too-long", &format!("{long}y")),
+            ],
+            &[],
+            1,
+            true,
+        );
+        let native = rows
+            .iter()
+            .map(|row| row.native_session.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            native,
+            vec![
+                Some("  session id\u{200b} "),
+                Some(long.as_str()),
+                None,
+                None
+            ]
+        );
+        assert!(validate_native_session(Some("  session id\u{200b} ")).is_ok());
+        assert!(validate_native_session(Some("abc\u{7}def")).is_err());
+    }
+
+    /// The row a hook report speaks for runs on the report's clock, whatever its publisher says.
+    #[test]
+    fn a_hook_report_starts_and_ends_its_rows_run() {
+        let quiet = protocol::PublishedRow {
+            id: "quiet".into(),
+            title: "quiet".into(),
+            status: "idle".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("native-quiet".into()),
+        };
+        let report = |state| protocol::AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: protocol::SessionInstanceId::for_test("server"),
+                    pane_id: 1,
+                    generation: 1,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state,
+            reason: None,
+            native_session: Some("native-quiet".into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        };
+        let mut rows = vec![quiet.clone()];
+        let working = report(protocol::AgentState::Working);
+        restamp_row_clocks(&mut rows, std::slice::from_ref(&quiet), Some(&working), 100);
+        assert_eq!(rows[0].work_started_at, Some(100));
+
+        // Still working later: one run, not a new one.
+        let previous = vec![protocol::effective_row(&rows[0], Some(&working))];
+        restamp_row_clocks(&mut rows, &previous, Some(&working), 160);
+        assert_eq!(rows[0].work_started_at, Some(100));
+
+        let previous = vec![protocol::effective_row(&rows[0], Some(&working))];
+        let done = report(protocol::AgentState::Done);
+        restamp_row_clocks(&mut rows, &previous, Some(&done), 200);
+        assert_eq!(rows[0].work_started_at, None);
     }
 
     #[test]

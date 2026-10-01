@@ -1015,7 +1015,11 @@ impl SessionServer {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
-                    cwd: pane.runtime.cwd.clone(),
+                    cwd: protocol::occupant_cwd(
+                        &pane.runtime.rows,
+                        runtime.reference.slot.as_deref(),
+                        pane.runtime.cwd.clone(),
+                    ),
                     native_session: protocol::occupant_native_session(
                         &pane.runtime.rows,
                         pane.runtime.integration.as_deref(),
@@ -2773,7 +2777,8 @@ mod tests {
             reason: None,
             active,
             work_started_at: None,
-            cwd: None,
+            // `b` works in its own worktree; `a` in the pane's directory.
+            cwd: (id == "b").then(|| "/repo/.claude/worktrees/b".to_string()),
             project: None,
             native_session: Some(format!("native-{id}")),
         };
@@ -2844,6 +2849,18 @@ mod tests {
                     protocol::AgentAuthority::Published,
                     Some("native-b".into())
                 ),
+            ]
+        );
+        // Each occupant reports where it works: its row's own directory, or the pane's.
+        assert_eq!(
+            server
+                .session_agent_report()
+                .into_iter()
+                .map(|agent| agent.cwd)
+                .collect::<Vec<_>>(),
+            vec![
+                Some("/repo".to_string()),
+                Some("/repo/.claude/worktrees/b".to_string())
             ]
         );
 

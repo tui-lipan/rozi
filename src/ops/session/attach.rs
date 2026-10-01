@@ -312,8 +312,33 @@ pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Reconnect the current attachment without replacing its retained screens or window-manager state.
 /// The new id invalidates frames from the dead transport while preserving the attachment identity.
+///
+/// For a reconnect the user asked for (Enter or Retry on the offline overlay, switching back to a
+/// detached session), so ssh may raise its password or host-key dialog.
 pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
-    begin_current_session_reconnect(ctx, true)
+    begin_current_session_reconnect(ctx, true, Prompting::Allowed)
+}
+
+/// Reconnect after the transport dropped on its own. Nobody is waiting on this attempt, so it must
+/// not open a dialog over the session: an attempt that would need one fails and leaves the session
+/// offline, where Enter retries with prompts allowed.
+pub(crate) fn reconnect_after_transport_loss(ctx: &mut Context<AppRoot>) -> Update {
+    begin_current_session_reconnect(ctx, true, Prompting::Forbidden)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Prompting {
+    Allowed,
+    Forbidden,
+}
+
+impl Prompting {
+    fn remote_config(self, config: &crate::config::RemoteConfig) -> crate::config::RemoteConfig {
+        match self {
+            Self::Allowed => config.clone(),
+            Self::Forbidden => config.unattended(),
+        }
+    }
 }
 
 /// Explicitly adopt a replacement after the reconnect path proved the original remote server is
@@ -322,10 +347,14 @@ pub(crate) fn recreate_lost_remote_session(ctx: &mut Context<AppRoot>) -> Update
     if !ctx.state.current().remote_session_lost || ctx.state.current().remote_target.is_none() {
         return Update::none();
     }
-    begin_current_session_reconnect(ctx, false)
+    begin_current_session_reconnect(ctx, false, Prompting::Allowed)
 }
 
-fn begin_current_session_reconnect(ctx: &mut Context<AppRoot>, recover_existing: bool) -> Update {
+fn begin_current_session_reconnect(
+    ctx: &mut Context<AppRoot>,
+    recover_existing: bool,
+    prompting: Prompting,
+) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
         return Update::none();
     };
@@ -353,7 +382,7 @@ fn begin_current_session_reconnect(ctx: &mut Context<AppRoot>, recover_existing:
         parked_epoch: None,
     });
     if let Some(target) = ctx.state.current().remote_target.clone() {
-        let remote_config = ctx.state.config.remote.clone();
+        let remote_config = prompting.remote_config(&ctx.state.config.remote);
         return Update::with_command(Command::spawn(move |link| {
             std::thread::spawn(move || {
                 crate::session::bootstrap::attach_remote_session_client(
@@ -1141,4 +1170,23 @@ pub(crate) fn disconnect_host(
         return land_on_surviving_session(ctx);
     }
     Update::full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Prompting;
+    use crate::config::RemoteConfig;
+
+    /// A reconnect nobody asked for must not open an SSH dialog over the session, even with
+    /// `batch_mode = false`; one the user asked for keeps the configured choice.
+    #[test]
+    fn only_requested_reconnects_may_prompt() {
+        let config = RemoteConfig::default();
+        assert!(!config.batch_mode);
+        assert!(Prompting::Forbidden.remote_config(&config).batch_mode);
+        assert!(!Prompting::Allowed.remote_config(&config).batch_mode);
+
+        let refused = config.unattended();
+        assert!(Prompting::Allowed.remote_config(&refused).batch_mode);
+    }
 }

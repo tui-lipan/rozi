@@ -1012,9 +1012,7 @@ fn scp_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command
     super::askpass::configure(&mut command);
     // Same control socket as ssh: an upload rides the connection the probe already authenticated.
     apply_multiplexing(&mut command);
-    if config.batch_mode {
-        command.arg("-o").arg("BatchMode=yes");
-    }
+    configure_batch_mode(&mut command, config);
     if config.connection_timeout_secs > 0 {
         command
             .arg("-o")
@@ -1163,15 +1161,18 @@ fn download_release_binary_from_base_with(
     Ok((download_dir, binary))
 }
 
-/// Common ssh argv for every remote invocation: no tty, timeouts, and the per-host options.
-///
-/// `BatchMode` comes from `[remote] batch_mode` (default on). It is the single place that decides
-/// whether ssh may prompt, so probe, install, attach, list, and kill all agree — a mix would mean
-/// a host that lists fine but hangs on attach.
-///
-/// Being that single place is also why the askpass redirect is installed here: a prompt that
-/// escaped even one of those invocations would land on the terminal the TUI is drawing on. See
-/// [`super::askpass`].
+/// `BatchMode` for one ssh or scp: prompts only where this process has someone to answer them
+/// (see [`super::askpass::SshPrompts`]) and `config` is not [`RemoteConfig::unattended`].
+fn configure_batch_mode(command: &mut Command, config: &RemoteConfig) {
+    let prompts = super::askpass::SshPrompts::interactive().allows_prompt(config.batch_mode);
+    command.arg("-o").arg(if prompts {
+        "BatchMode=no"
+    } else {
+        "BatchMode=yes"
+    });
+}
+
+/// Common ssh argv for probe, install, attach, list, and kill, including the UI askpass redirect.
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     ssh_base_command_with_connect_timeout(resolved, config, config.connection_timeout_secs)
 }
@@ -1202,9 +1203,7 @@ pub(crate) fn ssh_base_command_with_connect_timeout(
             "ServerAliveCountMax={}",
             config.server_alive_count_max
         ));
-    if config.batch_mode {
-        command.arg("-o").arg("BatchMode=yes");
-    }
+    configure_batch_mode(&mut command, config);
     if connection_timeout_secs > 0 {
         command
             .arg("-o")
@@ -2253,16 +2252,29 @@ protocol_max={beyond}
         };
 
         let mut config = RemoteConfig::default();
-        assert!(config.batch_mode, "batch mode must default on");
+        assert!(!config.batch_mode, "interactive prompts must default on");
+        config.batch_mode = true;
         assert!(
             args(&config).iter().any(|arg| arg == "BatchMode=yes"),
-            "default config must refuse interactive ssh prompts"
+            "explicit batch mode must refuse interactive ssh prompts"
+        );
+
+        assert!(
+            args(&RemoteConfig::default().unattended())
+                .iter()
+                .any(|arg| arg == "BatchMode=yes"),
+            "an unattended ssh must refuse prompts"
         );
 
         config.batch_mode = false;
+        let expected = if super::super::askpass::SshPrompts::interactive().allows_prompt(false) {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        };
         assert!(
-            !args(&config).iter().any(|arg| arg == "BatchMode=yes"),
-            "batch_mode = false must let ssh prompt"
+            args(&config).iter().any(|arg| arg == expected),
+            "batch_mode = false must follow who can answer here"
         );
         // Everything else is unaffected by the switch.
         assert!(args(&config).iter().any(|arg| arg == "-T"));
@@ -2311,7 +2323,10 @@ protocol_max={beyond}
             ssh_args: vec!["-o".into(), "UserKnownHostsFile=/tmp/kh".into()],
             binary_path: None,
         };
-        let config = RemoteConfig::default();
+        let config = RemoteConfig {
+            batch_mode: true,
+            ..RemoteConfig::default()
+        };
         let args: Vec<String> = scp_base_command(&resolved, &config)
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())

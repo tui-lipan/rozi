@@ -147,8 +147,8 @@ sessions. See [Scope](sessions.md#scope-where-an-action-happens) and
 rozi uses your OpenSSH configuration, keys, agent, `known_hosts`, jump hosts, and other SSH policy.
 It does not manage credentials.
 
-By default, SSH runs in batch mode, so authentication must complete without a prompt. Load a key
-into your SSH agent or set an identity file:
+By default, rozi asks for host-key approval, passwords, and key passphrases when needed. For regular
+use, load a key into your SSH agent or set an identity file:
 
 ```toml
 [remote.hosts.workbox]
@@ -157,8 +157,8 @@ user = "dev"
 identity_file = "~/.ssh/id_ed25519"
 ```
 
-Set `[remote] batch_mode = false` to allow SSH prompts when probing, installing, attaching, listing,
-and killing sessions. A loaded agent is still the better choice for regular use.
+Set `[remote] batch_mode = true` to refuse SSH prompts. Unattended command-line runs always use
+batch mode, so their authentication must complete without a prompt.
 
 Test authentication directly when setup fails:
 
@@ -168,8 +168,7 @@ ssh workbox
 
 ### Prompts inside the UI
 
-With `batch_mode = false`, a running rozi client shows SSH prompts in a dialog instead of letting
-them reach the terminal:
+A running rozi client shows SSH prompts in a dialog by default:
 
 - A password or key passphrase is masked and never shown.
 - A host-key question shows OpenSSH's wording as is and has a text field, because OpenSSH accepts
@@ -186,10 +185,11 @@ them reach the terminal:
 
 To do this, rozi sets `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force`, and its own variables on every
 `ssh` and `scp` it runs, overriding a desktop `SSH_ASKPASS` for those commands only. This needs
-OpenSSH 8.4 or newer on the client; older versions prompt on the terminal, and the prompt draws
-over the rozi window.
+OpenSSH 8.4 or newer on the client, which rozi checks with `ssh -V`. An older client would prompt
+on the terminal, over the rozi window, so with one rozi runs SSH in batch mode instead: load a key
+into your agent, or connect once with `ssh <HOST>` to accept its host key.
 
-Command-line runs keep SSH's ordinary terminal prompt: `rozi sessions list --remote`,
+Interactive command-line runs keep SSH's ordinary terminal prompt: `rozi sessions list --remote`,
 `rozi sessions kill --remote`, and the install prompt shown before launch.
 
 ## Configure aliases and defaults
@@ -348,8 +348,12 @@ lost network, or missed heartbeats from the session — rozi shows a reconnectin
 in place for up to two minutes. It reuses the rozi binary it already found on the host.
 
 - `Esc` stops waiting and opens Sessions.
-- An SSH password, passphrase, or host-key prompt covers the overlay while authentication is
-  needed. `Esc` cancels that prompt, and the reconnecting overlay returns.
+- These automatic retries never prompt. If the host now needs a password, passphrase, or host-key
+  approval, they fail until the session goes **offline**; a retry you start with `Enter` can then
+  show the SSH dialog.
+- A reconnect you start, with `Enter` on an offline session or by switching back to a session that
+  lost its connection, shows any SSH prompt over the overlay. `Esc` cancels that prompt, and the
+  reconnecting overlay returns.
 - If the remote session no longer exists, the overlay shows **session lost**. rozi never starts a
   replacement on its own: press `Enter` to recreate the session from the panes still on screen, or
   `Esc` to open Sessions without recreating it.
@@ -373,7 +377,7 @@ session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `la
 it without contacting the host; if the host still reports the session later, it is listed again.
 
 Background reconnects never prompt. If a host needs a password or host-key approval, select it and
-reconnect with `Enter` or `Ctrl+R`; with `[remote] batch_mode = false`, the SSH dialog then handles
+reconnect with `Enter` or `Ctrl+R`; unless `[remote] batch_mode = true`, the SSH dialog then handles
 the prompt.
 
 Monitoring runs `rozi sessions watch` on the host, a protocol meant only for rozi clients. It is

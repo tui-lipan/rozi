@@ -514,7 +514,7 @@ See [Sessions](sessions.md).
 | `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
 | `server_alive_count_max` | integer | `3` | Minimum `1`. |
 | `install` | string | `"prompt"` | Whether to install rozi on the remote host: `"prompt"`, `"always"`, or `"never"`. Noninteractive runs never install. |
-| `batch_mode` | bool | `true` | Sets SSH `BatchMode=yes`. When `false`, a running client answers SSH prompts in a dialog; see [Remote sessions](remote.md#prompts-inside-the-ui). |
+| `batch_mode` | bool | `false` | When `true`, refuses SSH prompts. By default, a running client answers prompts in a dialog and interactive CLI commands use the terminal. Unattended commands always use batch mode; see [Remote sessions](remote.md#prompts-inside-the-ui). |
 
 ### `[remote.hosts.<alias>]`
 

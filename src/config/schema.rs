@@ -504,12 +504,22 @@ pub struct RemoteConfig {
     pub install: RemoteInstallPolicy,
     /// Pass `BatchMode=yes` to ssh, refusing every interactive prompt.
     ///
-    /// On by default: the attach transport hands ssh's stdin to the session protocol, so a
-    /// password prompt there cannot be answered and would hang instead. Turning it off lets ssh
-    /// prompt on the controlling terminal, which is useful for the CLI helpers
-    /// (`sessions list --remote`, `sessions kill --remote`) and for passphrase-protected keys with
-    /// no agent — at the cost of a prompt that can land on top of a running TUI.
+    /// Off by default: a running client answers through its SSH dialog, and interactive CLI
+    /// commands use the terminal. Without either, SSH always runs in batch mode, and so does
+    /// every connection nobody asked for (see [`RemoteConfig::unattended`]).
     pub batch_mode: bool,
+}
+
+impl RemoteConfig {
+    /// This config for an ssh nobody is waiting on: an automatic reconnect after the transport
+    /// dropped, a background host sweep or monitor. Such a connection must never raise a password
+    /// or host-key dialog, so it runs in batch mode whatever `batch_mode` says.
+    pub fn unattended(&self) -> Self {
+        Self {
+            batch_mode: true,
+            ..self.clone()
+        }
+    }
 }
 
 impl Default for RemoteConfig {
@@ -521,7 +531,7 @@ impl Default for RemoteConfig {
             server_alive_interval_secs: 15,
             server_alive_count_max: 3,
             install: RemoteInstallPolicy::default(),
-            batch_mode: true,
+            batch_mode: false,
         }
     }
 }

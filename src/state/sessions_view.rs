@@ -89,6 +89,9 @@ pub enum HostStatus {
     Connected,
     /// An attachment on this host is (re)connecting, or the host is being probed (just connected).
     Connecting,
+    /// Rozi is being copied onto the host after the user accepted the install offer. A phase of
+    /// connecting that can take long enough to need its own word.
+    Installing,
     /// Reachable — the probe reached the host (whether or not it has sessions) — but this client
     /// holds no attachment.
     Reachable,
@@ -103,6 +106,9 @@ pub enum HostStatus {
 #[derive(Clone, Debug, Default)]
 pub struct HostRegistry {
     entries: Vec<HostEntry>,
+    /// Hosts Rozi is being installed on, once per install in flight. Kept beside the entries
+    /// rather than on them: a reseed rebuilds the entries, and an install outlives that.
+    installing: Vec<RemoteTarget>,
 }
 
 impl HostRegistry {
@@ -116,6 +122,15 @@ impl HostRegistry {
 
     pub fn get(&self, target: &RemoteTarget) -> Option<&HostEntry> {
         self.entries.iter().find(|entry| &entry.target == target)
+    }
+
+    /// Record an install on `target` starting or ending. Each start is paired with one end.
+    pub fn set_installing(&mut self, target: &RemoteTarget, installing: bool) {
+        if installing {
+            self.installing.push(target.clone());
+        } else if let Some(index) = self.installing.iter().position(|held| held == target) {
+            self.installing.swap_remove(index);
+        }
     }
 
     pub fn get_mut(&mut self, target: &RemoteTarget) -> Option<&mut HostEntry> {
@@ -226,6 +241,9 @@ impl HostRegistry {
                 _ => {}
             }
         }
+        if self.installing.contains(target) {
+            return HostStatus::Installing;
+        }
         if any_connecting {
             return HostStatus::Connecting;
         }
@@ -301,6 +319,33 @@ mod tests {
         // A host that dropped out of every source is gone.
         registry.seed(&config(&[], None), &[], &[], &[]);
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn an_install_in_flight_reads_as_installing_until_its_last_end() {
+        let mut registry = HostRegistry::default();
+        registry.seed(&config(&["workbox"], None), &[], &[], &[]);
+        let target = RemoteTarget::Alias("workbox".into());
+        registry.get_mut(&target).unwrap().probe = HostProbe::InFlight;
+        registry.set_installing(&target, true);
+        registry.set_installing(&target, true);
+        // A reseed rebuilds the entries; the install is still running.
+        registry.seed(&config(&["workbox"], None), &[], &[], &[]);
+        assert_eq!(
+            registry.status_for(&target, &[super::super::ConnectionState::Connecting], false),
+            HostStatus::Installing
+        );
+        registry.set_installing(&target, false);
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), false),
+            HostStatus::Installing,
+            "a second install on the same host is still running"
+        );
+        registry.set_installing(&target, false);
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), false),
+            HostStatus::Connecting
+        );
     }
 
     #[test]

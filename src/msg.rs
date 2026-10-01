@@ -358,6 +358,12 @@ pub enum Msg {
         target: crate::session::remote::RemoteTarget,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
     },
+    /// Rozi started or finished copying itself onto a host, after the user accepted the install
+    /// offer. Drives the host's "installing…" status while the copy runs.
+    RemoteInstallProgress {
+        target: crate::session::remote::RemoteTarget,
+        installing: bool,
+    },
     RemotePickerSessionQueryChanged(String),
     RemotePickerSessionSelect(crate::state::RemoteSessionIdentity),
     RemotePickerSessionActivate(crate::state::RemoteSessionIdentity),

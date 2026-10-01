@@ -173,7 +173,7 @@ fn header_row(
             };
             SidebarRow::item(row, RowTarget::HostConnect(host.target.clone()))
         }
-        HostStatus::Connecting => SidebarRow::item(row, RowTarget::Inert),
+        HostStatus::Connecting | HostStatus::Installing => SidebarRow::item(row, RowTarget::Inert),
     }
 }
 
@@ -255,7 +255,7 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         ));
 
         match status {
-            HostStatus::Connecting => {}
+            HostStatus::Connecting | HostStatus::Installing => {}
             HostStatus::Connected | HostStatus::Reachable => {
                 // Online: live sessions follow the host row, then the way to start another.
                 if sessions.is_empty() {

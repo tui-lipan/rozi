@@ -593,11 +593,15 @@ fn askpass_choice_overlay(
             Msg::RemoteAskpassFocusAnswer(DIALOG_AFFIRM),
         ),
     ];
+    // The install offer arrives as `Label: value` lines. Shown as rows, so the host it is about to
+    // write to reads at a glance instead of drowning in one grey paragraph.
+    let facts = install.then(|| install_facts(question)).flatten();
     dialog_overlay(
         ctx,
         DialogChrome {
             title,
-            detail: Some(question),
+            detail: facts.is_none().then_some(question),
+            facts: facts.as_deref().unwrap_or_default(),
             highlight: fingerprint,
             caption,
             dim_behind: true,
@@ -606,6 +610,17 @@ fn askpass_choice_overlay(
         Msg::CancelRemoteAskpass,
         &buttons,
     )
+}
+
+/// The `Label: value` lines of rozi's install offer, or `None` when any line is not one.
+fn install_facts(question: &str) -> Option<Vec<(&str, &str)>> {
+    question
+        .lines()
+        .map(|line| {
+            line.split_once(": ")
+                .map(|(label, value)| (label.trim(), value.trim()))
+        })
+        .collect()
 }
 
 /// Assemble a palette-style overlay: shared modal chrome, a close handler, and the overlay's

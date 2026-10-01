@@ -103,12 +103,48 @@ fn dialog_caption_row(theme: &Theme, caption: PromptCaption<'_>) -> Element {
         .into()
 }
 
+/// The labelled values of a dialog, labels padded to one column so the values line up.
+fn dialog_facts(theme: &Theme, facts: &[(&str, &str)]) -> Element {
+    let label_width = facts
+        .iter()
+        .map(|(label, _)| label.chars().count())
+        .max()
+        .unwrap_or_default();
+    let mut rows = VStack::new().height(Length::Auto).padding((0, 1, 1, 1));
+    for (index, (label, value)) in facts.iter().enumerate() {
+        let value_style = if index == 0 {
+            fg_only(&theme.accent).bold()
+        } else {
+            fg_only(&theme.primary)
+        };
+        rows = rows.child(
+            HStack::new()
+                .height(Length::Auto)
+                .child(
+                    Text::new(format!("{label:<label_width$}  "))
+                        .overflow(Overflow::Clip)
+                        .style(fg_only(&theme.muted)),
+                )
+                .child(
+                    Text::new(*value)
+                        .overflow(Overflow::Wrap)
+                        .width(Length::Flex(1))
+                        .style(value_style),
+                ),
+        );
+    }
+    rows.into()
+}
+
 /// What one chosen-answer dialog differs by. The mirror of [`PromptChrome`] for a question with
 /// no field: same modal, same body slots, an answer row where the input would be.
 pub(super) struct DialogChrome<'a> {
     pub(super) title: &'a str,
     /// Wrapped text between the title and the answers, for a question too long to be a title.
     pub(super) detail: Option<&'a str>,
+    /// Labelled values between the detail and the answers, one per row: the label muted, the value
+    /// in the body colour, and the first value — the subject of the question — in the accent.
+    pub(super) facts: &'a [(&'a str, &'a str)],
     /// One string out of [`Self::detail`] repeated unbroken on its own line. See
     /// [`PromptChrome::highlight`].
     pub(super) highlight: Option<&'a str>,
@@ -133,6 +169,7 @@ pub(super) fn dialog_overlay(
     let DialogChrome {
         title,
         detail,
+        facts,
         highlight,
         caption,
         dim_behind,
@@ -142,6 +179,9 @@ pub(super) fn dialog_overlay(
     let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
     if let Some(detail) = detail {
         body = body.child(prompt_detail_row(theme, detail));
+    }
+    if !facts.is_empty() {
+        body = body.child(dialog_facts(theme, facts));
     }
     if let Some(highlight) = highlight {
         body = body.child(prompt_highlight_row(theme, highlight));

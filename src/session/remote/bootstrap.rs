@@ -95,6 +95,8 @@ else
   data_home="$HOME/.local/share"
 fi
 managed_root="$data_home/rozi/remote"
+printf 'home=%s\n' "$HOME"
+printf 'managed_root=%s\n' "$managed_root"
 for managed in "$managed_root/"*/rozi; do
   [ -e "$managed" ] || continue
   try_bin "$managed"
@@ -155,6 +157,8 @@ Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
 $dataHome = $env:LOCALAPPDATA
 if (-not $dataHome) { $dataHome = Join-Path $env:USERPROFILE '.local\share' }
 $managedRoot = Join-Path $dataHome 'rozi\remote'
+Write-Output "home=$env:USERPROFILE"
+Write-Output "managed_root=$managedRoot"
 Get-ChildItem -LiteralPath $managedRoot -Directory | ForEach-Object {
   Try-Bin (Join-Path $_.FullName 'rozi.exe')
 }
@@ -168,6 +172,11 @@ pub struct ProbeReport {
     /// Shell family detected from the remote host, kept separate from the client OS.
     pub(crate) family: Option<RemoteFamily>,
     pub candidates: Vec<ProbeCandidate>,
+    /// The remote user's home directory, so a path under it can be shown as `~`.
+    pub(crate) home: Option<String>,
+    /// Where managed installs live on this host, resolved by the remote shell: the directory an
+    /// install would write to, rather than the expression that picks it.
+    pub(crate) managed_root: Option<String>,
 }
 
 impl ProbeReport {
@@ -216,6 +225,10 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
             report.platform = value.to_string();
         } else if let Some(value) = line.strip_prefix("machine=") {
             report.machine = value.to_string();
+        } else if let Some(value) = line.strip_prefix("home=") {
+            report.home = Some(value.to_string()).filter(|home| !home.is_empty());
+        } else if let Some(value) = line.strip_prefix("managed_root=") {
+            report.managed_root = Some(value.to_string()).filter(|root| !root.is_empty());
         } else if let Some(value) = line.strip_prefix("candidate=") {
             flush(
                 &mut report,
@@ -412,6 +425,8 @@ fn configured_binary_path_report(
             protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
             protocol_max: Some(PROTOCOL_VERSION),
         }],
+        home: None,
+        managed_root: None,
     }
 }
 
@@ -606,33 +621,78 @@ pub(crate) fn ensure_remote_binary_in_ui(
     config: &RemoteConfig,
     probe_epoch: Option<u64>,
 ) -> Result<String, String> {
-    ensure_with_confirmation(target, config, true, |report, ask| {
-        if !ask {
-            return Ok(true);
+    let mut installing = false;
+    let result = ensure_with_confirmation(target, config, true, |report, ask| {
+        let accepted = if ask {
+            let host = ResolvedRemote::resolve(target, config).ssh_destination();
+            super::askpass::confirm_install(
+                format!(
+                    "Host: {host}\nDestination: {}\nVersion: {}",
+                    install_destination(report),
+                    env!("CARGO_PKG_VERSION")
+                ),
+                probe_epoch,
+            )?
+        } else {
+            true
+        };
+        // The copy that follows can take a while on a slow link; the host says so meanwhile.
+        if accepted {
+            installing = true;
+            super::askpass::report_install(target, true);
         }
-        let host = ResolvedRemote::resolve(target, config).ssh_destination();
-        super::askpass::confirm_install(
-            format!(
-                "Host: {host}\nDestination: {}\nVersion: {}",
-                install_destination(report),
-                env!("CARGO_PKG_VERSION")
-            ),
-            probe_epoch,
-        )
-    })
+        Ok(accepted)
+    });
+    if installing {
+        super::askpass::report_install(target, false);
+    }
+    result
 }
 
+/// Where an install onto this host would write, as the confirmation shows it: the directory the
+/// remote shell resolved, with the home directory folded to `~`. A probe that did not report one
+/// falls back to the expression the installer evaluates.
 fn install_destination(report: &ProbeReport) -> String {
-    if report.remote_family() == RemoteFamily::Windows {
-        format!(
-            r"%LOCALAPPDATA%\rozi\remote\{}\rozi.exe",
-            env!("CARGO_PKG_VERSION")
-        )
+    let version = env!("CARGO_PKG_VERSION");
+    let family = report.remote_family();
+    let Some(root) = report.managed_root.as_deref() else {
+        return match family {
+            RemoteFamily::Windows => format!(r"%LOCALAPPDATA%\rozi\remote\{version}\rozi.exe"),
+            RemoteFamily::Posix => format!(
+                "${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{version}/{INSTALL_NAME}"
+            ),
+        };
+    };
+    let path = match family {
+        RemoteFamily::Windows => format!(r"{}\{version}\rozi.exe", root.trim_end_matches('\\')),
+        RemoteFamily::Posix => format!("{}/{version}/{INSTALL_NAME}", root.trim_end_matches('/')),
+    };
+    match report.home.as_deref() {
+        Some(home) => fold_home(&path, home, family),
+        None => path,
+    }
+}
+
+/// `path` with a leading `home` written as `~`. Windows paths compare case-insensitively, as the
+/// filesystem does; a root home is left alone, since every path is under it.
+fn fold_home(path: &str, home: &str, family: RemoteFamily) -> String {
+    let separator = match family {
+        RemoteFamily::Windows => '\\',
+        RemoteFamily::Posix => '/',
+    };
+    let home = home.trim_end_matches(separator);
+    if home.is_empty() || !path.is_char_boundary(home.len()) {
+        return path.to_string();
+    }
+    let (head, rest) = path.split_at(home.len());
+    let same = match family {
+        RemoteFamily::Windows => head.eq_ignore_ascii_case(home),
+        RemoteFamily::Posix => head == home,
+    };
+    if same && rest.starts_with(separator) {
+        format!("~{rest}")
     } else {
-        format!(
-            "${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{}/{INSTALL_NAME}",
-            env!("CARGO_PKG_VERSION")
-        )
+        path.to_string()
     }
 }
 
@@ -1742,6 +1802,53 @@ mod tests {
         );
     }
 
+    /// The confirmation names the directory the remote shell resolved, not the expression that
+    /// picks it, and reads a path under home the way the user would type it.
+    #[test]
+    fn install_destination_shows_the_resolved_directory_under_home_as_tilde() {
+        let version = env!("CARGO_PKG_VERSION");
+        let posix = parse_probe_output(
+            "platform=Linux\nmachine=x86_64\nhome=/home/dev\n\
+             managed_root=/home/dev/.local/share/rozi/remote\nprobe_done=1\n",
+        );
+        assert_eq!(
+            install_destination(&posix),
+            format!("~/.local/share/rozi/remote/{version}/rozi")
+        );
+
+        let xdg = parse_probe_output(
+            "platform=Linux\nhome=/home/dev\nmanaged_root=/data/dev/rozi/remote\n",
+        );
+        assert_eq!(
+            install_destination(&xdg),
+            format!("/data/dev/rozi/remote/{version}/rozi")
+        );
+
+        // A sibling that merely shares the prefix is not under home.
+        let sibling =
+            parse_probe_output("platform=Linux\nhome=/home/dev\nmanaged_root=/home/devops/rozi\n");
+        assert_eq!(
+            install_destination(&sibling),
+            format!("/home/devops/rozi/{version}/rozi")
+        );
+
+        let windows = parse_probe_output(
+            "platform=windows\nhome=C:\\Users\\Dev\n\
+             managed_root=c:\\users\\dev\\AppData\\Local\\rozi\\remote\n",
+        );
+        assert_eq!(
+            install_destination(&windows),
+            format!(r"~\AppData\Local\rozi\remote\{version}\rozi.exe")
+        );
+
+        // A probe that reported nothing falls back to the installer's own expression.
+        let silent = parse_probe_output("platform=Linux\nmachine=x86_64\n");
+        assert_eq!(
+            install_destination(&silent),
+            format!("${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{version}/rozi")
+        );
+    }
+
     #[test]
     fn parse_probe_collects_candidates_and_protocol_range() {
         let report = parse_probe_output(
@@ -1978,6 +2085,7 @@ protocol_max={beyond}
             machine: "x86_64".into(),
             family: None,
             candidates: Vec::new(),
+            ..ProbeReport::default()
         };
         verify_override_targets_remote(&bin, &netbsd).expect("a NetBSD binary installs on NetBSD");
 
@@ -1986,6 +2094,7 @@ protocol_max={beyond}
             machine: "x86_64".into(),
             family: None,
             candidates: Vec::new(),
+            ..ProbeReport::default()
         };
         assert!(verify_override_targets_remote(&bin, &linux).is_err());
 
@@ -2012,6 +2121,7 @@ protocol_max={beyond}
             machine: "x86_64".into(),
             family: None,
             candidates: Vec::new(),
+            ..ProbeReport::default()
         };
         verify_override_targets_remote(&bin, &linux).expect("matching target installs");
 
@@ -2020,6 +2130,7 @@ protocol_max={beyond}
             machine: "x86_64".into(),
             family: None,
             candidates: Vec::new(),
+            ..ProbeReport::default()
         };
         assert!(verify_override_targets_remote(&bin, &windows).is_err());
 
@@ -2029,6 +2140,7 @@ protocol_max={beyond}
             machine: "unknown".into(),
             family: None,
             candidates: Vec::new(),
+            ..ProbeReport::default()
         };
         verify_override_targets_remote(&bin, &unknown).expect("unknown platform does not block");
 

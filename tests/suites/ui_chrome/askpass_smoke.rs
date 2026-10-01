@@ -378,18 +378,86 @@ fn remote_install_names_what_it_would_write_and_offers_the_two_answers() {
     on_large_stack(|| {
         let mut backend = askpass_backend(
             AskpassKind::Install { probe_epoch: None },
-            "Host: dev@workbox\nDestination: $HOME/.local/bin/rozi\nVersion: 0.0.17",
+            "Host: dev@workbox\nDestination: ~/.local/share/rozi/remote/0.0.17/rozi\nVersion: 0.0.17",
         );
         let frame = rendered_lines(&mut backend);
         assert!(frame.contains("Install Rozi on remote"), "{frame}");
         assert!(frame.contains("dev@workbox"), "{frame}");
-        assert!(frame.contains("$HOME/.local/bin/rozi"), "{frame}");
+        assert!(
+            frame.contains("~/.local/share/rozi/remote/0.0.17/rozi"),
+            "{frame}"
+        );
         // The buttons name the action rather than agreeing with an unstated question: nothing on
         // screen asks "install?", so a bare `Yes` would answer nothing.
         assert!(frame.contains("Install"), "{frame}");
         assert!(frame.contains("Cancel"), "{frame}");
         backend.dispatch(rozi::Msg::CancelRemoteAskpass).unwrap();
         assert!(backend.state().askpass.is_none());
+    });
+}
+
+/// The facts are rows, not one grey paragraph: the host — what the user is deciding about —
+/// stands out from the labels beside it.
+#[test]
+fn remote_install_highlights_the_host_against_muted_labels() {
+    on_large_stack(|| {
+        let mut backend = askpass_backend(
+            AskpassKind::Install { probe_epoch: None },
+            "Host: dev@workbox\nDestination: ~/.local/share/rozi/remote/0.0.17/rozi\nVersion: 0.0.17",
+        );
+        let (label_x, label_y) = label_cell(&mut backend, "Host");
+        let (host_x, host_y) = label_cell(&mut backend, "dev@workbox");
+        let (path_x, path_y) = label_cell(&mut backend, "~/.local/share/rozi/remote/0.0.17/rozi");
+        assert_eq!(label_y, host_y, "label and value share a row");
+        let frame = backend.capture_frame();
+        let label = frame.cell(label_x, label_y).fg;
+        let host = frame.cell(host_x, host_y).fg;
+        let path = frame.cell(path_x, path_y).fg;
+        assert_ne!(label, host, "the host is not drawn in the label's colour");
+        assert_ne!(label, path, "a value is not drawn in the label's colour");
+        assert_ne!(host, path, "the host is the accented value");
+        assert!(!rendered_lines(&mut backend).contains("Host:"));
+    });
+}
+
+/// After `Install`, the copy can take a while; the host row says what is happening meanwhile.
+#[test]
+fn an_accepted_install_shows_the_host_as_installing() {
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        backend
+            .state_mut()
+            .config
+            .remote
+            .hosts
+            .insert("workbox".into(), rozi::config::RemoteHostConfig::default());
+        backend
+            .dispatch(rozi::Msg::SessionPickerRemoteHosts)
+            .expect("open the remote picker");
+        let target = rozi::session::remote::RemoteTarget::Alias("workbox".into());
+        backend
+            .dispatch(rozi::Msg::RemoteInstallProgress {
+                target: target.clone(),
+                installing: true,
+            })
+            .unwrap();
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("installing…"), "{frame}");
+        backend
+            .dispatch(rozi::Msg::RemoteInstallProgress {
+                target,
+                installing: false,
+            })
+            .unwrap();
+        let frame = rendered_lines(&mut backend);
+        assert!(!frame.contains("installing…"), "{frame}");
     });
 }
 

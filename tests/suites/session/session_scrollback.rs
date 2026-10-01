@@ -64,8 +64,12 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
         local: false,
         pane_id: PANE_ID,
         generation: GENERATION,
+        // The generator outlives the test rather than exiting. A launched pane kept open swaps in
+        // an interactive shell when its command ends, and whatever that shell prints lands after
+        // the marker - macOS bash greets with a notice that wraps across many 40-column lines,
+        // enough to evict the marker from a three-line server history before the replay is read.
         launch: Some(rozi::pane::launch::PaneLaunch::shell(format!(
-            "i=0; while [ $i -lt 30 ]; do printf 'line-%03d\\n' $i; i=$((i+1)); done; printf '{FINAL_MARKER}\\n'"
+            "i=0; while [ $i -lt 30 ]; do printf 'line-%03d\\n' $i; i=$((i+1)); done; printf '{FINAL_MARKER}\\n'; exec sleep 600"
         ))),
         cwd: None,
         cols: COLS,

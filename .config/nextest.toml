@@ -1,0 +1,11 @@
+# Optional local runner: `cargo nextest run`. CI and the baseline checks still use `cargo test`,
+# which also runs doctests; nextest does not.
+#
+# Every test runs in its own process, so the per-process scratch roots in `src/test_support.rs`
+# isolate each test from every other one.
+
+[profile.default]
+# Report every failing test, like CI's `cargo test --no-fail-fast`.
+fail-fast = false
+# Flag a test that runs past a minute, and kill one that hangs for five.
+slow-timeout = { period = "60s", terminate-after = 5 }

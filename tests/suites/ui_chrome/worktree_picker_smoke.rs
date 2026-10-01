@@ -119,10 +119,10 @@ fn picker_widens_to_fit_long_checkout_rows() {
         backend.render();
         let frame = backend.capture_frame().plain_text();
         assert!(
-            frame.contains("fix/config-test-race  rozi/.claude/worktrees/session-fade-duration"),
+            frame.contains("rozi/.claude/worktrees/session-fade-duration"),
             "{frame}"
         );
-        assert!(frame.contains("primary"), "{frame}");
+        assert!(frame.contains("rozi · primary"), "{frame}");
 
         backend.set_viewport(Rect {
             x: 0,

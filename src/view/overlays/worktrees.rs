@@ -79,23 +79,9 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .iter()
         .map(|tree| WorktreeRow::new(tree, picker, primary))
         .collect();
-    // Branches are padded to one width so paths start in the same column. An unusually long branch
-    // pushes only its own path rather than every row's.
-    let branch_width = rows
-        .iter()
-        .map(|row| row.branch.chars().count())
-        .max()
-        .unwrap_or(0)
-        .min(MAX_BRANCH_COLUMN);
     let widest_row = rows
         .iter()
-        .map(|row| {
-            MARKER_WIDTH
-                + branch_width
-                + COLUMN_GAP
-                + row.path.chars().count()
-                + row.state.chars().count()
-        })
+        .map(|row| MARKER_WIDTH + row.branch.chars().count() + row.description().chars().count())
         .max()
         .unwrap_or(0);
     let entries = rows
@@ -106,7 +92,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             SearchEntry::Item(
                 SearchItem::new(row.branch.clone(), index)
                     .aliases([row.path.clone(), row.full_path.clone()])
-                    .description(picker_description(&row.state)),
+                    .description(picker_description(row.description())),
             )
         })
         .collect();
@@ -122,26 +108,25 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     let render_item: OverlayItemRenderer<usize> =
         Arc::new(move |item: &SearchItem<usize>, _highlight| {
             let row = rows.get(item.value)?;
-            let branch = format!("{:<branch_width$}", row.branch);
-            let item = ListItem::from_spans([
-                Span::new(if row.current { "● " } else { "  " }).style(styles.marker),
-                Span::new(branch).style(styles.branch),
-                Span::new(" ".repeat(COLUMN_GAP)),
-                Span::new(row.path.clone()).style(styles.path),
-            ]);
-            if row.state.is_empty() {
-                return Some(item);
+            let mut description = vec![Span::new(format!("  {}", row.path)).style(styles.path)];
+            if !row.state.is_empty() {
+                description.push(Span::new(" · ").style(styles.path));
+                description.push(Span::new(row.state.clone()).style(if row.has_sessions {
+                    styles.session
+                } else {
+                    styles.state
+                }));
             }
-            // Unlike most pickers, the path gives way before the state column: the branch already
-            // tells rows apart, while the session or `locked` is what decides what Enter does.
+            // A narrow modal cuts the description from its start: the path's tail and the session
+            // or `locked` state are what tell rows apart and decide what Enter does.
             Some(
-                item.description(format!("  {}", row.state))
-                    .description_style(if row.has_sessions {
-                        styles.session
-                    } else {
-                        styles.state
-                    })
-                    .primary_truncate_description_first(false),
+                ListItem::from_spans([
+                    Span::new(if row.current { "● " } else { "  " }).style(styles.marker),
+                    Span::new(row.branch.clone()).style(styles.branch),
+                ])
+                .description_spans(description)
+                .primary_description_truncation(ListTruncation::Start)
+                .primary_truncate_description_first(true),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {
@@ -299,10 +284,6 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
 
 /// Cells before the branch: the current-checkout marker.
 const MARKER_WIDTH: usize = 2;
-/// Widest the aligned branch column grows.
-const MAX_BRANCH_COLUMN: usize = 32;
-/// Cells between the branch and path columns.
-const COLUMN_GAP: usize = 2;
 
 #[derive(Clone, Copy)]
 struct RowStyles {
@@ -368,6 +349,15 @@ impl WorktreeRow {
             current: tree.path == picker.cwd,
         }
     }
+
+    /// The path, then the state when there is one, as the row's description shows them.
+    fn description(&self) -> String {
+        if self.state.is_empty() {
+            self.path.clone()
+        } else {
+            format!("{} · {}", self.path, self.state)
+        }
+    }
 }
 
 /// Wide enough for the widest row, so a nested checkout path and its session both fit, within a
@@ -376,7 +366,7 @@ impl WorktreeRow {
 fn picker_width(widest_row: usize) -> u16 {
     // Frame border, row padding, and the gap between a label and its description.
     const CHROME: usize = 8;
-    (widest_row + CHROME).clamp(72, 120) as u16
+    (widest_row + CHROME).clamp(72, 160) as u16
 }
 
 /// A checkout's path relative to the directory holding the primary checkout, so rows differ in the
@@ -413,7 +403,7 @@ mod tests {
     fn the_picker_grows_with_its_widest_row_within_bounds() {
         assert_eq!(picker_width(20), 72);
         assert_eq!(picker_width(90), 98);
-        assert_eq!(picker_width(400), 120);
+        assert_eq!(picker_width(400), 160);
     }
 
     #[test]

@@ -73,6 +73,10 @@ cargo test --lib
 cargo test --test pane_suite pane_slide_smoke
 ```
 
+If you have [cargo-nextest](https://nexte.st) installed, `cargo nextest run` runs the full suite
+in about a third of the time `cargo test` takes. The repository's `.config/nextest.toml` configures
+it. It does not run doctests, so the baseline below still uses `cargo test`.
+
 Use `cargo check` for a quick compile check. Run `cargo build --release` when changing packaging,
 startup, platform integration, or other behavior that differs in a release build.
 

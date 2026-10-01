@@ -78,7 +78,9 @@ pub fn inbound_mailbox_fixture(
 fn scratch_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!("rozi-test-home-{}", std::process::id()));
+        let base = std::env::temp_dir();
+        sweep_orphaned_roots(&base, HOME_ROOT_PREFIX);
+        let root = base.join(format!("{HOME_ROOT_PREFIX}{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::create_dir_all(&root);
         // Private, like a real home: rozi refuses to write state into a directory other users can
@@ -113,8 +115,8 @@ fn runtime_scratch_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
         let base = runtime_scratch_base();
-        sweep_stale_runtime_roots(&base);
-        let root = base.join(format!("rozi-test-run-{}", std::process::id()));
+        sweep_orphaned_roots(&base, RUNTIME_ROOT_PREFIX);
+        let root = base.join(format!("{RUNTIME_ROOT_PREFIX}{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::create_dir_all(&root);
         #[cfg(unix)]
@@ -176,29 +178,29 @@ pub fn socket_safe_temp_dir() -> PathBuf {
     if short.is_dir() { short } else { base }
 }
 
-/// Remove runtime roots left behind by test processes that are long gone.
+const HOME_ROOT_PREFIX: &str = "rozi-test-home-";
+const RUNTIME_ROOT_PREFIX: &str = "rozi-test-run-";
+
+/// Remove scratch roots whose owning test process has exited.
 ///
-/// One root per test binary per run, and `XDG_RUNTIME_DIR` is not swept by `cargo clean` or a
-/// tmpwatch - a day of `cargo test` would otherwise leave hundreds of directories in the place a
-/// developer's live rozi keeps its own endpoints. Age rather than liveness because a pid check is
-/// not portable and `cargo test` runs its binaries in parallel: a sibling minutes old may well be
-/// running right now, and deleting its endpoints would break it.
-fn sweep_stale_runtime_roots(base: &Path) {
-    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+/// One root per test process, and neither the temp directory nor `XDG_RUNTIME_DIR` is swept by
+/// `cargo clean` - a runner that starts a process per test, like `cargo nextest`, would otherwise
+/// leave hundreds of directories per run, some of them beside a developer's live endpoints.
+/// Liveness rather than age because test binaries run in parallel: a
+/// sibling's root may be seconds old or minutes old, and deleting it under a running test breaks
+/// that test.
+fn sweep_orphaned_roots(base: &Path, prefix: &str) {
     let Ok(entries) = std::fs::read_dir(base) else {
         return;
     };
+    let own = std::process::id();
     for entry in entries.flatten() {
-        let stale = entry
+        let owner = entry
             .file_name()
             .to_str()
-            .is_some_and(|name| name.starts_with("rozi-test-run-"))
-            && entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .and_then(|at| at.elapsed().map_err(std::io::Error::other))
-                .is_ok_and(|age| age > STALE_AFTER);
-        if stale {
+            .and_then(|name| name.strip_prefix(prefix))
+            .and_then(|pid| pid.parse::<u32>().ok());
+        if owner.is_some_and(|pid| pid != own && !crate::platform::command::process_is_alive(pid)) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -384,5 +386,38 @@ mod tests {
                 endpoint.display()
             );
         }
+    }
+
+    /// A per-test runner leaves one root per process; the next process must clear the exited
+    /// owners' roots without touching a root whose owner is still running.
+    #[test]
+    fn sweep_removes_only_roots_whose_owner_exited() {
+        let base = scratch_root().join("sweep");
+        let _ = std::fs::remove_dir_all(&base);
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("short-lived child");
+        let exited = child.id();
+        child.wait().expect("child exits");
+        let orphaned = base.join(format!("{HOME_ROOT_PREFIX}{exited}"));
+        let live = base.join(format!("{HOME_ROOT_PREFIX}{}", std::process::id()));
+        let unrelated = base.join(format!("{HOME_ROOT_PREFIX}not-a-pid"));
+        for dir in [&orphaned, &live, &unrelated] {
+            std::fs::create_dir_all(dir).expect("seed a root");
+        }
+
+        sweep_orphaned_roots(&base, HOME_ROOT_PREFIX);
+
+        assert!(
+            !orphaned.exists(),
+            "an exited owner's root survived the sweep"
+        );
+        assert!(live.exists(), "the sweep removed a running process's root");
+        assert!(
+            unrelated.exists(),
+            "the sweep removed a directory it does not own"
+        );
     }
 }

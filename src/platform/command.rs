@@ -180,13 +180,13 @@ pub(crate) fn configure_command_group(command: &mut std::process::Command) {
 #[cfg(windows)]
 pub(crate) fn configure_command_group(_command: &mut std::process::Command) {}
 
-#[cfg(all(test, unix))]
+#[cfg(unix)]
 pub(crate) fn process_is_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
 }
 
-#[cfg(all(test, windows))]
+#[cfg(windows)]
 pub(crate) fn process_is_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{

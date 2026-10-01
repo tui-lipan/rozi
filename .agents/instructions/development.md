@@ -31,6 +31,24 @@ cargo run -- --session dev --server
 
 Leave the TUI with `prefix d`.
 
+## Optional local tools
+
+None of these are required, and CI does not use them. The baseline checks stay `cargo test`.
+
+- `cargo nextest run` runs the whole suite in about a third of the time `cargo test` takes,
+  because it runs every test in its own process and schedules all of them across one pool.
+  `.config/nextest.toml` sets the local profile. It does not run doctests. Each test process
+  gets its own scratch root, and a later process deletes roots whose owner has exited
+  (`src/test_support.rs`).
+- `cargo llvm-cov nextest --html` writes a coverage report to `target/llvm-cov/html/`.
+- On x86_64 Linux, rustc already links with its bundled LLD. Measured on this repository, mold was
+  no faster than that LLD. Both were about five times faster than GNU ld, which is what a custom
+  `linker` setting can silently fall back to. Check which linker produced a binary with
+  `readelf -p .comment target/debug/rozi`.
+- A file watcher such as `cargo watch` or `bacon` contends for the build lock with every other
+  Cargo command. Give it its own target directory, for example
+  `CARGO_TARGET_DIR=target/watch cargo watch -x check`.
+
 ## Dependencies and release builds
 
 After dependency changes, run both policy and vulnerability checks. Install the

@@ -219,6 +219,8 @@ pub enum ClientMessage {
     /// than a per-client view. Sent after a config reload; a session that never reloads gets its
     /// definitions from the same load at startup.
     ReloadAgents,
+    /// Controller-only: re-read the host config for its agent sleep policy. No client payload.
+    ReloadSleepPolicy,
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
     CommitLayout {

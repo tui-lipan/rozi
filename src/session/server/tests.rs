@@ -4784,3 +4784,170 @@ fn ending_a_drag_broadcasts_a_cleared_drag() {
         )] if *author == controller
     ));
 }
+
+#[test]
+fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+        state: protocol::DetectedAgentState::Working,
+    });
+    pane.runtime.rows = ["done", "working"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, status)| protocol::PublishedRow {
+            id: index.to_string(),
+            title: status.into(),
+            status: status.into(),
+            reason: None,
+            active: index == 0,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        })
+        .collect();
+    pane.agent.sync_references(&pane.runtime);
+    server.panes.insert(1, pane);
+    // The active row is Done, but another subagent is Working.
+    assert!(server.any_agent_working());
+    for status in ["blocked", "idle", "done"] {
+        let pane = server.panes.get_mut(&1).unwrap();
+        pane.runtime.rows[1].status = status.into();
+        assert!(
+            !server.any_agent_working(),
+            "{status} overrides detected Working"
+        );
+    }
+    let mut local = test_pane(3);
+    local.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("claude", "Claude").into(),
+        state: protocol::DetectedAgentState::Working,
+    });
+    local.agent.sync_references(&local.runtime);
+    server.local_panes.insert((42, 1), local);
+    assert!(server.any_agent_working());
+    server.local_panes.get_mut(&(42, 1)).unwrap().exited = Some(0);
+    assert!(
+        !server.any_agent_working(),
+        "exited panes cannot retain a working lock"
+    );
+    server.panes.get_mut(&1).unwrap().runtime.rows[1].status = "working".into();
+    assert!(server.any_agent_working());
+    server.panes.clear();
+    assert!(
+        !server.any_agent_working(),
+        "pane disappearance clears aggregate work"
+    );
+}
+
+#[test]
+fn sleep_policy_reload_uses_host_config_and_requires_writable_controller() {
+    let _config = crate::test_support::lock_config_file();
+    crate::config::persist_session_flag("keep_awake_while_agents_work", false).unwrap();
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    server.settings.keep_awake_while_agents_work = true;
+    for id in [follower, viewer] {
+        assert!(
+            server
+                .handle_message(id, ClientMessage::ReloadSleepPolicy)
+                .is_empty()
+        );
+        assert!(server.settings.keep_awake_while_agents_work);
+    }
+    server
+        .clients
+        .iter_mut()
+        .find(|client| client.id == controller)
+        .unwrap()
+        .read_only = true;
+    server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
+    assert!(server.settings.keep_awake_while_agents_work);
+    server
+        .clients
+        .iter_mut()
+        .find(|client| client.id == controller)
+        .unwrap()
+        .read_only = false;
+    server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
+    assert!(!server.settings.keep_awake_while_agents_work);
+    crate::config::persist_session_flag("keep_awake_while_agents_work", true).unwrap();
+    server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
+    assert!(server.settings.keep_awake_while_agents_work);
+    // A malformed host config must preserve the last accepted policy.
+    std::fs::write(crate::config::config_path(), "[session").unwrap();
+    server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
+    assert!(server.settings.keep_awake_while_agents_work);
+    std::fs::write(crate::config::config_path(), "").unwrap();
+}
+
+#[test]
+fn sleep_policy_uses_integration_authority_including_for_published_rows() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("claude", "Claude").into(),
+        state: protocol::DetectedAgentState::Working,
+    });
+    pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+        integration: "hook".into(),
+        identity: protocol::AgentIdentity::new("claude", "Claude"),
+        reference: protocol::AgentRef {
+            pane: protocol::PaneRef {
+                session_instance: server.instance_id.clone(),
+                pane_id: 1,
+                generation: 2,
+            },
+            slot: None,
+            incarnation: 1,
+        },
+        state: protocol::AgentState::Blocked,
+        reason: None,
+        native_session: Some("conversation".into()),
+        seq: 1,
+        reported_at_unix_ms: 0,
+    }));
+    server.panes.insert(1, pane);
+    assert!(
+        !server.any_agent_working(),
+        "integration overrides detected Working"
+    );
+    server
+        .panes
+        .get_mut(&1)
+        .unwrap()
+        .runtime
+        .integration
+        .as_mut()
+        .unwrap()
+        .state = protocol::AgentState::Working;
+    assert!(server.any_agent_working());
+    let pane = server.panes.get_mut(&1).unwrap();
+    pane.runtime.integration.as_mut().unwrap().state = protocol::AgentState::Blocked;
+    pane.runtime.rows = vec![protocol::PublishedRow {
+        id: "row".into(),
+        title: "task".into(),
+        status: "working".into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("conversation".into()),
+    }];
+    pane.agent.sync_references(&pane.runtime);
+    assert!(
+        !server.any_agent_working(),
+        "matching hook overrides published Working"
+    );
+    let pane = server.panes.get_mut(&1).unwrap();
+    pane.runtime.rows[0].native_session = Some("other-conversation".into());
+    assert!(
+        server.any_agent_working(),
+        "a different subagent remains Working"
+    );
+}

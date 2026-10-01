@@ -551,6 +551,15 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
             persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
         }
+        ToggleKeepAwakeWhileAgentsWork => {
+            ctx.state.config.session.keep_awake_while_agents_work =
+                !ctx.state.config.session.keep_awake_while_agents_work;
+            persisted = Some((
+                "session",
+                "keep_awake_while_agents_work",
+                ctx.state.config.session.keep_awake_while_agents_work,
+            ));
+        }
         ToggleSessionAutosave => {
             ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
             persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
@@ -571,6 +580,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         };
         if let Err(err) = result {
             preference_error(ctx, err);
+        } else if action == ToggleKeepAwakeWhileAgentsWork {
+            crate::ops::config::reload_sleep_policy(ctx);
         }
     }
     if !matches!(action, Theme | EditPadding) {
@@ -1717,6 +1728,7 @@ mod tests {
     #[test]
     fn settings_toggles_session_flags() {
         on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             for (action, key) in [
@@ -1725,20 +1737,34 @@ mod tests {
                     "autosave",
                 ),
                 (
+                    crate::state::SettingsAction::ToggleKeepAwakeWhileAgentsWork,
+                    "keep_awake_while_agents_work",
+                ),
+                (
                     crate::state::SettingsAction::ToggleSessionResurrect,
                     "resurrect",
                 ),
             ] {
                 let before = match key {
                     "autosave" => backend.state().config.session.autosave,
+                    "keep_awake_while_agents_work" => {
+                        backend.state().config.session.keep_awake_while_agents_work
+                    }
                     _ => backend.state().config.session.resurrect,
                 };
                 backend.dispatch(Msg::SettingsActivate(action)).unwrap();
                 let after = match key {
                     "autosave" => backend.state().config.session.autosave,
+                    "keep_awake_while_agents_work" => {
+                        backend.state().config.session.keep_awake_while_agents_work
+                    }
                     _ => backend.state().config.session.resurrect,
                 };
                 assert_eq!(after, !before, "{key} should toggle");
+                let saved = crate::config::load_config();
+                if key == "keep_awake_while_agents_work" {
+                    assert_eq!(saved.config.session.keep_awake_while_agents_work, after);
+                }
                 assert_eq!(backend.state().settings_selected, Some(action));
                 assert!(backend.state().show_settings, "the dialog stays open");
             }

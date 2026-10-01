@@ -155,6 +155,7 @@ pub enum SettingsAction {
     ToggleSoundError,
     CycleStartupMode,
     ToggleSessionAutosave,
+    ToggleKeepAwakeWhileAgentsWork,
     ToggleSessionResurrect,
     CycleResurrectForeground,
 }
@@ -242,6 +243,7 @@ impl SettingsAction {
             // Sessions
             Self::CycleStartupMode,
             Self::ToggleSessionAutosave,
+            Self::ToggleKeepAwakeWhileAgentsWork,
             Self::ToggleSessionResurrect,
             Self::CycleResurrectForeground,
         ]

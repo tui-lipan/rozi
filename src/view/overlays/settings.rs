@@ -369,8 +369,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                 ),
             ],
         ),
-        // Last group: unlike everything above, these change what a *later* launch or server does, so
-        // there is nothing on screen to inspect after stepping them.
+        // Session startup and server-owned policies.
         settings_group(
             "Sessions",
             vec![
@@ -378,6 +377,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     "Startup mode",
                     ctx.state.config.session.startup.label().to_string(),
                     CycleStartupMode,
+                ),
+                (
+                    "Keep awake while agents work",
+                    enabled_status(ctx.state.config.session.keep_awake_while_agents_work),
+                    ToggleKeepAwakeWhileAgentsWork,
                 ),
                 (
                     "Layout autosave",

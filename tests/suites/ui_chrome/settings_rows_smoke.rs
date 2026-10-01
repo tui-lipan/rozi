@@ -1142,7 +1142,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
-            (SettingsTab::Sessions, 4, "Startup mode"),
+            (SettingsTab::Sessions, 5, "Startup mode"),
         ] {
             backend
                 .dispatch(rozi::Msg::SettingsTabSelected(tab))
@@ -1175,6 +1175,32 @@ fn deleting_the_query_restores_category_and_selection() {
         assert_eq!(
             backend.state().settings_selected,
             Some(SettingsAction::CycleBorderMode)
+        );
+    });
+}
+
+#[test]
+fn sessions_show_current_sleep_policy_as_boolean_row() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
+        backend
+            .state_mut()
+            .config
+            .session
+            .keep_awake_while_agents_work = false;
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Keep awake while agents work")
+                .contains("Disabled")
+        );
+        backend
+            .state_mut()
+            .config
+            .session
+            .keep_awake_while_agents_work = true;
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Keep awake while agents work")
+                .contains("Enabled")
         );
     });
 }

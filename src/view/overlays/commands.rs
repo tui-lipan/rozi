@@ -268,6 +268,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ToggleSoundBell => alias_list(&["beep"]),
         ToggleSoundBlocked => alias_list(&["waiting"]),
         CycleStartupMode => alias_list(&["launch", "picker", "ephemeral", "last session"]),
+        ToggleKeepAwakeWhileAgentsWork => alias_list(&["sleep", "power", "inhibit"]),
         ToggleSessionAutosave => alias_list(&["restore"]),
         ToggleSessionResurrect => alias_list(&["restore", "restart"]),
         CycleResurrectForeground => alias_list(&["rerun", "agents", "foreground"]),

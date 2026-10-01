@@ -591,12 +591,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":22,"min_protocol_version":22,
+{"type":"session-control","session":"dev","protocol_version":24,"min_protocol_version":24,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":22,
+{"type":"session-control-result","effective_protocol":24,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 

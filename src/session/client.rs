@@ -731,6 +731,11 @@ impl SessionClient {
         });
     }
 
+    /// Ask the host to reload its sleep policy; only a writable controller may do this.
+    pub fn reload_sleep_policy(&self) {
+        self.send_control(ClientMessage::ReloadSleepPolicy);
+    }
+
     /// Ask the session server to re-read its agent definitions after a config reload.
     ///
     /// Detection is server-side, so a reload that changed `[[agents]]` or an extension's agents

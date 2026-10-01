@@ -184,6 +184,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     if let Some(client) = ctx.state.scratch_client() {
         client.reload_agents();
     }
+    reload_sleep_policy(ctx);
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);
@@ -390,6 +391,18 @@ pub(crate) fn missing_editor_command(editor: &str) -> Option<String> {
 
 fn command_exists(command: &str) -> bool {
     crate::platform::command::program_exists(command)
+}
+
+/// Reload host-owned policy after a successful save or config reload.
+pub(crate) fn reload_sleep_policy(ctx: &Context<AppRoot>) {
+    if ctx.state.is_controller()
+        && let Some(client) = ctx.state.current().session_client.as_ref()
+    {
+        client.reload_sleep_policy();
+    }
+    if let Some(client) = ctx.state.scratch_client() {
+        client.reload_sleep_policy();
+    }
 }
 
 #[cfg(test)]

@@ -245,7 +245,7 @@ pub(crate) fn start(
                 io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
             );
             report(Err(format!(
-                "{}; Enter or Ctrl+R reconnects with SSH authentication",
+                "{}; Enter reconnects with SSH authentication",
                 error
             )));
             if unsupported {

@@ -250,7 +250,7 @@ Opening **Sessions** does not probe remote hosts. See
 | `Enter` | Connect the selected host and stay on the list; press again to open a connected host |
 | `Ctrl+N` | Add a host |
 | `Ctrl+E` | Edit the selected host |
-| `Ctrl+R` | Connect the selected host again |
+| `Ctrl+R` | Reconnect a connected host and refresh its sessions |
 | `Ctrl+K` twice | Forget the selected host |
 | `Esc` | Cancel the connection in progress, or close **Remote hosts** when none is running |
 

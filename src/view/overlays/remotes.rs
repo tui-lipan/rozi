@@ -117,13 +117,11 @@ fn remote_hosts_overlay(
     let pending_forget = picker.pending_forget.clone();
     let error_bg = ctx.state.theme.status.error;
     // `Enter` connects a host that is not yet reached and opens one that is, so the hint says which
-    // of the two the highlighted row will get.
-    let selected_reached = selected_target.as_ref().is_some_and(|target| {
-        matches!(
-            ctx.state.remote.hosts.get(target).map(|entry| &entry.probe),
-            Some(crate::state::HostProbe::Reached)
-        )
-    });
+    // of the two the highlighted row will get. Reconnecting only means something once a host is
+    // reached; before that it would be `Enter` under a second name.
+    let selected_reached = selected_target
+        .as_ref()
+        .is_some_and(|target| crate::ops::session::remotes::host_is_reached(&ctx.state, target));
     let actions =
         vec![
             OverlayAction::new(
@@ -142,7 +140,7 @@ fn remote_hosts_overlay(
                 "ctrl-r",
                 "reconnect",
                 Msg::RemotePickerReconnectHost,
-                selected_target.is_some() && !connecting,
+                selected_reached && !connecting,
             ),
             OverlayAction::new("ctrl-k", "forget", Msg::RemotePickerForgetHost, can_forget)
                 .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),

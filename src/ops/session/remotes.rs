@@ -443,24 +443,25 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
     if probe_in_flight(&ctx.state) {
         return Update::none();
     }
-    let reached = matches!(
-        ctx.state
-            .remote
-            .hosts
-            .get(&target)
-            .map(|entry| &entry.probe),
-        Some(crate::state::HostProbe::Reached)
-    );
-    if reached {
+    if host_is_reached(&ctx.state, &target) {
         open_host_sessions(ctx, target)
     } else {
         connect_host(ctx, target)
     }
 }
 
-/// `Ctrl+R`: contact the selected host again whatever state it is in — the way back from a host that
-/// went away under a connection this client still believes in, and the refresh for a session list
-/// that has moved on since the last probe.
+/// Whether the last probe of `target` reached it, so `Enter` opens it rather than connecting it.
+pub(crate) fn host_is_reached(state: &crate::state::State, target: &RemoteTarget) -> bool {
+    matches!(
+        state.remote.hosts.get(target).map(|entry| &entry.probe),
+        Some(crate::state::HostProbe::Reached)
+    )
+}
+
+/// `Ctrl+R`: contact a host already reached again — the way back from a host that went away under
+/// a connection this client still believes in, and the refresh for a session list that has moved on
+/// since the last probe. A host not yet reached has only one way in, `Enter`, so this does nothing
+/// there rather than offering the same connection under a second name.
 pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
     if probe_in_flight(&ctx.state) {
         return Update::none();
@@ -471,6 +472,7 @@ pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
         .as_ref()
         .filter(|picker| matches!(picker.mode, RemotePickerMode::Hosts))
         .and_then(|picker| picker.selected_host.clone())
+        .filter(|target| host_is_reached(&ctx.state, target))
     else {
         return Update::none();
     };
@@ -1441,6 +1443,49 @@ mod tests {
                     entry.probe.error().expect("the row carries the failure")
                 ),
                 "SSH login rejected"
+            );
+        });
+    }
+
+    /// A host not yet reached has one way in, `Enter`. `Ctrl+R` is the reconnect for a host already
+    /// reached, so on any other row it must not become a second name for connecting.
+    #[test]
+    fn reconnect_waits_for_a_reached_host() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            primed_connecting_picker(backend, &target, 7);
+            backend
+                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 7,
+                    target: target.clone(),
+                    rows: Err("Connection refused".into()),
+                })
+                .expect("apply failed probe");
+
+            backend
+                .dispatch(Msg::RemotePickerReconnectHost)
+                .expect("Ctrl+R on a host that is not reached");
+            let picker = backend
+                .state()
+                .remote_picker
+                .as_ref()
+                .expect("remote picker");
+            assert!(
+                matches!(picker.host_probe, crate::state::HostProbe::Failed(_)),
+                "Ctrl+R starts no connection on a host that is not reached"
+            );
+
+            backend
+                .dispatch(Msg::RemotePickerHostActivate(target.clone()))
+                .expect("Enter on the failed host");
+            let picker = backend
+                .state()
+                .remote_picker
+                .as_ref()
+                .expect("remote picker");
+            assert!(
+                matches!(picker.host_probe, crate::state::HostProbe::InFlight),
+                "Enter is the way to connect it"
             );
         });
     }

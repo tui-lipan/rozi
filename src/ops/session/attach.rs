@@ -1132,6 +1132,15 @@ pub(crate) fn disconnect_host(
     if ctx.state.launcher_scope.as_ref() == Some(target) {
         ctx.state.launcher_scope = None;
     }
+    // A sessionless picker's active tab is also the launcher's scope. Move both to Local in the
+    // disconnect transition so the badge and the picker's create/scratch actions still agree.
+    if ctx.state.is_launcher()
+        && let Some(picker) = ctx.state.session_picker.as_mut()
+        && picker.tab.as_ref() == Some(target)
+    {
+        picker.tab = None;
+        picker.keep_selection_in_tab();
+    }
     // Close every retained background attachment on this host; their servers keep running, except
     // for a disposable scratch session that nothing could reattach to.
     let ids: Vec<crate::state::AttachmentId> = ctx

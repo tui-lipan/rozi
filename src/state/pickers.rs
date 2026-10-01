@@ -832,8 +832,8 @@ impl AskpassState {
 
 /// The dialog a nested one was raised from, so cancelling (or finishing) the child returns there
 /// instead of dropping the user back on the terminal. A picker is rebuilt rather than un-hidden —
-/// opening a child drops the picker's state — so its origin carries the query and highlighted row
-/// the rebuild has to restore. See [`crate::ops::overlay_return`].
+/// opening a child drops the picker's state — so its origin carries the query, highlighted row,
+/// and scope the rebuild has to restore. See [`crate::ops::overlay_return`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OverlayOrigin {
     Settings,
@@ -845,6 +845,7 @@ pub enum OverlayOrigin {
     SessionPicker {
         query: String,
         selected: usize,
+        tab: Option<crate::session::remote::RemoteTarget>,
     },
     RemoteHosts {
         query: String,

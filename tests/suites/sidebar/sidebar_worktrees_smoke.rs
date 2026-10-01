@@ -2,7 +2,7 @@
 
 use rozi::AppRoot;
 use rozi::config::{SidebarTab, SidebarTabId};
-use rozi::git::worktrees::WorktreeInfo;
+use rozi::git::worktrees::{WorktreeInfo, WorktreeLock};
 use rozi::session::protocol::WorktreeSession;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
@@ -15,7 +15,10 @@ fn tree(path: &str, branch: &str, linked: bool, locked: bool) -> WorktreeInfo {
         bare: false,
         prunable: false,
         linked,
-        locked,
+        lock: locked.then(|| WorktreeLock {
+            reason: String::new(),
+            stale: false,
+        }),
     }
 }
 
@@ -180,6 +183,60 @@ fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
         let hovered = render(true);
         assert!(hovered.contains('…'), "{hovered:?}");
         assert!(hovered.contains("…   attach"), "{hovered:?}");
+    });
+}
+
+/// A lock left by a process that has exited reads as stale, and only it leaves the ✕ on offer: the
+/// armed row says the removal lifts the lock first.
+#[test]
+fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
+    on_large_stack(|| {
+        const STALE: &str = "/home/me/src/rozi/.claude/worktrees/abandoned";
+        let mut backend = seeded(100, 30);
+        backend
+            .state_mut()
+            .sidebar
+            .worktrees
+            .entries
+            .push(WorktreeInfo {
+                lock: Some(WorktreeLock {
+                    reason: "claude session abandoned (pid 9 start 1)".into(),
+                    stale: true,
+                }),
+                ..tree(STALE, "worktree-abandoned", true, false)
+            });
+        let rows = backend.state().worktree_tab_items();
+        let closable = |path: &str| {
+            rows.iter().any(|item| {
+                matches!(item, rozi::state::WorktreeTabItem::Checkout(row)
+                    if row.tree.path == path && row.closable)
+            })
+        };
+        assert!(closable(STALE));
+        // The live lock's checkout has no session to blame, and still no ✕.
+        backend.state_mut().sidebar.worktrees.sessions.clear();
+        let rows = backend.state().worktree_tab_items();
+        assert!(!rows.iter().any(|item| {
+            matches!(item, rozi::state::WorktreeTabItem::Checkout(row)
+                if row.tree.path.ends_with("release") && row.closable)
+        }));
+
+        backend.state_mut().sidebar.pending_row_close = Some(rozi::state::SidebarClose::Worktree {
+            path: STALE.into(),
+            force: false,
+        });
+        let lines = sidebar_lines(&mut backend, 32);
+        let text = lines.join("\n");
+        let row = lines
+            .iter()
+            .position(|line| line.contains("worktree-abandoned"))
+            .unwrap_or_else(|| panic!("no stale row:\n{text}"));
+        assert!(
+            lines[row..=row + 1]
+                .iter()
+                .any(|line| line.contains("Stale lock")),
+            "{text}"
+        );
     });
 }
 

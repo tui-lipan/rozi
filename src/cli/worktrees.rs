@@ -55,14 +55,7 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                 eprintln!("warning: {directory}/ is not ignored by Git");
                 eprintln!(
                     "hint: run `rozi{} worktrees exclude {directory}` to add it to .git/info/exclude",
-                    cli.remote
-                        .as_deref()
-                        .map(|remote| if remote.is_empty() {
-                            " --remote".to_string()
-                        } else {
-                            format!(" --remote {remote}")
-                        })
-                        .unwrap_or_default()
+                    remote_flag(cli.remote.as_deref())
                 );
             }
             if open {
@@ -93,11 +86,39 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
             }
         }
         WorktreesCommand::Remove { path, force } => {
-            match call(target.as_ref(), HostCall::Remove { path, force })? {
+            let call_value = HostCall::Remove {
+                path: path.clone(),
+                force,
+            };
+            match call(target.as_ref(), call_value).map_err(|message| {
+                if message.starts_with("worktree is locked") {
+                    format!(
+                        "{message}\nhint: run `rozi{} worktrees unlock {path}` first",
+                        remote_flag(cli.remote.as_deref())
+                    )
+                } else {
+                    message
+                }
+            })? {
                 HostReply::Removed { .. } => Ok(None),
                 other => Err(unexpected(other)),
             }
         }
+        WorktreesCommand::Unlock { path } => {
+            match call(target.as_ref(), HostCall::Unlock { path })? {
+                HostReply::Unlocked { .. } => Ok(None),
+                other => Err(unexpected(other)),
+            }
+        }
+    }
+}
+
+/// `--remote` as the user would retype it in a hint, with its leading space.
+fn remote_flag(remote: Option<&str>) -> String {
+    match remote {
+        None => String::new(),
+        Some("") => " --remote".to_string(),
+        Some(remote) => format!(" --remote {remote}"),
     }
 }
 
@@ -246,13 +267,16 @@ pub(super) fn format_worktrees_text(rows: &[ListedWorktree], styles: OutputStyle
                 (None, false) => "(detached)".to_string(),
             };
             let mut state = vec![if tree.linked { "linked" } else { "primary" }];
-            if tree.locked {
-                state.push("locked");
+            let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
+            match &tree.lock {
+                Some(lock) if lock.stale => state.push("stale-lock"),
+                Some(_) => state.push("locked"),
+                None => {}
             }
             if tree.prunable {
                 state.push("prunable");
             }
-            let tone = if tree.prunable {
+            let tone = if tree.prunable || stale {
                 OutputTone::Warning
             } else if tree.linked {
                 OutputTone::Plain
@@ -284,7 +308,7 @@ pub(super) fn format_worktrees_text(rows: &[ListedWorktree], styles: OutputStyle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::worktrees::WorktreeInfo;
+    use crate::git::worktrees::{WorktreeInfo, WorktreeLock};
 
     fn tree(path: &str, branch: Option<&str>, linked: bool) -> WorktreeInfo {
         WorktreeInfo {
@@ -294,7 +318,7 @@ mod tests {
             bare: false,
             prunable: false,
             linked,
-            locked: false,
+            lock: None,
         }
     }
 
@@ -333,17 +357,31 @@ mod tests {
             },
             ListedWorktree {
                 worktree: WorktreeInfo {
-                    locked: true,
+                    lock: Some(WorktreeLock {
+                        reason: String::new(),
+                        stale: false,
+                    }),
                     ..tree("C:\\wt\\feat", None, true)
+                },
+                sessions: Vec::new(),
+            },
+            ListedWorktree {
+                worktree: WorktreeInfo {
+                    lock: Some(WorktreeLock {
+                        reason: "claude session agent (pid 9 start 1)".into(),
+                        stale: true,
+                    }),
+                    ..tree("/wt/agent", Some("agent"), true)
                 },
                 sessions: Vec::new(),
             },
         ];
         assert_eq!(
             format_worktrees_text(&rows, OutputStyles::plain()),
-            "BRANCH      STATE          SESSIONS  PATH\n\
-             main        primary        dev       /src/rozi\n\
-             (detached)  linked,locked  —         C:\\wt\\feat\n"
+            "BRANCH      STATE              SESSIONS  PATH\n\
+             main        primary            dev       /src/rozi\n\
+             (detached)  linked,locked      —         C:\\wt\\feat\n\
+             agent       linked,stale-lock  —         /wt/agent\n"
         );
         assert_eq!(
             format_worktrees_text(&[], OutputStyles::plain()),

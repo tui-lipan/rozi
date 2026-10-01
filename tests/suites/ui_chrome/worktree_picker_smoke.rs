@@ -36,7 +36,7 @@ fn picker() -> TestBackend<AppRoot> {
         bare: false,
         prunable: false,
         linked: true,
-        locked: false,
+        lock: None,
     }];
     picker.sessions.push(DiscoveredSession {
         name: "review".into(),
@@ -104,7 +104,7 @@ fn picker_widens_to_fit_long_checkout_rows() {
                     bare: false,
                     prunable: false,
                     linked: false,
-                    locked: false,
+                    lock: None,
                 },
             );
             picker.entries[1].path = path.into();
@@ -207,7 +207,7 @@ fn listed_worktrees_are_cached_and_keep_the_selection() {
             bare: false,
             prunable: false,
             linked,
-            locked: false,
+            lock: None,
         };
         backend
             .state_mut()

@@ -266,11 +266,15 @@ Git worktrees live on the session host, and `--remote <HOST>` goes before `workt
 rozi worktrees list [--cwd <DIR>] --format json
 rozi worktrees create <BRANCH> [--base <REV>] [--path <DIR>] --format json
 rozi worktrees remove <PATH> [--force]
+rozi worktrees unlock <PATH>
 rozi worktrees exclude [DIR]
 ```
 
 `worktrees open` and `create --open` attach a UI, so run them only for a person at a terminal.
-Removal never deletes the branch and refuses a checkout that a session records as its origin.
+Removal never deletes the branch and refuses a checkout that a session records as its origin, or
+one that is locked. In `list` JSON, a checkout's `lock` holds Git's `reason` and `stale`, which is
+true when the process the reason names has exited. Unlock only a stale lock unless the user asks:
+another agent may still be working in a checkout with a live lock.
 
 ## Safety
 

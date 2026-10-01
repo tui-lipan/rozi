@@ -224,6 +224,21 @@ fn parse_process_stat(stat: &str) -> Option<(u32, String)> {
     Some((process_group_id, name))
 }
 
+/// When the process started, in clock ticks since boot: field 22 of `/proc/<pid>/stat`.
+pub(super) fn start_time(pid: u32) -> Option<u64> {
+    parse_start_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+fn parse_start_time(stat: &str) -> Option<u64> {
+    // Fields after the parenthesised name start at field 3, so field 22 is the twentieth.
+    let close = stat.rfind(')')?;
+    stat.get(close + 2..)?
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
 fn read_bounded(path: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
@@ -314,6 +329,20 @@ mod tests {
             parse_process_stat("42 (node worker (agent)) S 1 777 777 0 -1"),
             Some((777, "node worker (agent)".into()))
         );
+    }
+
+    #[test]
+    fn start_time_is_field_twenty_two_even_with_spaces_in_comm() {
+        let stat = "42 (a (b) c) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 153643 20 21";
+        assert_eq!(parse_start_time(stat), Some(153_643));
+        assert_eq!(parse_start_time("42 (short) S 1 2"), None);
+        let own = start_time(std::process::id()).expect("own start time");
+        assert!(!super::super::process_gone(std::process::id(), Some(own)));
+        assert!(super::super::process_gone(
+            std::process::id(),
+            Some(own + 1)
+        ));
+        assert!(!super::super::process_gone(std::process::id(), None));
     }
 
     #[test]

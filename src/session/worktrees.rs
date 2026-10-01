@@ -42,9 +42,15 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
                 }
             })
         }
-        WorktreeRequest::Remove { cwd, path, force } => {
-            remove(Path::new(&cwd), Path::new(&path), force)
-                .map(|()| WorktreeResult::Removed { path })
+        WorktreeRequest::Remove {
+            cwd,
+            path,
+            force,
+            unlock_stale,
+        } => remove(Path::new(&cwd), Path::new(&path), force, unlock_stale)
+            .map(|()| WorktreeResult::Removed { path }),
+        WorktreeRequest::Unlock { cwd, path } => {
+            unlock(Path::new(&cwd), Path::new(&path)).map(|()| WorktreeResult::Unlocked { path })
         }
         WorktreeRequest::Exclude { cwd, directory } => {
             worktrees::exclude_directory(Path::new(&cwd), &directory)
@@ -114,7 +120,7 @@ fn create(
     worktrees::create(cwd, branch, base, &path)
 }
 
-fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
+fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<(), String> {
     if !path.is_absolute() {
         return Err("worktree path must be absolute on the session host".to_string());
     }
@@ -126,7 +132,14 @@ fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
             users.join(", ")
         ));
     }
-    worktrees::remove(cwd, &canonical, force)
+    worktrees::remove(cwd, &canonical, force, unlock_stale)
+}
+
+fn unlock(cwd: &Path, path: &Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("worktree path must be absolute on the session host".to_string());
+    }
+    worktrees::unlock(cwd, path)
 }
 
 /// One `rozi worktrees` call, as the host that owns the repository receives it.
@@ -149,6 +162,9 @@ pub enum HostCall {
     Remove {
         path: String,
         force: bool,
+    },
+    Unlock {
+        path: String,
     },
     /// Add a top-level directory of the repository to `.git/info/exclude`: `directory`, or the
     /// repository-relative `[worktrees] directory` of this host.
@@ -183,6 +199,9 @@ pub enum HostReply {
         unignored: Option<String>,
     },
     Removed {
+        path: String,
+    },
+    Unlocked {
         path: String,
     },
     Excluded {
@@ -226,8 +245,17 @@ pub fn run_host_call(call: HostCall) -> HostReply {
                 .first()
                 .map(|primary| PathBuf::from(&primary.path))
                 .ok_or("Git reported no primary worktree")?;
-            remove(&primary, Path::new(&tree.path), force)?;
+            remove(&primary, Path::new(&tree.path), force, false)?;
             Ok(HostReply::Removed { path: tree.path })
+        })(),
+        HostCall::Unlock { path } => (|| {
+            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
+            let primary = trees
+                .first()
+                .map(|primary| PathBuf::from(&primary.path))
+                .ok_or("Git reported no primary worktree")?;
+            unlock(&primary, Path::new(&tree.path))?;
+            Ok(HostReply::Unlocked { path: tree.path })
         })(),
         HostCall::Exclude { cwd, directory } => (|| {
             let cwd = host_path(cwd.as_deref().unwrap_or("."))?;
@@ -605,7 +633,7 @@ mod tests {
                     bare: false,
                     prunable: false,
                     linked: false,
-                    locked: false,
+                    lock: None,
                 },
                 sessions: vec!["dev".into()],
             }],

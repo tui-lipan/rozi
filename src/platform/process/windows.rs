@@ -23,3 +23,29 @@ impl ProcessInspector for WindowsProcessInspector {
         None
     }
 }
+
+/// Whether `pid` has certainly exited: no such process, or one that has finished but whose handle
+/// is still held. A process this user may not open is not known to be gone.
+pub(super) fn process_gone(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: the handle is checked before use and closed exactly once.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return GetLastError() == ERROR_INVALID_PARAMETER;
+        }
+        let mut code = 0;
+        let exited = GetExitCodeProcess(handle, &mut code) != 0 && code != STILL_ACTIVE as u32;
+        CloseHandle(handle);
+        exited
+    }
+}

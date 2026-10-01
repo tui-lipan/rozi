@@ -15,7 +15,42 @@ pub struct WorktreeInfo {
     pub bare: bool,
     pub prunable: bool,
     pub linked: bool,
-    pub locked: bool,
+    pub lock: Option<WorktreeLock>,
+}
+
+/// A checkout Git has locked against removal and pruning.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorktreeLock {
+    /// Git's lock reason, empty when the lock gave none.
+    pub reason: String,
+    /// The reason names a process (`pid <N>`) that is no longer running on the repository's host.
+    /// A reason that names no process is never stale.
+    pub stale: bool,
+}
+
+impl WorktreeLock {
+    fn new(reason: &str) -> Self {
+        Self {
+            reason: reason.to_string(),
+            stale: lock_owner(reason)
+                .is_some_and(|(pid, started)| crate::platform::process::process_gone(pid, started)),
+        }
+    }
+}
+
+/// The process a lock reason names: `pid <N>`, optionally followed by `start <T>`, as Claude Code
+/// writes `claude session <name> (pid <N> start <T>)`.
+fn lock_owner(reason: &str) -> Option<(u32, Option<u64>)> {
+    let words: Vec<&str> = reason
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '(' | ')' | ',' | ';'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let at = words.iter().position(|word| *word == "pid")?;
+    let pid = words.get(at + 1)?.parse().ok().filter(|pid| *pid > 0)?;
+    let started = (words.get(at + 2) == Some(&"start"))
+        .then(|| words.get(at + 3)?.parse().ok())
+        .flatten();
+    Some((pid, started))
 }
 
 /// List registered checkouts. Git's porcelain format puts the primary worktree first.
@@ -131,27 +166,83 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
 }
 
 /// Remove a linked checkout. `force` only relaxes Git's dirty-checkout guard; it never removes a
-/// Rozi session or deletes a branch. Session-origin protection belongs at the RPC boundary.
-pub fn remove(cwd: &Path, path: &Path, force: bool) -> Result<(), String> {
-    absolute_path(path)?;
-    let worktree = list(cwd)?
-        .into_iter()
-        .find(|tree| same_path(Path::new(&tree.path), path))
-        .ok_or_else(|| "path is not a registered Git worktree".to_string())?;
-    if !worktree.linked || worktree.bare {
-        return Err("cannot remove the primary worktree".to_string());
-    }
-    if worktree.locked {
-        return Err("cannot remove a locked worktree".to_string());
+/// Rozi session, deletes a branch, or overrides a lock. `unlock_stale` first lifts a lock whose
+/// owner is gone, judged here rather than trusting the caller, and restores it if Git still
+/// refuses. Session-origin protection belongs at the RPC boundary.
+pub fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<(), String> {
+    let worktree = linked_worktree(cwd, path)?;
+    if let Some(lock) = &worktree.lock {
+        if !(unlock_stale && lock.stale) {
+            return Err(locked_error(lock));
+        }
+        unlock_path(cwd, &worktree.path)?;
     }
     let mut args = argv(&["worktree", "remove"]);
     if force {
         args.push("--force".into());
     }
     args.push("--".into());
-    args.push(worktree.path.into());
-    command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT)?;
-    Ok(())
+    args.push(worktree.path.clone().into());
+    let removed = command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT).map(drop);
+    if removed.is_err()
+        && let Some(lock) = &worktree.lock
+    {
+        // Best effort: Git's refusal is the error worth reporting.
+        let _ = lock_path(cwd, &worktree.path, &lock.reason);
+    }
+    removed
+}
+
+/// Lift a linked checkout's lock, whoever holds it. Whether its owner must be gone first is the
+/// caller's decision; Git itself unlocks any lock.
+pub fn unlock(cwd: &Path, path: &Path) -> Result<(), String> {
+    let worktree = linked_worktree(cwd, path)?;
+    if worktree.lock.is_none() {
+        return Err("worktree is not locked".to_string());
+    }
+    unlock_path(cwd, &worktree.path)
+}
+
+fn linked_worktree(cwd: &Path, path: &Path) -> Result<WorktreeInfo, String> {
+    absolute_path(path)?;
+    let worktree = list(cwd)?
+        .into_iter()
+        .find(|tree| same_path(Path::new(&tree.path), path))
+        .ok_or_else(|| "path is not a registered Git worktree".to_string())?;
+    if !worktree.linked || worktree.bare {
+        return Err("the primary worktree cannot be removed or unlocked".to_string());
+    }
+    Ok(worktree)
+}
+
+fn locked_error(lock: &WorktreeLock) -> String {
+    let what = if lock.stale {
+        "worktree is locked by a process that is no longer running"
+    } else {
+        "worktree is locked"
+    };
+    if lock.reason.is_empty() {
+        what.to_string()
+    } else {
+        format!("{what}: {}", lock.reason)
+    }
+}
+
+fn unlock_path(cwd: &Path, path: &str) -> Result<(), String> {
+    let mut args = argv(&["worktree", "unlock", "--"]);
+    args.push(path.into());
+    command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT).map(drop)
+}
+
+fn lock_path(cwd: &Path, path: &str, reason: &str) -> Result<(), String> {
+    let mut args = argv(&["worktree", "lock"]);
+    if !reason.is_empty() {
+        args.push("--reason".into());
+        args.push(reason.into());
+    }
+    args.push("--".into());
+    args.push(path.into());
+    command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT).map(drop)
 }
 
 /// Where `[worktrees] directory` keeps new checkouts.
@@ -335,7 +426,7 @@ fn parse_porcelain_z(output: &[u8]) -> Result<Vec<WorktreeInfo>, String> {
                 bare: false,
                 prunable: false,
                 linked: !trees.is_empty(),
-                locked: false,
+                lock: None,
             });
             continue;
         }
@@ -350,8 +441,10 @@ fn parse_porcelain_z(output: &[u8]) -> Result<Vec<WorktreeInfo>, String> {
             tree.bare = true;
         } else if field == "prunable" || field.starts_with("prunable ") {
             tree.prunable = true;
-        } else if field == "locked" || field.starts_with("locked ") {
-            tree.locked = true;
+        } else if field == "locked" {
+            tree.lock = Some(WorktreeLock::new(""));
+        } else if let Some(reason) = field.strip_prefix("locked ") {
+            tree.lock = Some(WorktreeLock::new(reason));
         }
     }
     if let Some(tree) = current {
@@ -375,7 +468,30 @@ mod tests {
         assert_eq!(trees[0].branch.as_deref(), Some("main"));
         assert!(!trees[0].linked);
         assert!(trees[1].linked && trees[1].detached);
-        assert!(trees[2].prunable && trees[2].locked);
+        assert!(trees[2].prunable);
+        assert_eq!(
+            trees[2].lock,
+            Some(WorktreeLock {
+                reason: "maintenance".into(),
+                stale: false,
+            })
+        );
+    }
+
+    #[test]
+    fn a_lock_reason_names_its_owner_by_pid_and_start_time() {
+        assert_eq!(
+            lock_owner("claude session fix-x (pid 538630 start 34095030)"),
+            Some((538_630, Some(34_095_030)))
+        );
+        assert_eq!(lock_owner("held by pid 42"), Some((42, None)));
+        assert_eq!(lock_owner("pid 42, start soon"), Some((42, None)));
+        for reason in ["", "maintenance", "pid", "pid zero", "pid 0", "rapid 42"] {
+            assert_eq!(lock_owner(reason), None, "{reason:?}");
+        }
+        // A lock naming no process, or a running one, is not stale.
+        assert!(!WorktreeLock::new("initializing").stale);
+        assert!(!WorktreeLock::new(&format!("pid {}", std::process::id())).stale);
     }
 
     fn git(cwd: &Path, args: &[&str]) {
@@ -426,10 +542,10 @@ mod tests {
         let tree = create(&repo, "feat/new", "HEAD", &fresh).unwrap();
         assert_eq!(tree.branch.as_deref(), Some("feat/new"));
         std::fs::write(fresh.join("scratch.txt"), b"unsaved").unwrap();
-        assert!(remove(&repo, &fresh, false).is_err());
+        assert!(remove(&repo, &fresh, false, false).is_err());
         assert!(fresh.exists());
-        assert!(remove(&repo, &repo, true).is_err());
-        remove(&repo, &fresh, true).unwrap();
+        assert!(remove(&repo, &repo, true, false).is_err());
+        remove(&repo, &fresh, true, false).unwrap();
         assert!(!fresh.exists());
         assert!(
             list(&repo)
@@ -438,7 +554,101 @@ mod tests {
                 .all(|tree| tree.path != fresh.to_string_lossy())
         );
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/new"]);
-        remove(&repo, &existing, false).unwrap();
+        remove(&repo, &existing, false, false).unwrap();
+    }
+
+    #[test]
+    fn locks_block_removal_until_unlocked_and_only_a_stale_one_lifts_itself() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        );
+        let lock_of = |path: &Path| {
+            list(&repo)
+                .unwrap()
+                .into_iter()
+                .find(|tree| same_path(Path::new(&tree.path), path))
+                .unwrap()
+                .lock
+        };
+
+        let live = temp.path().join("live");
+        create(&repo, "live", "HEAD", &live).unwrap();
+        let live_reason = format!("agent (pid {})", std::process::id());
+        git(
+            &repo,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                &live_reason,
+                live.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(
+            lock_of(&live),
+            Some(WorktreeLock {
+                reason: live_reason,
+                stale: false,
+            })
+        );
+        // Neither `force` nor `unlock_stale` gets past a running owner's lock.
+        let refused = remove(&repo, &live, true, true).unwrap_err();
+        assert!(
+            refused.starts_with("worktree is locked: agent"),
+            "{refused}"
+        );
+        assert!(live.exists());
+        unlock(&repo, &live).unwrap();
+        assert_eq!(lock_of(&live), None);
+        assert!(unlock(&repo, &live).is_err(), "already unlocked");
+        assert!(unlock(&repo, &repo).is_err(), "the primary checkout");
+        remove(&repo, &live, false, false).unwrap();
+
+        // The owner has exited, so the lock is stale.
+        let mut child = Command::new("git").arg("--version").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let stale = temp.path().join("stale");
+        create(&repo, "stale", "HEAD", &stale).unwrap();
+        let stale_reason = format!("claude session stale (pid {dead} start 1)");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                &stale_reason,
+                stale.to_str().unwrap(),
+            ],
+        );
+        assert!(lock_of(&stale).is_some_and(|lock| lock.stale));
+        let refused = remove(&repo, &stale, false, false).unwrap_err();
+        assert!(refused.contains("no longer running"), "{refused}");
+
+        // Git refuses the dirty checkout, so the lock goes back as it was.
+        std::fs::write(stale.join("scratch.txt"), b"unsaved").unwrap();
+        assert!(remove(&repo, &stale, false, true).is_err());
+        assert_eq!(lock_of(&stale).map(|lock| lock.reason), Some(stale_reason));
+        remove(&repo, &stale, true, true).unwrap();
+        assert!(!stale.exists());
     }
 
     #[test]

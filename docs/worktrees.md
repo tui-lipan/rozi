@@ -5,8 +5,8 @@ directory. rozi can open each worktree in its own named [session](sessions.md), 
 branches keeps separate shells, layouts, and running processes, and you can switch between them
 without stashing.
 
-This page covers the **Worktrees** picker, creating and removing checkouts, the `rozi worktrees`
-command, and the `[worktrees]` settings.
+This page covers the **Worktrees** picker, creating, removing, and unlocking checkouts, the
+`rozi worktrees` command, and the `[worktrees]` settings.
 
 ## Open a worktree
 
@@ -34,7 +34,8 @@ with it.
 | `Enter` | Open the checkout's session, or create one |
 | `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a new session |
 | `Ctrl+R` | Refresh the list |
-| `Ctrl+K` | Remove a linked checkout; press again to force only if Git refused a dirty checkout |
+| `Ctrl+K` | Remove a linked checkout; see [Remove a worktree](#remove-a-worktree) for when it asks twice |
+| `Ctrl+U` | Unlock a locked checkout |
 | `Esc` | Close the picker |
 
 ## Create a worktree
@@ -87,14 +88,33 @@ shell in the checkout.
 Select a linked checkout and press `Ctrl+K`. Removal follows these rules:
 
 - It never deletes a branch.
-- It refuses the primary checkout, a locked checkout, and any checkout owned by a running or
-  restorable rozi session. Stop or forget that session first.
+- It refuses the primary checkout and any checkout owned by a running or restorable rozi session.
+  Stop or forget that session first.
+- It refuses a locked checkout unless the lock is stale. Press `Ctrl+K` on a stale lock, then
+  press it again to unlock and remove the checkout. To remove a checkout with any other lock,
+  [unlock it](#unlock-a-worktree) first.
 - If Git refuses because the checkout has uncommitted changes, press `Ctrl+K` again to force the
-  removal. Forcing affects only that Git check.
+  removal. Forcing affects only that Git check, never a lock.
+
+In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
 
 A create or remove that has started finishes even if you close the picker, and rozi reports the
 result. If a created checkout is reported in a toast, right-click it to copy the checkout path on
 the session host.
+
+## Unlock a worktree
+
+Git can lock a checkout so that it is not removed or pruned. Coding agents such as Claude Code lock
+the checkouts they create, and a lock stays behind when an agent exits without cleaning up, even
+after its branch is merged.
+
+The picker and the sidebar show a locked checkout as `locked`. When the lock names a process with
+`pid <N>` and that process is no longer running on the session host, the checkout shows as
+`stale lock`. A lock that names no process is never stale.
+
+Select a locked checkout and press `Ctrl+U` to remove its lock. This works for any lock, so check
+that nothing still uses the checkout before unlocking one that is not stale. Unlocking changes
+nothing else: the checkout and its branch stay.
 
 ## Use worktrees from the command line
 
@@ -105,15 +125,17 @@ rozi worktrees create feat/login            # new branch from HEAD, at the defau
 rozi worktrees create fix/ssh --base origin/main --open
 rozi worktrees open ~/src/rozi-worktrees/feat-login
 rozi worktrees remove ~/src/rozi-worktrees/feat-login
+rozi worktrees unlock ~/src/rozi/.claude/worktrees/fix-ssh
 rozi worktrees exclude                      # add the in-repository worktree directory to .git/info/exclude
 ```
 
 | Command | Behavior |
 | --- | --- |
-| `list` | Lists checkouts. With `--format json`, prints a `worktrees` array; each entry includes the `sessions` whose recorded origin is that checkout. |
+| `list` | Lists checkouts, with `locked` or `stale-lock` in the state column. With `--format json`, prints a `worktrees` array; each entry includes the `sessions` whose recorded origin is that checkout, and a `lock` that is `null` or holds Git's lock `reason` and whether it is `stale`. |
 | `create <BRANCH>` | Checks out an existing local branch, or creates it from `--base` (`HEAD` by default). Without `--path`, uses the default location. Prints the new checkout's path, or a `worktree` object with `--format json`. `--open` then opens it like `open`, and cannot be combined with `--format json`. |
 | `open <PATH>` | Opens the checkout that contains `PATH`. |
-| `remove <PATH>` | Removes a checkout under the same rules as the picker. `--force` only lets Git remove a dirty checkout. |
+| `remove <PATH>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. |
+| `unlock <PATH>` | Removes the lock from the checkout that contains `PATH`, whether or not the lock is stale. |
 | `exclude [DIR]` | Adds the relative `[worktrees] directory`, or `DIR`, to `.git/info/exclude`. |
 
 When `create` puts a checkout inside the repository in a directory Git does not ignore, it prints a

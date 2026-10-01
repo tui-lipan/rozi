@@ -10,7 +10,8 @@ const DETAIL_INSET: usize = 5;
 /// The Worktrees tab: the focused pane's repository, then one row per checkout.
 ///
 /// Each checkout reads like a session row. The branch is the title, the path is the detail, and
-/// the right edge says what the checkout is to Rozi: the session using it, or `primary`/`locked`.
+/// the right edge says what the checkout is to Rozi: the session using it, or `primary`/`locked`/
+/// `stale lock`.
 /// The gutter bar marks the checkout the focused pane is in. Enter opens it, and the ✕ removes it
 /// behind the same two-step confirmation every destructive sidebar row uses.
 pub(super) fn worktrees_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
@@ -159,7 +160,9 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     // The right edge is one status rail: what the checkout is, then whether a session uses it.
     let state = if !tree.linked {
         Some(("primary", muted))
-    } else if tree.locked {
+    } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
+        Some(("stale lock", Style::new().fg(theme.status.warning)))
+    } else if tree.lock.is_some() {
         Some(("locked", muted))
     } else if tree.prunable {
         Some(("prunable", Style::new().fg(theme.status.warning)))
@@ -205,6 +208,9 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     }
     if row.force {
         item = item.armed_prompt("Dirty · again to force");
+    } else if tree.lock.is_some() {
+        // Only a stale lock leaves the row closable; the removal lifts it first.
+        item = item.armed_prompt("Stale lock · again to unlock");
     }
     let sidebar_row = SidebarRow::item(item, RowTarget::Worktree(tree.path.clone()));
     if row.closable {
@@ -229,7 +235,7 @@ mod tests {
             bare: false,
             prunable: false,
             linked: true,
-            locked: false,
+            lock: None,
         }
     }
 

@@ -13,11 +13,13 @@
 //! pre-TUI path — the `--remote` startup install prompt, `rozi sessions list --remote` — therefore
 //! keeps ssh's ordinary terminal prompt, which is the right answer when there is no UI to cover.
 //!
-//! A bind failure is not fatal and is not reported: it leaves prompts on the terminal exactly as
-//! they were before this module existed, and a runtime directory rozi cannot bind in has already
-//! failed the session endpoints the user will hear about first.
+//! Which invocations may prompt at all is the caller's [`SshPrompts`] choice. Once the TUI has
+//! claimed the terminal, a prompt goes through the broker or nowhere: a bind failure is not fatal
+//! and is not reported, but it runs every ssh in batch mode rather than letting a prompt reach the
+//! terminal. A runtime directory rozi cannot bind in has already failed the session endpoints the
+//! user will hear about first.
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -122,10 +124,70 @@ static BROKER: OnceLock<Broker> = OnceLock::new();
 /// Claimed once so a second [`start`] cannot bind a second endpoint while the first is still
 /// coming up.
 static STARTED: AtomicBool = AtomicBool::new(false);
+/// Set once the TUI is about to own the terminal. From then on a prompt belongs in the UI or
+/// nowhere: ssh asking on `/dev/tty` would paint over the UI and take its keystrokes.
+static UI_OWNS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Prompt workers waiting on the UI, by request id. A `Vec` rather than a map: at most a couple of
 /// ssh processes ever prompt at once, and `HashMap::new` is not const.
 static PENDING: Mutex<Vec<(u64, SyncSender<AskpassReply>)>> = Mutex::new(Vec::new());
+
+/// Who may answer an OpenSSH prompt raised by one ssh or scp invocation.
+///
+/// The caller chooses, because only it knows whether a person asked for this connection. An
+/// automatic reconnect or a background probe passes [`Never`](Self::Never) even inside a running
+/// UI; `[remote] batch_mode = true` turns every policy into `Never`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SshPrompts {
+    /// The running UI answers through this client's broker. Without the broker nobody does: ssh
+    /// runs in batch mode rather than falling back to the terminal the UI is drawing on.
+    Ui,
+    /// ssh asks on the controlling terminal, which no UI owns.
+    Terminal,
+    /// Nobody is there to answer.
+    Never,
+}
+
+impl SshPrompts {
+    /// Who answers for an operation a person just asked for in this process: the UI once it owns
+    /// the terminal, otherwise the terminal when there is one.
+    pub(crate) fn interactive() -> Self {
+        Self::interactive_for(
+            UI_OWNS_TERMINAL.load(Ordering::SeqCst),
+            io::stdin().is_terminal(),
+        )
+    }
+
+    fn interactive_for(ui_owns_terminal: bool, terminal: bool) -> Self {
+        if ui_owns_terminal {
+            Self::Ui
+        } else if terminal {
+            Self::Terminal
+        } else {
+            Self::Never
+        }
+    }
+
+    /// Whether ssh may prompt under this policy. `batch_mode` is `[remote] batch_mode`.
+    pub(crate) fn allows_prompt(self, batch_mode: bool) -> bool {
+        self.allows_prompt_with(batch_mode, may_prompt())
+    }
+
+    fn allows_prompt_with(self, batch_mode: bool, broker: bool) -> bool {
+        !batch_mode
+            && match self {
+                Self::Ui => broker,
+                Self::Terminal => true,
+                Self::Never => false,
+            }
+    }
+}
+
+/// Record that the TUI is about to take the terminal. Called before mount, so even an ssh spawned
+/// before the broker binds counts as UI-owned and fails closed instead of prompting on the tty.
+pub(crate) fn claim_terminal() {
+    UI_OWNS_TERMINAL.store(true, Ordering::SeqCst);
+}
 
 /// Bind the endpoint and start answering prompts. Idempotent; safe to call before any remote host
 /// is configured, since nothing connects until an ssh child actually prompts.
@@ -455,6 +517,30 @@ fn fresh_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interactive_prompts_go_to_the_ui_once_it_owns_the_terminal() {
+        assert_eq!(SshPrompts::interactive_for(true, true), SshPrompts::Ui);
+        assert_eq!(SshPrompts::interactive_for(true, false), SshPrompts::Ui);
+        assert_eq!(
+            SshPrompts::interactive_for(false, true),
+            SshPrompts::Terminal
+        );
+        assert_eq!(SshPrompts::interactive_for(false, false), SshPrompts::Never);
+    }
+
+    #[test]
+    fn ui_prompts_fail_closed_without_a_broker_and_batch_mode_always_wins() {
+        for broker in [false, true] {
+            for policy in [SshPrompts::Ui, SshPrompts::Terminal, SshPrompts::Never] {
+                assert!(!policy.allows_prompt_with(true, broker));
+            }
+            assert!(!SshPrompts::Never.allows_prompt_with(false, broker));
+            assert!(SshPrompts::Terminal.allows_prompt_with(false, broker));
+        }
+        assert!(SshPrompts::Ui.allows_prompt_with(false, true));
+        assert!(!SshPrompts::Ui.allows_prompt_with(false, false));
+    }
 
     /// The prompt that keeps its field: it names its own answers, and one of them is a string only
     /// the user can supply.

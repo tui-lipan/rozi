@@ -1,6 +1,6 @@
 //! Probe and optionally install rozi on a remote host before attach.
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
@@ -1161,21 +1161,14 @@ fn download_release_binary_from_base_with(
     Ok((download_dir, binary))
 }
 
-/// Refuse prompts when explicitly requested or when nobody can answer them.
-fn ssh_batch_mode(configured: bool, ui_available: bool, terminal_available: bool) -> bool {
-    configured || !(ui_available || terminal_available)
-}
-
+/// `BatchMode` for one ssh or scp: prompts only where this process has someone to answer them
+/// (see [`super::askpass::SshPrompts`]) and `config` is not [`RemoteConfig::unattended`].
 fn configure_batch_mode(command: &mut Command, config: &RemoteConfig) {
-    let batch = ssh_batch_mode(
-        config.batch_mode,
-        super::askpass::may_prompt(),
-        io::stdin().is_terminal(),
-    );
-    command.arg("-o").arg(if batch {
-        "BatchMode=yes"
-    } else {
+    let prompts = super::askpass::SshPrompts::interactive().allows_prompt(config.batch_mode);
+    command.arg("-o").arg(if prompts {
         "BatchMode=no"
+    } else {
+        "BatchMode=yes"
     });
 }
 
@@ -2266,15 +2259,22 @@ protocol_max={beyond}
             "explicit batch mode must refuse interactive ssh prompts"
         );
 
-        config.batch_mode = false;
         assert!(
-            args(&config).iter().any(|arg| arg == "BatchMode=yes")
-                == ssh_batch_mode(
-                    false,
-                    super::super::askpass::may_prompt(),
-                    io::stdin().is_terminal()
-                ),
-            "unattended commands must still refuse prompts"
+            args(&RemoteConfig::default().unattended())
+                .iter()
+                .any(|arg| arg == "BatchMode=yes"),
+            "an unattended ssh must refuse prompts"
+        );
+
+        config.batch_mode = false;
+        let expected = if super::super::askpass::SshPrompts::interactive().allows_prompt(false) {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        };
+        assert!(
+            args(&config).iter().any(|arg| arg == expected),
+            "batch_mode = false must follow who can answer here"
         );
         // Everything else is unaffected by the switch.
         assert!(args(&config).iter().any(|arg| arg == "-T"));
@@ -2283,16 +2283,6 @@ protocol_max={beyond}
                 .iter()
                 .any(|arg| arg.starts_with("ConnectTimeout="))
         );
-    }
-
-    #[test]
-    fn ssh_prompts_require_a_ui_or_terminal_and_respect_explicit_batch_mode() {
-        for ui in [false, true] {
-            for terminal in [false, true] {
-                assert!(ssh_batch_mode(true, ui, terminal));
-                assert_eq!(ssh_batch_mode(false, ui, terminal), !ui && !terminal);
-            }
-        }
     }
 
     #[test]

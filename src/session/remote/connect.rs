@@ -343,16 +343,20 @@ const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
 
 /// How long to wait for the proxy's preamble.
 fn preamble_timeout(config: &RemoteConfig) -> Duration {
-    preamble_timeout_for(config, super::askpass::may_prompt())
+    preamble_timeout_for(
+        config,
+        super::askpass::SshPrompts::interactive().allows_prompt(config.batch_mode),
+    )
 }
 
+/// `interactive` is whether this ssh may prompt at all, `batch_mode` included.
 fn preamble_timeout_for(config: &RemoteConfig, interactive: bool) -> Duration {
     let base = if config.connection_timeout_secs > 0 {
         Duration::from_secs(config.connection_timeout_secs.max(1))
     } else {
         DEFAULT_PREAMBLE_TIMEOUT
     };
-    if interactive && !config.batch_mode {
+    if interactive {
         base + INTERACTIVE_AUTH_ALLOWANCE
     } else {
         base
@@ -474,10 +478,7 @@ mod tests {
 
     #[test]
     fn reconnect_budget_caps_ssh_connect_and_preamble_timeouts() {
-        let config = RemoteConfig {
-            batch_mode: true,
-            ..RemoteConfig::default()
-        };
+        let config = RemoteConfig::default().unattended();
         assert_eq!(
             capped_connect_timeout_secs(&config, Duration::from_secs(120)),
             15

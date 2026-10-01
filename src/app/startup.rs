@@ -113,6 +113,10 @@ impl StartupTasks {
         }
         let theme_tick = self.theme_tick;
         let workbar_tick = self.workbar_tick;
+        // Bind the askpass broker before the first attach builds its ssh. Otherwise that ssh could
+        // spawn before `CommandLinkReady` is handled and, finding no broker, refuse a prompt the
+        // user could have answered.
+        crate::session::remote::askpass::start(link.clone());
         self.start_session(link.clone());
         if theme_tick {
             std::thread::sleep(Duration::from_millis(150));

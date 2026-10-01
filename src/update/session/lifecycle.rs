@@ -80,7 +80,7 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
     ctx.state.sidebar.invalidate_sessions();
     cancel_current_pointer_layout_sessions(&mut ctx.state);
     ctx.state.current_mut().mark_disconnected();
-    crate::ops::session::reconnect_current_session(ctx)
+    crate::ops::session::reconnect_after_transport_loss(ctx)
 }
 
 fn cancel_current_pointer_layout_sessions(state: &mut crate::state::State) {

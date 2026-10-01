@@ -11,9 +11,10 @@ pub(crate) use attach::{
     ensure_session_for_pty, enter_launcher, handle_offline_session_key, held_ephemeral_session_in,
     holding_previous_view, install_fresh_attachment, kill_current_session,
     land_on_surviving_session, may_shutdown_ephemeral, needs_session_for_pty,
-    park_current_and_install, reconnect_current_session, recreate_lost_remote_session,
-    release_background_for_exit, release_current_session, restart_current_session,
-    run_pending_session_action, start_launcher_shell, swap_to_fresh_ephemeral, switch_to_parked,
+    park_current_and_install, reconnect_after_transport_loss, reconnect_current_session,
+    recreate_lost_remote_session, release_background_for_exit, release_current_session,
+    restart_current_session, run_pending_session_action, start_launcher_shell,
+    swap_to_fresh_ephemeral, switch_to_parked,
 };
 pub(crate) use control_lease::{
     can_evict, decline_control, evict_client, finish_published_drag, flush_layout_commit,

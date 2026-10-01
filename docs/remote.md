@@ -347,8 +347,12 @@ lost network, or missed heartbeats from the session — rozi shows a reconnectin
 in place for up to two minutes. It reuses the rozi binary it already found on the host.
 
 - `Esc` stops waiting and opens Sessions.
-- An SSH password, passphrase, or host-key prompt covers the overlay while authentication is
-  needed. `Esc` cancels that prompt, and the reconnecting overlay returns.
+- These automatic retries never prompt. If the host now needs a password, passphrase, or host-key
+  approval, they fail until the session goes **offline**; a retry you start with `Enter` can then
+  show the SSH dialog.
+- A reconnect you start, with `Enter` on an offline session or by switching back to a session that
+  lost its connection, shows any SSH prompt over the overlay. `Esc` cancels that prompt, and the
+  reconnecting overlay returns.
 - If the remote session no longer exists, the overlay shows **session lost**. rozi never starts a
   replacement on its own: press `Enter` to recreate the session from the panes still on screen, or
   `Esc` to open Sessions without recreating it.

@@ -505,8 +505,21 @@ pub struct RemoteConfig {
     /// Pass `BatchMode=yes` to ssh, refusing every interactive prompt.
     ///
     /// Off by default: a running client answers through its SSH dialog, and interactive CLI
-    /// commands use the terminal. Without either, SSH always runs in batch mode.
+    /// commands use the terminal. Without either, SSH always runs in batch mode, and so does
+    /// every connection nobody asked for (see [`RemoteConfig::unattended`]).
     pub batch_mode: bool,
+}
+
+impl RemoteConfig {
+    /// This config for an ssh nobody is waiting on: an automatic reconnect after the transport
+    /// dropped, a background host sweep or monitor. Such a connection must never raise a password
+    /// or host-key dialog, so it runs in batch mode whatever `batch_mode` says.
+    pub fn unattended(&self) -> Self {
+        Self {
+            batch_mode: true,
+            ..self.clone()
+        }
+    }
 }
 
 impl Default for RemoteConfig {

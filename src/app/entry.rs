@@ -355,6 +355,9 @@ pub fn run() -> Result<()> {
             std::process::exit(1);
         }
     }
+    // From here the TUI owns the terminal: an ssh prompt goes through the in-app dialog or, with no
+    // broker to carry it, is refused rather than drawn over the UI.
+    crate::session::remote::askpass::claim_terminal();
 
     let outcome = app
         .mount(

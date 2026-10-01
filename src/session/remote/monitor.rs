@@ -175,8 +175,7 @@ fn connect(
 ) -> io::Result<(IpcConnection, std::thread::JoinHandle<String>)> {
     super::validate_remote_target(target).map_err(io::Error::other)?;
     let resolved = ResolvedRemote::resolve(target, config);
-    let mut config = config.clone();
-    config.batch_mode = true;
+    let config = config.unattended();
     let binary = super::binary::resolve(target, &config).map_err(io::Error::other)?;
     let mut command = super::ssh_base_command(&resolved, &config);
     super::append_ssh_destination(&mut command, &resolved);

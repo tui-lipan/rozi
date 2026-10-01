@@ -81,6 +81,8 @@ fn published_row(
                 .unwrap_or_default()
                 .as_secs(),
         ),
+        cwd: None,
+        project: None,
     }
 }
 

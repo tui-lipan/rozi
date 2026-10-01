@@ -19,6 +19,7 @@ const EXAMPLES: &[(&str, &[&str], &[&str])] = &[
         &["agent-activity.open"],
         &["agent-activity.watch"],
     ),
+    ("claude-code-sessions", &[], &["claude-code-sessions.watch"]),
 ];
 
 fn repository_root() -> PathBuf {

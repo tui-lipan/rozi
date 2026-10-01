@@ -165,6 +165,8 @@ mod tests {
             reason: None,
             active: true,
             work_started_at: None,
+            cwd: None,
+            project: None,
         }
     }
 

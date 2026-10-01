@@ -970,6 +970,7 @@ impl SessionServer {
                     foreground_program: pane.runtime.foreground_program.clone(),
                     foreground_programs: pane.runtime.foreground_programs.to_vec(),
                     foreground_arguments: pane.runtime.foreground_arguments.clone(),
+                    foreground_pid: pane.runtime.foreground_pid,
                     cwd: pane.runtime.cwd.clone().or_else(|| pane.cwd.clone()),
                     status: match pane.exited {
                         None => "ready".to_string(),
@@ -2508,6 +2509,8 @@ mod tests {
                 reason: None,
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
             },
             protocol::PublishedRow {
                 id: "hidden".into(),
@@ -2516,6 +2519,8 @@ mod tests {
                 reason: None,
                 active: false,
                 work_started_at: None,
+                cwd: None,
+                project: None,
             },
         ];
         pane.agent.sync_references(&pane.runtime);
@@ -2587,6 +2592,8 @@ mod tests {
                 reason: None,
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
             });
             pane.agent.sync_references(&pane.runtime);
         }

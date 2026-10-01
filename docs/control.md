@@ -219,8 +219,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 14,
-  "session_protocol": 21,
+  "schema": 15,
+  "session_protocol": 22,
   "capabilities": [
     "agent-waits",
     "attached-control",

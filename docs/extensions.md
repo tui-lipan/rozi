@@ -715,6 +715,8 @@ The repository includes these example extensions:
 - [Docker](../examples/extensions/docker/) — container controls
 - [SSH tools](../examples/extensions/ssh-tools/) — SSH host discovery and pane launch
 - [Agent activity](../examples/extensions/agent-activity/) — mirrored pane status
+- [Claude Code sessions](../examples/extensions/claude-code-sessions/) — one Activity row per
+  Claude Code background session, grouped by worktree
 - [Activity dashboard](../examples/extensions/activity-dashboard/) — general published activity
 - [Snippets](../examples/extensions/snippets/) — saved commands pasted into the focused pane
 - [Tasks](../examples/extensions/tasks/) — `just`, `make`, and `package.json` tasks, with a sidebar

@@ -242,6 +242,8 @@ mod tests {
                     reason: None,
                     active: true,
                     work_started_at: Some(10),
+                    cwd: None,
+                    project: None,
                 },
                 PublishedRow {
                     id: "two".into(),
@@ -250,6 +252,8 @@ mod tests {
                     reason: Some("complete".into()),
                     active: false,
                     work_started_at: None,
+                    cwd: None,
+                    project: None,
                 },
             ],
             ..PaneRuntimeState::default()
@@ -274,6 +278,8 @@ mod tests {
                 reason: None,
                 active: true,
                 work_started_at: None,
+                cwd: None,
+                project: None,
             }],
             integration: Some(Box::new(super::super::AgentIntegrationReport {
                 integration: "hook-abc".into(),

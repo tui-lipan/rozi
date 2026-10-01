@@ -107,10 +107,12 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.display_path = state.display_path;
     pane.terminal.project_root = state.project_root;
     pane.terminal.git_branch = state.git_branch;
+    pane.terminal.repository = state.repository;
     pane.terminal.foreground_program = state.foreground_program;
     pane.terminal.foreground_programs = state.foreground_programs.into_vec();
     pane.terminal.foreground_executable = state.foreground_executable;
     pane.terminal.foreground_arguments = state.foreground_arguments;
+    pane.terminal.foreground_pid = state.foreground_pid;
     pane.terminal.command_phase = state.command_phase;
     pane.terminal.last_exit_status = state.last_exit_status;
     pane.terminal.reported_status = state.status;

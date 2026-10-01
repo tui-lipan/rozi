@@ -414,6 +414,7 @@ impl PaneInfo {
             foreground_program: pane.terminal.foreground_program.clone(),
             foreground_programs: pane.terminal.foreground_programs.clone(),
             foreground_arguments: pane.terminal.foreground_arguments.clone(),
+            foreground_pid: pane.terminal.foreground_pid,
             cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
             status: pane.terminal.status_text(),
             reported_status: pane
@@ -901,12 +902,13 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
     let session_instance = attachment.session_instance.as_ref();
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
-            panes.push(PaneInfo::new(
-                pane,
-                workspace_index + 1,
-                &session,
-                session_instance,
-            ));
+            let mut info = PaneInfo::new(pane, workspace_index + 1, &session, session_instance);
+            // A pid names a process on the server's host. Through a remote attachment that is not
+            // this machine, and a caller here would match it against its own processes.
+            if attachment.remote_host.is_some() {
+                info.foreground_pid = None;
+            }
+            panes.push(info);
         }
     }
     for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {

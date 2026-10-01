@@ -217,6 +217,8 @@ pub struct TerminalPane {
     /// sidebar's Agents tab groups by the root and heads each group with the branch.
     pub project_root: Option<String>,
     pub git_branch: Option<String>,
+    /// Primary checkout when `project_root` is a linked worktree of it; labels the group.
+    pub repository: Option<String>,
     pub child_pid: Option<u32>,
     /// Normalized foreground-executable basename, server-authoritative (cross-platform plan
     /// Phase 6/7): pushed down via [`crate::session::protocol::PaneMeta::runtime`] and
@@ -234,6 +236,9 @@ pub struct TerminalPane {
     /// Arguments that program was launched with, `argv[0]` excluded, as read by the session
     /// server. Empty on platforms that cannot read another process's arguments.
     pub foreground_arguments: Vec<String>,
+    /// Server-side process group id of the running foreground job; see
+    /// [`crate::session::protocol::PaneRuntimeState::foreground_pid`].
+    pub foreground_pid: Option<u32>,
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
@@ -403,11 +408,13 @@ impl TerminalPane {
             display_path: None,
             project_root: None,
             git_branch: None,
+            repository: None,
             child_pid: None,
             foreground_program: None,
             foreground_programs: Vec::new(),
             foreground_executable: None,
             foreground_arguments: Vec::new(),
+            foreground_pid: None,
             reported_status: None,
             recording: false,
             detected_agent: None,
@@ -477,6 +484,7 @@ impl TerminalPane {
             self.display_path = None;
             self.project_root = None;
             self.git_branch = None;
+            self.repository = None;
             self.reported_status = None;
             self.recording = false;
             self.detected_agent = None;

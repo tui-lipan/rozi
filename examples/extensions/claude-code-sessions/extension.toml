@@ -1,0 +1,21 @@
+[extension]
+id = "claude-code-sessions"
+title = "Claude Code sessions"
+description = "Lists every Claude Code background session in the pane that runs Claude's session view"
+version = "1.0.0"
+api = 1
+
+# Defaults. Override them in [extensions.claude-code-sessions] in config.toml.
+[settings]
+# The Claude Code executable.
+claude = "claude"
+# Seconds between polls of `claude agents --json`.
+poll_seconds = 2
+# "all" lists every background session. "cwd" lists only sessions started under the directory the
+# pane is in, for when several panes each run Claude's session view.
+scope = "all"
+
+[[services]]
+name = "watch"
+exec = ["python", "{extension_dir}/bin/claude_sessions.py"]
+restart = "on-failure"

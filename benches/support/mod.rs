@@ -159,6 +159,8 @@ pub fn attached_message() -> ServerMessage {
                     display_path: pane.cwd.clone(),
                     project_root: pane.cwd.clone(),
                     git_branch: Some("bench".to_string()),
+                    repository: None,
+                    foreground_pid: None,
                     cwd_source: PaneCwdSource::ShellReport,
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),

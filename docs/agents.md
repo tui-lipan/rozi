@@ -283,3 +283,15 @@ For those programs, use `rozi status` to report one state for the pane, or `rozi
 several activity rows. While a pane publishes rows, rozi shows them instead of screen detection.
 Selecting a published row can also bring that activity into view inside the program. See
 [Control](control.md#published-activity) for fields and lifecycle.
+
+A row can carry the directory its activity works in. Activity and the Agents view then show it
+under that directory's project and branch, so sessions that each run in their own Git worktree are
+told apart.
+
+### Claude Code background sessions
+
+Claude Code can run several background sessions from one client, each often in its own worktree.
+rozi sees that client as one pane. The
+[Claude Code sessions](../examples/extensions/claude-code-sessions/) example extension lists every
+background session as its own row in that pane, under the repository and branch it works in. It
+reads `claude agents --json` and needs no Claude Code plugin.

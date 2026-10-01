@@ -23,6 +23,8 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
         reason: None,
         active,
         work_started_at: None,
+        cwd: None,
+        project: None,
     }
 }
 
@@ -199,4 +201,59 @@ fn published_rows_survive_detach_and_reattach() {
 
     reattached.write_control(&ClientMessage::Detach);
     controller.write_control(&ClientMessage::Detach);
+}
+
+/// A row that names its own directory comes back with that directory's project, resolved by the
+/// server: a linked worktree's own root and branch, and the repository it belongs to. Whatever
+/// project the publisher claimed is discarded.
+#[test]
+fn a_row_cwd_resolves_to_its_worktree_on_the_server() {
+    let scratch = std::env::temp_dir().join(format!("rozi-e2e-row-cwd-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let repo = scratch.join("repo");
+    let gitdir = repo.join(".git").join("worktrees").join("fix");
+    std::fs::create_dir_all(&gitdir).unwrap();
+    std::fs::write(repo.join(".git").join("HEAD"), b"ref: refs/heads/master\n").unwrap();
+    std::fs::write(gitdir.join("HEAD"), b"ref: refs/heads/fix-login\n").unwrap();
+    std::fs::write(gitdir.join("commondir"), b"../..\n").unwrap();
+    let worktree = repo.join(".claude").join("worktrees").join("fix");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", gitdir.display()).as_bytes(),
+    )
+    .unwrap();
+
+    let server = spawn_listener(ServerSettings::default());
+    let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
+    spawn_pane(&mut controller);
+
+    controller.write_control(&ClientMessage::ReportPaneRows {
+        pane_id: PANE_ID,
+        local: false,
+        generation: PANE_GENERATION,
+        rows: vec![PublishedRow {
+            cwd: Some(worktree.to_string_lossy().into_owned()),
+            project: Some(rozi::session::protocol::RowProject {
+                root: "/forged".to_string(),
+                repository: None,
+                branch: Some("forged".to_string()),
+            }),
+            ..row("fix", "working", false)
+        }],
+    });
+    let state = read_rows(&mut controller, |rows| rows.len() == 1);
+    let project = state.rows[0]
+        .project
+        .as_ref()
+        .expect("server resolved a project");
+    assert_eq!(project.root, worktree.to_string_lossy());
+    assert_eq!(project.branch.as_deref(), Some("fix-login"));
+    assert_eq!(
+        project.repository.as_deref(),
+        Some(repo.to_string_lossy().as_ref())
+    );
+
+    controller.write_control(&ClientMessage::Detach);
+    let _ = std::fs::remove_dir_all(&scratch);
 }

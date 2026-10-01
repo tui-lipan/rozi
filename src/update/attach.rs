@@ -43,10 +43,12 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.display_path = meta.runtime.display_path.clone();
     pane.terminal.project_root = meta.runtime.project_root.clone();
     pane.terminal.git_branch = meta.runtime.git_branch.clone();
+    pane.terminal.repository = meta.runtime.repository.clone();
     pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
     pane.terminal.foreground_programs = meta.runtime.foreground_programs.to_vec();
     pane.terminal.foreground_executable = meta.runtime.foreground_executable.clone();
     pane.terminal.foreground_arguments = meta.runtime.foreground_arguments.clone();
+    pane.terminal.foreground_pid = meta.runtime.foreground_pid;
     pane.terminal.reported_status = meta.runtime.status.clone();
     pane.terminal.recording = meta.runtime.recording;
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();

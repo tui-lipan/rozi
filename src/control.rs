@@ -34,8 +34,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
 /// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
-/// `record-ui-start`'s `hide_indicator`, and version 14 with `new-pane`'s `size`.
-pub const API_SCHEMA_VERSION: u32 = 14;
+/// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, and version 15 with
+/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`.
+pub const API_SCHEMA_VERSION: u32 = 15;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -806,6 +807,12 @@ pub struct PaneInfo {
     pub foreground_program: Option<String>,
     pub foreground_programs: Vec<String>,
     pub foreground_arguments: Vec<String>,
+    /// Process group id of the running foreground job, while one runs and where the platform can
+    /// read it. A program that lists its own processes by pid matches them against this to find
+    /// the one in a pane. A UI endpoint omits it for a remote attachment, whose processes are on
+    /// another machine; a session endpoint answers for its own host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground_pid: Option<u32>,
     pub cwd: Option<String>,
     /// Lifecycle text in the vocabulary a client's terminal reports: `ready`, or `exited (N)` for
     /// a pane whose process is gone but whose screen is still readable.
@@ -2740,6 +2747,7 @@ mod tests {
             foreground_program: None,
             foreground_programs: Vec::new(),
             foreground_arguments: Vec::new(),
+            foreground_pid: None,
             cwd: None,
             status: "ready".to_string(),
             reported_status: None,

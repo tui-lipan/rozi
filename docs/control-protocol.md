@@ -133,6 +133,9 @@ A `list-panes` pane object has these fields; optional values are JSON null:
 - Scratch panes use workspace `0` and have no `reference`.
 - `foreground_programs` lists the basenames of the pane's foreground processes. Wrappers and
   pipelines can produce more than one entry.
+- `foreground_pid` is the process group ID of the command running in the pane, which is its first
+  process's ID. It is omitted when nothing runs, when the platform cannot read it, and for a remote
+  attachment, whose processes are on another machine.
 
 ### Metrics
 
@@ -837,7 +840,13 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `status` | string | required | Status value. |
 | `reason` | string or null | null | Supporting detail. |
 | `active` | bool | `false` | The row currently visible inside the publisher. At most one should be active. |
+| `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
+| `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
+
+A row with its own `cwd` is grouped in Activity under that directory's project and branch instead
+of its pane's. Use it when one program runs several activities in different checkouts, such as
+coding-agent sessions that each work in their own Git worktree. A relative `cwd` is dropped.
 
 - An empty `rows` list withdraws the rows. End of input or any stream failure also withdraws them.
 - IDs, titles, and statuses are sanitized for display and limited to 64 characters; reasons are

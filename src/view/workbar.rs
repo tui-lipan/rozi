@@ -1048,10 +1048,12 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// `<modifier>-<key>`. The leave row reads the first live shortcut for both stable action ids, so
 /// overrides and unbinding remain truthful without repeating every modifier mirror.
 ///
-/// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x9, which
-/// leaves room for the headline plus three shortcut rows, and a prose spelling of the shortcuts
-/// does not survive the wrap. The key column is measured rather than fixed so a long custom prefix
-/// still aligns.
+/// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x9, and a
+/// prose spelling of the shortcuts does not survive the wrap. The key column is measured rather than
+/// fixed so a long custom prefix still aligns.
+///
+/// The launcher's scope is named twice: in the header, and on the shell row itself, because that
+/// row is the one thing on the card whose meaning changes with it.
 pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
     let prefix = input.prefix.label();
@@ -1065,17 +1067,18 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     } else {
         leave_keys.join(" / ")
     };
-    // The launcher's scope decides where its one offer lands, so the panel has to name it. It goes
-    // in the header and the line above the keys rather than on the key row, which is too narrow for
-    // a host name and would truncate the very word that carries the meaning.
     let scope = ctx
         .state
         .active_launcher_scope()
         .map(crate::session::remote::RemoteTarget::display_label);
+    let (header, shell) = match scope.as_deref() {
+        Some(host) => (format!("REMOTE · {host}"), format!("shell on {host}")),
+        None => ("No session".to_string(), "shell".to_string()),
+    };
     let rows = [
         (
             crate::view::keys_display::format_keys(&format!("enter / {prefix} enter")),
-            "ephemeral shell",
+            shell.as_str(),
         ),
         (
             crate::view::keys_display::format_keys(&format!("{prefix} s")),
@@ -1092,18 +1095,6 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let keys = rows.iter().fold(VStack::new(), |stack, (keys, what)| {
         stack.child(Text::new(format!("{keys:<key_width$}{what}")))
     });
-    // A scoped launcher is not a connection and does not claim to be one: it says which machine
-    // this client is working on, while holding no session and no SSH link on it.
-    let (header, blurb) = match scope.as_deref() {
-        Some(host) => (
-            format!("REMOTE · {host}"),
-            format!("Not attached. A shell starts on {host}."),
-        ),
-        None => (
-            "No session".to_string(),
-            "Not attached to any session.".to_string(),
-        ),
-    };
     Frame::new()
         .header_left(header)
         .header_padding(1)
@@ -1114,8 +1105,9 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
                 .fg(theme.surface.menu)
                 .bg(theme.surface.backdrop),
         )
-        .padding(1)
-        .child(VStack::new().gap(1).child(Text::new(blurb)).child(keys))
+        // Two rows of padding centre the three key rows in the fixed-height card.
+        .padding((2, 1, 2, 1))
+        .child(keys)
         .into()
 }
 

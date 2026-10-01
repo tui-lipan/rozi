@@ -249,48 +249,98 @@ fn a_parked_scratch_session_also_drops_the_hint() {
     });
 }
 
-/// The global Sessions picker's own keys act locally, and once a remote host is in play the footer
-/// says so. Without something remote on screen there is no second reading to guard against, and
-/// "new local" would only raise a question the surface cannot answer.
+fn remote_row(name: &str, host: &str) -> DiscoveredSession {
+    DiscoveredSession {
+        host: Some(host.to_string()),
+        remote_target: Some(rozi::session::remote::RemoteTarget::Alias(host.to_string())),
+        ..session_row(name)
+    }
+}
+
+/// With a host in play the picker splits into tabs, one per machine. Each tab lists only its own
+/// sessions, and a sessionless client opens on the tab of the host its launcher names.
 #[test]
-fn the_global_pickers_keys_name_their_scope_once_a_host_is_in_play() {
+fn a_host_in_play_gets_its_own_tab_and_the_launcher_opens_on_it() {
+    use rozi::input::Action;
     on_a_big_stack(|| {
+        let workbox = rozi::session::remote::RemoteTarget::Alias("workbox".to_string());
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
             *state.current_mut() = rozi::state::Attachment::new();
-            state.show_session_picker = true;
-            state.session_picker = Some(SessionPickerState::new(vec![session_row("dev")]));
+            state.launcher_scope = Some(workbox.clone());
         }
+        backend
+            .dispatch(Msg::RunAction(Action::OpenSessionPicker))
+            .expect("open Sessions");
+        backend
+            .state_mut()
+            .session_picker
+            .as_mut()
+            .expect("picker")
+            .entries = vec![session_row("dev"), remote_row("api", "workbox")];
 
-        let local_only = screen(&mut backend);
+        let on_host = screen(&mut backend);
         assert!(
-            local_only.contains("new Ctrl+N") && !local_only.contains("new local"),
-            "with nothing remote anywhere, `new` needs no qualifier:\n{local_only}"
+            on_host.contains("Local") && on_host.contains("workbox"),
+            "one tab per machine:\n{on_host}"
         );
         assert!(
-            local_only.contains("ephemeral shell Ctrl+T"),
-            "and the scratch chord keeps its plain name:\n{local_only}"
+            on_host.contains("api") && !on_host.contains("dev"),
+            "the launcher's host is the tab it opens on, and that tab lists only its rows:\n{on_host}"
         );
 
-        backend.state_mut().current_mut().remote_host = Some("workbox".to_string());
-        backend.state_mut().current_mut().remote_target = Some(
-            rozi::session::remote::RemoteTarget::Alias("workbox".to_string()),
+        backend
+            .dispatch(Msg::SessionPickerTab(0))
+            .expect("switch to Local");
+        let local = screen(&mut backend);
+        assert!(
+            local.contains("dev") && !local.contains("api"),
+            "Local lists this machine's sessions:\n{local}"
         );
-        backend.state_mut().current_mut().session_name = Some("backend".to_string());
-        backend.state_mut().current_mut().session_attached = true;
-        backend.state_mut().current_mut().pending_session_attach = None;
+        assert_eq!(
+            backend.state().launcher_scope,
+            None,
+            "in the launcher, the tab is the scope, so the card behind it follows"
+        );
+    });
+}
 
-        let with_remote = screen(&mut backend);
+/// The creating keys act on the tab on screen. In a launcher whose picker is on a host's tab, the
+/// shell starts on that host, which the tab and the card behind it both name.
+#[test]
+fn the_scratch_key_starts_its_shell_on_the_active_tabs_host() {
+    use rozi::input::Action;
+    on_a_big_stack(|| {
+        let workbox = rozi::session::remote::RemoteTarget::Alias("workbox".to_string());
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            *state.current_mut() = rozi::state::Attachment::new();
+            state.launcher_scope = Some(workbox.clone());
+        }
+        backend
+            .dispatch(Msg::RunAction(Action::OpenSessionPicker))
+            .expect("open Sessions");
+        let rendered = screen(&mut backend);
         assert!(
-            with_remote.contains("new local Ctrl+N"),
-            "attached to a host, the global picker says which machine its `new` means:\n{with_remote}"
+            rendered.contains("ephemeral shell Enter") && !rendered.contains("local"),
+            "the tab names the host, so the key needs no qualifier:\n{rendered}"
         );
-        assert!(
-            with_remote.contains("local ephemeral Ctrl+T"),
-            "and so does its scratch chord, which is local for the same reason:\n{with_remote}"
-        );
+
+        backend
+            .dispatch(Msg::SessionPickerEphemeral)
+            .expect("start the scratch session");
+        let state = backend.state();
+        let pending = state
+            .current()
+            .pending_session_attach
+            .as_ref()
+            .expect("an attach is in flight");
+        assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
+        assert_eq!(state.current().remote_target.as_ref(), Some(&workbox));
     });
 }
 
@@ -315,8 +365,8 @@ fn a_scoped_launcher_names_its_host_and_says_where_its_shell_lands() {
             "the launcher wears the scope it will act in:\n{rendered}"
         );
         assert!(
-            rendered.contains("Not attached. A shell starts on workbox."),
-            "and says both that nothing is attached and where its one offer lands:\n{rendered}"
+            rendered.contains("shell on workbox"),
+            "and its shell row says where the shell lands:\n{rendered}"
         );
     });
 }

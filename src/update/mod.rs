@@ -368,6 +368,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionPickerQueryChanged(query) => prompts::session_picker_query_changed(ctx, query),
         Msg::SessionPickerSelect(index) => prompts::session_picker_select(ctx, index),
         Msg::SessionPickerActivate(index) => prompts::session_picker_activate(ctx, index),
+        Msg::SessionPickerTab(index) => crate::ops::session::select_session_picker_tab(ctx, index),
         Msg::SessionPickerEphemeral => crate::ops::session::open_ephemeral_session(ctx),
         Msg::SessionPickerCreateFromQuery => prompts::session_picker_create_from_query(ctx),
         Msg::SessionPickerKillSelected => prompts::session_picker_kill_selected(ctx),

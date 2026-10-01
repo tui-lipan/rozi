@@ -171,6 +171,7 @@ pub(crate) fn apply_discovered_sessions(
                     .position(|entry| entry.name == name && entry.remote_target == target)
             })
             .unwrap_or_else(|| old_selected.min(picker.entries.len().saturating_sub(1)));
+        picker.keep_selection_in_tab();
         // A destructive confirmation belongs to the exact list the user armed it on. A refresh
         // may insert, remove, or reorder rows, so never let a numeric index carry across a change.
         if entries_changed {

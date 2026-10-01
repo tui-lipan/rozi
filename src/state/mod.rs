@@ -1063,6 +1063,17 @@ impl State {
     /// The name of the modal overlay drawn on top, if any, as a UI recording's `overlay` meta event
     /// reports it. Checked topmost first, in the order the view stacks them.
     pub fn modal_overlay(&self) -> Option<&'static str> {
+        self.modal_overlays().next()
+    }
+
+    /// Whether an SSH prompt is stacked on another dialog rather than on the panes, so it drops one
+    /// row below that dialog's top like every other stacked card.
+    pub fn askpass_is_stacked(&self) -> bool {
+        self.askpass.is_some() && self.modal_overlays().any(|name| name != "askpass")
+    }
+
+    /// Every open modal overlay, topmost first.
+    fn modal_overlays(&self) -> impl Iterator<Item = &'static str> {
         [
             (self.askpass.is_some(), "askpass"),
             (self.follow_prompt.is_some(), "follow-prompt"),
@@ -1086,7 +1097,7 @@ impl State {
             (self.show_palette, "palette"),
         ]
         .into_iter()
-        .find_map(|(open, name)| open.then_some(name))
+        .filter_map(|(open, name)| open.then_some(name))
     }
 
     /// Whether a pointer gesture is currently reshaping the layout: a pane move, a pane corner

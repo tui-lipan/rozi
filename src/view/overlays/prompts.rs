@@ -550,6 +550,7 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
             always_cancel_hint: true,
             dim_behind: true,
             caption,
+            parent_reserve_percent: askpass_parent_reserve(ctx),
             ..PromptChrome::new(&title, placeholder, &[("send", "enter")])
         },
         &askpass.input,
@@ -605,11 +606,19 @@ fn askpass_choice_overlay(
             highlight: fingerprint,
             caption,
             dim_behind: true,
-            parent_reserve_percent: None,
+            parent_reserve_percent: askpass_parent_reserve(ctx),
         },
         Msg::CancelRemoteAskpass,
         &buttons,
     )
+}
+
+/// An SSH prompt arrives over whatever is open. Over another dialog it is a stacked card and drops
+/// one row below that dialog's top; over the panes it is centred like any other.
+fn askpass_parent_reserve(ctx: &Context<AppRoot>) -> Option<u16> {
+    ctx.state
+        .askpass_is_stacked()
+        .then_some(ACTION_PALETTE_MAX_HEIGHT_PERCENT)
 }
 
 /// The `Label: value` lines of rozi's install offer, or `None` when any line is not one.

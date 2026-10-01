@@ -1775,13 +1775,15 @@ mod tests {
                     "occupied session should identify the other client sharing it\n{shared_row}"
                 );
                 assert!(
-                    lines.iter().any(|line| line.contains("LOCAL")),
-                    "local group header missing\n{}",
+                    lines
+                        .iter()
+                        .any(|line| line.contains("Local") && line.contains("workbox")),
+                    "one tab per machine\n{}",
                     lines.join("\n")
                 );
                 assert!(
-                    lines.iter().any(|line| line.contains("REMOTE · workbox")),
-                    "remote group header missing\n{}",
+                    !lines.iter().any(|line| line.contains("remote-dev")),
+                    "the Local tab lists only this machine's sessions\n{}",
                     lines.join("\n")
                 );
 

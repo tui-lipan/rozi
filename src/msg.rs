@@ -324,6 +324,8 @@ pub enum Msg {
     SessionPickerQueryChanged(String),
     SessionPickerSelect(usize),
     SessionPickerActivate(usize),
+    /// Show the Sessions picker tab at this index of [`crate::ops::session::session_picker_tabs`].
+    SessionPickerTab(usize),
     /// Go to this client's scratch session from the picker (`Ctrl+T`, or `Enter` with nothing to
     /// pick): start it when there is none, switch to it when there already is.
     SessionPickerEphemeral,

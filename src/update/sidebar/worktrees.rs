@@ -188,7 +188,7 @@ mod tests {
             bare: false,
             prunable: false,
             linked,
-            locked: false,
+            lock: None,
         }
     }
 
@@ -333,6 +333,99 @@ mod tests {
             assert!(listing.loaded, "no loading state between sessions");
             assert_eq!(listing.entries.len(), 2);
             assert_eq!(listing.sessions.get(LINKED), Some(&vec![running]));
+        });
+    }
+
+    fn stale_lock() -> Option<crate::git::worktrees::WorktreeLock> {
+        Some(crate::git::worktrees::WorktreeLock {
+            reason: "claude session feat (pid 9 start 1)".into(),
+            stale: true,
+        })
+    }
+
+    /// A stale lock does not hide the ✕: its removal asks the host to lift the lock first.
+    #[test]
+    fn a_stale_locked_checkout_is_removed_with_its_lock_lifted() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            backend.state_mut().sidebar.worktrees.entries[1].lock = stale_lock();
+            let close = Msg::SidebarRowClose { panel: 0, index: 2 };
+
+            backend.dispatch(close.clone()).unwrap();
+            assert!(sent_worktree_requests(&outbound).is_empty(), "arms first");
+            backend.dispatch(close).unwrap();
+            let requests = sent_worktree_requests(&outbound);
+            let [(_, WorktreeRequest::Remove { unlock_stale, .. })] = requests.as_slice() else {
+                panic!("one remove request, got {requests:?}");
+            };
+            assert!(*unlock_stale);
+        });
+    }
+
+    /// In the picker, Ctrl+K on a stale lock arms before it removes, and Ctrl+U unlocks any lock.
+    #[test]
+    fn the_picker_arms_a_stale_removal_and_unlocks_on_request() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let _ = sent_worktree_requests(&outbound);
+            let mut picker = crate::state::WorktreePickerState::new(REPO.into(), None);
+            let mut stale = tree(LINKED, true);
+            stale.lock = stale_lock();
+            picker.entries = vec![tree(REPO, false), stale];
+            picker.selected = 1;
+            backend.state_mut().worktree_picker = Some(picker);
+
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            assert!(sent_worktree_requests(&outbound).is_empty(), "arms first");
+            assert_eq!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .and_then(|picker| picker.pending_remove.as_ref())
+                    .map(|pending| pending.kind),
+                Some(crate::state::PendingWorktreeRemoveKind::StaleLock)
+            );
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            let requests = sent_worktree_requests(&outbound);
+            let [
+                (
+                    id,
+                    WorktreeRequest::Remove {
+                        force: false,
+                        unlock_stale: true,
+                        ..
+                    },
+                ),
+            ] = requests.as_slice()
+            else {
+                panic!("one stale removal, got {requests:?}");
+            };
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: *id,
+                    result: WorktreeResult::Failed {
+                        message: "worktree is locked".into(),
+                    },
+                })
+                .unwrap();
+
+            backend.dispatch(Msg::WorktreeUnlockSelected).unwrap();
+            // The failure also refreshed the tab's list; the unlock is the one mutation sent.
+            let unlocks: Vec<_> = sent_worktree_requests(&outbound)
+                .into_iter()
+                .filter_map(|(_, request)| match request {
+                    WorktreeRequest::Unlock { path, .. } => Some(path),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(unlocks, vec![LINKED.to_string()]);
         });
     }
 

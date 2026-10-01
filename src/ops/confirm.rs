@@ -61,6 +61,9 @@ fn clear_all(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(extensions) = ctx.state.extensions.as_mut() {
         cleared |= extensions.pending_remove.take().is_some();
     }
+    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+        cleared |= picker.pending_remove.take().is_some();
+    }
     if cleared {
         Update::full()
     } else {

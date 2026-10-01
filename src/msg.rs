@@ -283,6 +283,7 @@ pub enum Msg {
     WorktreeRefresh,
     WorktreeNew,
     WorktreeRemoveSelected,
+    WorktreeUnlockSelected,
     WorktreeFormChanged(crate::state::WorktreeFormField, InputEvent),
     WorktreeFormCycle(bool),
     WorktreeFormClose,

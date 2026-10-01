@@ -5,8 +5,8 @@ use tui_lipan::prelude::*;
 use crate::session::discovery::DiscoveredSession;
 use crate::session::protocol::{WorktreeRequest, WorktreeResult};
 use crate::state::{
-    WorktreeFormField, WorktreeFormState, WorktreeOperation, WorktreeOperationKind,
-    WorktreePickerState,
+    PendingWorktreeRemove, PendingWorktreeRemoveKind, WorktreeFormField, WorktreeFormState,
+    WorktreeOperation, WorktreeOperationKind, WorktreePickerState,
 };
 use crate::{AppRoot, Msg};
 
@@ -38,6 +38,7 @@ fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
         let what = match operation.kind {
             WorktreeOperationKind::Create { branch } => format!("creating `{branch}`"),
             WorktreeOperationKind::Remove { path, .. } => format!("removing {path}"),
+            WorktreeOperationKind::Unlock { path } => format!("unlocking {path}"),
         };
         crate::pane::pty_events::notify_info(
             ctx,
@@ -155,7 +156,10 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
 }
 
 pub(crate) fn select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
-    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+    // The palette reports its selection again as it redraws; only a move disarms a removal.
+    if let Some(picker) = ctx.state.worktree_picker.as_mut()
+        && picker.selected != index
+    {
         picker.selected = index;
         picker.pending_remove = None;
     }
@@ -532,18 +536,84 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+/// Ctrl+K in the picker. A clean checkout goes at once; one with a stale lock arms first, so the
+/// lift is a step the user sees; a dirty one arms as forced once Git has refused it.
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
-    let Some((cwd, tree, force)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
+    let Some((cwd, tree, armed)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
         let tree = selected(picker)?.clone();
-        Some((
-            picker.cwd.clone(),
-            tree.clone(),
-            picker.pending_remove.as_deref() == Some(tree.path.as_str()),
-        ))
+        let armed = picker
+            .pending_remove
+            .as_ref()
+            .filter(|pending| pending.path == tree.path)
+            .map(|pending| pending.kind);
+        Some((picker.cwd.clone(), tree, armed))
     }) else {
         return Update::none();
     };
-    start_remove(ctx, cwd, tree, force)
+    let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
+    if stale && armed.is_none() && writable(ctx) && !operation_in_flight(ctx) {
+        if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+            picker.pending_remove = Some(PendingWorktreeRemove {
+                path: tree.path,
+                kind: PendingWorktreeRemoveKind::StaleLock,
+            });
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    start_remove(
+        ctx,
+        cwd,
+        tree,
+        armed == Some(PendingWorktreeRemoveKind::Dirty),
+    )
+}
+
+/// Ctrl+U in the picker: lift the selected checkout's lock, stale or not.
+pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
+    let Some((cwd, tree)) = ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .and_then(|picker| Some((picker.cwd.clone(), selected(picker)?.clone())))
+    else {
+        return Update::none();
+    };
+    if !writable(ctx) {
+        crate::pane::pty_events::notify_error(ctx, "Unlock failed", "Client is read-only");
+        return Update::full();
+    }
+    if operation_in_flight(ctx) {
+        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
+        return Update::full();
+    }
+    if tree.lock.is_none() {
+        return Update::none();
+    }
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return Update::none();
+    };
+    let id = request_id(ctx);
+    ctx.state.worktree_operation = Some(WorktreeOperation {
+        request_id: id,
+        epoch: ctx.state.runtime_epoch,
+        connection: client.connection_token(),
+        cwd: cwd.clone(),
+        kind: WorktreeOperationKind::Unlock {
+            path: tree.path.clone(),
+        },
+        open_when_done: false,
+    });
+    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+        picker.pending_remove = None;
+    }
+    client.worktree(
+        id,
+        WorktreeRequest::Unlock {
+            cwd,
+            path: tree.path,
+        },
+    );
+    Update::full()
 }
 
 /// A checkout's ✕ in the Worktrees tab was confirmed.
@@ -564,7 +634,8 @@ pub(crate) fn remove_from_sidebar(ctx: &mut Context<AppRoot>, path: String, forc
 }
 
 /// Ask the session host to remove a linked checkout. The host refuses a checkout any session
-/// records as its origin, and `force` only relaxes Git's dirty-checkout check.
+/// records as its origin, and `force` only relaxes Git's dirty-checkout check. A stale lock is
+/// lifted on the way, once the host has confirmed for itself that its owner is gone.
 fn start_remove(
     ctx: &mut Context<AppRoot>,
     cwd: String,
@@ -579,11 +650,20 @@ fn start_remove(
         crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
-    if !tree.linked || tree.bare || tree.locked {
+    let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
+    if !tree.linked || tree.bare {
         crate::pane::pty_events::notify_error(
             ctx,
             "Remove failed",
-            "Primary or locked worktree cannot be removed",
+            "The primary worktree cannot be removed",
+        );
+        return Update::full();
+    }
+    if tree.lock.is_some() && !stale {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Remove failed",
+            "Worktree is locked; unlock it first",
         );
         return Update::full();
     }
@@ -602,12 +682,16 @@ fn start_remove(
         },
         open_when_done: false,
     });
+    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+        picker.pending_remove = None;
+    }
     client.worktree(
         id,
         WorktreeRequest::Remove {
             cwd,
             path: tree.path,
             force,
+            unlock_stale: stale,
         },
     );
     Update::full()
@@ -684,6 +768,12 @@ pub(crate) fn apply_result(
                 }
                 crate::pane::pty_events::notify_info(ctx, format!("Removed worktree {path}"));
             }
+            (WorktreeOperationKind::Unlock { .. }, WorktreeResult::Unlocked { path }) => {
+                if picker_here {
+                    return refresh(ctx);
+                }
+                crate::pane::pty_events::notify_info(ctx, format!("Unlocked worktree {path}"));
+            }
             (
                 WorktreeOperationKind::Remove { path, force: false },
                 WorktreeResult::Failed { message },
@@ -693,7 +783,10 @@ pub(crate) fn apply_result(
                     && dirty
                     && let Some(picker) = ctx.state.worktree_picker.as_mut()
                 {
-                    picker.pending_remove = Some(path.clone());
+                    picker.pending_remove = Some(PendingWorktreeRemove {
+                        path: path.clone(),
+                        kind: PendingWorktreeRemoveKind::Dirty,
+                    });
                 }
                 crate::pane::pty_events::notify_error(ctx, "Remove failed", message);
                 if sidebar_here && dirty {
@@ -896,7 +989,7 @@ mod tests {
                             bare: false,
                             prunable: false,
                             linked: true,
-                            locked: false,
+                            lock: None,
                         },
                         unignored: None,
                     },

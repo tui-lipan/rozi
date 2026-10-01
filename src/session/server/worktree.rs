@@ -24,7 +24,9 @@ impl WorktreeJob {
                 base,
                 path,
             } => cwd.len() + branch.len() + base.len() + path.as_ref().map_or(0, String::len),
-            Request::Remove { cwd, path, .. } => cwd.len() + path.len(),
+            Request::Remove { cwd, path, .. } | Request::Unlock { cwd, path } => {
+                cwd.len() + path.len()
+            }
             Request::Exclude { cwd, directory } => cwd.len() + directory.len(),
         }
     }

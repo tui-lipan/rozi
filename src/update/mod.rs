@@ -336,6 +336,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::WorktreeRefresh => crate::ops::worktrees::refresh(ctx),
         Msg::WorktreeNew => crate::ops::worktrees::open_form(ctx),
         Msg::WorktreeRemoveSelected => crate::ops::worktrees::remove_selected(ctx),
+        Msg::WorktreeUnlockSelected => crate::ops::worktrees::unlock_selected(ctx),
         Msg::WorktreeFormChanged(field, event) => {
             crate::ops::worktrees::form_changed(ctx, field, event)
         }

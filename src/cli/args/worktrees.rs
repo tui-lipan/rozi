@@ -37,6 +37,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "remove <PATH> [--force]",
                 "Remove a linked checkout, never its branch",
             ),
+            row("unlock <PATH>", "Lift a checkout's Git lock"),
             row(
                 "exclude [DIR] [--cwd <DIR>]",
                 "Add an in-repo worktree directory to",
@@ -98,6 +99,9 @@ pub(crate) enum WorktreesCommand {
     Remove {
         path: String,
         force: bool,
+    },
+    Unlock {
+        path: String,
     },
     Exclude {
         directory: Option<String>,
@@ -241,9 +245,15 @@ pub(super) fn parse(
                 force: flags.force,
             }
         }
+        "unlock" => {
+            flags.allow(&verb, &[])?;
+            WorktreesCommand::Unlock {
+                path: operand.ok_or("worktrees unlock requires a checkout path")?,
+            }
+        }
         other => {
             return Err(format!(
-                "unknown worktrees command `{other}` (expected list, create, open, remove, or exclude)"
+                "unknown worktrees command `{other}` (expected list, create, open, remove, unlock, or exclude)"
             ));
         }
     };
@@ -391,6 +401,12 @@ mod tests {
                 force: true,
             }
         );
+        assert_eq!(
+            command(&["worktrees", "unlock", "~/wt/x"]).command,
+            WorktreesCommand::Unlock {
+                path: "~/wt/x".into(),
+            }
+        );
     }
 
     #[test]
@@ -443,7 +459,15 @@ mod tests {
             ),
             (
                 &["worktrees", "prune"][..],
-                "unknown worktrees command `prune` (expected list, create, open, remove, or exclude)",
+                "unknown worktrees command `prune` (expected list, create, open, remove, unlock, or exclude)",
+            ),
+            (
+                &["worktrees", "unlock", "/wt/x", "--force"][..],
+                "worktrees unlock does not take --force",
+            ),
+            (
+                &["worktrees", "unlock"][..],
+                "worktrees unlock requires a checkout path",
             ),
         ] {
             assert_eq!(parse(args).expect_err("must reject"), message, "{args:?}");

@@ -185,6 +185,7 @@ fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
             cwd: "C:\\code\\repo".into(),
             path: "C:\\code\\repo-worktrees\\feature".into(),
             force: false,
+            unlock_stale: true,
         },
     };
     let mut bytes = Vec::new();

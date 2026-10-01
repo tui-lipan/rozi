@@ -932,7 +932,8 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                 state.current_mut().pending_session_attach = None;
                 state.overlay_return = Some(crate::state::OverlayOrigin::SessionPicker {
                     query: String::new(),
-                    selected: 0,
+                    selected_session: None,
+                    tab: None,
                 });
                 state.rename_session =
                     Some(SessionRenameState::new("dev", NamingMode::CreateSession));
@@ -1834,6 +1835,57 @@ fn backing_out_of_a_host_keeps_the_launcher_scoped_to_it() {
         .expect("spawn back-out scope test")
         .join()
         .expect("back-out scope test completes");
+}
+
+#[test]
+fn disconnecting_the_launcher_picker_host_moves_to_local_before_starting_a_shell() {
+    use crate::{AppRoot, Msg};
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = crate::state::Attachment::new();
+                state.launcher_scope = Some(workbox.clone());
+                state.session_picker = Some(
+                    SessionPickerState::new(vec![
+                        session_row("backend", Some("workbox")),
+                        session_row("local-dev", None),
+                    ])
+                    .on_tab(Some(workbox)),
+                );
+                state.show_session_picker = true;
+            }
+
+            backend
+                .update_level(Msg::SessionPickerDisconnectHost)
+                .expect("disconnect the launcher picker's host");
+
+            assert!(backend.state().launcher_scope.is_none());
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert!(picker.tab.is_none());
+            assert_eq!(picker.entries[picker.selected].name, "local-dev");
+
+            backend
+                .update_level(Msg::SessionPickerEphemeral)
+                .expect("start a local scratch session");
+            let pending = backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("local attach is pending");
+            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert!(pending.remote_host.is_none());
+            assert!(backend.state().current().remote_target.is_none());
+        })
+        .expect("spawn launcher picker disconnect test")
+        .join()
+        .expect("launcher picker disconnect test completes");
 }
 
 /// A scope is a tie to a host with no attachment behind it, and `Ctrl+X` is the key that cuts one.

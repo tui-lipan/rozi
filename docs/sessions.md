@@ -63,16 +63,30 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">
 </CaptureGallery>
 
+Once a remote host is involved, Sessions shows one tab per machine: **Local** first, then each
+host, by name. A host gets a tab while a session there is on screen or in the background, while the
+launcher is scoped to it, or while Sessions lists sessions on it. Sessions opens on the tab of the
+session you are in, or in the launcher on the tab of the host it is scoped to.
+
+The tab decides where every key acts. Each tab lists only its own host's sessions, and `Ctrl+N`,
+`Ctrl+T`, and `Enter` on an empty tab create sessions on that host.
+
+Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
+highlighted session you were browsing. If that session is gone, Sessions highlights the first row
+on the restored tab. In the launcher, disconnecting the active remote host with `Ctrl+X` moves both
+Sessions and the launcher to **Local**.
+
 | Key | Action |
 | --- | --- |
 | `Enter` | Connect, switch to a background session, or restore a snapshot |
-| Type a name, then `Ctrl+N` | Create and switch to a local named session |
+| Type a name, then `Ctrl+N` | Create and switch to a named session on this tab's host |
 | `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a `last seen` entry |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |
-| `Ctrl+X` | Disconnect a remote host |
+| `Ctrl+X` | Disconnect this tab's remote host |
 | `Ctrl+R` | Open [Remote hosts](remote.md#manage-remote-hosts) |
-| `Ctrl+T` | Open or switch to this client's local temporary shell |
+| `Ctrl+T` | Open or switch to this client's temporary shell on this tab's host |
+| `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous host's tab |
 | `Esc` | Return to the [sessionless launcher](#the-sessionless-launcher) |
 
 A row can show that a session is attached in the background, shared with other clients,
@@ -80,12 +94,14 @@ restorable, or created from a profile. The list of local sessions refreshes whil
 open.
 
 Opening Sessions never contacts a remote host. Sessions on remote hosts are listed from the last
-time each host answered. Each remote group's header shows the host's state, and rows on a host this
-client is not attached to are marked `last seen`, with the pane count the host last reported:
+time each host answered. A host's tab shows the host's state in the picker's top-right corner, and
+rows on a host this client is not attached to are marked `last seen`, with the pane count the host
+last reported:
 
 ```text
-REMOTE · workbox · disconnected
-dev                                       3 panes · last seen
+╭Sessions────────────────────────────────────disconnected╮
+│ Local   workbox                                        │
+│ dev                                3 panes · last seen │
 ```
 
 On a `last seen` row:
@@ -104,14 +120,13 @@ Each picker names the scope it acts in, and its keys act only in that scope.
 
 | Surface | Scope | `Ctrl+N` | `Ctrl+T` |
 | --- | --- | --- | --- |
-| **Sessions** | Global — every host at once | New local named session | Local temporary shell |
+| **Sessions** | The active tab's host | New named session on that host | Temporary shell on that host |
 | **Remote hosts** | Host management | Add a host | — |
 | **Sessions · host** | That one host | New named session on the host | Temporary session on the host |
 
-Sessions stays global even while a remote session is on screen. Attached to `backend@workbox`,
-`Ctrl+N` in Sessions still creates a local session, and the footer reads `new local` whenever a
-remote host is involved. To create a session on `workbox`, press `Ctrl+R`, choose the host, then
-press `Ctrl+N`. See [Manage remote hosts](remote.md#manage-remote-hosts).
+Attached to `backend@workbox`, Sessions opens on the `workbox` tab, so `Ctrl+N` creates a session on
+`workbox`. Switch to **Local** to create one on this machine. See
+[Manage remote hosts](remote.md#manage-remote-hosts).
 
 ## Switch sessions
 
@@ -224,17 +239,22 @@ shell, or use the spawn command.
 A launcher can be scoped to a remote host without a session or an open SSH connection there:
 
 ```text
-REMOTE · workbox
-Not attached. A shell starts on workbox.
+╭─REMOTE · workbox──────────────────────────╮
+│ Enter / Ctrl+A Enter  shell on workbox    │
+│ Ctrl+A s              pick a session      │
+│ Ctrl+A q / Ctrl+A d   leave               │
+╰───────────────────────────────────────────╯
 ```
 
 You land here when you dismiss the picker after `rozi --remote workbox` with `startup = "picker"`,
 or close `Sessions · workbox` with nothing attached. `Enter` then starts a temporary shell on
-`workbox`. Sessions opened from this launcher is still global.
+`workbox`. Sessions opened from this launcher starts on the `workbox` tab, and switching tabs there
+moves the launcher's scope with it.
 
 The scope follows the session you work in, so killing a remote session leaves you in that host's
-launcher. Opening another host, disconnecting this one with `Ctrl+X`, or forgetting it changes the
-scope. Browsing the host list or closing a picker without choosing does not.
+launcher. Opening another host, switching tabs in Sessions, disconnecting the host with `Ctrl+X`,
+or forgetting it changes the scope. Browsing the host list or closing a picker without choosing does
+not.
 
 ## Recover a temporary session
 

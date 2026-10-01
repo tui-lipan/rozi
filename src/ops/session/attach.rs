@@ -847,12 +847,13 @@ pub(crate) fn start_launcher_shell(ctx: &mut Context<AppRoot>) -> Update {
     attach_startup_ephemeral(ctx, scope)
 }
 
-/// [`start_launcher_shell`] pinned to the local machine, for the global Sessions picker's `Ctrl+T`.
-/// The picker shows every host at once and therefore commits to none; only a host-scoped surface
-/// may put a shell on a host.
-pub(crate) fn start_local_launcher_shell(ctx: &mut Context<AppRoot>) -> Update {
+/// [`start_launcher_shell`] on `scope`, for the Sessions picker's `Ctrl+T` on its active tab.
+pub(crate) fn start_launcher_shell_in(
+    ctx: &mut Context<AppRoot>,
+    scope: Option<crate::session::remote::RemoteTarget>,
+) -> Update {
     clear_pending_session_action(ctx, None);
-    attach_startup_ephemeral(ctx, None)
+    attach_startup_ephemeral(ctx, scope)
 }
 
 /// This client's own scratch session on `scope`, when it already has one: the ephemeral it holds in
@@ -1130,6 +1131,15 @@ pub(crate) fn disconnect_host(
     // The launcher's scope is a place to work, and this host is no longer one.
     if ctx.state.launcher_scope.as_ref() == Some(target) {
         ctx.state.launcher_scope = None;
+    }
+    // A sessionless picker's active tab is also the launcher's scope. Move both to Local in the
+    // disconnect transition so the badge and the picker's create/scratch actions still agree.
+    if ctx.state.is_launcher()
+        && let Some(picker) = ctx.state.session_picker.as_mut()
+        && picker.tab.as_ref() == Some(target)
+    {
+        picker.tab = None;
+        picker.keep_selection_in_tab();
     }
     // Close every retained background attachment on this host; their servers keep running, except
     // for a disposable scratch session that nothing could reattach to.

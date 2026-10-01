@@ -64,7 +64,9 @@ fn picker_showing(rows: Vec<DiscoveredSession>) -> TestBackend<AppRoot> {
         let state = backend.state_mut();
         *state.current_mut() = rozi::state::Attachment::new();
         state.show_session_picker = true;
-        state.session_picker = Some(SessionPickerState::new(rows));
+        // Remote rows live on their host's tab; open on it, as a client attached there would.
+        let tab = rows.iter().find_map(|row| row.remote_target.clone());
+        state.session_picker = Some(SessionPickerState::new(rows).on_tab(tab));
     }
     backend
 }
@@ -85,7 +87,7 @@ fn a_remembered_session_says_so_instead_of_reading_as_live() {
         let rendered = screen(&mut backend);
         assert!(
             rendered.contains("test") && !rendered.contains("test@winvm"),
-            "the session is listed by name; its group header already names the host:\n{rendered}"
+            "the session is listed by name; its tab already names the host:\n{rendered}"
         );
         assert!(
             rendered.contains("last seen"),
@@ -94,10 +96,9 @@ fn a_remembered_session_says_so_instead_of_reading_as_live() {
     });
 }
 
-/// Rows no longer spell out their host, so a query for the host has to match it through the hidden
-/// alias and keep the header that names it above the surviving rows.
+/// Rows no longer spell out their host, so a query for the host still has to keep them.
 #[test]
-fn a_host_query_keeps_its_rows_under_their_header() {
+fn a_host_query_keeps_its_rows() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("winvm".to_string());
         let mut backend = picker_showing(vec![last_seen("test", 1, &target)]);
@@ -123,8 +124,8 @@ fn a_host_query_keeps_its_rows_under_their_header() {
             "the query reached the picker"
         );
         assert!(
-            rendered.contains("REMOTE") && rendered.contains("last seen"),
-            "the host's header and its row survive the query:\n{rendered}"
+            rendered.contains("last seen"),
+            "the host's row survives the query:\n{rendered}"
         );
     });
 }
@@ -135,20 +136,12 @@ fn a_host_query_keeps_its_rows_under_their_header() {
 fn unheld_rows_get_a_dot_beside_a_marked_row() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("winvm".to_string());
-        let local = DiscoveredSession {
-            name: "dev".to_string(),
-            origin: Default::default(),
-            ephemeral: false,
-            host: None,
-            remote_target: None,
-            status: DiscoveredSessionStatus::Running {
-                panes: 1,
-                has_layout: true,
-                clients: 1,
-            },
-        };
-        let mut backend = picker_showing(vec![local, last_seen("test", 1, &target)]);
+        let mut backend = picker_showing(vec![live("dev", &target), last_seen("test", 1, &target)]);
         backend.state_mut().current_mut().session_name = Some("dev".to_string());
+        backend.state_mut().current_mut().remote_target = Some(target.clone());
+        backend.state_mut().current_mut().remote_host = Some(target.display_label());
+        backend.state_mut().current_mut().session_attached = true;
+        backend.state_mut().current_mut().connection = rozi::state::ConnectionState::Connected;
 
         let rendered = screen(&mut backend);
         assert!(
@@ -162,22 +155,22 @@ fn unheld_rows_get_a_dot_beside_a_marked_row() {
     });
 }
 
-/// The host's own state belongs on its group header, the way the sidebar has always badged it.
-/// `REMOTE · winvm` alone described a machine that might be on or might be gone.
+/// The host's own state belongs on the picker's header beside its tab, the way the sidebar has
+/// always badged it. A tab named `winvm` alone describes a machine that might be on or might be gone.
 #[test]
-fn the_remote_group_header_names_the_hosts_state() {
+fn the_remote_tab_names_the_hosts_state() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("winvm".to_string());
         let mut backend = picker_showing(vec![last_seen("test", 1, &target)]);
 
         let rendered = screen(&mut backend);
         assert!(
-            rendered.contains("REMOTE") && rendered.contains("winvm"),
-            "the group still names its host:\n{rendered}"
+            rendered.contains("winvm"),
+            "the tab names its host:\n{rendered}"
         );
         assert!(
             rendered.contains("disconnected"),
-            "an unreached host says so on its header:\n{rendered}"
+            "an unreached host says so in the header:\n{rendered}"
         );
     });
 }

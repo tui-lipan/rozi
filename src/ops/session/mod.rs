@@ -34,8 +34,8 @@ pub(crate) use lifecycle::{
     forget_last_seen_session, host_can_disconnect, kill_discovered_session, kill_selected_session,
     open_create_session, open_create_session_on_host, open_ephemeral_session,
     open_ephemeral_session_on_host, open_leave_prompt, open_rename_session, open_session_picker,
-    open_startup_session_picker, restart_selected_session, session_row_can_disconnect,
-    session_row_can_disconnect_host, session_row_can_kill, session_row_can_restart,
+    open_startup_session_picker, restart_selected_session, select_session_picker_tab,
+    session_picker_tabs, session_row_can_disconnect, session_row_can_kill, session_row_can_restart,
     session_row_is_current, session_row_is_last_seen, session_row_is_restorable,
 };
 pub(crate) use remotes::{open_new_host_flow, open_remote_hosts, open_startup_remote_picker};

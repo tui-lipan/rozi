@@ -239,7 +239,8 @@ fn enter_checkout(
         return crate::ops::session::activate_discovered_session(ctx, matches.remove(0));
     }
     if matches.len() > 1 {
-        ctx.state.session_picker = Some(crate::state::SessionPickerState::new(matches));
+        ctx.state.session_picker =
+            Some(crate::state::SessionPickerState::new(matches).on_tab(target));
         ctx.state.show_session_picker = true;
         crate::ops::focus::request_session_picker_focus(ctx);
         return Update::full();

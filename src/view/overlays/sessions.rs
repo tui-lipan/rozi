@@ -349,22 +349,9 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
 /// say it already. With nothing to pick, Enter is free and carries it; with the scratch session
 /// itself on the list, its own row is the obvious way to it. The label borrows the word the rows
 /// use (`ephemeral`) so the hint and the session it lands on read as the same thing.
-/// Whether a remote host is anywhere in this client's picture: the session on screen, one parked in
-/// the background, or the host a sessionless launcher is scoped to.
 ///
-/// What it gates is the word "local" on the global picker's own keys. Those keys are local
-/// unconditionally — the global Sessions surface shows every host and commits to none — but a user
-/// with nothing remote in play has no second reading to be protected from, and "new local" would
-/// only raise a question ("local as opposed to what?") the screen cannot answer.
-fn remote_is_in_play(state: &crate::state::State) -> bool {
-    state.current().remote_target.is_some()
-        || state.launcher_scope.is_some()
-        || state
-            .background
-            .values()
-            .any(|attachment| attachment.remote_target.is_some())
-}
-
+/// Every creating key acts on the active tab's host, which the tab strip names, so no label needs
+/// to repeat it.
 fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Vec::new();
@@ -399,11 +386,7 @@ fn push_session_activation(
     if picker_list_is_empty(picker) {
         actions.push(OverlayAction::new(
             "enter",
-            if remote_is_in_play(&ctx.state) {
-                "local ephemeral"
-            } else {
-                "ephemeral shell"
-            },
+            "ephemeral shell",
             Msg::SessionPickerEphemeral,
             true,
         ));
@@ -451,25 +434,19 @@ fn push_session_creation_actions(
     picker: &SessionPickerState,
     actions: &mut Vec<OverlayAction>,
 ) {
-    // Both keys act on this surface's scope, which is global — so they act locally. Saying "local"
-    // is only worth the width once a remote host is in play; with nothing remote anywhere, "new"
-    // has nothing to be mistaken for.
-    let remote_in_play = remote_is_in_play(&ctx.state);
+    // Both keys act on the active tab's host.
     actions.push(OverlayAction::new(
         "ctrl-n",
-        if remote_in_play { "new local" } else { "new" },
+        "new",
         Msg::SessionPickerCreateFromQuery,
         true,
     ));
     let show_ephemeral = !picker_list_is_empty(picker)
-        && crate::ops::session::held_ephemeral_session_in(&ctx.state, None).is_none();
+        && crate::ops::session::held_ephemeral_session_in(&ctx.state, picker.tab.as_ref())
+            .is_none();
     actions.push(OverlayAction::new(
         "ctrl-t",
-        if remote_in_play {
-            "local ephemeral"
-        } else {
-            "ephemeral shell"
-        },
+        "ephemeral shell",
         Msg::SessionPickerEphemeral,
         show_ephemeral,
     ));
@@ -538,9 +515,11 @@ fn push_session_management_actions(
             ),
         );
     }
-    if selected.is_some_and(|entry| {
-        crate::ops::session::session_row_can_disconnect_host(&ctx.state, entry)
-    }) {
+    if picker
+        .tab
+        .as_ref()
+        .is_some_and(|target| crate::ops::session::host_can_disconnect(&ctx.state, target))
+    {
         actions.push(OverlayAction::new(
             "ctrl-x",
             "disconnect host",
@@ -562,7 +541,7 @@ fn selected_session(
     picker
         .entries
         .get(picker.selected)
-        .filter(|entry| matches_session_query(entry, &query_lower))
+        .filter(|entry| picker.in_tab(entry) && matches_session_query(entry, &query_lower))
 }
 
 /// Whether a session row survives the picker's filter. The list, the footer hints, and the keys
@@ -580,14 +559,14 @@ fn matches_session_query(
             .is_some_and(|host| host.to_ascii_lowercase().contains(query_lower))
 }
 
-/// Whether the picker is showing no session at all — nothing discovered, or nothing left by the
+/// Whether the active tab is showing no session at all — nothing discovered, or nothing left by the
 /// query. There is then no row for Enter to activate, which is what frees it to start a shell.
 fn picker_list_is_empty(picker: &SessionPickerState) -> bool {
     let query = picker.input.text().trim().to_ascii_lowercase();
     !picker
         .entries
         .iter()
-        .any(|entry| matches_session_query(entry, &query))
+        .any(|entry| picker.in_tab(entry) && matches_session_query(entry, &query))
 }
 
 fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> Element {
@@ -617,26 +596,22 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         .filter_map(|(index, entry)| entry.ephemeral.then_some(index))
         .collect::<Vec<_>>();
     let mut entries = Vec::new();
-    let mut last_group: Option<Option<&str>> = None;
     let mut reserve_discovered_gutter = false;
+    // The palette's highlight is a position among the rows it draws, which on a tab is not the
+    // row's index into every host's entries.
+    let selected_position = picker
+        .entries
+        .iter()
+        .take(picker.selected)
+        .filter(|entry| picker.in_tab(entry))
+        .count();
     for (index, entry) in picker
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| matches_session_query(entry, &query))
+        .filter(|(_, entry)| picker.in_tab(entry) && matches_session_query(entry, &query))
     {
         reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
-        let group = entry.host.as_deref();
-        if last_group != Some(group) {
-            if last_group.is_some() {
-                entries.push(SearchEntry::spacer());
-            }
-            entries.push(SearchEntry::header(match group {
-                Some(host) => remote_group_header(ctx, host, entry.remote_target.as_ref()),
-                None => "LOCAL".to_string(),
-            }));
-            last_group = Some(group);
-        }
         // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
         let label = if entry.ephemeral {
@@ -644,9 +619,8 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         } else {
             entry.name.as_str()
         };
-        // The group header already names the host, so the row shows the bare session name. The
-        // raw name and `name@host` stay matchable as hidden aliases, which is what lets a query
-        // for the host keep its rows.
+        // The tab already names the host, so the row shows the bare session name. The raw name
+        // and `name@host` stay matchable as hidden aliases, so a query for the host keeps its rows.
         let mut aliases = Vec::new();
         if entry.ephemeral {
             aliases.push(entry.name.clone());
@@ -664,7 +638,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
-    let empty_text = if picker.entries.is_empty() {
+    let empty_text = if picker.first_in_tab().is_none() {
         "No sessions".to_string()
     } else if query.is_empty() {
         "Type to filter sessions".to_string()
@@ -695,6 +669,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         }) as OverlayItemRenderer<usize>
     });
 
+    let tabs = crate::ops::session::session_picker_tabs(&ctx.state);
     let mut overlay = OverlayPalette::new(
         "Sessions",
         session_picker_key(),
@@ -702,14 +677,11 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         64,
     )
     .entries(entries)
-    // Rows no longer repeat their host, so filtering must keep the group headers that name it;
-    // otherwise `dev` on two hosts would read as the same session twice.
-    .preserve_groups(true)
     .actions(session_picker_actions(ctx))
     .armed_row(pending_kill.or(pending_restart))
     .placeholder("Search sessions…")
     .initial_query(picker.input.text().to_string())
-    .selected(Some(picker.selected))
+    .selected(Some(selected_position))
     .empty_text(empty_text)
     .fallback_interceptor(fallback)
     .on_query_change(
@@ -731,33 +703,41 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
     }
+    // One strip per host only once there is a second place to be; a client that has never touched
+    // a remote host sees the plain list it always did.
+    if tabs.len() > 1 {
+        let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
+        let labels = tabs
+            .iter()
+            .map(|tab| match tab {
+                Some(target) => target.display_label(),
+                None => "Local".to_string(),
+            })
+            .collect();
+        overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab));
+    }
+    if let Some(target) = picker.tab.as_ref() {
+        overlay = overlay.header_right(remote_tab_status(ctx, target));
+    }
     overlay.render(ctx)
 }
 
-/// A remote group's header: the host, then what this client's link to it is doing.
+/// A remote tab's status, in the frame's right header: what this client's link to the host is
+/// doing.
 ///
-/// The status belongs on the header rather than the rows because it is the *host's* news, and it
-/// has to be said at all because this picker never probes: it replays remembered rows for every
-/// host it holds no attachment on (see
-/// [`crate::ops::session::discovery::push_cached_known_remote_rows`]). Under a bare `REMOTE · host`
-/// a group of those looked exactly like a group of live ones. The sidebar has badged its host
-/// headers all along; this is the same vocabulary, lowercase as the picker's rows read.
+/// It is the *host's* news rather than any row's, and it has to be said at all because this picker
+/// never probes: it replays remembered rows for every host it holds no attachment on (see
+/// [`crate::ops::session::discovery::push_cached_known_remote_rows`]). Without it a tab of those
+/// looks exactly like a tab of live ones. Same vocabulary the sidebar badges its hosts with.
 ///
-/// The rows below are passed as *no* evidence of reachability, deliberately: a memory of a session
-/// is not proof that anything answers there now, and must not talk the header into "reached".
-fn remote_group_header(
+/// The rows are passed as *no* evidence of reachability, deliberately: a memory of a session is not
+/// proof that anything answers there now, and must not talk the status into "reached".
+fn remote_tab_status(
     ctx: &Context<AppRoot>,
-    host: &str,
-    target: Option<&crate::session::remote::RemoteTarget>,
+    target: &crate::session::remote::RemoteTarget,
 ) -> String {
-    let Some(target) = target else {
-        return format!("REMOTE · {host}");
-    };
     let status = crate::view::session_status::host_connection_status(&ctx.state, target, false);
-    format!(
-        "REMOTE · {host} · {}",
-        crate::view::session_status::host_status_label(status)
-    )
+    crate::view::session_status::host_status_label(status).to_string()
 }
 
 /// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's

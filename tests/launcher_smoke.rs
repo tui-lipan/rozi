@@ -85,7 +85,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
                 "the launcher must say how to reach the picker, got {lines:#?}"
             );
             assert!(
-                lines.iter().any(|line| line.contains("ephemeral shell")),
+                lines.iter().any(|line| line.contains("shell")),
                 "the launcher must say how to start a session, got {lines:#?}"
             );
             assert!(
@@ -99,8 +99,7 @@ fn a_sessionless_client_renders_the_launcher_panel() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("Enter / Ctrl+A Enter")
-                        && line.contains("ephemeral shell")),
+                    .any(|line| line.contains("Enter / Ctrl+A Enter") && line.contains("shell")),
                 "the launcher must offer the bare Enter it accepts, got {lines:#?}"
             );
             // Prefix and held-modifier spellings resolve to the same table entry

@@ -125,8 +125,11 @@ and `[session] startup` does not run again. A client can stay scoped to a host w
 session there:
 
 ```text
-REMOTE · workbox
-Not attached. A shell starts on workbox.
+╭─REMOTE · workbox──────────────────────────╮
+│ Enter / Ctrl+A Enter  shell on workbox    │
+│ Ctrl+A s              pick a session      │
+│ Ctrl+A q / Ctrl+A d   leave               │
+╰───────────────────────────────────────────╯
 ```
 
 This is a normal state, not an error, and it does not mean an SSH connection is open. `Enter`
@@ -138,8 +141,9 @@ Pressing `Esc` in `Sessions · <host>` to go back to **Remote hosts** keeps the 
 host, press `Ctrl+X` in `Sessions · <host>`; it is available whenever this client is tied to that
 host, including by scope alone.
 
-**Sessions** opened from this state is still global: its `Ctrl+N` and `Ctrl+T` create local
-sessions. See [Scope](sessions.md#scope-where-an-action-happens) and
+**Sessions** opened from this state starts on the host's tab, so its `Ctrl+N` and `Ctrl+T` create
+sessions on that host; switch to **Local** for this machine. See
+[Scope](sessions.md#scope-where-an-action-happens) and
 [The sessionless launcher](sessions.md#the-sessionless-launcher).
 
 ## Set up SSH authentication

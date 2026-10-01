@@ -582,3 +582,47 @@ fn remote_install_policy_and_abandoned_probes_do_not_open_a_modal() {
         assert!(backend.state().askpass.is_none());
     });
 }
+
+/// Row of the first line containing `needle`.
+fn row_of(frame: &str, needle: &str) -> usize {
+    frame
+        .lines()
+        .position(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("`{needle}` is on screen:\n{frame}"))
+}
+
+/// Raised over Remote hosts, the install offer is a card stacked on that list and drops one row
+/// below its top, the way every stacked card does. Over the panes it is centred like any dialog.
+#[test]
+fn an_ssh_prompt_over_a_dialog_sits_one_row_below_its_top() {
+    on_large_stack(|| {
+        let mut backend = picker_backend();
+        let parent_top = row_of(&rendered_lines(&mut backend), "Remote hosts");
+        backend
+            .dispatch(rozi::Msg::RemoteAskpassPrompt {
+                id: 9,
+                session: "ssh-1".into(),
+                attach_epoch: None,
+                kind: AskpassKind::Install { probe_epoch: None },
+                prompt: "Host: dev@workbox".into(),
+            })
+            .expect("dispatch install offer");
+        let frame = rendered_lines(&mut backend);
+        assert_eq!(
+            row_of(&frame, "Install Rozi on remote"),
+            parent_top + 1,
+            "{frame}"
+        );
+
+        let mut alone = askpass_backend(
+            AskpassKind::Install { probe_epoch: None },
+            "Host: dev@workbox",
+        );
+        let frame = rendered_lines(&mut alone);
+        assert_eq!(
+            row_of(&frame, "Install Rozi on remote"),
+            parent_top,
+            "with nothing beneath it the prompt keeps the ordinary dialog position:\n{frame}"
+        );
+    });
+}

@@ -232,12 +232,13 @@ See [Sidebar](sidebar.md) for what each tab shows.
 | Key | Action |
 | --- | --- |
 | `Enter` | Connect, switch, or restore |
-| `Ctrl+N` | Create a named session |
-| `Ctrl+T` | Open the temporary shell |
+| `Ctrl+N` | Create a named session on the active tab's host |
+| `Ctrl+T` | Open the temporary shell on the active tab's host |
 | `Ctrl+K` twice | Kill a live session, or forget a snapshot or last-seen cache entry |
 | `Ctrl+E` twice | Restart a live session |
 | `Ctrl+W` | Disconnect a background attachment |
-| `Ctrl+X` | Disconnect a remote host |
+| `Ctrl+X` | Disconnect the active tab's remote host |
+| `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous host's tab |
 | `Ctrl+R` | Open **Remote hosts** |
 
 Opening **Sessions** does not probe remote hosts. See

@@ -259,6 +259,9 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
     pub pending_restart: Option<usize>,
+    /// The host whose tab is showing, `None` for **Local**. Rows, `Enter` on an empty list,
+    /// `Ctrl+N`, and `Ctrl+T` all act on this host, so the tab strip says where they land.
+    pub tab: Option<crate::session::remote::RemoteTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -829,8 +832,8 @@ impl AskpassState {
 
 /// The dialog a nested one was raised from, so cancelling (or finishing) the child returns there
 /// instead of dropping the user back on the terminal. A picker is rebuilt rather than un-hidden —
-/// opening a child drops the picker's state — so its origin carries the query and highlighted row
-/// the rebuild has to restore. See [`crate::ops::overlay_return`].
+/// opening a child drops the picker's state — so its origin carries the query, highlighted row,
+/// and scope the rebuild has to restore. See [`crate::ops::overlay_return`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OverlayOrigin {
     Settings,
@@ -841,7 +844,8 @@ pub enum OverlayOrigin {
     },
     SessionPicker {
         query: String,
-        selected: usize,
+        selected_session: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
+        tab: Option<crate::session::remote::RemoteTarget>,
     },
     RemoteHosts {
         query: String,
@@ -895,6 +899,35 @@ impl SessionPickerState {
             selected: 0,
             pending_kill: None,
             pending_restart: None,
+            tab: None,
+        }
+    }
+
+    /// Open on `tab`, highlighting its first row.
+    pub fn on_tab(mut self, tab: Option<crate::session::remote::RemoteTarget>) -> Self {
+        self.tab = tab;
+        self.keep_selection_in_tab();
+        self
+    }
+
+    /// Whether `entry` is listed under the active tab.
+    pub fn in_tab(&self, entry: &DiscoveredSession) -> bool {
+        entry.remote_target.as_ref() == self.tab.as_ref()
+    }
+
+    /// Index of the active tab's first row.
+    pub fn first_in_tab(&self) -> Option<usize> {
+        self.entries.iter().position(|entry| self.in_tab(entry))
+    }
+
+    /// Move the highlight onto the active tab when a rebuild or a tab change left it elsewhere.
+    pub fn keep_selection_in_tab(&mut self) {
+        if !self
+            .entries
+            .get(self.selected)
+            .is_some_and(|entry| self.in_tab(entry))
+        {
+            self.selected = self.first_in_tab().unwrap_or(0);
         }
     }
 }

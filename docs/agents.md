@@ -292,6 +292,8 @@ told apart.
 
 Claude Code can run several background sessions from one client, each often in its own worktree.
 rozi sees that client as one pane. The
-[Claude Code sessions](../examples/extensions/claude-code-sessions/) example extension lists every
+[claude-rozi-sessions](https://github.com/tui-lipan/claude-rozi-sessions) extension lists every
 background session as its own row in that pane, under the repository and branch it works in. It
-reads `claude agents --json` and needs no Claude Code plugin.
+reads `claude agents --json` and needs no Claude Code plugin. Install it from the **Discover** tab
+of **Extensions…**, or with
+`rozi extensions install https://github.com/tui-lipan/claude-rozi-sessions.git`.

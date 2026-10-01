@@ -55,7 +55,6 @@ for extension in \
     docker \
     ssh-tools \
     agent-activity \
-    claude-code-sessions \
     activity-dashboard \
     snippets \
     tasks

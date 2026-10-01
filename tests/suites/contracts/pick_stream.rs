@@ -1,27 +1,57 @@
 //! `rozi pick --json` against a live control socket: the stream contract a producer sees.
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 
+/// Generous on purpose: the `rozi pick` under test is a freshly linked debug executable, and its
+/// first start on a loaded Windows runner, past a virus scanner that has never seen it, can take
+/// most of ten seconds on its own. That says nothing about the stream contract this file checks.
+const BUDGET: Duration = Duration::from_secs(30);
+
+/// Pump the app until `predicate` holds. With a `child`, fail as soon as it exits instead of
+/// waiting out the budget, and say why: a client that could not connect exits early, and a bare
+/// timeout would hide that behind an empty picker.
 fn pump_until(
     backend: &mut TestBackend<AppRoot>,
+    mut child: Option<&mut Child>,
     mut predicate: impl FnMut(&TestBackend<AppRoot>) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + BUDGET;
     while !predicate(backend) {
         backend.render();
         let _ = backend.pump();
-        assert!(
-            Instant::now() < deadline,
-            "timed out with pages {:?}",
-            backend.state().pick.as_ref().map(|pick| &pick.pages)
-        );
+        if let Some(child) = child.as_deref_mut()
+            && let Some(status) = child.try_wait().unwrap()
+        {
+            panic!(
+                "`rozi pick` exited with {status} before the picker got there; stderr: {}",
+                stderr_of(child)
+            );
+        }
+        if Instant::now() >= deadline {
+            let stderr = child.map(|child| {
+                let _ = child.kill();
+                stderr_of(child)
+            });
+            panic!(
+                "timed out with pages {:?}; `rozi pick` stderr: {stderr:?}",
+                backend.state().pick.as_ref().map(|pick| &pick.pages)
+            );
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn stderr_of(child: &mut Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
 }
 
 /// A tabbed picker reports every event on one stream, in order: an action that keeps the picker
@@ -36,7 +66,7 @@ fn a_tabbed_picker_reports_actions_tab_switches_and_the_selection_in_order() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = TestBackend::new(rozi::test_support::configured_app());
-            pump_until(&mut backend, |backend| {
+            pump_until(&mut backend, None, |backend| {
                 backend.state().control_socket_path.is_some()
             });
             let socket = backend.state().control_socket_path.clone().unwrap();
@@ -48,7 +78,7 @@ fn a_tabbed_picker_reports_actions_tab_switches_and_the_selection_in_order() {
                 .env_remove("ROZI_EXTENSION")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
             let mut stdin = child.stdin.take().unwrap();
@@ -72,7 +102,7 @@ fn a_tabbed_picker_reports_actions_tab_switches_and_the_selection_in_order() {
             .unwrap();
             stdin.flush().unwrap();
 
-            pump_until(&mut backend, |backend| {
+            pump_until(&mut backend, Some(&mut child), |backend| {
                 backend.state().pick.as_ref().is_some_and(|pick| {
                     pick.pages.len() == 2 && pick.pages.iter().all(|page| !page.rows.is_empty())
                 })
@@ -85,15 +115,23 @@ fn a_tabbed_picker_reports_actions_tab_switches_and_the_selection_in_order() {
             backend.dispatch(Msg::PickTabSelected(1)).unwrap();
             backend.dispatch(Msg::PickActivate(0)).unwrap();
 
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + BUDGET;
             while child.try_wait().unwrap().is_none() {
                 backend.render();
                 let _ = backend.pump();
-                assert!(Instant::now() < deadline, "pick never exited");
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    panic!("pick never exited; stderr: {}", stderr_of(&mut child));
+                }
                 std::thread::sleep(Duration::from_millis(10));
             }
             drop(stdin);
-            assert!(child.wait().unwrap().success(), "a selection exits 0");
+            let status = child.wait().unwrap();
+            assert!(
+                status.success(),
+                "a selection exits 0, got {status}; stderr: {}",
+                stderr_of(&mut child)
+            );
 
             let lines: Vec<serde_json::Value> = BufReader::new(child.stdout.take().unwrap())
                 .lines()

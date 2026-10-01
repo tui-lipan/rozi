@@ -443,24 +443,28 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
     if probe_in_flight(&ctx.state) {
         return Update::none();
     }
-    let reached = matches!(
-        ctx.state
-            .remote
-            .hosts
-            .get(&target)
-            .map(|entry| &entry.probe),
-        Some(crate::state::HostProbe::Reached)
-    );
-    if reached {
+    if host_is_connected(&ctx.state, &target) {
         open_host_sessions(ctx, target)
     } else {
         connect_host(ctx, target)
     }
 }
 
-/// `Ctrl+R`: contact the selected host again whatever state it is in — the way back from a host that
-/// went away under a connection this client still believes in, and the refresh for a session list
-/// that has moved on since the last probe.
+/// Whether `target` shows as connected on its row: a live attachment there, or a probe that reached
+/// it. One predicate for the dot, the footer, and the keys, so `Enter` opens and `Ctrl+R` reconnects
+/// exactly the hosts that read as connected — including one whose metadata monitor failed under a
+/// session attachment that is still live.
+pub(crate) fn host_is_connected(state: &crate::state::State, target: &RemoteTarget) -> bool {
+    matches!(
+        crate::view::session_status::host_connection_status(state, target, false),
+        crate::state::HostStatus::Connected | crate::state::HostStatus::Reachable
+    )
+}
+
+/// `Ctrl+R`: contact a connected host again — the way back from a host that went away under
+/// a connection this client still believes in, and the refresh for a session list that has moved on
+/// since the last probe. A host that is not connected has only one way in, `Enter`, so this does
+/// nothing there rather than offering the same connection under a second name.
 pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
     if probe_in_flight(&ctx.state) {
         return Update::none();
@@ -471,6 +475,7 @@ pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
         .as_ref()
         .filter(|picker| matches!(picker.mode, RemotePickerMode::Hosts))
         .and_then(|picker| picker.selected_host.clone())
+        .filter(|target| host_is_connected(&ctx.state, target))
     else {
         return Update::none();
     };
@@ -1441,6 +1446,106 @@ mod tests {
                     entry.probe.error().expect("the row carries the failure")
                 ),
                 "SSH login rejected"
+            );
+        });
+    }
+
+    /// A host that is not connected has one way in, `Enter`. `Ctrl+R` is the reconnect for a
+    /// connected host, so on any other row it must not become a second name for connecting.
+    #[test]
+    fn reconnect_waits_for_a_connected_host() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            primed_connecting_picker(backend, &target, 7);
+            backend
+                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 7,
+                    target: target.clone(),
+                    rows: Err("Connection refused".into()),
+                })
+                .expect("apply failed probe");
+
+            backend
+                .dispatch(Msg::RemotePickerReconnectHost)
+                .expect("Ctrl+R on a host that is not reached");
+            let picker = backend
+                .state()
+                .remote_picker
+                .as_ref()
+                .expect("remote picker");
+            assert!(
+                matches!(picker.host_probe, crate::state::HostProbe::Failed(_)),
+                "Ctrl+R starts no connection on a host that is not reached"
+            );
+
+            backend
+                .dispatch(Msg::RemotePickerHostActivate(target.clone()))
+                .expect("Enter on the failed host");
+            let picker = backend
+                .state()
+                .remote_picker
+                .as_ref()
+                .expect("remote picker");
+            assert!(
+                matches!(picker.host_probe, crate::state::HostProbe::InFlight),
+                "Enter is the way to connect it"
+            );
+        });
+    }
+
+    /// A live attachment keeps a host connected even when its metadata monitor fails and marks the
+    /// probe failed. The row still reads `connected`, so the keys follow the row: `Ctrl+R` reconnects
+    /// it and `Enter` is offered as `open`, not `connect`.
+    #[test]
+    fn a_failed_monitor_under_a_live_attachment_still_reconnects() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            primed_connecting_picker(backend, &target, 8);
+            backend
+                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 8,
+                    target: target.clone(),
+                    rows: Err("Connection reset".into()),
+                })
+                .expect("apply failed probe");
+            {
+                let current = backend.state_mut().current_mut();
+                current.remote_target = Some(target.clone());
+                current.session_name = Some("backend".into());
+                current.connection = crate::state::ConnectionState::Connected;
+            }
+            assert!(matches!(
+                backend
+                    .state()
+                    .remote
+                    .hosts
+                    .get(&target)
+                    .map(|entry| &entry.probe),
+                Some(crate::state::HostProbe::Failed(_))
+            ));
+            assert!(
+                host_is_connected(backend.state(), &target),
+                "the row reads connected"
+            );
+
+            backend.render();
+            let footer = backend.capture_frame().plain_text();
+            assert!(
+                footer.contains("open Enter") && footer.contains("reconnect Ctrl+R"),
+                "the footer offers what the row's state allows:\n{footer}"
+            );
+
+            backend
+                .dispatch(Msg::RemotePickerReconnectHost)
+                .expect("Ctrl+R on the connected host");
+            let picker = backend
+                .state()
+                .remote_picker
+                .as_ref()
+                .expect("remote picker");
+            assert!(
+                matches!(picker.host_probe, crate::state::HostProbe::InFlight),
+                "Ctrl+R contacts the host again"
             );
         });
     }

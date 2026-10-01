@@ -47,7 +47,7 @@ returning to this list does not contact any machine.
 | `Enter` | Connect the selected host, or open it if it is already connected | Attach or switch to the selected session |
 | `Ctrl+N` | Add a host | Create a named session on this host |
 | `Ctrl+E` | Edit the selected host | Restart the selected session (twice) |
-| `Ctrl+R` | Connect the selected host again | — |
+| `Ctrl+R` | Reconnect a connected host and refresh its sessions | — |
 | `Ctrl+T` | — | Create or switch to a temporary session on this host |
 | `Ctrl+K` twice | Forget the selected host | Kill a live session, or forget a `last seen` entry |
 | `Ctrl+W` | — | Disconnect a background session attachment |
@@ -101,8 +101,8 @@ same message:
 !  workbox                                       SSH login rejected
 ```
 
-The error stays on the row until the host connects or you retry, edit, or forget it. `Enter` or
-`Ctrl+R` retries, `Ctrl+E` edits the host, and `Ctrl+K` twice forgets it. See
+The error stays on the row until the host connects or you retry, edit, or forget it. `Enter`
+retries, `Ctrl+E` edits the host, and `Ctrl+K` twice forgets it. See
 [Troubleshooting](#troubleshooting) for what each message means.
 
 ### Edit or forget a host
@@ -378,9 +378,9 @@ own, waiting between 500 ms and 30 seconds between attempts. While a host is unr
 session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `last seen` row forgets
 it without contacting the host; if the host still reports the session later, it is listed again.
 
-Background reconnects never prompt. If a host needs a password or host-key approval, select it and
-reconnect with `Enter` or `Ctrl+R`; unless `[remote] batch_mode = true`, the SSH dialog then handles
-the prompt.
+Background reconnects never prompt. If a host needs a password or host-key approval, select it in
+Remote hosts and reconnect with `Enter`, or `Ctrl+R` if it still shows connected; unless
+`[remote] batch_mode = true`, the SSH dialog then handles the prompt.
 
 Monitoring runs `rozi sessions watch` on the host, a protocol meant only for rozi clients. It is
 versioned separately from session attachment. If the host's rozi lacks a required feature

@@ -202,7 +202,8 @@ up to two minutes. After that the session shows **offline**; if the remote sessi
 password or host-key answer keeps failing until you reconnect it yourself.
 
 1. Test with `ssh <HOST>`, or run `rozi --remote <HOST>` in a shell to see the SSH error.
-2. Select the host in Remote hosts (`Ctrl+R` in Sessions) and press `Enter` or `Ctrl+R`.
+2. Select the host in Remote hosts (`Ctrl+R` in Sessions) and press `Enter`, or `Ctrl+R` if it still
+   shows connected.
 3. On a network that drops idle connections, tune `[remote] server_alive_interval_secs` and
    `server_alive_count_max`.
 

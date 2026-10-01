@@ -4281,6 +4281,13 @@
           "description": "Publisher-chosen identity, opaque to rozi and stable across updates.\n\nNever a position: tabs are reordered and closed, and an index-keyed run clock would hand\none tab's elapsed time to whichever tab slid into its place.",
           "type": "string"
         },
+        "native_session": {
+          "description": "The agent's own conversation id for this row, when the row is one: what `--resume` takes.\n\nIt ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks\nfor the row whose native session it names, so several conversations behind one client\nstay listed while the one the hooks follow keeps their fresher state. It is also what\nresurrection resumes when this row is the active one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "project": {
           "anyOf": [
             {

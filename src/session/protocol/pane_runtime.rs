@@ -197,6 +197,14 @@ pub struct PublishedRow {
     /// Server-owned project of [`Self::cwd`]. Whatever a publisher sends here is overwritten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<RowProject>,
+    /// The agent's own conversation id for this row, when the row is one: what `--resume` takes.
+    ///
+    /// It ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks
+    /// for the row whose native session it names, so several conversations behind one client
+    /// stay listed while the one the hooks follow keeps their fresher state. It is also what
+    /// resurrection resumes when this row is the active one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session: Option<String>,
 }
 
 /// The Git project a published row's `cwd` lies in, as the session server resolved it.

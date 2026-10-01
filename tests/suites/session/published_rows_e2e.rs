@@ -25,6 +25,7 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
         work_started_at: None,
         cwd: None,
         project: None,
+        native_session: None,
     }
 }
 

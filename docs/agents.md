@@ -267,8 +267,11 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - A released token cannot claim the pane again. Late hooks from an old process fail with `conflict`,
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
-- A live report overrides screen detection and clears older published rows. Releasing it returns
-  the pane to screen detection or rows published later.
+- A live report overrides screen detection. Releasing it returns the pane to screen detection.
+- When the pane also publishes rows, the rows stay listed. The report drives only the row whose
+  `native_session` matches `--native-session`. A report about a conversation no row lists is kept
+  but not shown, so a client that switched conversations without its hooks noticing still lists
+  every conversation correctly.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). With `--session`, always pass `--target`, because an inherited pane number may belong

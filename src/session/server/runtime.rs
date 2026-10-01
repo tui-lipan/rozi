@@ -74,7 +74,9 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
-        if let Some(integration) = &runtime.integration {
+        if let Some(integration) = &runtime.integration
+            && runtime.rows.is_empty()
+        {
             self.references.clear();
             self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
             self.references.insert(
@@ -102,6 +104,18 @@ impl AgentScratch {
                 TrackedAgentReference {
                     identity: identity.to_string(),
                     incarnation: self.next_incarnation,
+                },
+            );
+        }
+        // A claim beside published rows keeps its own reference, so it is the same agent - not a
+        // replacement - when the rows are withdrawn and it speaks for the pane alone again.
+        if let Some(integration) = &runtime.integration {
+            self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
+            self.references.insert(
+                None,
+                TrackedAgentReference {
+                    identity: integration.identity.id.clone(),
+                    incarnation: integration.reference.incarnation,
                 },
             );
         }
@@ -503,12 +517,9 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
-        if pane.runtime.integration.is_some() {
-            // Integration authority invalidates the previous published-slot snapshot. Do not
-            // retain concurrent publisher updates behind it and resurrect them on release.
-            return Ok(None);
-        }
-
+        // Rows and a live integration report coexist: one client can run several conversations,
+        // and the report speaks for the row whose `native_session` it names. See
+        // [`protocol::effective_agent_runtimes`].
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -583,9 +594,9 @@ impl SessionServer {
                 seq,
                 previous.as_deref(),
             )?));
-            // Pane-level integration owns the same semantic slot as published activity. Keeping
-            // the old rows would resurrect stale logical agents as soon as this claim releases.
-            pane.runtime.rows.clear();
+            // Published rows stay. A program listing several conversations keeps listing them
+            // while hooks report on one; the publisher's stream, not this claim, owns their
+            // lifetime, and withdraws them when it closes.
         } else {
             pane.agent.retire_integration(integration);
             pane.runtime.integration = None;
@@ -923,7 +934,9 @@ fn derive_detected_agent(
     if !pane.runtime.rows.is_empty() {
         pane.agent.hold = None;
         pane.agent.read = None;
-        let aggregate = crate::session::protocol::aggregate_row_state(&pane.runtime.rows);
+        let aggregate = crate::session::protocol::aggregate_row_state(
+            &crate::session::protocol::rows_with_integration(&pane.runtime),
+        );
         return pane
             .runtime
             .detected_agent
@@ -1544,6 +1557,10 @@ fn sanitize_rows(
                 work_started_at,
                 cwd,
                 project,
+                native_session: row
+                    .native_session
+                    .as_deref()
+                    .and_then(|session| clean_text(session, PANE_STATUS_REASON_MAX_LEN)),
             })
         })
         .take(MAX_PANE_ROWS)
@@ -2018,6 +2035,7 @@ mod tests {
             active: false,
             work_started_at: None,
             cwd,
+            native_session: None,
             project: Some(protocol::RowProject {
                 root: "/forged".into(),
                 repository: None,
@@ -2068,6 +2086,7 @@ mod tests {
             work_started_at: None,
             cwd: None,
             project: None,
+            native_session: None,
         };
         let mut scratch = AgentScratch::default();
         let mut runtime = PaneRuntimeState {

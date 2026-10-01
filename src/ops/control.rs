@@ -933,11 +933,11 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                     state: runtime.state,
                     reason: runtime.reason,
                     cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
-                    native_session: pane
-                        .terminal
-                        .agent_integration
-                        .as_ref()
-                        .and_then(|report| report.native_session.clone()),
+                    native_session: crate::session::protocol::occupant_native_session(
+                        &pane.terminal.published_rows,
+                        pane.terminal.agent_integration.as_deref(),
+                        runtime.reference.slot.as_deref(),
+                    ),
                     reference: runtime.reference,
                     source: runtime.source,
                 });

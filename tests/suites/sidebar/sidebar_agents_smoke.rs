@@ -83,6 +83,7 @@ fn published_row(
         ),
         cwd: None,
         project: None,
+        native_session: None,
     }
 }
 

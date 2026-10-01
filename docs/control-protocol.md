@@ -841,6 +841,7 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `reason` | string or null | null | Supporting detail. |
 | `active` | bool | `false` | The row currently visible inside the publisher. At most one should be active. |
 | `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
+| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 | `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
 
@@ -873,6 +874,12 @@ While a pane has published rows, they are the authoritative activity list for th
 detected an agent in the pane, it derives the agent's displayed state from the rows: blocked first,
 then any status other than `idle` or `done`, then the remaining rows. A publisher in a pane with no
 detected agent still gets Activity rows, but rozi does not treat it as an agent.
+
+Rows and a live [agent report](agents.md#report-state-from-agent-hooks) coexist. The report keeps its
+claim and its sequence fence, and its state replaces the state of the row whose `native_session`
+matches the report's. A report that matches no row is not listed while rows are published. When a
+session is restored, the active row's `native_session` is the conversation rozi resumes, ahead of
+the report's.
 
 CLI bridge:
 

@@ -2623,6 +2623,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 work_started_at: None,
                 cwd: None,
                 project: None,
+                native_session: None,
             });
             let session_instance = crate::session::protocol::SessionInstanceId::for_test("shared");
             let agent_ref = crate::session::protocol::AgentRef {

@@ -895,6 +895,7 @@ mod tests {
             work_started_at: None,
             cwd: None,
             project: None,
+            native_session: None,
         }
     }
 
@@ -952,6 +953,7 @@ mod tests {
                 work_started_at: None,
                 cwd: None,
                 project: None,
+                native_session: None,
             },
             crate::session::protocol::PublishedRow {
                 id: "test".into(),
@@ -962,6 +964,7 @@ mod tests {
                 work_started_at: None,
                 cwd: None,
                 project: None,
+                native_session: None,
             },
         ];
         sync_published_refs(&mut publisher);

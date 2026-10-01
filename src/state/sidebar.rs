@@ -278,7 +278,7 @@ impl State {
                         HostStatus::Disconnected | HostStatus::Unreachable => {
                             (RowTarget::HostConnect(host.target.clone()), None)
                         }
-                        HostStatus::Connecting => (RowTarget::Inert, None),
+                        HostStatus::Connecting | HostStatus::Installing => (RowTarget::Inert, None),
                     };
                     items.push(SidebarItemProjection {
                         target: header_target,
@@ -286,7 +286,7 @@ impl State {
                     });
 
                     match status {
-                        HostStatus::Connecting => {}
+                        HostStatus::Connecting | HostStatus::Installing => {}
                         HostStatus::Connected | HostStatus::Reachable => {
                             if live.is_empty() {
                                 items.push(SidebarItemProjection {

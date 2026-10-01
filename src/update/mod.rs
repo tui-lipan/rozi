@@ -405,6 +405,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             target,
             rows,
         } => crate::ops::session::remotes::apply_host_discovery(ctx, epoch, target, rows),
+        Msg::RemoteInstallProgress { target, installing } => {
+            ctx.state.remote.hosts.set_installing(&target, installing);
+            Update::full()
+        }
         Msg::RemotePickerSessionQueryChanged(query) => {
             crate::ops::session::remotes::session_query_changed(ctx, query)
         }

@@ -126,7 +126,7 @@ impl HostStatusStyles {
         match status {
             HostStatus::Connected => self.connected,
             HostStatus::Reachable => self.reachable,
-            HostStatus::Connecting => self.connecting,
+            HostStatus::Connecting | HostStatus::Installing => self.connecting,
             HostStatus::Unreachable => self.unreachable,
             HostStatus::Disconnected => self.disconnected,
         }
@@ -163,6 +163,7 @@ pub(crate) fn host_status_label(status: HostStatus) -> &'static str {
         HostStatus::Connected => "connected",
         HostStatus::Reachable => "reached",
         HostStatus::Connecting => "connecting…",
+        HostStatus::Installing => "installing…",
         HostStatus::Unreachable => "unreachable",
         HostStatus::Disconnected => "disconnected",
     }
@@ -172,7 +173,7 @@ pub(crate) fn host_status_label(status: HostStatus) -> &'static str {
 pub(crate) fn host_status_gutter(status: HostStatus, styles: HostStatusStyles) -> ListItemGutter {
     let style = styles.for_status(status);
     match status {
-        HostStatus::Connecting => picker_circle_spinner_gutter(style),
+        HostStatus::Connecting | HostStatus::Installing => picker_circle_spinner_gutter(style),
         HostStatus::Connected | HostStatus::Reachable => picker_filled_gutter(style),
         HostStatus::Unreachable => picker_marker_gutter(MARKER_FAILED, style),
         HostStatus::Disconnected => picker_ring_gutter(style),
@@ -184,7 +185,9 @@ pub(crate) fn host_status_gutter(status: HostStatus, styles: HostStatusStyles) -
 pub(crate) fn host_status_badge(status: HostStatus, styles: HostStatusStyles) -> Element {
     let style = styles.for_status(status);
     let marker: Element = match status {
-        HostStatus::Connecting => picker_circle_spinner(style).height(Length::Px(1)).into(),
+        HostStatus::Connecting | HostStatus::Installing => {
+            picker_circle_spinner(style).height(Length::Px(1)).into()
+        }
         HostStatus::Connected | HostStatus::Reachable => Text::new(MARKER_LIVE)
             .style(style)
             .height(Length::Px(1))
@@ -358,6 +361,7 @@ mod tests {
             HostStatus::Connected,
             HostStatus::Reachable,
             HostStatus::Connecting,
+            HostStatus::Installing,
             HostStatus::Unreachable,
             HostStatus::Disconnected,
         ] {

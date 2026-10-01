@@ -249,8 +249,10 @@ Windows clients do not share SSH connections and authenticate for each command.
 
 Before connecting, rozi checks the host for a compatible rozi binary, whether you open the host
 inside rozi or start with `rozi --remote <host>`. When rozi needs to install one, a dialog shows
-the host, install location, and version, with `Install` and `Cancel`; `Esc` also cancels. The
-connection continues after installation.
+the host, the install location as the host resolves it (your home directory shown as `~`), and the
+version, with `Install` and `Cancel`; `Esc` also cancels. While
+rozi copies itself onto the host, the host's row shows a spinner and `installing…`. The connection
+continues after installation.
 
 | `[remote] install` | TUI connection or interactive terminal | Non-interactive run |
 | --- | --- | --- |

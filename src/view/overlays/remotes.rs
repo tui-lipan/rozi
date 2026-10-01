@@ -29,9 +29,13 @@ fn remote_host_description(
     // a reachable host than "reached" does. The status words themselves come from the one shared
     // vocabulary, so this row and the sidebar's badge never call the same state two things.
     let label = match (cached, status, entry.origin) {
-        (_, crate::state::HostStatus::Connecting | crate::state::HostStatus::Unreachable, _) => {
-            crate::view::session_status::host_status_label(status).to_string()
-        }
+        (
+            _,
+            crate::state::HostStatus::Connecting
+            | crate::state::HostStatus::Installing
+            | crate::state::HostStatus::Unreachable,
+            _,
+        ) => crate::view::session_status::host_status_label(status).to_string(),
         (1, _, _) => "1 session".to_string(),
         (count, _, _) if count > 1 => format!("{count} sessions"),
         (_, crate::state::HostStatus::Connected | crate::state::HostStatus::Reachable, _) => {
@@ -170,13 +174,16 @@ fn remote_hosts_overlay(
             .map(|entry| (entry.target.clone(), remote_host_status(ctx, &entry.target)))
             .collect();
         move |item: &SearchItem<crate::session::remote::RemoteTarget>, _hl| {
-            let status = if connecting_target.as_ref() == Some(&item.value) {
-                crate::state::HostStatus::Connecting
-            } else {
-                statuses
-                    .iter()
-                    .find(|(target, _)| target == &item.value)
-                    .map(|(_, status)| *status)?
+            let known = statuses
+                .iter()
+                .find(|(target, _)| target == &item.value)
+                .map(|(_, status)| *status);
+            let status = match known {
+                Some(crate::state::HostStatus::Installing) => crate::state::HostStatus::Installing,
+                _ if connecting_target.as_ref() == Some(&item.value) => {
+                    crate::state::HostStatus::Connecting
+                }
+                known => known?,
             };
             Some(crate::view::session_status::host_status_gutter(
                 status, styles,

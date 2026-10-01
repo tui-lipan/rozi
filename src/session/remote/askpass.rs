@@ -118,6 +118,8 @@ enum AskpassReply {
 struct Broker {
     endpoint: IpcEndpoint,
     token: String,
+    /// The UI, for news that is not a question: an accepted install reporting its progress.
+    link: CommandLink<Msg>,
 }
 
 static BROKER: OnceLock<Broker> = OnceLock::new();
@@ -235,7 +237,7 @@ pub(crate) fn start(link: CommandLink<Msg>) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let Ok((broker, listener)) = bind() else {
+    let Ok((broker, listener)) = bind(link.clone()) else {
         return;
     };
     let spawned = std::thread::Builder::new()
@@ -246,7 +248,7 @@ pub(crate) fn start(link: CommandLink<Msg>) {
     }
 }
 
-fn bind() -> io::Result<(Broker, IpcListener)> {
+fn bind(link: CommandLink<Msg>) -> io::Result<(Broker, IpcListener)> {
     let dir = crate::control::runtime_dir()?;
     // Named by pid like the control endpoint, so a crashed predecessor's leftover is reclaimed by
     // `bind` (which replaces only an endpoint nothing answers) rather than accumulating.
@@ -255,6 +257,7 @@ fn bind() -> io::Result<(Broker, IpcListener)> {
     let broker = Broker {
         endpoint: bound.endpoint().clone(),
         token: fresh_token(),
+        link,
     };
     Ok((broker, bound.into_listener()))
 }
@@ -284,6 +287,17 @@ pub(crate) fn confirm_install(prompt: String, probe_epoch: Option<u64>) -> Resul
             "y" | "yes"
         )),
         AskpassReply::Cancel => Ok(false),
+    }
+}
+
+/// Tell the UI an accepted install on `target` started or finished, so the host can read as
+/// installing while the binary is copied. Without a UI there is nobody to tell.
+pub(crate) fn report_install(target: &super::RemoteTarget, installing: bool) {
+    if let Some(broker) = BROKER.get() {
+        broker.link.send(Msg::RemoteInstallProgress {
+            target: target.clone(),
+            installing,
+        });
     }
 }
 

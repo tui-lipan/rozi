@@ -22,7 +22,7 @@ jobs:
       # periodic job exercises the ptys, signals, Unix sockets, and process lifecycle in a real VM.
       # It stands alone so a failure is visible without blocking work on release platforms.
       - name: Build and test in a NetBSD VM
-        uses: vmactions/netbsd-vm@20ee93a005c9fc78743e6e05269f4cb023b87413 # v1
+        uses: vmactions/netbsd-vm@c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92 # v1
         with:
           # Pinned rather than tracking the action's default, so a new NetBSD release changes this
           # job in a commit instead of overnight. Bumping it is a one-line change.

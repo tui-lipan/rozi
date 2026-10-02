@@ -43,7 +43,8 @@ selection. The plugin works on its own when you only need activity for the main 
 | Prompt submitted or tool running | `working` |
 | Permission requested | `blocked` |
 | `AskUserQuestion` or MCP input requested | `blocked` |
-| Tool finishes, fails, or MCP input returns | `working` |
+| Tool finishes, fails, or MCP input returns | `working` unless another input wait remains |
+| Parallel tool batch resolves | `working`, clearing unresolved batch waits |
 | Response finishes without background tasks or scheduled wakeups | `done` |
 | Response finishes with background tasks or scheduled wakeups | `working` |
 | Compaction | `working`, keeping the same integration token |
@@ -55,15 +56,30 @@ notifications, and notifications about hidden sessions do not change the parent 
 Subagent-local hooks are ignored so a child's completion cannot mark its parent done. The plugin
 reports one activity for the main conversation; it does not create separate child rows.
 
+Parallel tool calls cannot clear each other's input waits. The plugin tracks questions by
+`tool_use_id` and MCP requests by server and elicitation ID where provided. Permission hooks
+normally omit the tool ID, so those waits remain blocked until `PostToolBatch` confirms the whole
+batch resolved, or the turn ends. A completion of an unrelated tool keeps the conversation blocked.
+
 Hooks call the matching `ROZI_BIN` executable through structured arguments. A unique integration
 token and increasing sequence numbers fence each reporting lifecycle. Switching conversations
 releases the previous token before claiming a new one. Events from a different conversation or an
-already-ended lifecycle cannot update that lifecycle. Sequence allocation and delivery share a
-bounded SQLite lock, and the hooks run synchronously to preserve Claude's event order.
+already-ended lifecycle cannot update that lifecycle. Hooks record events and outstanding waits
+in short SQLite transactions before delivering them. A separate sender lock serializes delivery
+without preventing parallel hooks from recording their state. Pending snapshots may be coalesced;
+the newest state keeps all outstanding waits.
 
-The plugin keeps only tokens, conversation IDs, sequence numbers, and release markers under
+Conversation changes persist the new lifecycle and the old token's pending release together.
+The sender retries that release before claiming the new token. CLI errors and timeouts leave the
+transition pending, so later hooks can recover without restarting Claude. A release already
+accepted by rozi is recognised on retry. If no later hook runs, pending delivery waits until one
+does; the plugin does not run a background retry service.
+
+The plugin keeps tokens, conversation IDs, sequence numbers, pending states and releases, and
+input-wait identifiers and reasons under
 `CLAUDE_PLUGIN_DATA/activity`. It does not read transcripts or store prompts, tool arguments, or
-notification text. Rozi calls time out after 750 ms. Hooks produce no output or permission
+notification text. Individual rozi calls time out after 750 ms, with a 900 ms delivery budget per
+hook. Hooks produce no output or permission
 decisions, and failures never prevent Claude from continuing.
 
 Reporting requires the pane's `ROZI_SOCKET`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`. Remote and

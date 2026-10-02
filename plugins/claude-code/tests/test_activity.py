@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -45,7 +46,7 @@ class ActivityTests(unittest.TestCase):
         return args[args.index(flag) + 1]
 
     def test_main_lifecycle_uses_one_token_and_increasing_sequences(self):
-        for name in ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop", "SessionEnd"):
+        for name in ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolBatch", "Stop", "SessionEnd"):
             self.hook(name)
         self.assertEqual([self.field("--state", i) for i in range(5)],
                          ["idle", "working", "blocked", "working", "done"])
@@ -116,9 +117,9 @@ class ActivityTests(unittest.TestCase):
 
     def test_questions_and_mcp_input_are_blocked_then_working(self):
         self.hook("SessionStart")
-        self.hook("PreToolUse", tool_name="AskUserQuestion")
+        self.hook("PreToolUse", tool_name="AskUserQuestion", tool_use_id="question")
         self.assertEqual(self.field("--state"), "blocked")
-        self.hook("PostToolUse", tool_name="AskUserQuestion")
+        self.hook("PostToolUse", tool_name="AskUserQuestion", tool_use_id="question")
         self.assertEqual(self.field("--state"), "working")
         self.hook("Elicitation")
         self.assertEqual(self.field("--state"), "blocked")
@@ -157,7 +158,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(kwargs["env"], self.env)
         self.assertEqual(kwargs["timeout"], activity.CLI_TIMEOUT)
         self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
-        self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["stderr"], subprocess.PIPE)
 
     def test_timeout_still_persists_sequence(self):
         self.hook("SessionStart")
@@ -178,7 +179,208 @@ class ActivityTests(unittest.TestCase):
         with patch.object(activity.subprocess, "run", side_effect=slow_record):
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                 list(pool.map(lambda _: self.hook("PostToolUse"), range(4)))
-        self.assertEqual([self.field("--seq", i) for i in range(5)], ["1", "2", "3", "4", "5"])
+        # Concurrent snapshots can be coalesced, but every delivered sequence advances and the
+        # final report includes all four committed events.
+        seqs = [int(self.field("--seq", i)) for i in range(len(self.calls))]
+        self.assertEqual(seqs, sorted(set(seqs)))
+        self.assertEqual(seqs[-1], 5)
+
+    def test_parallel_permission_and_unrelated_completion_stay_blocked(self):
+        for identified in (False, True):
+            self.hook("SessionStart")
+            extra = {"tool_use_id": "waiting"} if identified else {}
+            barrier = threading.Barrier(2)
+
+            def permission():
+                barrier.wait()
+                self.hook("PermissionRequest", **extra)
+
+            def completion():
+                barrier.wait()
+                self.hook("PostToolUse", tool_use_id="other")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(permission), pool.submit(completion)]
+                for future in futures:
+                    future.result(timeout=2)
+            self.assertEqual(self.field("--state"), "blocked")
+            self.hook("PreToolUse", tool_use_id="third", tool_name="Read")
+            self.assertEqual(self.field("--state"), "blocked")
+
+    def test_twenty_parallel_hooks_preserve_waits_and_deliver_latest_state(self):
+        self.hook("SessionStart")
+        events = [
+            ("PermissionRequest", {}),
+            ("Elicitation", {"mcp_server_name": "server", "elicitation_id": "wait"}),
+        ] + [("PostToolUse", {"tool_use_id": f"other-{index}"}) for index in range(18)]
+        barrier = threading.Barrier(len(events))
+        original = self.record
+
+        def slow_record(args, **kwargs):
+            time.sleep(0.01)
+            return original(args, **kwargs)
+
+        def run(event):
+            barrier.wait(timeout=2)
+            self.hook(event[0], **event[1])
+
+        with patch.object(activity.subprocess, "run", side_effect=slow_record):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as pool:
+                list(pool.map(run, events))
+        self.assertEqual(self.field("--state"), "blocked")
+        self.assertEqual(self.field("--seq"), "21")
+        db = activity.open_state(activity.state_path(self.env, 123))
+        try:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM blockers").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT dirty FROM status").fetchone()[0], 0)
+        finally:
+            db.close()
+
+    def test_completion_clears_only_its_own_identified_wait(self):
+        self.hook("SessionStart")
+        self.hook("PermissionRequest", tool_use_id="a")
+        self.hook("PreToolUse", tool_name="AskUserQuestion", tool_use_id="b")
+        self.hook("PostToolUse", tool_use_id="a")
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolUseFailure", tool_use_id="b")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_permission_without_id_waits_for_batch_even_if_same_tool_finishes(self):
+        self.hook("SessionStart")
+        self.hook("PermissionRequest", tool_name="Bash")
+        self.hook("PostToolUse", tool_name="Bash", tool_use_id="unrelated")
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolBatch", tool_calls=[])
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_elicitation_result_clears_only_matching_server_and_request(self):
+        self.hook("SessionStart")
+        self.hook("Elicitation", mcp_server_name="one", elicitation_id="a")
+        self.hook("Elicitation", mcp_server_name="two", elicitation_id="b")
+        self.hook("PostToolUse", tool_use_id="unrelated")
+        self.hook("ElicitationResult", mcp_server_name="one", elicitation_id="a")
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("ElicitationResult", mcp_server_name="two", elicitation_id="b")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_two_elicitations_without_ids_need_two_responses(self):
+        self.hook("SessionStart")
+        self.hook("Elicitation", mcp_server_name="same")
+        self.hook("Elicitation", mcp_server_name="same")
+        self.hook("ElicitationResult", mcp_server_name="same")
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("ElicitationResult", mcp_server_name="same")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_slow_delivery_does_not_lock_out_a_permission_event(self):
+        self.hook("SessionStart")
+        sending = threading.Event()
+        unblock = threading.Event()
+        original = self.record
+
+        def held_delivery(args, **kwargs):
+            if "--seq" in args and args[args.index("--seq") + 1] == "2":
+                sending.set()
+                self.assertTrue(unblock.wait(timeout=2))
+            return original(args, **kwargs)
+
+        with patch.object(activity.subprocess, "run", side_effect=held_delivery):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                sender = pool.submit(self.hook, "PostToolUse", tool_use_id="other")
+                self.assertTrue(sending.wait(timeout=1))
+                try:
+                    permission = pool.submit(self.hook, "PermissionRequest")
+                    permission.result(timeout=1)
+                    db = activity.open_state(activity.state_path(self.env, 123))
+                    try:
+                        self.assertEqual(db.execute("SELECT state FROM status").fetchone()[0], "blocked")
+                    finally:
+                        db.close()
+                finally:
+                    unblock.set()
+                sender.result(timeout=2)
+        self.assertEqual(self.field("--state"), "blocked")
+
+    def test_resume_retries_release_after_timeout_launch_failure_or_nonzero_exit(self):
+        failures = (
+            subprocess.TimeoutExpired("rozi", 0.75), FileNotFoundError("rozi"),
+            subprocess.CompletedProcess([], 1, stderr="session unavailable\n"),
+        )
+        for index, failure in enumerate(failures):
+            pid = 600 + index
+            self.hook("SessionStart", pid=pid)
+            old_token = self.field("--integration")
+            with patch.object(activity.subprocess, "run", side_effect=[failure]):
+                if isinstance(failure, Exception):
+                    with self.assertRaises(type(failure)):
+                        self.hook("SessionStart", session="new-id", source="resume", pid=pid)
+                else:
+                    self.hook("SessionStart", session="new-id", source="resume", pid=pid)
+            # New-session events still belong to the new lifecycle and retry the old release.
+            self.hook("PermissionRequest", session="new-id", pid=pid)
+            self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
+            self.assertEqual(self.field("--integration", -2), old_token)
+            self.assertNotEqual(self.field("--integration"), old_token)
+            self.assertEqual(self.field("--native-session"), "new-id")
+            self.assertEqual(self.field("--state"), "blocked")
+
+    def test_timed_out_release_that_reached_server_allows_new_claim(self):
+        self.hook("SessionStart")
+        with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.hook("SessionStart", session="new-id", source="resume")
+        refused = subprocess.CompletedProcess([], 1, stderr="integration token belongs to a retired agent incarnation\n")
+        with patch.object(activity.subprocess, "run", side_effect=[refused, self.record_result()]):
+            self.hook("UserPromptSubmit", session="new-id")
+        db = activity.open_state(activity.state_path(self.env, 123))
+        try:
+            self.assertEqual(db.execute("SELECT session FROM run").fetchone()[0], "new-id")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM releases").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT dirty FROM status").fetchone()[0], 0)
+        finally:
+            db.close()
+
+    def record_result(self):
+        return subprocess.CompletedProcess([], 0)
+
+    def test_failed_exit_release_is_retried_when_next_conversation_starts(self):
+        self.hook("SessionStart")
+        old = self.field("--integration")
+        with patch.object(activity.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
+            self.hook("SessionEnd", reason="resume")
+        self.hook("SessionStart", session="new-id", source="resume")
+        self.assertEqual(self.field("--integration", -2), old)
+        self.assertEqual(self.field("--native-session"), "new-id")
+
+    def test_retry_of_a_timed_out_report_uses_a_newer_sequence(self):
+        self.hook("SessionStart")
+        with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.hook("UserPromptSubmit")
+        path = activity.state_path(self.env, 123)
+        db = activity.open_state(path)
+        try:
+            activity.flush_pending(db, path, self.env)
+        finally:
+            db.close()
+        self.assertEqual(self.field("--seq"), "3")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_permission_notification_survives_unrelated_tool_completion(self):
+        self.hook("SessionStart")
+        self.hook("Notification", notification_type="permission_prompt")
+        self.hook("PostToolUse", tool_use_id="other")
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolBatch", tool_calls=[])
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_parallel_batch_does_not_clear_a_usage_limit_wait(self):
+        self.hook("SessionStart")
+        self.hook("Notification", notification_type="quota_auto_resume_stale")
+        self.hook("PostToolBatch", tool_calls=[])
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("Notification", notification_type="quota_auto_resume_fired")
+        self.assertEqual(self.field("--state"), "working")
 
     def test_state_is_separate_for_each_server_and_pane(self):
         self.hook("SessionStart")
@@ -213,6 +415,7 @@ class ActivityTests(unittest.TestCase):
             self.assertFalse(hook.get("async", False), name)
             self.assertGreater(hook["timeout"], activity.CLI_TIMEOUT)
         self.assertNotIn("SubagentStop", hooks)
+        self.assertIn("PostToolBatch", hooks)
 
 
 if __name__ == "__main__":

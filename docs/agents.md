@@ -38,6 +38,8 @@ panes without a local UI endpoint continue using screen detection.
 
 The plugin reports one activity for the main conversation. Child-agent completion cannot mark the
 parent done, and background tasks or scheduled wakeups keep a completed response working.
+Parallel tool completions keep the conversation blocked while another input wait remains.
+Permission waits without a tool ID clear when the whole tool batch resolves or the turn ends.
 See the plugin README for the event mapping, checkout installation, and verification steps.
 
 ## Add an agent

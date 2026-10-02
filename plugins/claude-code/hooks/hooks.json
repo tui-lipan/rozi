@@ -195,6 +195,20 @@
           }
         ]
       }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
+            ],
+            "timeout": 2
+          }
+        ]
+      }
     ]
   }
 }

@@ -369,8 +369,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                 ),
             ],
         ),
-        // Last group: unlike everything above, these change what a *later* launch or server does, so
-        // there is nothing on screen to inspect after stepping them.
+        // Session startup and server-owned policies.
         settings_group(
             "Sessions",
             vec![
@@ -378,6 +377,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     "Startup mode",
                     ctx.state.config.session.startup.label().to_string(),
                     CycleStartupMode,
+                ),
+                (
+                    "Keep awake while agents work",
+                    enabled_status(ctx.state.config.session.keep_awake_while_agents_work),
+                    ToggleKeepAwakeWhileAgentsWork,
                 ),
                 (
                     "Layout autosave",
@@ -630,7 +634,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 targets.push(None);
             }
             SearchEntry::Item(item) => {
-                let disabled_reason = item.value.0.disabled_reason(&config);
+                let disabled_reason = item.value.0.disabled_reason_for_state(&ctx.state);
                 let marked =
                     disabled_reason.is_none() && item.value.0.shows_choice_ellipsis(&config);
                 let label = if marked {
@@ -779,7 +783,7 @@ fn settings_actions(
     selected: Option<SettingsAction>,
 ) -> Vec<OverlayAction> {
     let can_change =
-        selected.is_some_and(|action| action.disabled_reason(&ctx.state.config).is_none());
+        selected.is_some_and(|action| action.disabled_reason_for_state(&ctx.state).is_none());
     let tab = if settings_query(ctx).is_empty() {
         ctx.state.settings_navigation.tab
     } else {
@@ -820,7 +824,7 @@ fn settings_actions(
             "cycle",
             Msg::SettingsCycleChoice(selected.unwrap_or(SettingsAction::Theme)),
             selected.is_some_and(|action| {
-                action.disabled_reason(&ctx.state.config).is_none()
+                action.disabled_reason_for_state(&ctx.state).is_none()
                     && action.choice_ring(&ctx.state.config).is_some()
             }),
         )

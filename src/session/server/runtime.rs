@@ -757,6 +757,16 @@ impl SessionServer {
         for (id, generation) in panes {
             self.sync_pane_runtime_inner(None, id, generation, true, &mut scan);
         }
+        let local_panes: Vec<_> = self
+            .local_panes
+            .iter()
+            .filter(|(_, pane)| pane.pty.is_some())
+            .map(|(&(owner, id), pane)| (owner, id, pane.generation))
+            .collect();
+        for (owner, id, generation) in local_panes {
+            self.sync_pane_runtime_inner(Some(owner), id, generation, true, &mut scan);
+        }
+        self.reconcile_sleep_policy();
     }
 
     /// Recompute `pane_id`'s runtime state and broadcast a

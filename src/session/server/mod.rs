@@ -31,6 +31,7 @@ pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
 mod pane_log;
 mod panes;
+mod power;
 mod recordings;
 mod resurrect;
 pub use pane_log::PaneLog;
@@ -205,6 +206,7 @@ pub struct SessionServer {
     /// listener behind it is dropped.
     pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
+    sleep_policy: power::AgentSleepPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +219,7 @@ pub struct ServerSettings {
     /// [`crate::config::LoggingConfig::max_bytes`] including its `0` (unlimited) escape.
     pub log_max_bytes: u64,
     pub resurrect: bool,
+    pub keep_awake_while_agents_work: bool,
     /// What a snapshot does with a command a pane was observed running at its prompt. Mirrors
     /// [`crate::config::SessionConfig::resurrect_foreground`], and is read at both ends: capture
     /// declines to write the command down under
@@ -278,6 +281,7 @@ impl Default for ServerSettings {
             log_dir: None,
             log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
+            keep_awake_while_agents_work: false,
             resurrect_foreground: crate::config::ForegroundRestore::default(),
             resurrect_agents: true,
             snapshot_dir: None,
@@ -1398,6 +1402,7 @@ impl SessionServer {
             session_name,
             endpoint: None,
             pending_listener: None,
+            sleep_policy: power::AgentSleepPolicy::default(),
             settings,
         }
     }
@@ -1529,6 +1534,7 @@ impl SessionServer {
                 let _ = pty.kill();
             }
         }
+        self.sleep_policy = power::AgentSleepPolicy::default();
         self.discard_ephemeral_logs();
         // Retire the discovery entry while this server still owns the listener/pipe instances. A
         // replacement can then claim the name without a later post-loop unlink being able to remove
@@ -1904,6 +1910,7 @@ pub fn run_named_session_mode_with_nonce(
             resurrect: !client_scratch && loaded.config.session.resurrect,
             resurrect_foreground: loaded.config.session.resurrect_foreground,
             resurrect_agents: loaded.config.session.resurrect_agents,
+            keep_awake_while_agents_work: loaded.config.session.keep_awake_while_agents_work,
             allow_takeover: !client_scratch && loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,
             shell,

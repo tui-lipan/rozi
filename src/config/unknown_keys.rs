@@ -70,6 +70,7 @@ const ANIMATION_KEYS: &[&str] = &[
 
 const SESSION_KEYS: &[&str] = &[
     "autosave",
+    "keep_awake_while_agents_work",
     "path",
     "startup",
     "resurrect",

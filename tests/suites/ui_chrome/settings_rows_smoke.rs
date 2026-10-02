@@ -1142,7 +1142,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
-            (SettingsTab::Sessions, 4, "Startup mode"),
+            (SettingsTab::Sessions, 5, "Startup mode"),
         ] {
             backend
                 .dispatch(rozi::Msg::SettingsTabSelected(tab))
@@ -1176,5 +1176,58 @@ fn deleting_the_query_restores_category_and_selection() {
             backend.state().settings_selected,
             Some(SettingsAction::CycleBorderMode)
         );
+    });
+}
+
+#[test]
+fn sessions_show_current_sleep_policy_as_boolean_row() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
+        backend
+            .state_mut()
+            .config
+            .session
+            .keep_awake_while_agents_work = false;
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Keep awake while agents work")
+                .contains("Disabled")
+        );
+        backend
+            .state_mut()
+            .config
+            .session
+            .keep_awake_while_agents_work = true;
+        assert!(
+            setting_row(&rendered_rows(&mut backend), "Keep awake while agents work")
+                .contains("Enabled")
+        );
+    });
+}
+
+#[test]
+fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
+        backend.state_mut().current_mut().remote_target =
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into()));
+        for local_enabled in [false, true] {
+            backend
+                .state_mut()
+                .config
+                .session
+                .keep_awake_while_agents_work = local_enabled;
+            let frame = rendered_rows(&mut backend);
+            let row = setting_row(&frame, "Keep awake while agents work");
+            assert!(row.contains("Configure on remote host"), "{row}");
+            assert!(
+                !row.contains("Enabled") && !row.contains("Disabled"),
+                "{row}"
+            );
+        }
+        backend.state_mut().current_mut().remote_target = None;
+        let frame = rendered_rows(&mut backend);
+        assert!(setting_row(&frame, "Keep awake while agents work").contains("Enabled"));
     });
 }

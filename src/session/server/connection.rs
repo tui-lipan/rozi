@@ -392,6 +392,12 @@ impl SessionServer {
                     )],
                 }
             }
+            ClientMessage::ReloadSleepPolicy => {
+                if self.is_controller(client_id) && !self.client_read_only(client_id) {
+                    self.reload_sleep_policy();
+                }
+                Vec::new()
+            }
             ClientMessage::ReloadAgents => {
                 if self.is_controller(client_id) && !self.client_read_only(client_id) {
                     self.reload_agent_definitions();

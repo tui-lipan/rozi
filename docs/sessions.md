@@ -410,3 +410,28 @@ and removing collaborators.
   refers to two different sessions.
 
 See also [Troubleshooting](troubleshooting.md).
+
+## Keep the system awake
+
+Enable **Settings → Sessions → Keep awake while agents work**, or set
+`[session] keep_awake_while_agents_work = true`. The default is disabled. Each session
+server keeps its host awake while any agent is Working, including agents in local panes
+and sessions whose UI has detached. Blocked, Idle, Done, exited panes, and no agents
+allow sleep after a five-second grace period. Working again during that grace period
+keeps the existing lock. Disabling the setting releases it immediately.
+
+Screen blanking and locking remain allowed, and this setting adds no lid-switch lock.
+Linux requires `systemd-inhibit` and logind and blocks sleep requests while held.
+Older systemd helpers are supported; authentication prompts are disabled when the
+installed helper supports that option.
+macOS uses `caffeinate` to prevent idle system sleep; Windows uses a system power
+request to prevent automatic sleep. Explicit sleep and lid handling remain controlled
+by the OS on macOS and Windows. Unsupported hosts allow sleep and log an error.
+
+Saving the setting or reloading config asks attached servers to read their own host
+config; only a writable controller can do this. Remote servers use the remote host's
+setting. While attached remotely, this Settings row is disabled and shows
+**Configure on remote host**; edit the remote host's config and reload it instead.
+Detached servers pick it up at their next controller reload or restart.
+If acquisition fails, the server allows sleep and logs once until the next working
+epoch rather than retrying continuously.

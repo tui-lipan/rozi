@@ -40,8 +40,8 @@ instead of adding an unlinked snippet.
 - A session endpoint ignores `source_pane`/`ROZI_PANE`: a pane id carries no session identity, and
   `--session` names a different namespace than the caller is in. Targets there are explicit.
 - The server's `ServerSettings` are a startup snapshot, except agent definitions (refreshed by
-  `ReloadAgents`) and spawn policy — `[[rules]]`, shell, command runner — which
-  `reload_spawn_policy` re-reads for each headless spawn, since they describe the next pane and a
+  `ReloadAgents`), the host sleep policy (refreshed by controller-only `ReloadSleepPolicy`), and
+  spawn policy — `[[rules]]`, shell, command runner — which `reload_spawn_policy` re-reads for each headless spawn, since they describe the next pane and a
   detached session has no client to send a reload message.
 - `PaneIdentity::env` carries per-spawn values that must never be persisted. File-tree actions pass
   paths through `ROZI_FILE`; never splice a selected filename into a command.

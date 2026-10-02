@@ -26,6 +26,7 @@ See [Terminal features](terminal.md).
 ## Leave work running
 
 - Create named sessions that keep their live panes after clients detach.
+- Optionally keep the system awake while agents work, including after detaching.
 - Attach several clients to one named session and hand layout control between them.
 - Attach to sessions on another machine over SSH.
 - Use temporary sessions for work that does not need a durable name.

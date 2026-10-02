@@ -155,6 +155,7 @@ pub enum SettingsAction {
     ToggleSoundError,
     CycleStartupMode,
     ToggleSessionAutosave,
+    ToggleKeepAwakeWhileAgentsWork,
     ToggleSessionResurrect,
     CycleResurrectForeground,
 }
@@ -242,6 +243,7 @@ impl SettingsAction {
             // Sessions
             Self::CycleStartupMode,
             Self::ToggleSessionAutosave,
+            Self::ToggleKeepAwakeWhileAgentsWork,
             Self::ToggleSessionResurrect,
             Self::CycleResurrectForeground,
         ]
@@ -517,6 +519,14 @@ impl SettingsAction {
                 &mut config.session.resurrect_foreground,
             ),
             _ => false,
+        }
+    }
+
+    pub fn disabled_reason_for_state(self, state: &super::State) -> Option<&'static str> {
+        if self == Self::ToggleKeepAwakeWhileAgentsWork && state.current().remote_target.is_some() {
+            Some("Configure on remote host")
+        } else {
+            self.disabled_reason(&state.config)
         }
     }
 

@@ -72,6 +72,8 @@ pub mod process;
 pub mod progress;
 pub mod server_lifecycle;
 pub mod shell_integration;
+/// Host system-sleep guards; display sleep remains allowed.
+pub mod sleep_inhibit;
 pub mod sound;
 
 /// Open a local file with the platform's default application.

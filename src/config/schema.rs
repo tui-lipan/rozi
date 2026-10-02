@@ -423,6 +423,8 @@ impl ForegroundRestore {
 pub struct SessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
     pub autosave: bool,
+    /// Keep the host awake while any server-owned agent is Working.
+    pub keep_awake_while_agents_work: bool,
     /// Override the session file location; defaults to `$XDG_STATE_HOME/rozi/session.toml`.
     pub path: Option<PathBuf>,
     /// Whether a bare launch opens the session picker (the default), attaches to an ephemeral
@@ -451,6 +453,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             autosave: false,
+            keep_awake_while_agents_work: false,
             path: None,
             startup: SessionStartup::default(),
             resurrect: true,

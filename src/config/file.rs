@@ -410,6 +410,7 @@ struct EnvironmentFileConfig {
 #[serde(default)]
 struct SessionFileConfig {
     autosave: Option<bool>,
+    keep_awake_while_agents_work: Option<bool>,
     path: Option<String>,
     startup: Option<String>,
     resurrect: Option<bool>,
@@ -891,6 +892,9 @@ fn load_config_from_text_with_extensions(
             Ok(_) => config.worktrees.directory = Some(directory),
             Err(message) => warnings.push(format!("Ignored {message}")),
         }
+    }
+    if let Some(enabled) = parsed.session.keep_awake_while_agents_work {
+        config.session.keep_awake_while_agents_work = enabled;
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;
@@ -1761,6 +1765,20 @@ mod file_tests {
                 .resurrect_foreground,
             crate::session::server::ServerSettings::default().resurrect_foreground
         );
+    }
+
+    #[test]
+    fn sleep_policy_defaults_off_and_parses_both_values() {
+        assert!(!Config::default().session.keep_awake_while_agents_work);
+        assert!(!crate::session::server::ServerSettings::default().keep_awake_while_agents_work);
+        for enabled in [false, true] {
+            let loaded = load_config_from_text(
+                &format!("[session]\nkeep_awake_while_agents_work = {enabled}"),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.session.keep_awake_while_agents_work, enabled);
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        }
     }
 
     #[test]

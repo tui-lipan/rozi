@@ -323,7 +323,7 @@ fn open_settings_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -341,7 +341,7 @@ fn open_settings_choice(
 }
 
 fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsAction) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -551,6 +551,15 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
             persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
         }
+        ToggleKeepAwakeWhileAgentsWork => {
+            ctx.state.config.session.keep_awake_while_agents_work =
+                !ctx.state.config.session.keep_awake_while_agents_work;
+            persisted = Some((
+                "session",
+                "keep_awake_while_agents_work",
+                ctx.state.config.session.keep_awake_while_agents_work,
+            ));
+        }
         ToggleSessionAutosave => {
             ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
             persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
@@ -571,6 +580,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         };
         if let Err(err) = result {
             preference_error(ctx, err);
+        } else if action == ToggleKeepAwakeWhileAgentsWork {
+            crate::ops::config::reload_sleep_policy(ctx);
         }
     }
     if !matches!(action, Theme | EditPadding) {
@@ -650,7 +661,7 @@ fn cycle_settings_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -1715,8 +1726,45 @@ mod tests {
     }
 
     #[test]
+    fn sleep_policy_settings_cannot_change_local_config_while_attached_remotely() {
+        on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
+            crate::config::persist_session_flag("keep_awake_while_agents_work", false).unwrap();
+            let before = std::fs::read(crate::config::config_path()).unwrap();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .state_mut()
+                .config
+                .session
+                .keep_awake_while_agents_work = false;
+            backend.state_mut().current_mut().remote_target = Some(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+            );
+            let action = crate::state::SettingsAction::ToggleKeepAwakeWhileAgentsWork;
+            for message in [
+                Msg::SettingsActivate(action),
+                Msg::SettingsCycleChoice(action),
+            ] {
+                backend.dispatch(message).unwrap();
+                assert!(!backend.state().config.session.keep_awake_while_agents_work);
+                assert_eq!(std::fs::read(crate::config::config_path()).unwrap(), before);
+            }
+            backend.state_mut().current_mut().remote_target = None;
+            backend.dispatch(Msg::SettingsActivate(action)).unwrap();
+            assert!(backend.state().config.session.keep_awake_while_agents_work);
+            assert!(
+                crate::config::load_config()
+                    .config
+                    .session
+                    .keep_awake_while_agents_work
+            );
+        });
+    }
+
+    #[test]
     fn settings_toggles_session_flags() {
         on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             for (action, key) in [
@@ -1725,20 +1773,34 @@ mod tests {
                     "autosave",
                 ),
                 (
+                    crate::state::SettingsAction::ToggleKeepAwakeWhileAgentsWork,
+                    "keep_awake_while_agents_work",
+                ),
+                (
                     crate::state::SettingsAction::ToggleSessionResurrect,
                     "resurrect",
                 ),
             ] {
                 let before = match key {
                     "autosave" => backend.state().config.session.autosave,
+                    "keep_awake_while_agents_work" => {
+                        backend.state().config.session.keep_awake_while_agents_work
+                    }
                     _ => backend.state().config.session.resurrect,
                 };
                 backend.dispatch(Msg::SettingsActivate(action)).unwrap();
                 let after = match key {
                     "autosave" => backend.state().config.session.autosave,
+                    "keep_awake_while_agents_work" => {
+                        backend.state().config.session.keep_awake_while_agents_work
+                    }
                     _ => backend.state().config.session.resurrect,
                 };
                 assert_eq!(after, !before, "{key} should toggle");
+                let saved = crate::config::load_config();
+                if key == "keep_awake_while_agents_work" {
+                    assert_eq!(saved.config.session.keep_awake_while_agents_work, after);
+                }
                 assert_eq!(backend.state().settings_selected, Some(action));
                 assert!(backend.state().show_settings, "the dialog stays open");
             }

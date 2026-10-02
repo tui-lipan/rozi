@@ -13,7 +13,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     for entry in ctx.command_registry().entries() {
         if !crate::commands::is_palette_eligible(entry.id.as_str())
             || Action::from_id(entry.id.as_str())
-                .is_some_and(|action| !crate::commands::command_available(action, &ctx.state))
+                .is_some_and(|action| !crate::commands::palette_visible(action, &ctx.state))
         {
             continue;
         }

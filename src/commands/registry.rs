@@ -360,6 +360,17 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
     }
 }
 
+/// Whether the command palette lists `action` right now. Stricter than [`command_available`]: a
+/// row the focused pane cannot use is noise in the palette, but a bound key still runs and
+/// explains why it cannot act.
+pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
+    command_available(action, state)
+        && match action {
+            Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
+            _ => true,
+        }
+}
+
 /// The display chord for a built-in command's first current binding (e.g. `ctrl+a e`), read live
 /// from the registry so `[keys]` overrides are honored. `None` when the command is unbound. Prefer
 /// this over hardcoding keys in toasts/hints, since every binding is user-configurable.
@@ -1616,6 +1627,22 @@ mod tests {
         assert!(!command_available(Action::ApplyProfile, &state));
         state.current_mut().session_attached = true;
         assert!(command_available(Action::ApplyProfile, &state));
+    }
+
+    #[test]
+    fn worktrees_is_listed_only_for_a_pane_in_a_git_repository() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+        state.current_mut().session_client = Some(client);
+        assert!(command_available(Action::OpenWorktrees, &state));
+        assert!(!palette_visible(Action::OpenWorktrees, &state));
+
+        let focused = state.focused_pane().unwrap();
+        crate::pane::lifecycle::find_pane_mut(&mut state, focused)
+            .unwrap()
+            .terminal
+            .project_root = Some("/repo".to_string());
+        assert!(palette_visible(Action::OpenWorktrees, &state));
     }
 
     #[test]

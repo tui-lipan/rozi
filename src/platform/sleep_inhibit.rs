@@ -11,20 +11,10 @@ mod backend {
     fn command(reason: &str) -> Command {
         #[cfg(target_os = "linux")]
         let mut command = {
-            let mut command = Command::new("systemd-inhibit");
-            // systemd-inhibit holds the lock while cat runs. The pipe closes even if the
-            // server is killed, so cat and its waiting helper exit without an orphaned lock.
-            command.args([
-                "--what=sleep",
-                "--mode=block",
-                "--who=rozi",
-                "--no-ask-password",
-                "--why",
-                reason,
-                "--",
-                "cat",
-            ]);
-            command
+            static SUPPORTS_NO_ASK_PASSWORD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            let supported = *SUPPORTS_NO_ASK_PASSWORD
+                .get_or_init(|| probe_no_ask_password(std::ffi::OsStr::new("systemd-inhibit")));
+            linux_command(reason, supported)
         };
         #[cfg(target_os = "macos")]
         let mut command = {
@@ -37,6 +27,39 @@ mod backend {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        command
+    }
+
+    #[cfg(target_os = "linux")]
+    fn probe_no_ask_password(program: &std::ffi::OsStr) -> bool {
+        // Probe the installed helper rather than a version number, so backports work too.
+        // Missing/failed help falls back to the arguments supported by older systemd.
+        Command::new(program)
+            .arg("--help")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && output
+                        .stdout
+                        .split(|byte| byte.is_ascii_whitespace())
+                        .any(|word| word == b"--no-ask-password")
+            })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_command(reason: &str, supports_no_ask_password: bool) -> Command {
+        let mut command = Command::new("systemd-inhibit");
+        command.args(["--what=sleep", "--mode=block", "--who=rozi"]);
+        // systemd <= 256 has neither this option nor the interactive agent it disables.
+        if supports_no_ask_password {
+            command.arg("--no-ask-password");
+        }
+        // The helper holds the lock while cat runs. Closing the server-owned pipe on
+        // server death makes cat and its waiting helper exit without an orphaned lock.
+        command.args(["--why", reason, "--", "cat"]);
         command
     }
 
@@ -70,6 +93,9 @@ mod backend {
 
         #[test]
         fn command_inhibits_only_system_sleep() {
+            #[cfg(target_os = "linux")]
+            let cmd = linux_command("agents working", true);
+            #[cfg(target_os = "macos")]
             let cmd = command("agents working");
             let args: Vec<_> = cmd.get_args().map(|arg| arg.to_str().unwrap()).collect();
             #[cfg(target_os = "linux")]
@@ -94,6 +120,59 @@ mod backend {
                 assert_eq!(cmd.get_program(), "caffeinate");
                 assert_eq!(args, ["-i", "-w", &std::process::id().to_string()]);
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn linux_command_supports_old_helpers_without_the_password_option() {
+            let cmd = linux_command("agents working", false);
+            let args: Vec<_> = cmd.get_args().map(|arg| arg.to_str().unwrap()).collect();
+            assert_eq!(
+                args,
+                [
+                    "--what=sleep",
+                    "--mode=block",
+                    "--who=rozi",
+                    "--why",
+                    "agents working",
+                    "--",
+                    "cat"
+                ]
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn linux_help_probe_recognizes_old_new_and_failed_helpers() {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = tempfile::tempdir().unwrap();
+            let helper = directory.path().join("systemd-inhibit");
+            // Representative help from v256 and v257; the probe never acquires a real lock.
+            for (help, exit_code, expected) in [
+                (
+                    "--what=WHAT Operations to inhibit\n--mode=MODE One of block or delay",
+                    0,
+                    false,
+                ),
+                (
+                    "--no-ask-password Do not query the user for authentication",
+                    0,
+                    true,
+                ),
+                (
+                    "--no-ask-password Do not query the user for authentication",
+                    1,
+                    false,
+                ),
+                ("", 0, false),
+            ] {
+                std::fs::write(&helper, format!("#!/bin/sh\n[ \"$1\" = --help ] || exit 99\nprintf '%s\\n' '{help}'\nexit {exit_code}\n")).unwrap();
+                std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+                assert_eq!(probe_no_ask_password(helper.as_os_str()), expected);
+            }
+            assert!(!probe_no_ask_password(
+                directory.path().join("missing").as_os_str()
+            ));
         }
 
         #[test]

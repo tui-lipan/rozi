@@ -1204,3 +1204,30 @@ fn sessions_show_current_sleep_policy_as_boolean_row() {
         );
     });
 }
+
+#[test]
+fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
+        backend.state_mut().current_mut().remote_target =
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into()));
+        for local_enabled in [false, true] {
+            backend
+                .state_mut()
+                .config
+                .session
+                .keep_awake_while_agents_work = local_enabled;
+            let frame = rendered_rows(&mut backend);
+            let row = setting_row(&frame, "Keep awake while agents work");
+            assert!(row.contains("Configure on remote host"), "{row}");
+            assert!(
+                !row.contains("Enabled") && !row.contains("Disabled"),
+                "{row}"
+            );
+        }
+        backend.state_mut().current_mut().remote_target = None;
+        let frame = rendered_rows(&mut backend);
+        assert!(setting_row(&frame, "Keep awake while agents work").contains("Enabled"));
+    });
+}

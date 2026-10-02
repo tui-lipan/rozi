@@ -323,7 +323,7 @@ fn open_settings_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -341,7 +341,7 @@ fn open_settings_choice(
 }
 
 fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsAction) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -661,7 +661,7 @@ fn cycle_settings_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
 ) -> Update {
-    if action.disabled_reason(&ctx.state.config).is_some() {
+    if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
@@ -1721,6 +1721,42 @@ mod tests {
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Profile,
                 "starring a profile puts the mode back in the ring"
+            );
+        });
+    }
+
+    #[test]
+    fn sleep_policy_settings_cannot_change_local_config_while_attached_remotely() {
+        on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
+            crate::config::persist_session_flag("keep_awake_while_agents_work", false).unwrap();
+            let before = std::fs::read(crate::config::config_path()).unwrap();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .state_mut()
+                .config
+                .session
+                .keep_awake_while_agents_work = false;
+            backend.state_mut().current_mut().remote_target = Some(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+            );
+            let action = crate::state::SettingsAction::ToggleKeepAwakeWhileAgentsWork;
+            for message in [
+                Msg::SettingsActivate(action),
+                Msg::SettingsCycleChoice(action),
+            ] {
+                backend.dispatch(message).unwrap();
+                assert!(!backend.state().config.session.keep_awake_while_agents_work);
+                assert_eq!(std::fs::read(crate::config::config_path()).unwrap(), before);
+            }
+            backend.state_mut().current_mut().remote_target = None;
+            backend.dispatch(Msg::SettingsActivate(action)).unwrap();
+            assert!(backend.state().config.session.keep_awake_while_agents_work);
+            assert!(
+                crate::config::load_config()
+                    .config
+                    .session
+                    .keep_awake_while_agents_work
             );
         });
     }

@@ -522,6 +522,14 @@ impl SettingsAction {
         }
     }
 
+    pub fn disabled_reason_for_state(self, state: &super::State) -> Option<&'static str> {
+        if self == Self::ToggleKeepAwakeWhileAgentsWork && state.current().remote_target.is_some() {
+            Some("Configure on remote host")
+        } else {
+            self.disabled_reason(&state.config)
+        }
+    }
+
     pub fn disabled_reason(self, config: &Config) -> Option<&'static str> {
         let pane = &config.pane;
         match self {

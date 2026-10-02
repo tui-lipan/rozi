@@ -16,8 +16,8 @@ checkouts. The palette lists **Worktrees** only while the focused pane is in a G
 **Worktrees** has no default command key.
 
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
-marks the checkout the focused pane is in, and each row shows that checkout's sessions on the
-right. The picker opens with the list it last showed for the repository and refreshes it in place.
+marks the checkout the focused pane is in. Each row shows the branch, then its path and, after a
+`·`, the checkout's sessions or a state such as `primary` or `locked`. The picker opens with the list it last showed for the repository and refreshes it in place.
 
 Press `Enter` on a checkout to open it:
 

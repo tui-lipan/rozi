@@ -117,8 +117,10 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                     styles.state
                 }));
             }
-            // A narrow modal cuts the description from its start: the path's tail and the session
-            // or `locked` state are what tell rows apart and decide what Enter does.
+            // A narrow modal cuts the description from its start, keeping the path's tail and the
+            // session or `locked` state, which tell rows apart and decide what Enter does. The
+            // description still gives way before the branch, so a branch wide enough to fill the
+            // row hides the state too.
             Some(
                 ListItem::from_spans([
                     Span::new(if row.current { "● " } else { "  " }).style(styles.marker),

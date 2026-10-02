@@ -140,6 +140,42 @@ fn picker_widens_to_fit_long_checkout_rows() {
     });
 }
 
+/// A narrow picker cuts a row's description from its start, so the path's tail and the state that
+/// decides what Enter does stay visible while the branch is kept whole.
+#[test]
+fn narrow_picker_keeps_the_state_and_path_tail() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        {
+            let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+            picker.target = None;
+            picker.cwd = "/home/me/src/rozi".into();
+            picker.sessions.clear();
+            picker.entries[0].path =
+                "/home/me/src/rozi/.claude/worktrees/session-fade-duration".into();
+            picker.entries[0].branch = Some("feat/narrow-layout".into());
+            picker.entries[0].lock = Some(rozi::git::worktrees::WorktreeLock {
+                reason: String::new(),
+                stale: false,
+            });
+        }
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 20,
+        });
+        backend.render();
+        let frame = backend.capture_frame().plain_text();
+        let row = frame
+            .lines()
+            .find(|line| line.contains("feat/narrow-layout"))
+            .unwrap_or_else(|| panic!("the branch is kept whole: {frame}"));
+        assert!(row.contains("…"), "the path is cut: {frame}");
+        assert!(row.contains("duration · locked"), "{frame}");
+    });
+}
+
 #[test]
 fn stale_list_reply_does_not_replace_a_new_picker_request() {
     on_large_stack(|| {

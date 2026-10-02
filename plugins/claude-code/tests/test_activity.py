@@ -301,6 +301,71 @@ class ActivityTests(unittest.TestCase):
                 sender.result(timeout=2)
         self.assertEqual(self.field("--state"), "blocked")
 
+    def test_state_lock_longer_than_one_second_retries_without_losing_permission(self):
+        self.hook("SessionStart")
+        path = activity.state_path(self.env, 123)
+        owner = activity.open_state(path)
+        owner.execute("BEGIN IMMEDIATE")
+        retrying = threading.Event()
+        original = activity.retry_delay
+
+        def observe_retry(deadline):
+            retrying.set()
+            return original(deadline)
+
+        try:
+            with patch.object(activity, "retry_delay", side_effect=observe_retry):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    permission = pool.submit(self.hook, "PermissionRequest")
+                    try:
+                        self.assertTrue(retrying.wait(timeout=1))
+                        # Exercise a real SQLite lock beyond the old one-second timeout.
+                        time.sleep(1.1)
+                    finally:
+                        owner.commit()
+                    permission.result(timeout=3)
+        finally:
+            owner.close()
+        self.assertEqual(self.field("--state"), "blocked")
+        self.assertEqual(self.field("--seq"), "2")
+
+    def test_busy_transaction_rolls_back_before_retrying_the_event(self):
+        self.hook("SessionStart")
+        original = activity.record_event
+        attempts = 0
+
+        def fail_first_transaction(db, event, change):
+            nonlocal attempts
+            attempts += 1
+            original(db, event, change)
+            if attempts == 1:
+                raise activity.sqlite3.OperationalError("database is locked")
+
+        with patch.object(activity, "record_event", side_effect=fail_first_transaction):
+            self.hook("Elicitation", mcp_server_name="server")
+        db = activity.open_state(activity.state_path(self.env, 123))
+        try:
+            self.assertEqual(db.execute("SELECT count FROM blockers").fetchone()[0], 1)
+        finally:
+            db.close()
+        self.assertEqual(attempts, 2)
+        self.assertEqual(self.field("--seq"), "2")
+
+    def test_state_retry_deadline_is_bounded_and_skips_delivery(self):
+        error = activity.sqlite3.OperationalError("database is locked")
+        with patch.object(activity, "persist_once", side_effect=error) as persist, \
+             patch.object(activity.time, "monotonic", side_effect=[10, 14]):
+            with self.assertRaises(activity.sqlite3.OperationalError):
+                self.hook("SessionStart")
+        self.assertEqual(persist.call_count, 1)
+        self.assertEqual(self.calls, [])
+
+    def test_non_lock_database_failure_is_not_retried(self):
+        with patch.object(activity, "persist_once", side_effect=activity.sqlite3.OperationalError("disk I/O error")) as persist:
+            with self.assertRaises(activity.sqlite3.OperationalError):
+                self.hook("SessionStart")
+        self.assertEqual(persist.call_count, 1)
+
     def test_resume_retries_release_after_timeout_launch_failure_or_nonzero_exit(self):
         failures = (
             subprocess.TimeoutExpired("rozi", 0.75), FileNotFoundError("rozi"),
@@ -408,12 +473,16 @@ class ActivityTests(unittest.TestCase):
 
     def test_manifest_hooks_run_directly_and_synchronously(self):
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
+        self.assertLess(activity.CLI_TIMEOUT, activity.DELIVERY_BUDGET)
+        self.assertLess(activity.DELIVERY_BUDGET, activity.STATE_RETRY_BUDGET)
         for name, groups in hooks.items():
             hook = groups[0]["hooks"][0]
             self.assertEqual(hook["command"], "python")
             self.assertEqual(hook["args"], ["${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"])
             self.assertFalse(hook.get("async", False), name)
-            self.assertGreater(hook["timeout"], activity.CLI_TIMEOUT)
+            implementation_budget = (activity.STATE_RETRY_BUDGET + activity.DELIVERY_BUDGET
+                                     + activity.DELIVERY_LOCK_TIMEOUT + 2 * activity.STATE_LOCK_TIMEOUT)
+            self.assertGreater(hook["timeout"], implementation_budget + 0.5)
         self.assertNotIn("SubagentStop", hooks)
         self.assertIn("PostToolBatch", hooks)
 

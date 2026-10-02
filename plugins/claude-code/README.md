@@ -82,6 +82,17 @@ notification text. Individual rozi calls time out after 750 ms, with a 900 ms de
 hook. Hooks produce no output or permission
 decisions, and failures never prevent Claude from continuing.
 
+State persistence gets priority over delivery. Schema initialization and the event transaction
+retry SQLite lock contention for up to three seconds, with short waits and random delays between
+attempts. Failed transactions roll back before retrying, so an event is recorded once. The
+configured command-hook timeout is five seconds, leaving time for startup and delivery after
+persistence. Delivery stays best effort; a failed delivery leaves committed state pending.
+
+Claude applies a separate default 1.5-second overall timeout to `SessionEnd`, and a plugin's
+timeout setting does not raise that budget. To allow the full five seconds during exit or
+conversation switching, launch Claude with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=5000`.
+See the [SessionEnd timeout reference](https://code.claude.com/docs/en/hooks#sessionend).
+
 Reporting requires the pane's `ROZI_SOCKET`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`. Remote and
 headless panes without a local UI endpoint keep using Rozi's screen detection. If the UI endpoint
 goes away, hook reports cannot reach it. Restart Claude Code in an attached pane to begin a new

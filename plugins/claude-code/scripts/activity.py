@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import random
 import sqlite3
 import subprocess
 import sys
@@ -38,7 +39,8 @@ NOTIFICATIONS = {
     "quota_auto_resume_disabled": ("idle", "Usage limit wait ended"),
 }
 CLI_TIMEOUT = 0.75
-STATE_LOCK_TIMEOUT = 1.0
+STATE_LOCK_TIMEOUT = 0.05
+STATE_RETRY_BUDGET = 3.0
 DELIVERY_LOCK_TIMEOUT = 0.05
 DELIVERY_BUDGET = 0.9
 
@@ -104,8 +106,7 @@ def connect_private(path: Path, timeout: float) -> sqlite3.Connection:
     return sqlite3.connect(path, timeout=timeout, isolation_level=None)
 
 
-def open_state(path: Path) -> sqlite3.Connection:
-    db = connect_private(path, STATE_LOCK_TIMEOUT)
+def initialize_state(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS run (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         token TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
@@ -126,7 +127,53 @@ def open_state(path: Path) -> sqlite3.Connection:
     db.execute("""CREATE TABLE IF NOT EXISTS attempts (
         token TEXT PRIMARY KEY, seq INTEGER NOT NULL
     )""")
-    return db
+
+
+def open_state(path: Path) -> sqlite3.Connection:
+    db = connect_private(path, STATE_LOCK_TIMEOUT)
+    try:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            initialize_state(db)
+        return db
+    except BaseException:
+        db.close()
+        raise
+
+
+def is_lock_error(error: sqlite3.OperationalError) -> bool:
+    return "locked" in str(error) or "busy" in str(error)
+
+
+def persist_once(path: Path, event: dict, change: tuple) -> sqlite3.Connection:
+    db = open_state(path)
+    try:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            record_event(db, event, change)
+        return db
+    except BaseException:
+        db.close()
+        raise
+
+
+def retry_delay(deadline: float) -> bool:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    # Independent hook processes must not all retry ownership at the same instant.
+    time.sleep(min(random.uniform(0.01, 0.05), remaining))
+    return time.monotonic() < deadline
+
+
+def persist_event(path: Path, event: dict, change: tuple) -> sqlite3.Connection:
+    deadline = time.monotonic() + STATE_RETRY_BUDGET
+    while True:
+        try:
+            return persist_once(path, event, change)
+        except sqlite3.OperationalError as error:
+            if not is_lock_error(error) or not retry_delay(deadline):
+                raise
 
 
 def start_run(db: sqlite3.Connection, row: tuple | None, event: dict) -> tuple:
@@ -316,7 +363,7 @@ def acquire_sender(sender: sqlite3.Connection) -> bool:
         sender.execute("BEGIN IMMEDIATE")
         return True
     except sqlite3.OperationalError as error:
-        if "locked" not in str(error):
+        if not is_lock_error(error):
             raise
         return False
 
@@ -330,15 +377,29 @@ def flush_pending(db: sqlite3.Connection, path: Path, env: dict[str, str]) -> No
             return
         deadline = time.monotonic() + DELIVERY_BUDGET
         while time.monotonic() < deadline:
-            delivery = next_delivery(db)
-            if delivery is None:
-                return
-            remaining = max(0.001, deadline - time.monotonic())
-            if not send_report(env, delivery[:3], delivery[3:], min(CLI_TIMEOUT, remaining)):
-                return
-            acknowledge_delivery(db, delivery)
+            try:
+                if not deliver_pending(db, env, deadline):
+                    return
+            except sqlite3.OperationalError as error:
+                if not is_lock_error(error):
+                    raise
+                if not retry_delay(deadline):
+                    return
     finally:
         sender.close()
+
+
+def deliver_pending(db: sqlite3.Connection, env: dict[str, str], deadline: float) -> bool:
+    delivery = next_delivery(db)
+    if delivery is None:
+        return False
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    if not send_report(env, delivery[:3], delivery[3:], min(CLI_TIMEOUT, remaining)):
+        return False
+    acknowledge_delivery(db, delivery)
+    return True
 
 
 def handle(event: dict, env: dict[str, str], parent_pid: int) -> None:
@@ -351,11 +412,10 @@ def handle(event: dict, env: dict[str, str], parent_pid: int) -> None:
     if change is None:
         return
     path = state_path(env, parent_pid)
-    db = open_state(path)
+    # State persistence has its own retry budget. Delivery gets only its separate, smaller
+    # budget after the event has committed, and never extends a failed persistence attempt.
+    db = persist_event(path, event, change)
     try:
-        with db:
-            db.execute("BEGIN IMMEDIATE")
-            record_event(db, event, change)
         flush_pending(db, path, env)
     finally:
         db.close()

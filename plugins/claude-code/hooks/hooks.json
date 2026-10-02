@@ -9,7 +9,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -23,7 +23,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -37,7 +37,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -51,7 +51,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -65,7 +65,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -79,7 +79,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -93,7 +93,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -107,7 +107,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -121,7 +121,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -135,7 +135,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -149,7 +149,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -163,7 +163,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -177,7 +177,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -191,7 +191,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }
@@ -205,7 +205,7 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/activity.py"
             ],
-            "timeout": 2
+            "timeout": 5
           }
         ]
       }

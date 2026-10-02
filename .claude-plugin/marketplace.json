@@ -1,0 +1,13 @@
+{
+  "name": "rozi",
+  "owner": { "name": "Rozi contributors" },
+  "metadata": { "description": "Claude Code integrations for the Rozi terminal multiplexer." },
+  "plugins": [
+    {
+      "name": "rozi",
+      "source": "./plugins/claude-code",
+      "description": "Report Claude Code activity and conversation identity to Rozi.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -149,6 +149,26 @@ fn canonical_extension_logic_passes_without_live_optional_services() {
 }
 
 #[test]
+fn claude_code_plugin_lifecycle_passes_without_a_live_ui() {
+    let python = Command::new("python").arg("--version").output();
+    if !python.is_ok_and(|output| output.status.success()) {
+        return;
+    }
+    let output = Command::new("python")
+        .args(["-m", "unittest", "discover", "-s"])
+        .arg(repository_root().join("plugins/claude-code/tests"))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn extension_author_skill_tracks_the_current_public_contract() {
     let path = repository_root().join(".agents/skills/rozi-extension/SKILL.md");
     let skill = std::fs::read_to_string(path).unwrap();

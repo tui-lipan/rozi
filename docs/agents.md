@@ -18,6 +18,30 @@ not match the version you run.
 Detection runs in the session server, so every client attached to a session sees the same agent
 label and state.
 
+## Integrate Claude Code hooks
+
+The [Claude Code plugin](../plugins/claude-code/README.md) reports activity directly from Claude's
+hooks, including permission waits, questions, response completion, and the conversation ID used
+by [native resume](sessions.md#reopen-an-agent-conversation).
+
+Install it in Claude Code:
+
+```text
+/plugin marketplace add tui-lipan/rozi
+/plugin install rozi@rozi
+```
+
+Restart Claude Code inside a local Rozi pane. The plugin needs Python 3.10 or newer available as
+`python` and a current Claude Code with exec-form hooks and `CLAUDE_PLUGIN_DATA`. It requires
+`rozi agents report` and `rozi agents release`; no Rozi extension is needed. Remote and headless
+panes without a local UI endpoint continue using screen detection.
+
+The plugin reports one activity for the main conversation. Child-agent completion cannot mark the
+parent done, and background tasks or scheduled wakeups keep a completed response working.
+Parallel tool completions keep the conversation blocked while another input wait remains.
+Permission waits without a tool ID clear when the whole tool batch resolves or the turn ends.
+See the plugin README for the event mapping, checkout installation, and verification steps.
+
 ## Add an agent
 
 Start with a process match:
@@ -280,6 +304,10 @@ Inside a rozi pane without `--session`, an omitted `--target` means the calling 
 (`ROZI_PANE`). With `--session`, always pass `--target`, because an inherited pane number may belong
 to a different session.
 
+Pane hooks carry `ROZI_SESSION_INSTANCE`, so reports and releases follow the calling pane's
+session even after the UI switches to another attached session. If that session is no longer
+attached, the UI refuses the report instead of applying it to the session on screen.
+
 ## Publish state instead of reading the screen
 
 Screen matching only sees what one terminal is currently drawing. It cannot reliably follow a
@@ -305,7 +333,8 @@ unsent text, a dialog, or a streaming response. Install it from the **Discover**
 **Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/claude-rozi-sessions.git`.
 
-It works with or without a Claude Code hook integration. With one, the hooks' state drives the row
-for the conversation they report on, matched by `native_session`, and the other rows stay listed.
+It works with or without the [Claude Code hook plugin](#integrate-claude-code-hooks). With it, the
+hooks' state drives the row for the conversation they report on, matched by `native_session`, and
+the other rows stay listed.
 The extension needs a readable foreground process group, so it covers local panes on Linux and
 macOS, not Windows or remote panes.

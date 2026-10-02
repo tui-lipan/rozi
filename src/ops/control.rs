@@ -40,6 +40,21 @@ pub(crate) fn handle_control_request(
     if envelope.request.command.pane_wait().is_some() {
         return crate::ops::capture_wait::start(ctx, envelope);
     }
+    let agent_report_epoch = if envelope.request.source_session.is_some()
+        && matches!(
+            envelope.request.command,
+            ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. }
+        ) {
+        match crate::ops::attached_control::route(&ctx.state, &envelope.request) {
+            Ok(epoch) => Some(epoch),
+            Err(response) => {
+                let _ = envelope.reply.send(response);
+                return Update::none();
+            }
+        }
+    } else {
+        None
+    };
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
         ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
@@ -334,6 +349,7 @@ pub(crate) fn handle_control_request(
             return report_agent(
                 ctx,
                 target.or(envelope.request.source_pane),
+                agent_report_epoch,
                 Some(agent),
                 integration,
                 Some(state),
@@ -351,6 +367,7 @@ pub(crate) fn handle_control_request(
             return report_agent(
                 ctx,
                 target.or(envelope.request.source_pane),
+                agent_report_epoch,
                 None,
                 integration,
                 None,
@@ -1032,6 +1049,7 @@ fn validate_agent_input_reference(
 fn report_agent(
     ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
+    origin_epoch: Option<u64>,
     agent: Option<String>,
     integration: String,
     state: Option<crate::session::protocol::AgentState>,
@@ -1047,24 +1065,12 @@ fn report_agent(
         ));
         return Update::none();
     };
-    let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
-    else {
-        let _ = reply.send(ControlResponse::error_with(
-            ControlErrorCode::PaneNotFound,
-            format!("pane {id} not found"),
-        ));
-        return Update::none();
-    };
-    let pane_id = pane.id;
-    let generation = pane.pty_generation;
-    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, pane.id);
-    let scratch = crate::scratchpad::contains(&ctx.state, pane.id);
-    let Some(client) = ctx.state.pty_client_for_pane(pane.id) else {
-        let _ = reply.send(ControlResponse::error_with(
-            ControlErrorCode::SessionNotConnected,
-            format!("pane {id} has no session server"),
-        ));
-        return Update::none();
+    let destination = match agent_report_destination(&ctx.state, id, origin_epoch) {
+        Ok(destination) => destination,
+        Err(response) => {
+            let _ = reply.send(response);
+            return Update::none();
+        }
     };
     let request_id = ctx.state.next_agent_report_request_id;
     ctx.state.next_agent_report_request_id = ctx
@@ -1075,15 +1081,15 @@ fn report_agent(
     ctx.state.pending_agent_report_replies.insert(
         request_id,
         crate::state::PendingAgentReportReply {
-            origin_epoch: (!scratch).then_some(ctx.state.runtime_epoch),
+            origin_epoch: destination.origin_epoch,
             reply,
         },
     );
-    client.report_agent(
+    destination.client.report_agent(
         request_id,
-        pane_id,
-        generation,
-        local,
+        id,
+        destination.generation,
+        destination.local,
         agent,
         integration,
         state,
@@ -1092,6 +1098,56 @@ fn report_agent(
         seq,
     );
     Update::none()
+}
+
+struct AgentReportDestination {
+    generation: u64,
+    local: bool,
+    origin_epoch: Option<u64>,
+    client: crate::session::client::SessionClient,
+}
+
+fn agent_report_destination(
+    state: &crate::state::State,
+    id: PaneId,
+    origin_epoch: Option<u64>,
+) -> std::result::Result<AgentReportDestination, ControlResponse> {
+    let pane = match origin_epoch {
+        Some(epoch) => state.attachment_for_epoch(epoch).and_then(|attachment| {
+            attachment
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.panes.iter())
+                .find(|pane| pane.id == id)
+        }),
+        None => crate::pane::lifecycle::find_pane(state, id),
+    }
+    .filter(|pane| !pane.closing)
+    .ok_or_else(|| {
+        ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        )
+    })?;
+    let client = match origin_epoch {
+        Some(epoch) => state
+            .attachment_for_epoch(epoch)
+            .and_then(|attachment| attachment.session_client.clone()),
+        None => state.pty_client_for_pane(id),
+    }
+    .ok_or_else(|| {
+        ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {id} has no session server"),
+        )
+    })?;
+    Ok(AgentReportDestination {
+        generation: pane.pty_generation,
+        local: origin_epoch.is_none() && crate::pane::lifecycle::pane_is_local(state, id),
+        origin_epoch: origin_epoch
+            .or_else(|| (!crate::scratchpad::contains(state, id)).then_some(state.runtime_epoch)),
+        client,
+    })
 }
 
 fn set_status(

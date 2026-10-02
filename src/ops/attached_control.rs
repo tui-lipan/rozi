@@ -54,7 +54,10 @@ pub(crate) fn forward_recording(
 
 /// The epoch of the attachment `request` is about: the calling pane's session, current or in the
 /// background, or the one on screen for a caller outside every session.
-fn route(state: &State, request: &ControlRequest) -> std::result::Result<u64, ControlResponse> {
+pub(crate) fn route(
+    state: &State,
+    request: &ControlRequest,
+) -> std::result::Result<u64, ControlResponse> {
     match (&request.source_session, request.source_pane) {
         (Some(instance), _) => std::iter::once((state.runtime_epoch, state.current()))
             .chain(
@@ -406,6 +409,90 @@ mod tests {
                 "a dropped session answers what it left pending"
             );
             assert!(backend.state().pending_attached_controls.is_empty());
+        });
+    }
+
+    #[test]
+    fn agent_hooks_follow_the_calling_session_after_switching_away() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (background_client, background_outbound) = SessionClient::test_channel();
+            let (current_client, current_outbound) = SessionClient::test_channel();
+            let pane = backend.state().focused_pane().unwrap();
+            {
+                let state = backend.state_mut();
+                attach(state.current_mut(), background_client, "background");
+                state.current_mut().workspaces[0].panes[0].pty_generation = 9;
+                let mut background = std::mem::take(state.current_mut());
+                background.epoch = 4;
+                state.background.insert(4, background);
+                state.runtime_epoch = 5;
+                attach(state.current_mut(), current_client, "current");
+                state.current_mut().workspaces[0]
+                    .panes
+                    .push(crate::state::Pane::new(pane, 100, Default::default()));
+            }
+            let commands = [
+                ControlCommand::AgentReport {
+                    target: None,
+                    agent: "claude".into(),
+                    integration: "hook-token".into(),
+                    state: crate::session::protocol::AgentState::Working,
+                    reason: None,
+                    native_session: Some("native-id".into()),
+                    seq: 1,
+                },
+                ControlCommand::AgentRelease {
+                    target: None,
+                    integration: "hook-token".into(),
+                    seq: 2,
+                },
+            ];
+            for command in commands {
+                let response = ask_from(&mut backend, command, Some(pane), Some("background"));
+                let reports = background_outbound
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::Control(ClientMessage::ReportAgent {
+                            request_id,
+                            pane_id,
+                            generation,
+                            local,
+                            ..
+                        }) => Some((request_id, pane_id, generation, local)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let [(request_id, pane_id, generation, local)] = reports.try_into().unwrap();
+                assert_eq!((pane_id, generation, local), (pane, 9, false));
+                assert_eq!(
+                    backend.state().pending_agent_report_replies[&request_id].origin_epoch,
+                    Some(4)
+                );
+                backend
+                    .dispatch(crate::Msg::SessionAgentReportResult {
+                        epoch: 4,
+                        request_id,
+                        response: ControlResponse::empty(),
+                    })
+                    .unwrap();
+                assert!(response.try_recv().unwrap().ok);
+            }
+            assert!(!current_outbound.try_iter().any(|message| matches!(
+                message,
+                ClientOutbound::Control(ClientMessage::ReportAgent { .. })
+            )));
+            let unknown = ask_from(
+                &mut backend,
+                ControlCommand::AgentRelease {
+                    target: None,
+                    integration: "hook-token".into(),
+                    seq: 3,
+                },
+                Some(pane),
+                Some("detached"),
+            );
+            assert_eq!(code(&unknown), Some(ControlErrorCode::SessionNotAttached));
         });
     }
 

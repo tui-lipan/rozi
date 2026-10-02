@@ -1,0 +1,9 @@
+{
+  "name": "rozi",
+  "version": "0.1.0",
+  "description": "Report Claude Code activity and conversation identity to Rozi.",
+  "author": { "name": "Rozi contributors" },
+  "homepage": "https://rozi.tui-lipan.dev/agents",
+  "repository": "https://github.com/tui-lipan/rozi",
+  "license": "MPL-2.0"
+}

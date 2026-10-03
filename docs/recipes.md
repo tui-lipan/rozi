@@ -329,7 +329,7 @@ from inside the session server, with or without a UI, and exports frames with an
 
 ```sh
 rozi --session dev record pane --target 3 --output demo.rozirec   # Ctrl+C to stop
-rozi record export demo.rozirec --to png-frames frames --scale 2
+rozi record export demo.rozirec --to video-frames frames --scale 2
 ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
   -vf "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" demo.gif
 ```
@@ -340,9 +340,9 @@ a shell inside rozi; the file lands in the directory you run them in:
 ```sh
 rozi record start ui --output ui.rozirec
 rozi record stop --ui                       # when you are done
-rozi record export ui.rozirec --to png-frames frames --scale 2
+rozi record export ui.rozirec --to video-frames frames --scale 2
 ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
-  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -pix_fmt yuv420p -fps_mode vfr ui.mp4
+  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -bf 0 -pix_fmt yuv420p -fps_mode vfr -movflags +faststart ui.mp4
 ```
 
 Both keep every change with the moment it happened, so the GIF or video plays in real time. See

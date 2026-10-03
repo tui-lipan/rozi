@@ -27,10 +27,82 @@ pub struct ExportSummary {
 /// each frame its real duration. `dir` is created if missing; existing frames are refused unless
 /// `overwrite`.
 pub fn png_frames<R: BufRead>(
+    replay: Replay<R>,
+    dir: &Path,
+    scale: u8,
+    overwrite: bool,
+) -> Result<ExportSummary, String> {
+    write_png_frames(replay, dir, scale, overwrite, None)
+}
+
+/// Export fixed-size PNGs for video encoding. Resizes keep their original cell size and position;
+/// unused space is filled with each frame's default background. Timing is unchanged.
+pub fn video_frames(
+    input: &Path,
+    dir: &Path,
+    scale: u8,
+    overwrite: bool,
+) -> Result<ExportSummary, String> {
+    let canvas = video_canvas(open(input)?)?;
+    write_png_frames(open(input)?, dir, scale, overwrite, Some(canvas))
+}
+
+fn video_canvas<R: BufRead>(mut replay: Replay<R>) -> Result<(u16, u16), String> {
+    let (mut width, mut height) = (0, 0);
+    while let Some(step) = replay.step()? {
+        if let ReplayStep::Frame { .. } = step {
+            let frame = replay.frame().expect("a frame step has a frame");
+            width = width.max(frame.width);
+            height = height.max(frame.height);
+        }
+    }
+    if usize::from(width) * usize::from(height) > super::read::MAX_FRAME_CELLS {
+        return Err(format!(
+            "video canvas of {width}x{height} cells is too large"
+        ));
+    }
+    Ok((width, height))
+}
+
+fn pad_frame(frame: &mut tui_lipan::CapturedFrame, width: u16, height: u16) -> Result<(), String> {
+    if frame.width == 0 || frame.width > width || frame.height > height {
+        return Err(
+            "recording dimensions changed during export; stop recording before exporting"
+                .to_string(),
+        );
+    }
+    use tui_lipan::CapturedCell;
+    use tui_lipan::prelude::*;
+    let blank = CapturedCell {
+        symbol: " ".to_string(),
+        fg: Color::Reset,
+        bg: Color::Reset,
+        underline_color: Color::Reset,
+        modifiers: Default::default(),
+    };
+    let mut cells = vec![blank; usize::from(width) * usize::from(height)];
+    for (y, row) in frame.cells.chunks(usize::from(frame.width)).enumerate() {
+        let start = y * usize::from(width);
+        cells[start..start + row.len()].clone_from_slice(row);
+    }
+    frame.cells = cells;
+    frame.width = width;
+    frame.height = height;
+    frame.viewport = Rect {
+        x: 0,
+        y: 0,
+        w: width,
+        h: height,
+    };
+    Ok(())
+}
+
+fn write_png_frames<R: BufRead>(
     mut replay: Replay<R>,
     dir: &Path,
     scale: u8,
     overwrite: bool,
+    canvas: Option<(u16, u16)>,
 ) -> Result<ExportSummary, String> {
     std::fs::create_dir_all(dir)
         .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
@@ -42,12 +114,12 @@ pub fn png_frames<R: BufRead>(
                 let name = format!("frame-{:06}.png", frames.len() + 1);
                 let images = replay.frame_images()?.clone();
                 let frame = replay.frame().expect("a frame step has a frame");
-                let png = crate::pane::png_bytes(
-                    &captured_frame(frame, &images),
-                    palette(&frame.palette),
-                    scale,
-                )
-                .map_err(|error| format!("cannot draw frame {}: {error}", frames.len() + 1))?;
+                let mut captured = captured_frame(frame, &images);
+                if let Some((width, height)) = canvas {
+                    pad_frame(&mut captured, width, height)?;
+                }
+                let png = crate::pane::png_bytes(&captured, palette(&frame.palette), scale)
+                    .map_err(|error| format!("cannot draw frame {}: {error}", frames.len() + 1))?;
                 write_new(&dir.join(&name), &png, overwrite)?;
                 frames.push((name, t));
             }
@@ -79,19 +151,20 @@ fn last_frame_end(frames: &[(String, u64)], end: u64) -> u64 {
 }
 
 /// An ffmpeg concat listing that shows each frame until the next one. The last file is listed
-/// twice, as the concat demuxer needs to honor its duration.
+/// twice, as the concat demuxer needs to honor its duration. PNG inputs use a millisecond
+/// time base so ffmpeg does not round timestamps to its default 25 fps.
 fn concat_listing(frames: &[(String, u64)], end: u64) -> String {
     let mut out = String::from("ffconcat version 1.0\n");
     let stop = last_frame_end(frames, end);
     for (index, (name, t)) in frames.iter().enumerate() {
         let next = frames.get(index + 1).map_or(stop, |(_, next)| *next);
         out.push_str(&format!(
-            "file '{name}'\nduration {:.3}\n",
+            "file '{name}'\noption framerate 1000\nduration {:.3}\n",
             next.saturating_sub(*t) as f64 / 1000.0
         ));
     }
     if let Some((name, _)) = frames.last() {
-        out.push_str(&format!("file '{name}'\n"));
+        out.push_str(&format!("file '{name}'\noption framerate 1000\n"));
     }
     out
 }

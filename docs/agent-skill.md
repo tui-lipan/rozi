@@ -13,10 +13,16 @@ With the skill installed, an agent that you ask to use `rozi` can:
 - watch and read coding agents running in other panes through `rozi agents`;
 - control a detached named session with `--session`.
 
-The skill tells the agent to act only when you explicitly ask it to use `rozi`, to read live pane
+The skill lets the agent act when you ask it to use `rozi` or request a live terminal preview
+from a verified `rozi` pane, to read live pane
 IDs instead of guessing them, and to change only the panes and sessions you name or it created. It
 controls the current UI only from inside one of that UI's panes. For the commands themselves, see
 [Control CLI](control.md) and [Scripting](scripting.md).
+
+For visual reviews in this repository, the separate
+[rozi visual skill](../.agents/skills/rozi-visual/SKILL.md) covers preview panes, screenshots,
+live animation recordings, and playable exports. It uses rozi's capture and recording commands;
+it does not replace the tui-lipan app-development visual skill.
 
 ## Install the skill
 

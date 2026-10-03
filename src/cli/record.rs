@@ -67,6 +67,7 @@ fn run_export(
             export::png_frames(export::open(input)?, dir, scale, force)?,
             dir,
         ),
+        ExportTarget::VideoFrames(dir) => (export::video_frames(input, dir, scale, force)?, dir),
         ExportTarget::Cast(path) => (export::cast(export::open(input)?, path, force)?, path),
     };
     println!(
@@ -78,7 +79,7 @@ fn run_export(
     if summary.truncated {
         eprintln!("The recording ends partway through; exported up to its last complete event.");
     }
-    if let ExportTarget::PngFrames(dir) = to {
+    if let ExportTarget::PngFrames(dir) | ExportTarget::VideoFrames(dir) = to {
         let listing = dir.join(export::CONCAT_LISTING);
         eprintln!(
             "Make a GIF with: ffmpeg -f concat -safe 0 -i {} -vf \"split[a][b];[a]palettegen[p];[b][p]paletteuse\" out.gif",

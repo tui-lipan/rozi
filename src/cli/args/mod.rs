@@ -274,7 +274,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let namespace_index = args.iter().position(|arg| {
         matches!(
             arg.as_str(),
-            "agents" | "sessions" | "worktrees" | "extensions" | "skill"
+            "agents" | "sessions" | "worktrees" | "extensions" | "skill" | "record"
         )
     });
     if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {

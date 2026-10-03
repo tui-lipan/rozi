@@ -213,6 +213,7 @@ pub(crate) fn render_workspace_panes(
     let mut seam_titles: Vec<(FloatRect, Element)> = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
+    let mut closing_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
     let mut fullscreen_panes: Vec<(FloatRect, Element)> = Vec::new();
     for pane in ordered_panes(workspace, focused_pane, |pane| {
@@ -484,23 +485,15 @@ pub(crate) fn render_workspace_panes(
                 seam.element,
             ));
         }
-        // A pane in transition stays in the canvas layer, *under* the tile taking its space.
-        //
-        // Lifting it above looks wrong, and the reason is that a terminal cell has no transparency:
-        // an effect that "removes" a cell paints a blank over it, so a pane drawn on top covers its
-        // whole rectangle with a solid square whether or not the effect still has anything there.
-        // Portal's ring ends up inside an opaque box, and Scale's shrinking frame floats over a
-        // neighbour that has already claimed the space - both read as artifacts rather than motion.
-        //
-        // Underneath, the neighbour paints the space it has taken and the leaving pane shows
-        // through wherever the neighbour has not reached yet, which is what "it is going away"
-        // actually looks like. The two share a clock (see `pane_event_animation`), so the neighbour
-        // cannot outrun the effect either.
+        // Closing tiles finish above the live tiled layout. Backdrop-aware reveal effects let
+        // the expanding neighbor show through wherever the closing effect has erased content.
         let above_settled_tiles = merge_layering || divider_mode;
         if pane.fullscreen {
             fullscreen_panes.push((element_rect, element));
         } else if pane.floating {
             floating_panes.push((element_rect, element));
+        } else if pane.closing {
+            closing_tiles.push((element_rect, element));
         } else if above_settled_tiles && moving.is_some() {
             dragged_tiles.push((element_rect, element));
         } else if above_settled_tiles
@@ -625,7 +618,7 @@ pub(crate) fn render_workspace_panes(
             canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
     }
-    for (rect, element) in floating_panes {
+    for (rect, element) in closing_tiles.into_iter().chain(floating_panes) {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
     for (rect, element) in fullscreen_panes {

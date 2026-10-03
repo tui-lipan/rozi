@@ -258,7 +258,9 @@ fn reveal_titles_stay_inside_the_effect_scope_until_merged_or_divider_settlement
                         .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
                         .expect("close titled pane through lifecycle");
                     backend.render();
-                    backend.advance(Duration::from_millis(100));
+                    // A top-left Scan erases the bottom-right first on close. Sample late enough
+                    // for its frontier to reach the title, before the retained pane is pruned.
+                    backend.advance(Duration::from_millis(175));
                     let closing_midpoint = backend.capture_frame().to_fixed_grid_lines();
                     assert!(
                         closing_midpoint

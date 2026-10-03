@@ -1082,14 +1082,7 @@ mod pane_layer_tests {
             .collect()
     }
 
-    /// A leaving pane is drawn *under* the tile taking its space, for every style.
-    ///
-    /// Terminal cells have no transparency: an effect that removes a cell paints a blank over it.
-    /// A leaving pane on top therefore covers its whole rectangle with a solid square regardless of
-    /// how much of the effect is left - Portal's ring sits inside an opaque box, and Scale's
-    /// shrinking frame floats over space the neighbour has already taken. Both read as artifacts.
-    /// Underneath, the neighbour paints what it has claimed and the leaving pane shows through the
-    /// rest, which is what going away looks like.
+    /// Full-app view tests need more stack space than the default test thread provides.
     fn on_large_stack(test: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1100,68 +1093,77 @@ mod pane_layer_tests {
     }
 
     #[test]
-    fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space() {
+    fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body);
+        on_large_stack(a_closing_pane_is_drawn_above_the_neighbour_taking_its_space_body);
     }
 
-    fn a_closing_pane_is_drawn_under_the_neighbour_taking_its_space_body() {
+    fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space_body() {
         for style in [
             PaneAnimationStyle::Scale,
             PaneAnimationStyle::Slide,
             PaneAnimationStyle::Portal,
             PaneAnimationStyle::Scan,
         ] {
-            crate::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            let (closing, survivor) = {
-                let state = backend.state_mut();
-                state.config.animations.pane_style = style;
-                state.config.animations.geometry_duration = std::time::Duration::from_millis(900);
-                state.config.confirm.close_pane = false;
-                let mut neighbour = Pane::new(2, 100, FloatRect::default());
-                neighbour.opening = false;
-                neighbour.opening_animation = None;
-                let workspace = state.active_workspace_mut();
-                workspace.panes.push(neighbour);
-                crate::layout::tiling::append_tiled_window(workspace, 2);
-                workspace.panes[0].opening = false;
-                workspace.panes[0].opening_animation = None;
-                let key = |pane: &Pane| super::pane_window_key(pane.id, pane.pty_generation);
-                (key(&workspace.panes[0]), key(&workspace.panes[1]))
-            };
-            backend.render();
-            backend.advance(std::time::Duration::from_millis(1000));
-            backend.render();
+            for border_mode in [
+                crate::state::PaneBorderMode::Separate,
+                crate::state::PaneBorderMode::Merged,
+                crate::state::PaneBorderMode::Dividers,
+                crate::state::PaneBorderMode::None,
+            ] {
+                crate::test_support::isolate_user_dirs();
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let (closing, survivor) = {
+                    let state = backend.state_mut();
+                    state.config.animations.pane_style = style;
+                    state.config.pane.border_mode = border_mode;
+                    state.config.animations.geometry_duration =
+                        std::time::Duration::from_millis(900);
+                    state.config.confirm.close_pane = false;
+                    let mut neighbour = Pane::new(2, 100, FloatRect::default());
+                    neighbour.opening = false;
+                    neighbour.opening_animation = None;
+                    let workspace = state.active_workspace_mut();
+                    workspace.panes.push(neighbour);
+                    crate::layout::tiling::append_tiled_window(workspace, 2);
+                    workspace.panes[0].opening = false;
+                    workspace.panes[0].opening_animation = None;
+                    let key = |pane: &Pane| super::pane_window_key(pane.id, pane.pty_generation);
+                    (key(&workspace.panes[0]), key(&workspace.panes[1]))
+                };
+                backend.render();
+                backend.advance(std::time::Duration::from_millis(1000));
+                backend.render();
 
-            backend
-                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
-                .expect("close the focused pane");
-            backend.advance(std::time::Duration::from_millis(300));
-            backend.render();
-
-            let order = |key: &str| {
                 backend
-                    .capture_ui_snapshot()
-                    .widgets
-                    .iter()
-                    .position(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
-            };
-            let closing_at = order(&closing)
-                .unwrap_or_else(|| panic!("{style:?}: the closing pane is still rendered"));
-            let survivor_at = order(&survivor)
-                .unwrap_or_else(|| panic!("{style:?}: the surviving pane is still rendered"));
-            assert!(
-                closing_at < survivor_at,
-                "{style:?}: the closing pane must paint before the tile taking its space, \
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                    .expect("close the focused pane");
+                backend.advance(std::time::Duration::from_millis(300));
+                backend.render();
+
+                let order = |key: &str| {
+                    backend
+                        .capture_ui_snapshot()
+                        .widgets
+                        .iter()
+                        .position(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
+                };
+                let closing_at = order(&closing)
+                    .unwrap_or_else(|| panic!("{style:?}: the closing pane is still rendered"));
+                let survivor_at = order(&survivor)
+                    .unwrap_or_else(|| panic!("{style:?}: the surviving pane is still rendered"));
+                assert!(
+                    closing_at > survivor_at,
+                    "{style:?}: the closing pane must paint after the tile taking its space, \
                  got closing at {closing_at} and survivor at {survivor_at}"
-            );
+                );
+            }
         }
     }
 

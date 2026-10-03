@@ -14,27 +14,11 @@ pub(super) fn pane_reveal_scope(
     seed: u64,
 ) -> Element {
     let scope = EffectScope::new();
-    let scope = match (spec.kind, progress < 1.0) {
-        (PaneAnimationStyle::Portal, true) => scope.custom_effect(PaneRevealEffect::with_spec(
-            PaneRevealPattern::Portal,
-            progress,
-            seed,
-            spec,
-        )),
-        (PaneAnimationStyle::Scan, true) => scope.custom_effect(PaneRevealEffect::with_spec(
-            PaneRevealPattern::Scan,
-            progress,
-            seed,
-            spec,
-        )),
-        (
-            PaneAnimationStyle::Off
-            | PaneAnimationStyle::Scale
-            | PaneAnimationStyle::Slide
-            | PaneAnimationStyle::Portal
-            | PaneAnimationStyle::Scan,
-            _,
-        ) => scope,
+    let scope = match PaneRevealPattern::from_style(spec.kind).filter(|_| progress < 1.0) {
+        Some(pattern) => {
+            scope.custom_effect(PaneRevealEffect::with_spec(pattern, progress, seed, spec))
+        }
+        None => scope,
     };
     let scoped: Element = scope.child(pane_tree).into();
     scoped.key(key)
@@ -194,6 +178,16 @@ enum PaneRevealPattern {
     Scan,
 }
 
+impl PaneRevealPattern {
+    fn from_style(style: PaneAnimationStyle) -> Option<Self> {
+        match style {
+            PaneAnimationStyle::Portal => Some(Self::Portal),
+            PaneAnimationStyle::Scan => Some(Self::Scan),
+            PaneAnimationStyle::Off | PaneAnimationStyle::Scale | PaneAnimationStyle::Slide => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PaneRevealEffect {
     pattern: PaneRevealPattern,
@@ -236,7 +230,7 @@ impl PaneRevealEffect {
         }
     }
 
-    fn apply_portal(&self, cell: &mut EffectCell, position: RevealPosition) {
+    fn portal_cell(&self, position: RevealPosition) -> RevealCell {
         let (distance, maximum) = portal_distance(
             position.x,
             position.y,
@@ -247,23 +241,23 @@ impl PaneRevealEffect {
         let radius = self.progress * maximum;
         let ring = portal_ring_width(maximum, self.progress);
         if distance <= radius {
-            return;
+            return RevealCell::Content;
         }
         if distance <= radius + ring {
             // Half the ring's cells, chosen by position rather than by frame, so the ring reads as
             // a sparse edge that the reveal moves through rather than as static noise.
             let hash = pane_spatial_hash(position.x, position.y, self.seed);
             if hash & 1 == 0 {
-                cell.set_symbol(portal_symbol(hash));
+                RevealCell::Frontier(portal_symbol(hash))
             } else {
-                cell.set_symbol(" ");
+                RevealCell::Backdrop
             }
         } else {
-            cell.set_symbol(" ");
+            RevealCell::Backdrop
         }
     }
 
-    fn apply_scan(&self, cell: &mut EffectCell, position: RevealPosition) {
+    fn scan_cell(&self, position: RevealPosition) -> RevealCell {
         let hash = pane_spatial_hash(position.x, position.y, self.seed);
         let quantized = quantized_progress(self.progress);
         let scan = scan_position(
@@ -275,34 +269,66 @@ impl PaneRevealEffect {
         );
         let frontier = frontier_width(self.progress);
         if scan <= (self.progress - frontier).max(0.0) {
-            return;
+            return RevealCell::Content;
         }
         if scan <= self.progress {
-            cell.set_symbol(frontier_symbol(hash, quantized));
+            RevealCell::Frontier(frontier_symbol(hash, quantized))
         } else {
-            cell.set_symbol(" ");
+            RevealCell::Backdrop
+        }
+    }
+
+    fn reveal_cell(&self, position: RevealPosition) -> RevealCell {
+        if self.progress >= 1.0 {
+            return RevealCell::Content;
+        }
+        if self.progress <= 0.0 || !position.is_valid() {
+            return RevealCell::Backdrop;
+        }
+        match self.pattern {
+            PaneRevealPattern::Portal => self.portal_cell(position),
+            PaneRevealPattern::Scan => self.scan_cell(position),
+        }
+    }
+}
+
+/// Patterns choose cell coverage; compositing and backdrop restoration are shared.
+enum RevealCell {
+    Content,
+    Backdrop,
+    Frontier(&'static str),
+}
+
+impl RevealCell {
+    fn composite(self, cell: &mut EffectCell, backdrop: &EffectCell) {
+        match self {
+            Self::Content => {}
+            Self::Backdrop => *cell = backdrop.clone(),
+            Self::Frontier(symbol) => {
+                let foreground = cell.fg;
+                *cell = backdrop.clone();
+                cell.set_symbol(symbol);
+                cell.set_fg(foreground);
+            }
         }
     }
 }
 
 impl CellEffect for PaneRevealEffect {
-    fn apply(&self, cell: &mut EffectCell, ctx: &EffectContext) {
-        if self.progress >= 1.0 {
-            return;
-        }
-        if self.progress <= 0.0 {
-            cell.set_symbol(" ");
-            return;
-        }
-        let position = reveal_position(ctx);
-        if !position.is_valid() {
-            cell.set_symbol(" ");
-            return;
-        }
-        match self.pattern {
-            PaneRevealPattern::Portal => self.apply_portal(cell, position),
-            PaneRevealPattern::Scan => self.apply_scan(cell, position),
-        }
+    fn apply(&self, _cell: &mut EffectCell, _ctx: &EffectContext) {}
+
+    fn uses_backdrop(&self) -> bool {
+        self.progress < 1.0
+    }
+
+    fn apply_with_backdrop(
+        &self,
+        cell: &mut EffectCell,
+        backdrop: &EffectCell,
+        ctx: &EffectContext,
+    ) {
+        self.reveal_cell(reveal_position(ctx))
+            .composite(cell, backdrop);
     }
 }
 
@@ -418,6 +444,75 @@ mod tests {
     use super::*;
     use tui_lipan::prelude::Rect;
 
+    #[test]
+    fn pane_reveals_restore_live_backdrop_cells_and_colors() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 41,
+            h: 13,
+        };
+        let mut backdrop = EffectCell::new("neighbor");
+        backdrop.set_fg(TerminalColor::Green);
+        backdrop.set_bg(TerminalColor::Blue);
+        let mut content = EffectCell::new("pane");
+        content.set_fg(TerminalColor::White);
+        content.set_bg(TerminalColor::Red);
+        for pattern in [PaneRevealPattern::Portal, PaneRevealPattern::Scan] {
+            for progress in [0.0, 0.5, 1.0] {
+                let effect = PaneRevealEffect::new(pattern, progress, 17);
+                assert_eq!(effect.uses_backdrop(), progress < 1.0);
+                let frame = reveal_frame(&effect, bounds, &content, &backdrop);
+                for cell in &frame {
+                    assert_reveal_cell(cell, &content, &backdrop);
+                }
+                let restored = frame.iter().filter(|cell| **cell == backdrop).count();
+                let retained = frame.iter().filter(|cell| **cell == content).count();
+                let area = usize::from(bounds.w) * usize::from(bounds.h);
+                match progress {
+                    0.0 => assert_eq!(restored, area),
+                    1.0 => assert_eq!(retained, area),
+                    _ => assert!(restored > 0 && retained > 0),
+                }
+            }
+        }
+    }
+
+    fn reveal_frame(
+        effect: &PaneRevealEffect,
+        bounds: Rect,
+        content: &EffectCell,
+        backdrop: &EffectCell,
+    ) -> Vec<EffectCell> {
+        (0..bounds.h)
+            .flat_map(|y| {
+                (0..bounds.w).map(move |x| {
+                    let mut cell = content.clone();
+                    effect.apply_with_backdrop(
+                        &mut cell,
+                        backdrop,
+                        &EffectContext::new(bounds.x + x as i16, bounds.y + y as i16, bounds),
+                    );
+                    cell
+                })
+            })
+            .collect()
+    }
+
+    fn assert_reveal_cell(cell: &EffectCell, content: &EffectCell, backdrop: &EffectCell) {
+        if cell.symbol() == backdrop.symbol() {
+            assert_eq!(cell, backdrop);
+        } else if cell.symbol() == content.symbol() {
+            assert_eq!(cell, content);
+        } else {
+            assert_eq!(
+                cell.bg, backdrop.bg,
+                "the frontier must not leave a pane-colored box"
+            );
+            assert_eq!(cell.fg, content.fg);
+        }
+    }
+
     /// Composite a `new` screen over an `old` one through a session portal at `progress`.
     fn session_portal_frame(progress: f32, bounds: Rect) -> Vec<String> {
         let effect = SessionPortalEffect::new(progress, SessionPortalRing::default());
@@ -525,8 +620,9 @@ mod tests {
                 .flat_map(|y| {
                     (0..bounds.w).map(move |x| {
                         let mut cell = EffectCell::new("X");
-                        PaneRevealEffect::new(pattern, 0.5, 17).apply(
+                        PaneRevealEffect::new(pattern, 0.5, 17).apply_with_backdrop(
                             &mut cell,
+                            &EffectCell::new(" "),
                             &context(bounds.x + x as i16, bounds.y + y as i16),
                         );
                         cell.symbol().to_string()
@@ -542,8 +638,11 @@ mod tests {
         for pattern in [PaneRevealPattern::Portal, PaneRevealPattern::Scan] {
             let original = EffectCell::new("original");
             let mut settled = original.clone();
-            PaneRevealEffect::new(pattern, 1.0, 17)
-                .apply(&mut settled, &context(bounds.x, bounds.y));
+            PaneRevealEffect::new(pattern, 1.0, 17).apply_with_backdrop(
+                &mut settled,
+                &EffectCell::new(" "),
+                &context(bounds.x, bounds.y),
+            );
             assert_eq!(settled, original);
         }
 
@@ -561,10 +660,18 @@ mod tests {
             assert_eq!(low.progress, 0.0);
             assert_eq!(high.progress, 1.0);
             let mut low_cell = EffectCell::new("X");
-            low.apply(&mut low_cell, &context(bounds.x, bounds.y));
+            low.apply_with_backdrop(
+                &mut low_cell,
+                &EffectCell::new(" "),
+                &context(bounds.x, bounds.y),
+            );
             assert_eq!(low_cell.symbol(), " ");
             let mut high_cell = EffectCell::new("X");
-            high.apply(&mut high_cell, &context(bounds.x, bounds.y));
+            high.apply_with_backdrop(
+                &mut high_cell,
+                &EffectCell::new(" "),
+                &context(bounds.x, bounds.y),
+            );
             assert_eq!(high_cell.symbol(), "X");
         }
 
@@ -572,8 +679,11 @@ mod tests {
             for (w, h) in [(0, 0), (1, 1), (1, 2), (2, 1)] {
                 let bounds = Rect { x: 0, y: 0, w, h };
                 let mut cell = EffectCell::new("X");
-                PaneRevealEffect::new(pattern, 0.5, 0)
-                    .apply(&mut cell, &EffectContext::new(0, 0, bounds));
+                PaneRevealEffect::new(pattern, 0.5, 0).apply_with_backdrop(
+                    &mut cell,
+                    &EffectCell::new(" "),
+                    &EffectContext::new(0, 0, bounds),
+                );
             }
         }
     }
@@ -667,8 +777,9 @@ mod tests {
             .flat_map(|y| {
                 (0..bounds.w).map(move |x| {
                     let mut cell = EffectCell::new("X");
-                    PaneRevealEffect::new(pattern, progress, seed).apply(
+                    PaneRevealEffect::new(pattern, progress, seed).apply_with_backdrop(
                         &mut cell,
+                        &EffectCell::new(" "),
                         &EffectContext::new(bounds.x + x as i16, bounds.y + y as i16, bounds)
                             .with_phase(99),
                     );
@@ -711,8 +822,11 @@ mod tests {
         // or wearing a frontier glyph.
         let sample = |spec: PaneAnimationSpec, pattern, x: i16, y: i16| {
             let mut cell = EffectCell::new("X");
-            PaneRevealEffect::with_spec(pattern, 0.25, 17, spec)
-                .apply(&mut cell, &EffectContext::new(x, y, bounds).with_phase(99));
+            PaneRevealEffect::with_spec(pattern, 0.25, 17, spec).apply_with_backdrop(
+                &mut cell,
+                &EffectCell::new(" "),
+                &EffectContext::new(x, y, bounds).with_phase(99),
+            );
             cell.symbol() == "X"
         };
 

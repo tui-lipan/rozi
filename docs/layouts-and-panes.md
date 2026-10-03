@@ -140,6 +140,10 @@ choose how panes appear and disappear.
 `portal` and `scan` work for tiled and floating panes, including popups. The pane keeps its final
 size throughout, so the program inside does not see a resize on every frame.
 
+Closing panes finish their animation above the remaining tiles while those tiles expand underneath.
+The erased areas of `portal` and `scan` reveal the live panes below, including their text and colors.
+Floating panes and dialogs stay above closing tiles.
+
 - `portal`, `scan`, and tiled `slide` use `geometry_ms` for their duration. Floating `slide` behaves
   like `scale` and uses `close_ms` when closing.
 - Inside the scratchpad, these styles apply to individual panes; the scratchpad's dropdown keeps its

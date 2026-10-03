@@ -108,7 +108,7 @@ def initialize_state(db: sqlite3.Connection) -> None:
     # Tool calls that started and have not completed.
     db.execute("""CREATE TABLE IF NOT EXISTS calls (call TEXT PRIMARY KEY)""")
     # Open approvals. `waits` is whether the approval waits for the calls listed for it in
-    # `approval_calls`; one opened while no call was running waits for the next completion.
+    # `approval_calls`; one with no call to wait for stays open until the turn ends.
     db.execute("""CREATE TABLE IF NOT EXISTS approvals (
         id INTEGER PRIMARY KEY, reason TEXT NOT NULL, waits INTEGER NOT NULL
     )""")
@@ -220,24 +220,35 @@ def call_id(event: dict) -> str | None:
     return str(value) if value else None
 
 
-def open_approval(db: sqlite3.Connection, reason: str) -> None:
-    """Record an approval as waiting on every tool call running when it was asked for.
+def approval_calls(db: sqlite3.Connection, event: dict) -> list[str]:
+    """The tool calls whose completion may end an approval.
 
     Codex's PermissionRequest names no tool call, and one call can raise several: a command's own
     approval, then network access or an escalated subcommand while it runs. Whichever call it
-    belongs to is among those running, unless that call fired no PreToolUse. Waiting for all of
-    them never reports work while an approval may still be open."""
-    running = [row[0] for row in db.execute("SELECT call FROM calls")]
+    belongs to is among those running, unless that call fired no PreToolUse. `write_stdin` fires
+    none, and writes to a command that may have outlived the turn that started it, so its approval
+    names that command's exec call instead."""
+    if event.get("tool_name") == "write_stdin":
+        tool_input = event.get("tool_input")
+        parent = tool_input.get("parent_call_id") if isinstance(tool_input, dict) else None
+        parent = parent or event.get("parent_call_id")
+        if parent:
+            return [str(parent)]
+    return [row[0] for row in db.execute("SELECT call FROM calls")]
+
+
+def open_approval(db: sqlite3.Connection, event: dict, reason: str) -> None:
+    """Record an approval as waiting on every call it may belong to. Waiting for all of them, and
+    holding an approval with none until the turn ends, never reports work while an approval may
+    still be open."""
+    calls = approval_calls(db, event)
     approval = db.execute("INSERT INTO approvals (reason, waits) VALUES (?, ?)",
-                          (reason, int(bool(running)))).lastrowid
+                          (reason, int(bool(calls)))).lastrowid
     db.executemany("INSERT INTO approval_calls VALUES (?, ?)",
-                   [(approval, call) for call in running])
+                   [(approval, call) for call in calls])
 
 
 def finish_call(db: sqlite3.Connection, event: dict) -> None:
-    # An approval with no running call to wait for ends at the next completion, usually that of
-    # the call it approved.
-    db.execute("DELETE FROM approvals WHERE waits = 0")
     call = call_id(event)
     if call is None:
         return
@@ -266,7 +277,7 @@ def update_blockers(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     elif name == "PostToolUse":
         finish_call(db, event)
     elif name == "PermissionRequest":
-        open_approval(db, change[1])
+        open_approval(db, event, change[1])
 
 
 def open_wait(db: sqlite3.Connection) -> tuple | None:

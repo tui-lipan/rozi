@@ -67,8 +67,10 @@ child rows.
 Codex's approval event names no tool call, and one call can raise several approvals: the command
 itself, then network access or an escalated subcommand while it runs. The plugin therefore treats
 an approval as a wait on every tool call running when Codex asked for it, and reports `blocked`
-until all of those calls finish. An approval asked while no call was running ends at the next tool
-completion. The turn finishing or being interrupted ends every wait. The thread never reads as
+until all of those calls finish. Codex reports no start for `write_stdin`, and the command it
+writes to may have started in an earlier turn, so a `write_stdin` approval instead waits on the
+command named by its `parent_call_id`. An approval with no call to wait on stays open until the
+turn finishes or is interrupted, which ends every wait. The thread never reads as
 working while an approval may still be open, so it can stay `blocked` after you approve a
 long-running command, until that command or a parallel call that was already running finishes.
 

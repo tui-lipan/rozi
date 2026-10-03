@@ -224,11 +224,42 @@ class ActivityTests(unittest.TestCase):
         self.hook("PostToolUse", tool_use_id="exec-2", **BASH)
         self.assertEqual(self.field("--state"), "working")
 
-    def test_approval_without_a_running_call_ends_at_the_next_completion(self):
+    def test_approval_without_a_running_call_stays_until_the_turn_ends(self):
         self.hook("SessionStart")
-        self.hook("PermissionRequest", tool_name="write_stdin", tool_input={"chars": "y"})
+        self.hook("UserPromptSubmit")
+        self.hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("Stop")
+        self.assertEqual(self.field("--state"), "done")
+
+    def test_write_stdin_approval_waits_for_its_exec_call_across_turns(self):
+        # Codex fires no PreToolUse for write_stdin, and the command it writes to can outlive the
+        # turn that started it, so only its approval's parent_call_id identifies the call.
+        self.hook("SessionStart")
+        self.hook("UserPromptSubmit")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.hook("Stop")
+        self.hook("UserPromptSubmit")
+        self.hook("PermissionRequest", tool_name="write_stdin", tool_input={
+            "chars": "y", "parent_call_id": "exec-1", "approval_id": "approval-1"})
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PreToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
+        self.hook("PostToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.assertEqual(self.field("--state"), "blocked")
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_write_stdin_approval_ignores_other_running_calls(self):
+        self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.hook("PreToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
+        self.hook("PermissionRequest", tool_name="write_stdin", tool_input={
+            "chars": "y", "parent_call_id": "exec-2"})
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.assertEqual(self.field("--state"), "working")
 
     def test_denied_permission_clears_when_the_turn_ends(self):

@@ -119,6 +119,22 @@ mod tests {
         identify_job(&catalog, job).map(|definition| definition.id().to_string())
     }
 
+    #[test]
+    fn builtins_with_hook_plugins_resume_their_native_conversation() {
+        let catalog = catalog();
+        for (id, expected) in [
+            ("claude", ["claude", "--resume", "thread id"]),
+            ("codex", ["codex", "resume", "thread id"]),
+        ] {
+            let definition = catalog.by_id(id).expect("built-in agent exists");
+            assert_eq!(
+                definition.resume_command("thread id"),
+                Some(expected.map(String::from).to_vec()),
+                "{id}"
+            );
+        }
+    }
+
     /// Both halves of detection in one call, the way a pane's first poll runs them.
     fn detect(
         catalog: &AgentCatalog,

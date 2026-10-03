@@ -42,6 +42,31 @@ Parallel tool completions keep the conversation blocked while another input wait
 Permission waits without a tool ID clear when the whole tool batch resolves or the turn ends.
 See the plugin README for the event mapping, checkout installation, and verification steps.
 
+## Integrate Codex hooks
+
+The [Codex plugin](../plugins/codex/README.md) reports activity directly from Codex's hooks,
+including approval waits, questions, response completion, interrupted turns, and the thread ID
+used by [native resume](sessions.md#reopen-an-agent-conversation).
+
+Install it with the Codex CLI:
+
+```sh
+codex plugin marketplace add tui-lipan/rozi
+codex plugin add rozi@rozi
+```
+
+Restart Codex inside a local Rozi pane and trust the plugin's hooks when Codex asks you to review
+them. The plugin needs Python 3.10 or newer available as `python3`. It requires
+`rozi agents report` and `rozi agents release`; no Rozi extension is needed. Remote and headless
+panes without a local UI endpoint continue using screen detection.
+
+Codex starts a thread's hooks at its first prompt, so after `/resume` the pane reports the new
+thread once you send it something. The plugin reports one activity for the thread on screen.
+Sub-agent completion cannot mark the parent done. An approval keeps the thread blocked until the
+tool calls running when Codex asked for it finish, so a parallel completion never hides an open
+approval. See the plugin README for the event mapping, checkout installation, and verification
+steps.
+
 ## Add an agent
 
 Start with a process match:
@@ -338,3 +363,20 @@ hooks' state drives the row for the conversation they report on, matched by `nat
 the other rows stay listed.
 The extension needs a readable foreground process group, so it covers local panes on Linux and
 macOS, not Windows or remote panes.
+
+### Codex threads
+
+Codex runs its threads in a shared background server, so several threads can work at once behind
+one Codex client. rozi sees that client as one pane. The
+[codex-rozi-sessions](https://github.com/tui-lipan/codex-rozi-sessions) extension lists each thread
+loaded in that server as its own row in the pane running Codex, under the repository and branch it
+works in, and shows which ones wait for an approval or an answer. A thread it saw finish stays
+listed as done until you have looked at it, even after Codex unloads it. Selecting a row switches
+the client to that thread with Codex's `/resume`, and only from an empty prompt with no turn
+running. Install it from the **Discover** tab of **Extensions…**, or with
+`rozi extensions install https://github.com/tui-lipan/codex-rozi-sessions.git`.
+
+It works with or without the [Codex hook plugin](#integrate-codex-hooks). With it, the hooks' state
+drives the row for the thread they report on, matched by `native_session`. The extension covers
+local panes on Linux and macOS whose Codex client uses the background server, which is Codex's
+default.

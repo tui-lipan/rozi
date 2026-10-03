@@ -1,0 +1,11 @@
+{
+  "name": "rozi",
+  "version": "0.1.0",
+  "description": "Report Codex activity and thread identity to Rozi.",
+  "author": { "name": "Rozi contributors" },
+  "homepage": "https://rozi.tui-lipan.dev/agents",
+  "repository": "https://github.com/tui-lipan/rozi",
+  "license": "MPL-2.0",
+  "keywords": ["rozi", "terminal-multiplexer", "hooks"],
+  "hooks": "./hooks/hooks.json"
+}

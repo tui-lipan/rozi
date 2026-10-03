@@ -204,6 +204,7 @@
 # Omitting close_curve runs `curve` backwards on the way out.
 #curve = [0.16, 1.0, 0.3, 1.0]
 #close_curve = "ease_in_quad"
+# Whole-pane fade: on for Scale by default, off for Portal and Scan to keep the frontier visible.
 #fade = true
 # One geometry knob per style, read only by the style pane_style selects. The others sit dormant,
 # so a config can carry all three and switching pane_style picks up the matching one. Slide has

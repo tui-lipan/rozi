@@ -102,6 +102,8 @@ pub struct ConnectHold {
 
 pub struct State {
     pub config: Config,
+    /// Runner cadence fixed when this client starts; config reloads apply on the next launch.
+    runtime_frame_rate: u16,
     /// Opaque per-runtime fencing tokens keyed by stable extension id.
     pub extension_generations: HashMap<String, String>,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
@@ -504,6 +506,11 @@ impl State {
         }
     }
 
+    /// Effective frame rate of this client, independent of live config reloads.
+    pub fn runtime_frame_rate(&self) -> u16 {
+        self.runtime_frame_rate
+    }
+
     pub fn new(mut config: Config, theme: Theme) -> Self {
         let (extension_generations, retired) =
             crate::config::reconcile_generations(None, &mut config, &HashMap::new());
@@ -513,6 +520,7 @@ impl State {
         let attachment = fresh_default_attachment(&config);
 
         Self {
+            runtime_frame_rate: config.frame_rate,
             config,
             extension_generations,
             window_focused: true,

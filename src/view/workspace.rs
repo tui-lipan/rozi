@@ -213,8 +213,9 @@ pub(crate) fn render_workspace_panes(
     let mut seam_titles: Vec<(FloatRect, Element)> = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
-    let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
-    let mut fullscreen_panes: Vec<(FloatRect, Element)> = Vec::new();
+    let mut closing_tiles: Vec<(FloatRect, Element)> = Vec::new();
+    let mut floating_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
+    let mut fullscreen_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
     for pane in ordered_panes(workspace, focused_pane, |pane| {
         pane_border_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
     }) {
@@ -409,6 +410,7 @@ pub(crate) fn render_workspace_panes(
         } else {
             PaneKind::Tiled
         };
+        let fade = animation::pane_fade(ctx, pane);
         let element = pane_element(
             ctx,
             pane,
@@ -419,6 +421,7 @@ pub(crate) fn render_workspace_panes(
             merge,
             reveal_progress,
             scales,
+            fade,
         );
         // Everything below places the pane at `render_rect`, so the clip window takes that rect and
         // the pane moves *inside* it. A `Canvas` clips its descendants to its own allocation, which
@@ -445,9 +448,8 @@ pub(crate) fn render_workspace_panes(
                 )
                 .key(layer.pane_clip_key(pane.id))
         } else if animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Scale {
-            // Keep the wrapper mounted while settled so the pane's Animated node and the
-            // overlay fade retain opacity 1. Mounting them on close initializes both at the
-            // new target of 0, hiding the pane before its shrink can be seen.
+            // Keep the clip wrapper while settled so terminal allocation stays fixed. The
+            // shared fade seeds both pane and border if closing moves them to a new layer.
             let mut chrome = pane_frame_chrome(ctx, pane, focused_pane, kind);
             chrome.show_border &= scales;
             scale_pane_element(
@@ -456,14 +458,7 @@ pub(crate) fn render_workspace_panes(
                 animation_spec.scale_from,
                 if scales { scale_progress } else { 1.0 },
                 layer.pane_clip_key(pane.id),
-                ScaleOverlay {
-                    chrome,
-                    opacity: crate::layout::anim::pane_opacity_target(
-                        ctx.state.config.animations,
-                        pane,
-                    ),
-                    opacity_transition: animation::window_opacity_config(ctx, pane),
-                },
+                ScaleOverlay { chrome, fade },
             )
         } else {
             element
@@ -484,23 +479,15 @@ pub(crate) fn render_workspace_panes(
                 seam.element,
             ));
         }
-        // A pane in transition stays in the canvas layer, *under* the tile taking its space.
-        //
-        // Lifting it above looks wrong, and the reason is that a terminal cell has no transparency:
-        // an effect that "removes" a cell paints a blank over it, so a pane drawn on top covers its
-        // whole rectangle with a solid square whether or not the effect still has anything there.
-        // Portal's ring ends up inside an opaque box, and Scale's shrinking frame floats over a
-        // neighbour that has already claimed the space - both read as artifacts rather than motion.
-        //
-        // Underneath, the neighbour paints the space it has taken and the leaving pane shows
-        // through wherever the neighbour has not reached yet, which is what "it is going away"
-        // actually looks like. The two share a clock (see `pane_event_animation`), so the neighbour
-        // cannot outrun the effect either.
+        // Closing tiles finish above the live tiled layout. Backdrop-aware reveal effects let
+        // the expanding neighbor show through wherever the closing effect has erased content.
         let above_settled_tiles = merge_layering || divider_mode;
         if pane.fullscreen {
-            fullscreen_panes.push((element_rect, element));
+            fullscreen_panes.push((element_rect, element, pane.closing));
         } else if pane.floating {
-            floating_panes.push((element_rect, element));
+            floating_panes.push((element_rect, element, pane.closing));
+        } else if pane.closing {
+            closing_tiles.push((element_rect, element));
         } else if above_settled_tiles && moving.is_some() {
             dragged_tiles.push((element_rect, element));
         } else if above_settled_tiles
@@ -625,13 +612,47 @@ pub(crate) fn render_workspace_panes(
             canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
     }
-    for (rect, element) in floating_panes {
-        canvas = canvas.child_at(rect.to_rect(), element);
+    let viewport = ctx.state.content_viewport(ctx.viewport());
+    let area = Rect {
+        x: 0,
+        y: 0,
+        w: viewport.w,
+        h: viewport.h,
+    };
+    let canvas = paint_only_pane_layer(canvas, closing_tiles, area);
+    let canvas = raised_pane_layer(canvas, floating_panes, area);
+    raised_pane_layer(canvas, fullscreen_panes, area)
+}
+
+/// Live panes occlude lower pointer targets and scrollbar zones. Retained closing panes
+/// paint above their own layer but pass input through to that live canvas.
+fn raised_pane_layer(
+    mut canvas: Canvas,
+    panes: Vec<(FloatRect, Element, bool)>,
+    area: Rect,
+) -> Canvas {
+    let mut closing = Vec::new();
+    for (rect, element, retained) in panes {
+        if retained {
+            closing.push((rect, element));
+        } else {
+            canvas = canvas.child_at(rect.to_rect(), element);
+        }
     }
-    for (rect, element) in fullscreen_panes {
-        canvas = canvas.child_at(rect.to_rect(), element);
+    paint_only_pane_layer(canvas, closing, area)
+}
+
+fn paint_only_pane_layer(canvas: Canvas, panes: Vec<(FloatRect, Element)>, area: Rect) -> Canvas {
+    let mut closing = Canvas::new().passthrough(true);
+    for (rect, element) in panes {
+        closing = closing.child_at(rect.to_rect(), element);
     }
-    canvas
+    // Always mount the group, including its empty closing layer, so starting or finishing
+    // a close does not reparent live terminal widgets. The outer Canvas stays occluding.
+    Canvas::new().child_at(
+        area,
+        ZStack::new().passthrough(true).child(canvas).child(closing),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -852,8 +873,7 @@ struct ScaleOverlay {
     /// Where the pane's own opacity is heading, and how it gets there. The overlay border is a
     /// sibling of the clipped pane rather than a child, so without this it stays fully opaque while
     /// everything inside it fades - a hard bright rectangle around a pane that is otherwise gone.
-    opacity: f32,
-    opacity_transition: TransitionConfig,
+    fade: animation::Fade,
 }
 
 fn scale_pane_element(
@@ -901,10 +921,7 @@ fn scale_pane_element(
         .max_width(Length::Px(viewport.w))
         .min_height(Length::Px(viewport.h))
         .max_height(Length::Px(viewport.h));
-    let border: Element = Animated::new(border)
-        .opacity(overlay.opacity)
-        .transition(overlay.opacity_transition)
-        .into();
+    let border: Element = animation::crossfade(overlay.fade, Animated::new(border)).into();
     ZStack::new()
         .passthrough(true)
         .child(clipped)

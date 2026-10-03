@@ -84,7 +84,7 @@ session's panes.
 | `shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
 | `command_shell` | New command, hook, service, sidebar, and workbar executions. |
 | `scrollback` | New terminal screens. Existing screens never resize; restart an existing session server before creating panes that should use the new capacity. |
-| `frame_rate` | Next client launch or reattach. |
+| `frame_rate` | Next client launch or reattach. The active client keeps its startup cadence, including animation timing. |
 | `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
 | `sidebar.visible` | Client startup only. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
@@ -313,7 +313,7 @@ curve = [0.16, 1.0, 0.3, 1.0]
 | --- | --- | --- | --- |
 | `curve` | curve | the style's own | all |
 | `close_curve` | curve | the reverse of `curve` | all |
-| `fade` | bool | `true` | Scale, Portal, Scan |
+| `fade` | bool | `true` for Scale, `false` for Portal and Scan | Scale, Portal, Scan |
 | `scale_from` | float in `[0.1, 1]` | `0.9` | Scale |
 | `portal_origin` | float pair in `[0, 1]` | `[0.5, 0.5]` | Portal |
 | `scan_direction` | `top-left`, `top-right`, `bottom-left`, `bottom-right` | `top-left` | Scan |

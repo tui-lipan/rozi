@@ -87,8 +87,8 @@ pub struct PaneAnimationSpec {
     pub close_duration: Duration,
     pub open_curve: Easing,
     pub close_curve: Easing,
-    /// Curves for the opacity riding the effect. Kept separate because Scale's fade leads its
-    /// scale, and Slide is opaque throughout.
+    /// Curves for an optional whole-pane fade. Scale fades by default; clips and cell masks
+    /// otherwise control visibility while the revealed content stays opaque.
     pub visual_open_curve: Easing,
     pub visual_close_curve: Easing,
     pub fade: bool,
@@ -154,10 +154,10 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
             Easing::Linear,
         ),
         PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => (
-            Easing::EaseOutQuad,
-            Easing::EaseInQuad,
-            Easing::EaseOutQuad,
-            Easing::EaseInQuad,
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
         ),
     };
     PaneAnimationSpec {
@@ -177,12 +177,9 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
         close_curve,
         visual_open_curve,
         visual_close_curve,
-        // Slide is clipped to its tile, so it genuinely emerges; a fade on top would make its
-        // leading edge ghostly instead of solid. Off has no effect to fade.
-        fade: matches!(
-            style,
-            PaneAnimationStyle::Scale | PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
-        ),
+        // Wipes and clipped motion own visibility. Fading their whole rectangle makes revealed
+        // cells translucent and hides the frontier before it has finished traveling.
+        fade: style == PaneAnimationStyle::Scale,
         scale_from: 0.9,
         origin: [0.5, 0.5],
         scan_direction: ScanDirection::TopLeft,
@@ -470,11 +467,11 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
         && (pane_opening_transition(pane) || pane.closing)
 }
 
-/// Visibility target for a pane's open/close opacity animation.
+/// Visibility target for an optional whole-pane open/close fade.
 ///
 /// Animation gates choose whether the transition is timed, not whether a retained closing pane is
-/// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
-/// state settles; otherwise disabling close animation can make it reappear before pruning.
+/// visible. A fading pane that is opening or closing stays at the hidden target until its lifecycle
+/// state settles; effects without a fade own visibility through their clip or cell mask.
 ///
 /// [`PaneAnimationStyle::Off`] draws no effect. An opening pane is fully visible on the first
 /// frame, and a retained closing pane (the last scratch pane, held while the dropdown retracts)
@@ -889,8 +886,8 @@ pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
 }
 
 /// How long a closing pane stays described before `Msg::PruneClosed` drops it. The margin
-/// covers the frame the animation finishes on.
-pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
+/// covers at least one finishing frame; another frame covers the Restart-to-Handoff delay.
+pub fn retained_pane_timeout(animations: WindowAnimationConfig, frame_rate: u16) -> Duration {
     if !animations.enabled || !animations.close {
         return Duration::ZERO;
     }
@@ -906,21 +903,29 @@ pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
         // Both paint effects run on the same geometry duration in either direction.
         PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => spec.close_duration,
     };
-    motion + Duration::from_millis(20)
+    motion + pane_finish_delay(frame_rate)
+}
+
+fn pane_finish_delay(frame_rate: u16) -> Duration {
+    let frame = Duration::from_millis(1_000_u64.div_ceil(u64::from(frame_rate.max(1))));
+    // A fade can finish between paints. Keep the finishing margin at least one frame,
+    // so even a close shorter than a frame paints its zero-opacity state before pruning.
+    frame + frame.max(Duration::from_millis(20))
 }
 
 pub fn retained_pane_timeout_for_pane(
     animations: WindowAnimationConfig,
     pane: &crate::state::Pane,
+    frame_rate: u16,
 ) -> Duration {
     if let Some(snapshot) = pane.closing_animation {
         return if snapshot.active {
-            snapshot.spec.close_duration + Duration::from_millis(20)
+            snapshot.spec.close_duration + pane_finish_delay(frame_rate)
         } else {
             Duration::ZERO
         };
     }
-    retained_pane_timeout(animations)
+    retained_pane_timeout(animations, frame_rate)
 }
 
 pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
@@ -1086,16 +1091,45 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(animations),
-            Duration::from_millis(100)
+            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(109)
         );
         assert_eq!(
-            retained_pane_timeout(WindowAnimationConfig {
-                close: false,
-                ..animations
-            }),
+            retained_pane_timeout(
+                WindowAnimationConfig {
+                    close: false,
+                    ..animations
+                },
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn low_frame_rate_retention_reaches_zero_before_the_last_paint() {
+        use tui_lipan::animation::Transition;
+        let frame = Duration::from_millis(67);
+        for close_ms in [120, 20] {
+            let animations = WindowAnimationConfig {
+                close_duration: Duration::from_millis(close_ms),
+                ..WindowAnimationConfig::default()
+            };
+            let timeout = retained_pane_timeout(animations, 15);
+            let mut fade =
+                Transition::new(1.0_f32, 0.0, animations.close_duration, Easing::EaseOutQuad);
+            // Restart is painted at t=0; Handoff starts the fade one frame later.
+            let mut last_paint = frame;
+            while last_paint + frame < timeout {
+                last_paint += frame;
+                fade.tick(frame);
+            }
+            assert!(
+                fade.current() <= 0.001,
+                "close_ms={close_ms}: last paint at {last_paint:?}, prune at {timeout:?}, opacity={}",
+                fade.current()
+            );
+        }
     }
 
     #[test]
@@ -1106,8 +1140,8 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(scale),
-            Duration::from_millis(140),
+            retained_pane_timeout(scale, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(149),
             "the scale close is a short pop the fade rides on"
         );
 
@@ -1139,15 +1173,21 @@ mod tests {
         );
 
         assert!(
-            retained_pane_timeout(slide) > leaving,
+            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE) > leaving,
             "the pane must stay described past the end of its slide"
         );
-        assert_eq!(retained_pane_timeout(slide), Duration::from_millis(220));
         assert_eq!(
-            retained_pane_timeout(WindowAnimationConfig {
-                close: false,
-                ..slide
-            }),
+            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(229)
+        );
+        assert_eq!(
+            retained_pane_timeout(
+                WindowAnimationConfig {
+                    close: false,
+                    ..slide
+                },
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
             Duration::ZERO
         );
     }
@@ -1236,11 +1276,18 @@ mod tests {
             assert!(!pane_opacity_animates(animations, closing));
             assert_eq!(pane_opacity_target(animations, closing), 0.0);
             assert_eq!(
-                retained_pane_timeout_for_pane(animations, closing),
+                retained_pane_timeout_for_pane(
+                    animations,
+                    closing,
+                    tui_lipan::prelude::DEFAULT_FRAME_RATE
+                ),
                 Duration::ZERO
             );
         }
-        assert_eq!(retained_pane_timeout(animations), Duration::ZERO);
+        assert_eq!(
+            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::ZERO
+        );
 
         let mut neighbour = Pane::new(2, 100, FloatRect::default());
         neighbour.opening = false;
@@ -1429,10 +1476,14 @@ mod tests {
     }
 
     #[test]
-    fn pane_opacity_target_stays_hidden_until_non_sliding_pane_settles() {
+    fn fading_panes_target_hidden_until_the_lifecycle_settles() {
         let mut pane = Pane::new(1, 100, FloatRect::default());
         let mut animations = WindowAnimationConfig {
             pane_style: PaneAnimationStyle::Portal,
+            pane_overrides: PaneAnimationOverrides {
+                fade: Some(true),
+                ..Default::default()
+            },
             ..WindowAnimationConfig::default()
         };
 
@@ -1517,8 +1568,8 @@ mod tests {
     fn fade_defaults_follow_builtin_style_and_can_be_disabled() {
         assert!(builtin_animation(PaneAnimationStyle::Scale).fade);
         assert!(!builtin_animation(PaneAnimationStyle::Slide).fade);
-        assert!(builtin_animation(PaneAnimationStyle::Portal).fade);
-        assert!(builtin_animation(PaneAnimationStyle::Scan).fade);
+        assert!(!builtin_animation(PaneAnimationStyle::Portal).fade);
+        assert!(!builtin_animation(PaneAnimationStyle::Scan).fade);
 
         let mut animations = WindowAnimationConfig::default();
         let mut pane = Pane::new(1, 100, FloatRect::default());
@@ -1534,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_reveal_progress_and_opacity_share_complementary_open_close_policies() {
+    fn pane_reveals_travel_uniformly_and_keep_revealed_cells_opaque() {
         let mut animations = WindowAnimationConfig {
             pane_style: PaneAnimationStyle::Portal,
             ..WindowAnimationConfig::default()
@@ -1544,17 +1595,18 @@ mod tests {
         for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
             animations.pane_style = style;
             assert!(pane_reveal_effects(animations));
-            assert!(pane_opacity_animates(animations, &pane));
+            assert!(!pane_opacity_animates(animations, &pane));
 
-            // The paint effect reads `transition`, the fade over it reads `visual_transition`. They
-            // have to agree, or the cells finish arriving before or after the pane is fully opaque.
+            // The frontier owns visibility, with uniform steps throughout both directions.
             pane.closing = false;
             let spec = pane_animation_for_pane(animations, &pane);
             let opening_effect = spec.transition(pane.closing);
             let opening_opacity = spec.visual_transition(pane.closing);
             assert_eq!(opening_effect.duration, opening_opacity.duration);
             assert_eq!(opening_effect.easing, opening_opacity.easing);
-            assert_eq!(opening_effect.easing, Easing::EaseOutQuad);
+            assert_eq!(opening_effect.easing, Easing::Linear);
+            assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+            assert!(!pane_opacity_animates(animations, &pane));
 
             pane.closing = true;
             let spec = pane_animation_for_pane(animations, &pane);
@@ -1562,10 +1614,12 @@ mod tests {
             let closing_opacity = spec.visual_transition(pane.closing);
             assert_eq!(closing_effect.duration, closing_opacity.duration);
             assert_eq!(closing_effect.easing, closing_opacity.easing);
-            assert_eq!(closing_effect.easing, Easing::EaseInQuad);
+            assert_eq!(closing_effect.easing, Easing::Linear);
+            assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+            assert!(!pane_opacity_animates(animations, &pane));
 
             assert_eq!(opening_effect.duration, closing_effect.duration);
-            assert_ne!(opening_effect.easing, closing_effect.easing);
+            assert_eq!(opening_effect.easing, closing_effect.easing);
         }
     }
 
@@ -1595,8 +1649,12 @@ mod tests {
             PaneAnimationStyle::Scale
         );
         assert_eq!(
-            retained_pane_timeout_for_pane(animations, &pane),
-            Duration::from_millis(140)
+            retained_pane_timeout_for_pane(
+                animations,
+                &pane,
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
+            Duration::from_millis(149)
         );
     }
 
@@ -1816,8 +1874,12 @@ mod tests {
                 "{style:?} does not spring neighbouring tiles"
             );
             assert_eq!(
-                retained_pane_timeout(state.config.animations),
-                state.config.animations.geometry_duration + Duration::from_millis(20)
+                retained_pane_timeout(
+                    state.config.animations,
+                    tui_lipan::prelude::DEFAULT_FRAME_RATE
+                ),
+                state.config.animations.geometry_duration
+                    + pane_finish_delay(state.runtime_frame_rate())
             );
         }
     }

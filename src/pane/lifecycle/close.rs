@@ -32,7 +32,7 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
                 anim::retained_pane_timeout(
                     ctx.state.config.animations,
-                    ctx.state.config.frame_rate,
+                    ctx.state.runtime_frame_rate(),
                 )
                 .max(anim::scratch_transition_duration(
                     ctx.state.config.animations.geometry_duration,
@@ -43,13 +43,13 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
                         anim::retained_pane_timeout_for_pane(
                             ctx.state.config.animations,
                             pane,
-                            ctx.state.config.frame_rate,
+                            ctx.state.runtime_frame_rate(),
                         )
                     })
                     .unwrap_or_else(|| {
                         anim::retained_pane_timeout(
                             ctx.state.config.animations,
-                            ctx.state.config.frame_rate,
+                            ctx.state.runtime_frame_rate(),
                         )
                     })
             },
@@ -73,7 +73,7 @@ pub(crate) fn remove_pane_after_exit(
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
                 anim::retained_pane_timeout(
                     ctx.state.config.animations,
-                    ctx.state.config.frame_rate,
+                    ctx.state.runtime_frame_rate(),
                 )
                 .max(anim::scratch_transition_duration(
                     ctx.state.config.animations.geometry_duration,
@@ -84,13 +84,13 @@ pub(crate) fn remove_pane_after_exit(
                         anim::retained_pane_timeout_for_pane(
                             ctx.state.config.animations,
                             pane,
-                            ctx.state.config.frame_rate,
+                            ctx.state.runtime_frame_rate(),
                         )
                     })
                     .unwrap_or_else(|| {
                         anim::retained_pane_timeout(
                             ctx.state.config.animations,
-                            ctx.state.config.frame_rate,
+                            ctx.state.runtime_frame_rate(),
                         )
                     })
             },
@@ -342,13 +342,13 @@ pub(crate) fn prune_closed_pane(
                 crate::layout::anim::retained_pane_timeout_for_pane(
                     ctx.state.config.animations,
                     pane,
-                    ctx.state.config.frame_rate,
+                    ctx.state.runtime_frame_rate(),
                 )
             })
             .unwrap_or_else(|| {
                 crate::layout::anim::retained_pane_timeout(
                     ctx.state.config.animations,
-                    ctx.state.config.frame_rate,
+                    ctx.state.runtime_frame_rate(),
                 )
             });
         // Take the pane out first so its terminal screen can be retired: a same-generation

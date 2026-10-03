@@ -1879,7 +1879,7 @@ mod tests {
                     tui_lipan::prelude::DEFAULT_FRAME_RATE
                 ),
                 state.config.animations.geometry_duration
-                    + pane_finish_delay(state.config.frame_rate)
+                    + pane_finish_delay(state.runtime_frame_rate())
             );
         }
     }

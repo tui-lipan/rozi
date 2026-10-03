@@ -25,6 +25,18 @@ fn pane_key(id: u32) -> Key {
     format!("rozi-pane-{id}-0").into()
 }
 
+fn client_backend(frame_rate: u16) -> TestBackend<AppRoot> {
+    rozi::test_support::isolate_user_dirs();
+    let app = tui_lipan::App::new().frame_rate(frame_rate);
+    let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+    let theme = backend.state().theme.clone();
+    let mut config = rozi::config::Config::default();
+    config.frame_rate = frame_rate;
+    *backend.state_mut() = rozi::state::State::new(config, theme);
+    backend.set_viewport(VIEWPORT);
+    backend
+}
+
 fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
@@ -63,9 +75,11 @@ fn configure_reveal(state: &mut rozi::state::State, style: PaneAnimationStyle) {
 }
 
 fn popup_backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
-    rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
-    backend.set_viewport(VIEWPORT);
+    popup_backend_at_frame_rate(style, tui_lipan::prelude::DEFAULT_FRAME_RATE)
+}
+
+fn popup_backend_at_frame_rate(style: PaneAnimationStyle, frame_rate: u16) -> TestBackend<AppRoot> {
+    let mut backend = client_backend(frame_rate);
     {
         let state = backend.state_mut();
         configure_reveal(state, style);
@@ -120,9 +134,14 @@ fn titled_reveal_backend(
 }
 
 fn single_pane_backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
-    rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
-    backend.set_viewport(VIEWPORT);
+    single_pane_backend_at_frame_rate(style, tui_lipan::prelude::DEFAULT_FRAME_RATE)
+}
+
+fn single_pane_backend_at_frame_rate(
+    style: PaneAnimationStyle,
+    frame_rate: u16,
+) -> TestBackend<AppRoot> {
+    let mut backend = client_backend(frame_rate);
     {
         let state = backend.state_mut();
         configure_reveal(state, style);
@@ -388,7 +407,7 @@ fn reveal_styles_reverse_a_real_close_at_a_fixed_rectangle_and_prune_hidden() {
                 assert_eq!(
                     retained_pane_timeout(
                         backend.state().config.animations,
-                        backend.state().config.frame_rate
+                        backend.state().runtime_frame_rate()
                     ),
                     Duration::from_millis(229),
                     "{style:?} retention must cover the reveal duration"
@@ -724,14 +743,13 @@ fn low_frame_rate_scale_close_finishes_fading_before_prune() {
             for popup in [false, true] {
                 for close_ms in [120, 20] {
                     let mut backend = if popup {
-                        popup_backend(PaneAnimationStyle::Scale)
+                        popup_backend_at_frame_rate(PaneAnimationStyle::Scale, 15)
                     } else {
-                        single_pane_backend(PaneAnimationStyle::Scale)
+                        single_pane_backend_at_frame_rate(PaneAnimationStyle::Scale, 15)
                     };
                     let id = if popup { POPUP_PANE_ID } else { 11 };
                     {
                         let state = backend.state_mut();
-                        state.config.frame_rate = 15;
                         state.config.confirm.close_pane = false;
                         state.config.animations.close_duration = Duration::from_millis(close_ms);
                         let pane = if popup {
@@ -756,7 +774,7 @@ fn low_frame_rate_scale_close_finishes_fading_before_prune() {
                     let timeout = rozi::layout::anim::retained_pane_timeout_for_pane(
                         backend.state().config.animations,
                         retained_pane(&backend, id).expect("retained pane"),
-                        backend.state().config.frame_rate,
+                        backend.state().runtime_frame_rate(),
                     );
                     // TestBackend caps individual animation ticks at 50 ms. It still exercises
                     // the delayed handoff and the real rendered opacity at the retention boundary.
@@ -790,4 +808,64 @@ fn low_frame_rate_scale_close_finishes_fading_before_prune() {
         .expect("spawn low frame rate fade test")
         .join()
         .expect("low frame rate fade test completes");
+}
+
+#[test]
+fn frame_rate_reload_keeps_scale_close_retention_at_client_cadence() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let _config = rozi::test_support::lock_config_file();
+            let path = rozi::config::config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let original = std::fs::read(&path).ok();
+            for popup in [false, true] {
+                let mut backend = if popup {
+                    popup_backend_at_frame_rate(PaneAnimationStyle::Scale, 15)
+                } else {
+                    single_pane_backend_at_frame_rate(PaneAnimationStyle::Scale, 15)
+                };
+                // Establish the watcher baseline, then change the startup-only setting on disk.
+                std::fs::write(&path, "frame_rate = 15\n").unwrap();
+                rozi::config::load_config();
+                std::fs::write(
+                    &path,
+                    "frame_rate = 480\n[animations]\npane_style = \"scale\"\nclose_ms = 120\n",
+                )
+                .unwrap();
+                backend.dispatch(rozi::Msg::ConfigFileChanged).unwrap();
+                assert_eq!(backend.state().config.frame_rate, 480);
+                assert_eq!(backend.state().runtime_frame_rate(), 15);
+                backend.state_mut().config.confirm.close_pane = false;
+                backend.advance(Duration::from_millis(300));
+                backend
+                    .dispatch(if popup {
+                        rozi::Msg::ClosePopup
+                    } else {
+                        rozi::Msg::RunAction(rozi::input::Action::Close)
+                    })
+                    .unwrap();
+                let id = if popup { POPUP_PANE_ID } else { 11 };
+                let pane = retained_pane(&backend, id).expect("closing pane retained");
+                assert!(pane.closing);
+                assert_eq!(
+                    rozi::layout::anim::retained_pane_timeout_for_pane(
+                        backend.state().config.animations,
+                        pane,
+                        backend.state().runtime_frame_rate(),
+                    ),
+                    Duration::from_millis(254),
+                    "reload must retain the 15 fps handoff and finishing paint budget",
+                );
+            }
+            if let Some(original) = original {
+                std::fs::write(path, original).unwrap();
+            } else {
+                std::fs::remove_file(path).unwrap();
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

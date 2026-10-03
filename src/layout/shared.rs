@@ -1276,7 +1276,7 @@ pub(crate) fn apply_shared_layout(
                     crate::layout::anim::retained_pane_timeout_for_pane(
                         ctx.state.config.animations,
                         pane,
-                        ctx.state.config.frame_rate,
+                        ctx.state.runtime_frame_rate(),
                     )
                 })
             })
@@ -1284,7 +1284,7 @@ pub(crate) fn apply_shared_layout(
             .unwrap_or_else(|| {
                 crate::layout::anim::retained_pane_timeout(
                     ctx.state.config.animations,
-                    ctx.state.config.frame_rate,
+                    ctx.state.runtime_frame_rate(),
                 )
             });
         return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(

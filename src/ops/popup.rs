@@ -111,6 +111,7 @@ pub(crate) fn open(
 
 pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     let animations = ctx.state.config.animations;
+    let frame_rate = ctx.state.runtime_frame_rate();
     let client = ctx.state.current().session_client.clone();
     let Some(pane) = ctx.state.popup.as_mut().filter(|pane| !pane.closing) else {
         return Update::none();
@@ -125,11 +126,7 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     pane.closing = true;
     pane.begin_close_animation(animations);
     pane.terminal.kill();
-    let timeout = crate::layout::anim::retained_pane_timeout_for_pane(
-        animations,
-        pane,
-        ctx.state.config.frame_rate,
-    );
+    let timeout = crate::layout::anim::retained_pane_timeout_for_pane(animations, pane, frame_rate);
     ctx.state
         .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
     restore_focus(ctx);

@@ -329,7 +329,7 @@ pub(crate) fn kill_workspace_with_confirmation(
         targets,
         crate::layout::anim::retained_pane_timeout(
             ctx.state.config.animations,
-            ctx.state.config.frame_rate,
+            ctx.state.runtime_frame_rate(),
         ),
     ))
 }

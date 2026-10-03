@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::time::Instant;
 
 use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus};
@@ -32,6 +33,9 @@ pub struct Pane {
     pub closing: bool,
     /// Resolved at the start of closing so retention and rendering share one immutable recipe.
     pub closing_animation: Option<crate::layout::anim::PaneAnimationSnapshot>,
+    /// Local handoff of the fade when the pane moves into its retained closing layer.
+    pub(crate) fade_closing: Cell<bool>,
+    pub(crate) fade_stage: Cell<crate::layout::anim::FadeStage>,
     pub logging: bool,
     pub activity: PaneActivity,
     pub agent_refs: Vec<crate::session::protocol::AgentRef>,
@@ -99,6 +103,8 @@ pub struct PaneKeys {
     pub terminal: Key,
     /// Stable wrapper key for the pane's optional full-size paint effect.
     pub effect_scope: Key,
+    /// Tracks opacity independently of the pane's live or closing widget parent.
+    pub(crate) opacity: Key,
     /// One animation key per [`ChromeSlot`], indexed by the slot.
     chrome: [Key; ChromeSlot::ALL.len()],
 }
@@ -109,6 +115,7 @@ impl PaneKeys {
             body: crate::view::pane_body_key(id).into(),
             terminal: crate::view::pane_terminal_key(id).into(),
             effect_scope: Key::from(format!("rozi-pane-effect-{id}")),
+            opacity: Key::from(format!("rozi-pane-opacity-{id}")),
             chrome: ChromeSlot::ALL
                 .map(|slot| Key::from(format!("rozi-pane-chrome-{id}-{}", slot.name()))),
         }
@@ -172,6 +179,8 @@ impl Pane {
             terminal_active: false,
             closing: false,
             closing_animation: None,
+            fade_closing: Cell::new(false),
+            fade_stage: Cell::new(crate::layout::anim::FadeStage::Running),
             logging: false,
             activity: PaneActivity::default(),
             agent_refs: Vec::new(),

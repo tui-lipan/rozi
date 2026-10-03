@@ -540,3 +540,161 @@ fn closing_reveals_pass_mouse_presses_to_the_surviving_pane() {
         .join()
         .expect("reveal mouse test completes");
 }
+
+#[test]
+fn floating_panes_occlude_tiled_terminal_scrollbars() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend(PaneAnimationStyle::Scan);
+            for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+                pane.opening = false;
+            }
+            backend.render();
+            backend.advance(Duration::from_millis(300));
+            let tiled = backend.rect_of_key(&pane_key(10)).expect("left tile");
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .process_server_output("scrollback row\r\n".repeat(100).as_bytes());
+            let mut float = Pane::new(
+                12,
+                5_000,
+                FloatRect {
+                    x: f32::from(tiled.x) + f32::from(tiled.w) - 6.0,
+                    y: 1.0,
+                    w: 16.0,
+                    h: 8.0,
+                },
+            );
+            float.floating = true;
+            float.opening = false;
+            float.terminal_active = true;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(float);
+            backend.render();
+            backend.advance(Duration::from_millis(300));
+            let x = (tiled.x + tiled.w as i16 - 1) as u16;
+            let y = (tiled.y + 3) as u16;
+            let float_rect = backend.rect_of_key(&pane_key(12)).expect("floating pane");
+            assert!(float_rect.contains(x as i16, y as i16));
+            assert!(
+                x < (float_rect.x + float_rect.w as i16 - 2) as u16,
+                "the float's own scrollbar must be elsewhere"
+            );
+            for (kind, mouse_y) in [
+                (MouseKind::Down(MouseButton::Left), y),
+                (MouseKind::Drag(MouseButton::Left), y + 1),
+                (MouseKind::Up(MouseButton::Left), y + 1),
+            ] {
+                backend
+                    .send_mouse(MouseEvent {
+                        x,
+                        y: mouse_y,
+                        kind,
+                        mods: Default::default(),
+                    })
+                    .expect("click/drag over covered tiled scrollbar");
+            }
+            assert_eq!(
+                backend.state().current().workspaces[0].panes[0]
+                    .terminal
+                    .scrollback_offset(),
+                0,
+                "a floating pane must occlude the tiled scrollbar underneath it"
+            );
+            // Prove the coordinate and scrollback are usable: removing the covering float should
+            // let the same press move the tiled terminal away from its bottom position.
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .retain(|pane| pane.id != 12);
+            backend.render();
+            for kind in [
+                MouseKind::Down(MouseButton::Left),
+                MouseKind::Up(MouseButton::Left),
+            ] {
+                backend
+                    .send_mouse(MouseEvent {
+                        x,
+                        y,
+                        kind,
+                        mods: Default::default(),
+                    })
+                    .expect("click uncovered tiled scrollbar");
+            }
+            assert!(
+                backend.state().current().workspaces[0].panes[0]
+                    .terminal
+                    .scrollback_offset()
+                    > 0,
+                "control press must actually operate the tiled scrollbar"
+            );
+        })
+        .expect("spawn scrollbar occlusion test")
+        .join()
+        .expect("scrollbar occlusion test completes");
+}
+
+#[test]
+fn closing_raised_panes_pass_mouse_input_to_tiles() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
+                for fullscreen in [false, true] {
+                    let mut backend = backend(style);
+                    let state = backend.state_mut();
+                    for pane in &mut state.current_mut().workspaces[0].panes {
+                        pane.opening = false;
+                    }
+                    let mut raised = Pane::new(
+                        12,
+                        5_000,
+                        FloatRect {
+                            x: 12.0,
+                            y: 1.0,
+                            w: 16.0,
+                            h: 8.0,
+                        },
+                    );
+                    raised.floating = true;
+                    raised.fullscreen = fullscreen;
+                    raised.opening = false;
+                    raised.terminal_active = true;
+                    state.current_mut().workspaces[0].panes.push(raised);
+                    state.current_mut().workspaces[0].focused_pane = Some(12);
+                    state.current_mut().focused_pane = Some(12);
+                    backend.render();
+                    backend.advance(Duration::from_millis(300));
+                    backend
+                        .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                        .expect("close raised pane");
+                    backend.advance(Duration::from_millis(175));
+                    let retained = backend
+                        .rect_of_key(&pane_key(12))
+                        .expect("retained raised pane");
+                    assert!(retained.contains(17, 5));
+                    assert!(contains_frontier(&mut backend, retained));
+                    backend.state_mut().current_mut().focused_pane = None;
+                    backend.state_mut().current_mut().workspaces[0].focused_pane = None;
+                    backend.render();
+                    backend
+                        .send_mouse(MouseEvent {
+                            x: 17,
+                            y: 5,
+                            kind: MouseKind::Down(MouseButton::Left),
+                            mods: Default::default(),
+                        })
+                        .expect("press through raised close");
+                    assert_eq!(
+                        backend.state().current().focused_pane,
+                        Some(10),
+                        "{style:?}/fullscreen={fullscreen}: raised closing layer swallowed input"
+                    );
+                }
+            }
+        })
+        .expect("spawn raised close test")
+        .join()
+        .expect("raised close test completes");
+}

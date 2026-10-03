@@ -105,6 +105,28 @@ pub(crate) fn pane_reveal_progress(
     ctx.transition(key, target, spec.transition(pane.closing))
 }
 
+/// Preserve the fade's current value when a pane moves from its live canvas into the
+/// paint-only closing layer. Seed the remounted wrapper once, then hand it the final target.
+/// The wrapper continues to own the fade, including the image encoding target.
+pub(crate) fn pane_fade(ctx: &Context<AppRoot>, pane: &Pane) -> Fade {
+    let target = anim::pane_opacity_target(ctx.state.config.animations, pane);
+    let transition = window_opacity_config(ctx, pane);
+    let current = ctx.transition(pane.keys.opacity.clone(), target, transition);
+    let was_closing = pane.fade_closing.replace(pane.closing);
+    let stage = if pane.closing {
+        anim::FadeStage::next(!was_closing, pane.fade_stage.get())
+    } else {
+        anim::FadeStage::Handoff
+    };
+    pane.fade_stage.set(stage);
+    Fade {
+        current,
+        target,
+        transition,
+        stage,
+    }
+}
+
 pub(crate) fn window_opacity_config(ctx: &Context<AppRoot>, pane: &Pane) -> TransitionConfig {
     let animations = ctx.state.config.animations;
     let snapshot_active = pane

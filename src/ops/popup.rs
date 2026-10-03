@@ -211,6 +211,7 @@ pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> 
                 format!("rozi-popup-pane-reveal-{}", pane.id),
             ),
             false,
+            crate::view::animation::pane_fade(ctx, pane),
         ),
     ))
 }

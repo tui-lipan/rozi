@@ -994,6 +994,7 @@ pub(crate) fn pane_element(
     merge: PaneMerge,
     reveal_progress: f32,
     hide_frame_border: bool,
+    fade: animation::Fade,
 ) -> Element {
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -1584,9 +1585,7 @@ pub(crate) fn pane_element(
             animation::screenshot_flash_color(theme),
         )
         .apply(Animated::new(pane_tree)),
-        None => Animated::new(pane_tree)
-            .opacity(opacity)
-            .transition(animation::window_opacity_config(ctx, pane)),
+        None => animation::crossfade(fade, Animated::new(pane_tree)),
     }
     .height(Length::Flex(1));
     // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree

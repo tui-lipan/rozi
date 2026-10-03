@@ -62,9 +62,10 @@ panes without a local UI endpoint continue using screen detection.
 
 Codex starts a thread's hooks at its first prompt, so after `/resume` the pane reports the new
 thread once you send it something. The plugin reports one activity for the thread on screen.
-Sub-agent completion cannot mark the parent done, and parallel tool completions keep the thread
-blocked while another approval or question remains. See the plugin README for the event mapping,
-checkout installation, and verification steps.
+Sub-agent completion cannot mark the parent done. An approval keeps the thread blocked until the
+tool calls running when Codex asked for it finish, so a parallel completion never hides an open
+approval. See the plugin README for the event mapping, checkout installation, and verification
+steps.
 
 ## Add an agent
 

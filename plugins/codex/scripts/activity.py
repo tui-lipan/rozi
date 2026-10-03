@@ -67,11 +67,12 @@ def transition(event: dict) -> tuple[str, str | None] | None:
     return EVENT_STATES.get(name)
 
 
-def state_path(env: dict[str, str], parent_pid: int) -> Path:
-    # Codex runs hook commands as children of the TUI process, even when the thread itself runs
-    # in its shared app-server daemon. A thread id alone is not a process identity: two TUIs can
-    # open the same thread.
-    identity = [env["ROZI_SOCKET"], env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"], parent_pid]
+def state_path(env: dict[str, str]) -> Path:
+    # One store per pane. Codex starts each hook through `$SHELL -lc` or `cmd.exe /C`, and a shell
+    # that does not exec its last command leaves a fresh parent process for every hook, so no
+    # process id identifies the client. Successive clients in a pane are told apart by their
+    # lifecycle tokens instead: each one's first SessionStart releases the previous token.
+    identity = [env["ROZI_SOCKET"], env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"]]
     key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     # Codex owns this persistent directory, separately from its cached plugin code.
     root = Path(env["PLUGIN_DATA"]) / "activity"
@@ -100,10 +101,19 @@ def initialize_state(db: sqlite3.Connection) -> None:
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         state TEXT NOT NULL, reason TEXT, dirty INTEGER NOT NULL
     )""")
-    db.execute("""CREATE TABLE IF NOT EXISTS blockers (
-        kind TEXT NOT NULL, identity TEXT NOT NULL, reason TEXT NOT NULL,
-        count INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (kind, identity)
+    # Questions, keyed by the tool call that asks them.
+    db.execute("""CREATE TABLE IF NOT EXISTS questions (
+        call TEXT PRIMARY KEY, reason TEXT NOT NULL
+    )""")
+    # Tool calls that started and have not completed.
+    db.execute("""CREATE TABLE IF NOT EXISTS calls (call TEXT PRIMARY KEY)""")
+    # Open approvals. `waits` is whether the approval waits for the calls listed for it in
+    # `approval_calls`; one opened while no call was running waits for the next completion.
+    db.execute("""CREATE TABLE IF NOT EXISTS approvals (
+        id INTEGER PRIMARY KEY, reason TEXT NOT NULL, waits INTEGER NOT NULL
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS approval_calls (
+        approval INTEGER NOT NULL, call TEXT NOT NULL, PRIMARY KEY (approval, call)
     )""")
     db.execute("""CREATE TABLE IF NOT EXISTS releases (
         token TEXT PRIMARY KEY, seq INTEGER NOT NULL
@@ -166,7 +176,7 @@ def start_run(db: sqlite3.Connection, row: tuple | None, event: dict) -> tuple:
         queue_release(db, row)
     row = ("codex:" + uuid.uuid4().hex, event["session_id"], 0, 0)
     db.execute("INSERT OR REPLACE INTO run VALUES (1, ?, ?, ?, ?)", row)
-    db.execute("DELETE FROM blockers")
+    clear_waits(db)
     return row
 
 
@@ -200,47 +210,68 @@ def queue_release(db: sqlite3.Connection, row: tuple) -> None:
     db.execute("INSERT OR IGNORE INTO releases VALUES (?, ?)", (row[0], row[2]))
 
 
-def call_identity(event: dict) -> str:
-    """The tool call an event is about, from what both its permission request and its completion
-    carry. Codex's PermissionRequest has no tool_use_id, and adds the approval prompt's own
-    `description` to the tool input."""
-    tool_input = event.get("tool_input")
-    if event["hook_event_name"] == "PermissionRequest" and isinstance(tool_input, dict):
-        tool_input = {key: value for key, value in tool_input.items() if key != "description"}
-    call = [event.get("tool_name"), tool_input]
-    return hashlib.sha256(json.dumps(call, sort_keys=True, default=str).encode()).hexdigest()
+def clear_waits(db: sqlite3.Connection) -> None:
+    for table in ("questions", "calls", "approvals", "approval_calls"):
+        db.execute(f"DELETE FROM {table}")
 
 
-def start_permission_wait(db: sqlite3.Connection, event: dict, reason: str) -> None:
-    # Identical parallel calls share an identity. Counting them keeps one completion from
-    # clearing another call's outstanding approval.
-    db.execute("""INSERT INTO blockers (kind, identity, reason) VALUES ('permission', ?, ?)
-        ON CONFLICT (kind, identity) DO UPDATE SET count = count + 1""",
-               (call_identity(event), reason))
+def call_id(event: dict) -> str | None:
+    value = event.get("tool_use_id")
+    return str(value) if value else None
 
 
-def finish_tool(db: sqlite3.Connection, event: dict) -> None:
-    identity = call_identity(event)
-    db.execute("UPDATE blockers SET count = count - 1 WHERE kind = 'permission' AND identity = ?",
-               (identity,))
-    db.execute("DELETE FROM blockers WHERE kind = 'permission' AND identity = ? AND count <= 0",
-               (identity,))
-    if event.get("tool_use_id"):
-        db.execute("DELETE FROM blockers WHERE kind = 'question' AND identity = ?",
-                   (str(event["tool_use_id"]),))
+def open_approval(db: sqlite3.Connection, reason: str) -> None:
+    """Record an approval as waiting on every tool call running when it was asked for.
+
+    Codex's PermissionRequest names no tool call, and one call can raise several: a command's own
+    approval, then network access or an escalated subcommand while it runs. Whichever call it
+    belongs to is among those running, unless that call fired no PreToolUse. Waiting for all of
+    them never reports work while an approval may still be open."""
+    running = [row[0] for row in db.execute("SELECT call FROM calls")]
+    approval = db.execute("INSERT INTO approvals (reason, waits) VALUES (?, ?)",
+                          (reason, int(bool(running)))).lastrowid
+    db.executemany("INSERT INTO approval_calls VALUES (?, ?)",
+                   [(approval, call) for call in running])
+
+
+def finish_call(db: sqlite3.Connection, event: dict) -> None:
+    # An approval with no running call to wait for ends at the next completion, usually that of
+    # the call it approved.
+    db.execute("DELETE FROM approvals WHERE waits = 0")
+    call = call_id(event)
+    if call is None:
+        return
+    db.execute("DELETE FROM calls WHERE call = ?", (call,))
+    db.execute("DELETE FROM questions WHERE call = ?", (call,))
+    db.execute("DELETE FROM approval_calls WHERE call = ?", (call,))
+    db.execute("""DELETE FROM approvals WHERE waits = 1 AND NOT EXISTS
+        (SELECT 1 FROM approval_calls WHERE approval_calls.approval = approvals.id)""")
+
+
+def start_call(db: sqlite3.Connection, event: dict, change: tuple) -> None:
+    call = call_id(event)
+    if call is None:
+        return
+    db.execute("INSERT OR IGNORE INTO calls VALUES (?)", (call,))
+    if change[0] == "blocked":
+        db.execute("INSERT OR REPLACE INTO questions VALUES (?, ?)", (call, change[1]))
 
 
 def update_blockers(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     name = event["hook_event_name"]
     if name in {"Stop", "Interrupt", "SessionEnd", "UserPromptSubmit"}:
-        db.execute("DELETE FROM blockers")
+        clear_waits(db)
+    elif name == "PreToolUse":
+        start_call(db, event, change)
     elif name == "PostToolUse":
-        finish_tool(db, event)
+        finish_call(db, event)
     elif name == "PermissionRequest":
-        start_permission_wait(db, event, change[1])
-    elif name == "PreToolUse" and change[0] == "blocked":
-        db.execute("INSERT OR REPLACE INTO blockers (kind, identity, reason) VALUES ('question', ?, ?)",
-                   (str(event.get("tool_use_id") or ""), change[1]))
+        open_approval(db, change[1])
+
+
+def open_wait(db: sqlite3.Connection) -> tuple | None:
+    return db.execute("""SELECT reason FROM questions
+        UNION ALL SELECT reason FROM approvals LIMIT 1""").fetchone()
 
 
 def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
@@ -248,7 +279,7 @@ def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     if row is None:
         return
     update_blockers(db, event, change)
-    blocker = db.execute("SELECT reason FROM blockers ORDER BY kind, identity LIMIT 1").fetchone()
+    blocker = open_wait(db)
     state, reason = ("blocked", blocker[0]) if blocker else change
     released = state == "release"
     db.execute("UPDATE run SET seq = ?, released = ?", (row[2] + 1, int(released)))
@@ -359,16 +390,25 @@ def deliver_pending(db: sqlite3.Connection, env: dict[str, str], deadline: float
     return True
 
 
-def handle(event: dict, env: dict[str, str], parent_pid: int) -> None:
+def nested(event: dict, env: dict[str, str]) -> bool:
+    """Whether this hook belongs to a Codex started from another Codex thread's tool shell, which
+    inherits that thread's id and the pane, but is not what the pane shows."""
+    inherited = env.get("CODEX_THREAD_ID")
+    return bool(inherited) and inherited != event["session_id"]
+
+
+def handle(event: dict, env: dict[str, str]) -> None:
     required = ("ROZI_PANE", "ROZI_SOCKET", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA")
     if env.get("ROZI") != "1" or not all(env.get(key) for key in required):
         return
     if not isinstance(event.get("session_id"), str) or not event["session_id"]:
         return
+    if nested(event, env):
+        return
     change = transition(event)
     if change is None:
         return
-    path = state_path(env, parent_pid)
+    path = state_path(env)
     # State persistence has its own retry budget. Delivery gets only its separate, smaller
     # budget after the event has committed, and never extends a failed persistence attempt.
     db = persist_event(path, event, change)
@@ -382,7 +422,7 @@ def main() -> None:
     try:
         event = json.load(sys.stdin)
         if isinstance(event, dict):
-            handle(event, dict(os.environ), os.getppid())
+            handle(event, dict(os.environ))
     except (OSError, ValueError, TypeError, sqlite3.Error, subprocess.SubprocessError):
         # An unavailable UI must never fail a tool call, veto Stop, or decide
         # whether Codex is permitted to run something. All output stays empty.

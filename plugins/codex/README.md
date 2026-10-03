@@ -47,7 +47,7 @@ for the thread on screen.
 | Prompt submitted or tool running | `working` |
 | Approval requested | `blocked` |
 | `request_user_input` question asked | `blocked` |
-| Tool finishes | `working` unless another approval or question remains |
+| Tool finishes | `working` once no question or approval waits on a running call |
 | Compaction | `working`, keeping the same integration token |
 | Turn finishes | `done` |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
@@ -64,10 +64,13 @@ Sub-agent events arrive with an agent ID and are ignored, so a child's completio
 parent done. The plugin reports one activity for the thread on screen; it does not create separate
 child rows.
 
-Codex's approval event carries no tool call ID. The plugin matches an approval to the call that
-completes it by tool name and input, and counts identical parallel calls, so the completion of an
-unrelated call keeps the thread blocked. An approval you decline without interrupting the turn stays
-blocked until the turn finishes.
+Codex's approval event names no tool call, and one call can raise several approvals: the command
+itself, then network access or an escalated subcommand while it runs. The plugin therefore treats
+an approval as a wait on every tool call running when Codex asked for it, and reports `blocked`
+until all of those calls finish. An approval asked while no call was running ends at the next tool
+completion. The turn finishing or being interrupted ends every wait. The thread never reads as
+working while an approval may still be open, so it can stay `blocked` after you approve a
+long-running command, until that command or a parallel call that was already running finishes.
 
 Hooks call the matching `ROZI_BIN` executable through structured arguments. A unique integration
 token and increasing sequence numbers fence each reporting lifecycle. Events from a different
@@ -82,8 +85,15 @@ pending, so later hooks can recover without restarting Codex. A release already 
 recognised on retry. If no later hook runs, pending delivery waits until one does; the plugin does
 not run a background retry service.
 
-The plugin keeps tokens, thread IDs, sequence numbers, pending states and releases, and hashed
-approval identities under Codex's `PLUGIN_DATA` directory, in `activity`. It does not read
+Codex runs each hook through your login shell, which may stay the hook's parent process, so the
+plugin keeps one state store per pane rather than per process. Each Codex client's first
+SessionStart in a pane releases the previous client's token, including one that exited without
+releasing it. A Codex started from inside a Codex thread's tool shell inherits that thread's
+`CODEX_THREAD_ID`; its hooks are ignored, so it cannot take over the pane's report.
+
+The plugin keeps tokens, thread IDs, sequence numbers, pending states and releases, and the tool
+call IDs of running calls and open waits under Codex's `PLUGIN_DATA` directory, in `activity`.
+It does not read
 transcripts or store prompts, tool input, or assistant messages. Individual rozi calls time out
 after 750 ms, with a 900 ms delivery budget per hook. Hooks produce no output or permission
 decisions, and failures never prevent Codex from continuing.
@@ -114,7 +124,8 @@ For a live check, launch Codex with the plugin inside a Rozi pane. From another 
 `rozi agents list --format json`. Confirm these transitions:
 
 1. Submit a prompt. The pane reports the native thread ID and its state becomes `working`.
-2. Request a command that needs approval. Its state becomes `blocked` until you answer.
+2. Request a command that needs approval. Its state becomes `blocked`, and returns to `working`
+   once the approved command finishes.
 3. Let the response finish. Its state becomes `done`.
 4. Run `/compact`. Reporting continues with the same token.
 5. Run `/new` and submit a prompt. The pane reports the new thread ID.

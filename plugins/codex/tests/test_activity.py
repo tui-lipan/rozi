@@ -4,7 +4,9 @@ import concurrent.futures
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -40,8 +42,8 @@ class ActivityTests(unittest.TestCase):
         self.calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0)
 
-    def hook(self, name, session="thread-id", pid=123, **extra):
-        activity.handle({"hook_event_name": name, "session_id": session, **extra}, self.env, pid)
+    def hook(self, name, session="thread-id", **extra):
+        activity.handle({"hook_event_name": name, "session_id": session, **extra}, self.env)
 
     def field(self, flag, call=-1):
         args = self.calls[call][0]
@@ -92,7 +94,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("SessionStart")
         old = self.field("--integration")
         self.hook("SessionEnd")
-        self.hook("SessionStart", pid=456, source="resume")
+        self.hook("SessionStart", source="resume")
         self.assertNotEqual(old, self.field("--integration"))
         self.assertEqual(self.field("--seq"), "1")
 
@@ -163,23 +165,58 @@ class ActivityTests(unittest.TestCase):
 
     def test_approved_permission_clears_when_its_call_completes(self):
         self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.assertEqual(self.field("--state"), "blocked")
         self.assertEqual(self.field("--reason"), "Permission required")
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.assertEqual(self.field("--state"), "working")
 
-    def test_unrelated_completion_keeps_permission_wait(self):
+    def test_parallel_completion_keeps_the_approval_open(self):
         self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.hook("PreToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.permission()
-        self.hook("PostToolUse", tool_use_id="other", tool_name="Bash",
-                  tool_input={"command": "ls"})
+        self.hook("PostToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.assertEqual(self.field("--state"), "blocked")
-        self.hook("PostToolUse", tool_use_id="other", tool_name="apply_patch", **{"tool_input": BASH["tool_input"]})
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_a_call_started_after_the_approval_does_not_hold_it(self):
+        self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.permission()
+        self.hook("PreToolUse", tool_use_id="later", tool_name="Bash", tool_input={"command": "ls"})
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_network_approval_for_the_same_command_needs_one_completion(self):
+        # Codex reports a running command's network access as a second Bash approval carrying
+        # the same command and a `network-access` description.
+        self.hook("SessionStart")
+        curl = {"tool_name": "Bash", "tool_input": {"command": "curl https://example.com"}}
+        self.hook("PreToolUse", tool_use_id="exec-1", **curl)
+        self.permission(**curl)
+        self.hook("PermissionRequest", tool_name="Bash", tool_input={
+            "command": "curl https://example.com", "description": "network-access example.com"})
         self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolUse", tool_use_id="exec-1", **curl)
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_mcp_arguments_named_description_are_not_special(self):
+        self.hook("SessionStart")
+        deploy = {"tool_name": "mcp__ops__deploy",
+                  "tool_input": {"description": "production deployment", "target": "foo"}}
+        self.hook("PreToolUse", tool_use_id="mcp-1", **deploy)
+        self.hook("PermissionRequest", **deploy)
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolUse", tool_use_id="mcp-1", **deploy)
+        self.assertEqual(self.field("--state"), "working")
 
     def test_identical_parallel_calls_need_both_completions(self):
         self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
+        self.hook("PreToolUse", tool_use_id="exec-2", **BASH)
         self.permission()
         self.permission()
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
@@ -187,9 +224,29 @@ class ActivityTests(unittest.TestCase):
         self.hook("PostToolUse", tool_use_id="exec-2", **BASH)
         self.assertEqual(self.field("--state"), "working")
 
+    def test_approval_without_a_running_call_ends_at_the_next_completion(self):
+        self.hook("SessionStart")
+        self.hook("PermissionRequest", tool_name="write_stdin", tool_input={"chars": "y"})
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "working")
+
     def test_denied_permission_clears_when_the_turn_ends(self):
         self.hook("SessionStart")
+        self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
+        self.hook("Stop")
+        self.assertEqual(self.field("--state"), "done")
+        self.hook("UserPromptSubmit")
+        self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_nested_codex_in_a_tool_shell_cannot_claim_the_pane(self):
+        self.hook("SessionStart")
+        self.env["CODEX_THREAD_ID"] = "thread-id"
+        for name in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"):
+            self.hook(name, session="nested")
+        self.assertEqual(len(self.calls), 1)
         self.hook("Stop")
         self.assertEqual(self.field("--state"), "done")
 
@@ -207,7 +264,7 @@ class ActivityTests(unittest.TestCase):
         for key in ("ROZI", "ROZI_PANE", "ROZI_SOCKET", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA"):
             env = self.env.copy()
             env.pop(key)
-            activity.handle({"hook_event_name": "SessionStart", "session_id": "id"}, env, 123)
+            activity.handle({"hook_event_name": "SessionStart", "session_id": "id"}, env)
         self.assertEqual(self.calls, [])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
@@ -263,6 +320,7 @@ class ActivityTests(unittest.TestCase):
     def test_twenty_parallel_hooks_preserve_waits_and_deliver_latest_state(self):
         self.hook("SessionStart")
         waiting = {"tool_name": "Bash", "tool_input": {"command": "waiting"}}
+        self.hook("PreToolUse", tool_use_id="waiting", **waiting)
         events = [
             ("PermissionRequest", waiting),
             ("PreToolUse", {"tool_name": "request_user_input", "tool_use_id": "question"}),
@@ -282,10 +340,12 @@ class ActivityTests(unittest.TestCase):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as pool:
                 list(pool.map(run, events))
         self.assertEqual(self.field("--state"), "blocked")
-        self.assertEqual(self.field("--seq"), "21")
-        db = activity.open_state(activity.state_path(self.env, 123))
+        self.assertEqual(self.field("--seq"), "22")
+        db = activity.open_state(activity.state_path(self.env))
         try:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM blockers").fetchone()[0], 2)
+            waits = db.execute("""SELECT (SELECT COUNT(*) FROM questions)
+                + (SELECT COUNT(*) FROM approvals)""").fetchone()[0]
+            self.assertEqual(waits, 2)
             self.assertEqual(db.execute("SELECT dirty FROM status").fetchone()[0], 0)
         finally:
             db.close()
@@ -308,7 +368,7 @@ class ActivityTests(unittest.TestCase):
                 self.assertTrue(sending.wait(timeout=1))
                 try:
                     pool.submit(self.permission).result(timeout=1)
-                    db = activity.open_state(activity.state_path(self.env, 123))
+                    db = activity.open_state(activity.state_path(self.env))
                     try:
                         self.assertEqual(db.execute("SELECT state FROM status").fetchone()[0], "blocked")
                     finally:
@@ -320,7 +380,7 @@ class ActivityTests(unittest.TestCase):
 
     def test_state_lock_longer_than_one_second_retries_without_losing_permission(self):
         self.hook("SessionStart")
-        path = activity.state_path(self.env, 123)
+        path = activity.state_path(self.env)
         owner = activity.open_state(path)
         owner.execute("BEGIN IMMEDIATE")
         retrying = threading.Event()
@@ -360,9 +420,9 @@ class ActivityTests(unittest.TestCase):
 
         with patch.object(activity, "record_event", side_effect=fail_first_transaction):
             self.permission()
-        db = activity.open_state(activity.state_path(self.env, 123))
+        db = activity.open_state(activity.state_path(self.env))
         try:
-            self.assertEqual(db.execute("SELECT count FROM blockers").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 1)
         finally:
             db.close()
         self.assertEqual(attempts, 2)
@@ -400,17 +460,17 @@ class ActivityTests(unittest.TestCase):
             subprocess.CompletedProcess([], 1, stderr="session unavailable\n"),
         )
         for index, failure in enumerate(failures):
-            pid = 600 + index
-            self.hook("SessionStart", pid=pid)
+            self.env["ROZI_PANE"] = str(600 + index)
+            self.hook("SessionStart")
             old_token = self.field("--integration")
             with patch.object(activity.subprocess, "run", side_effect=[failure]):
                 if isinstance(failure, Exception):
                     with self.assertRaises(type(failure)):
-                        self.hook("SessionStart", session="new-id", source="resume", pid=pid)
+                        self.hook("SessionStart", session="new-id", source="resume")
                 else:
-                    self.hook("SessionStart", session="new-id", source="resume", pid=pid)
+                    self.hook("SessionStart", session="new-id", source="resume")
             # New-thread events still belong to the new lifecycle and retry the old release.
-            self.hook("PermissionRequest", session="new-id", pid=pid, **BASH)
+            self.hook("PermissionRequest", session="new-id", **BASH)
             self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
             self.assertEqual(self.field("--integration", -2), old_token)
             self.assertNotEqual(self.field("--integration"), old_token)
@@ -425,7 +485,7 @@ class ActivityTests(unittest.TestCase):
         refused = subprocess.CompletedProcess([], 1, stderr="integration token belongs to a retired agent incarnation\n")
         with patch.object(activity.subprocess, "run", side_effect=[refused, subprocess.CompletedProcess([], 0)]):
             self.hook("UserPromptSubmit", session="new-id")
-        db = activity.open_state(activity.state_path(self.env, 123))
+        db = activity.open_state(activity.state_path(self.env))
         try:
             self.assertEqual(db.execute("SELECT session FROM run").fetchone()[0], "new-id")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM releases").fetchone()[0], 0)
@@ -438,7 +498,7 @@ class ActivityTests(unittest.TestCase):
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.hook("UserPromptSubmit")
-        path = activity.state_path(self.env, 123)
+        path = activity.state_path(self.env)
         db = activity.open_state(path)
         try:
             activity.flush_pending(db, path, self.env)
@@ -447,7 +507,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--seq"), "3")
         self.assertEqual(self.field("--state"), "working")
 
-    def test_state_is_separate_for_each_server_pane_and_process(self):
+    def test_state_is_separate_for_each_server_and_pane(self):
         self.hook("SessionStart")
         first = self.field("--integration")
         self.env["ROZI_SESSION_INSTANCE"] = "another-server"
@@ -455,8 +515,18 @@ class ActivityTests(unittest.TestCase):
         self.assertNotEqual(first, self.field("--integration"))
         self.env["ROZI_PANE"] = "8"
         self.hook("SessionStart")
-        self.hook("SessionStart", pid=456)
-        self.assertEqual(len(list(Path(self.temp.name).rglob("*.sqlite3"))), 4)
+        self.assertEqual(len(list(Path(self.temp.name).rglob("*.sqlite3"))), 3)
+
+    def test_successive_clients_in_one_pane_share_state_but_not_tokens(self):
+        # A client that exited without releasing, such as one that crashed, is released by the
+        # next client's first SessionStart in the same pane.
+        self.hook("SessionStart")
+        crashed = self.field("--integration")
+        self.hook("SessionStart", session="next-client")
+        self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
+        self.assertEqual(self.field("--integration", -2), crashed)
+        self.assertNotEqual(self.field("--integration"), crashed)
+        self.assertEqual(len(list(Path(self.temp.name).rglob("*.sqlite3"))), 1)
 
     def test_main_is_silent_and_successful_on_bad_input_and_cli_failure(self):
         for raw in ("bad json", "[]", '{"hook_event_name": [], "session_id": "id"}'):
@@ -493,6 +563,57 @@ class ActivityTests(unittest.TestCase):
                                      + activity.DELIVERY_LOCK_TIMEOUT + 2 * activity.STATE_LOCK_TIMEOUT)
             self.assertGreater(hook["timeout"], implementation_budget + 0.5, name)
         self.assertEqual(hooks["Interrupt"][0]["hooks"][0]["timeout"], 3)
+
+
+@unittest.skipIf(os.name == "nt" or not shutil.which("sh") or not shutil.which("python3"),
+                 "needs a POSIX shell and python3")
+class ShellLaunchTests(unittest.TestCase):
+    """Runs every hook the way Codex does: the manifest's command line, through a shell, as its own
+    process. The trailing `; exit` keeps the shell from replacing itself with Python, as fish,
+    some `/bin/sh` builds, and `cmd.exe` do not, so each hook has a different parent process."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="rozi codex shell ")
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.log = root / "rozi calls.log"
+        fake = root / "rozi"
+        fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.log}"\n')
+        fake.chmod(0o755)
+        hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
+        self.commands = {name: groups[0]["hooks"][0]["command"] for name, groups in hooks.items()}
+        self.env = {
+            "PATH": os.environ["PATH"], "PLUGIN_ROOT": str(ROOT),
+            "PLUGIN_DATA": str(root / "data"), "ROZI": "1", "ROZI_PANE": "4",
+            "ROZI_SOCKET": "ui-endpoint", "ROZI_SESSION_INSTANCE": "session-instance",
+            "ROZI_BIN": str(fake), "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        (root / "data").mkdir()
+
+    def run_hook(self, name, **extra):
+        event = {"hook_event_name": name, "session_id": "thread-id", **extra}
+        result = subprocess.run(["sh", "-c", self.commands[name] + "; exit $?"],
+                                input=json.dumps(event), env=self.env, capture_output=True,
+                                text=True, timeout=10, check=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""), name)
+
+    def test_lifecycle_survives_a_new_parent_process_for_every_hook(self):
+        call = {"tool_use_id": "exec-1", **BASH}
+        self.run_hook("SessionStart", source="startup")
+        self.run_hook("UserPromptSubmit", prompt="test")
+        self.run_hook("PreToolUse", **call)
+        self.run_hook("PermissionRequest", tool_name="Bash", tool_input={
+            **BASH["tool_input"], "description": "Do you approve running cargo test?"})
+        self.run_hook("PostToolUse", **call)
+        self.run_hook("Stop", stop_hook_active=False)
+        self.run_hook("SessionEnd", reason="other")
+        calls = [line.split() for line in self.log.read_text().splitlines()]
+        states = [args[args.index("--state") + 1] if "--state" in args else args[1]
+                  for args in calls]
+        self.assertEqual(states, ["idle", "working", "working", "blocked", "working", "done",
+                                  "release"])
+        tokens = {args[args.index("--integration") + 1] for args in calls}
+        self.assertEqual(len(tokens), 1)
 
 
 if __name__ == "__main__":

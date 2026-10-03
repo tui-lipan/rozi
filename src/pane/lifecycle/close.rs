@@ -30,17 +30,28 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
             id,
             generation,
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
-                anim::retained_pane_timeout(ctx.state.config.animations).max(
-                    anim::scratch_transition_duration(
-                        ctx.state.config.animations.geometry_duration,
-                    ),
+                anim::retained_pane_timeout(
+                    ctx.state.config.animations,
+                    ctx.state.runtime_frame_rate(),
                 )
+                .max(anim::scratch_transition_duration(
+                    ctx.state.config.animations.geometry_duration,
+                ))
             } else {
                 find_pane(&ctx.state, id)
                     .map(|pane| {
-                        anim::retained_pane_timeout_for_pane(ctx.state.config.animations, pane)
+                        anim::retained_pane_timeout_for_pane(
+                            ctx.state.config.animations,
+                            pane,
+                            ctx.state.runtime_frame_rate(),
+                        )
                     })
-                    .unwrap_or_else(|| anim::retained_pane_timeout(ctx.state.config.animations))
+                    .unwrap_or_else(|| {
+                        anim::retained_pane_timeout(
+                            ctx.state.config.animations,
+                            ctx.state.runtime_frame_rate(),
+                        )
+                    })
             },
         )),
         None => Update::full(),
@@ -60,17 +71,28 @@ pub(crate) fn remove_pane_after_exit(
             id,
             generation,
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
-                anim::retained_pane_timeout(ctx.state.config.animations).max(
-                    anim::scratch_transition_duration(
-                        ctx.state.config.animations.geometry_duration,
-                    ),
+                anim::retained_pane_timeout(
+                    ctx.state.config.animations,
+                    ctx.state.runtime_frame_rate(),
                 )
+                .max(anim::scratch_transition_duration(
+                    ctx.state.config.animations.geometry_duration,
+                ))
             } else {
                 find_pane(&ctx.state, id)
                     .map(|pane| {
-                        anim::retained_pane_timeout_for_pane(ctx.state.config.animations, pane)
+                        anim::retained_pane_timeout_for_pane(
+                            ctx.state.config.animations,
+                            pane,
+                            ctx.state.runtime_frame_rate(),
+                        )
                     })
-                    .unwrap_or_else(|| anim::retained_pane_timeout(ctx.state.config.animations))
+                    .unwrap_or_else(|| {
+                        anim::retained_pane_timeout(
+                            ctx.state.config.animations,
+                            ctx.state.runtime_frame_rate(),
+                        )
+                    })
             },
         )),
         None => Update::full(),
@@ -320,10 +342,14 @@ pub(crate) fn prune_closed_pane(
                 crate::layout::anim::retained_pane_timeout_for_pane(
                     ctx.state.config.animations,
                     pane,
+                    ctx.state.runtime_frame_rate(),
                 )
             })
             .unwrap_or_else(|| {
-                crate::layout::anim::retained_pane_timeout(ctx.state.config.animations)
+                crate::layout::anim::retained_pane_timeout(
+                    ctx.state.config.animations,
+                    ctx.state.runtime_frame_rate(),
+                )
             });
         // Take the pane out first so its terminal screen can be retired: a same-generation
         // reintroduction (a layout correction) restores its scrollback instead of starting blank.

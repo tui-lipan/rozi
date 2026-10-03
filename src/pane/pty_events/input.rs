@@ -189,12 +189,13 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
 
     let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
-    let interval =
-        crate::pane::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
+    let interval = crate::pane::pty_events::pointer_flow::interval_for_frame_rate(
+        ctx.state.runtime_frame_rate(),
+    );
     let mut hold = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
-            // Motion is sampled at the configured frame cadence; state changes always go. See
+            // Motion is sampled at the active client frame cadence; state changes always go. See
             // `pty_events::pointer_flow`.
             if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes, interval) {
                 client.send_input(id, pane.pty_generation, local, bytes);
@@ -225,8 +226,9 @@ pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Updat
 
     let client = ctx.state.pty_client_for_pane(id);
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
-    let interval =
-        crate::pane::pty_events::pointer_flow::interval_for_frame_rate(ctx.state.config.frame_rate);
+    let interval = crate::pane::pty_events::pointer_flow::interval_for_frame_rate(
+        ctx.state.runtime_frame_rate(),
+    );
     let mut retry = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         match pane.terminal.pointer_flow.paced(interval) {

@@ -327,7 +327,10 @@ pub(crate) fn kill_workspace_with_confirmation(
     Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
         ctx.state.runtime_epoch,
         targets,
-        crate::layout::anim::retained_pane_timeout(ctx.state.config.animations),
+        crate::layout::anim::retained_pane_timeout(
+            ctx.state.config.animations,
+            ctx.state.runtime_frame_rate(),
+        ),
     ))
 }
 

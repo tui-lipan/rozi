@@ -364,9 +364,9 @@ pub fn ordered_panes(
 
 fn pane_z_group(pane: &Pane) -> u8 {
     match (pane.closing, pane.floating) {
-        // Tiled close animations should not cover the panes expanding into their space.
-        (true, false) => 0,
-        (false, false) => 1,
+        (false, false) => 0,
+        // Retained closing tiles finish their effect over the expanding layout.
+        (true, false) => 1,
         (false, true) => 2,
         // Floating windows do not resize the tile layout, so keep their fade-out above it.
         (true, true) => 3,
@@ -893,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_panes_draws_tiled_closing_panes_under_expanding_panes() {
+    fn ordered_panes_draws_closing_tiles_above_live_tiles_below_floats() {
         fn pane(id: PaneId) -> Pane {
             Pane::new(
                 id,
@@ -932,7 +932,7 @@ mod tests {
             .map(|pane| pane.id)
             .collect();
 
-        assert_eq!(ids, vec![1, 2, 3, 4]);
+        assert_eq!(ids, vec![2, 1, 3, 4]);
     }
 
     #[test]

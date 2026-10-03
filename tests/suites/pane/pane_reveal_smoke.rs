@@ -9,7 +9,8 @@ use rozi::layout::anim::{
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{POPUP_PANE_ID, Pane, PaneBorderMode, SplitAxis};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Key, Rect};
+use tui_lipan::core::event::{MouseButton, MouseKind};
+use tui_lipan::prelude::{FloatRect, Key, MouseEvent, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -460,4 +461,82 @@ fn reveal_styles_keep_popup_rect_fixed_through_opening_and_settle_content() {
         .expect("spawn popup-reveal smoke test")
         .join()
         .expect("popup-reveal smoke test completes");
+}
+
+#[test]
+fn closing_reveals_pass_mouse_presses_to_the_surviving_pane() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
+                for titlebar in [
+                    rozi::state::PaneTitlebarMode::Border,
+                    rozi::state::PaneTitlebarMode::Integrated,
+                    rozi::state::PaneTitlebarMode::Bar,
+                    rozi::state::PaneTitlebarMode::Inset,
+                ] {
+                    let mut backend = backend(style);
+                    {
+                        let state = backend.state_mut();
+                        state.config.pane.show_titles = true;
+                        state.config.pane.titlebar = titlebar;
+                        state.config.pane.focus_on_hover = false;
+                        for pane in &mut state.current_mut().workspaces[0].panes {
+                            pane.opening = false;
+                            let color = if pane.id == 10 { 44 } else { 42 };
+                            pane.terminal
+                                .process_server_output(format!("\x1b[{color}m\x1b[2J").as_bytes());
+                        }
+                    }
+                    backend.render();
+                    backend.advance(Duration::from_millis(300));
+                    let original = backend.rect_of_key(&pane_key(10)).unwrap();
+                    backend
+                        .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                        .expect("close left pane");
+                    backend.advance(Duration::from_millis(175));
+                    let retained = backend
+                        .rect_of_key(&pane_key(10))
+                        .expect("closing pane paints");
+                    assert!(contains_frontier(&mut backend, retained));
+                    // Near the old pane's bottom-right: both masks reveal the expanded survivor.
+                    let x = (original.x + original.w as i16 - 3) as u16;
+                    let y = (original.y + original.h as i16 - 3) as u16;
+                    assert!(retained.contains(x as i16, y as i16));
+                    let frame = backend.capture_frame();
+                    assert_eq!(
+                        frame.cell(x, y).bg,
+                        frame.cell(VIEWPORT.w - 4, y).bg,
+                        "{style:?}/{titlebar:?}: click must land on a revealed survivor cell"
+                    );
+                    // Closing automatically focuses the survivor. Clear that result before each
+                    // press so routing through the actual widget tree must establish focus again.
+                    // Cover the terminal body, border header, and interior titlebar rows.
+                    for click_y in [y, original.y as u16, original.y as u16 + 1] {
+                        backend.state_mut().current_mut().focused_pane = None;
+                        backend.state_mut().current_mut().workspaces[0].focused_pane = None;
+                        backend.render();
+                        for kind in [MouseKind::Down(MouseButton::Left), MouseKind::Up(MouseButton::Left)] {
+                            backend.send_mouse(MouseEvent {
+                                x, y: click_y, kind, mods: Default::default(),
+                            }).expect("press through closing reveal");
+                        }
+                        assert_eq!(backend.state().current().focused_pane, Some(11),
+                            "{style:?}/{titlebar:?} at row {click_y}: retained pane swallowed the press");
+                    }
+                    backend.state_mut().config.pane.focus_on_hover = true;
+                    backend.state_mut().current_mut().focused_pane = None;
+                    backend.state_mut().current_mut().workspaces[0].focused_pane = None;
+                    backend.render();
+                    backend.send_mouse(MouseEvent {
+                        x, y, kind: MouseKind::Moved, mods: Default::default(),
+                    }).expect("hover through closing reveal");
+                    assert_eq!(backend.state().current().focused_pane, Some(11),
+                        "{style:?}/{titlebar:?}: retained pane swallowed hover focus");
+                }
+            }
+        })
+        .expect("spawn reveal mouse test")
+        .join()
+        .expect("reveal mouse test completes");
 }

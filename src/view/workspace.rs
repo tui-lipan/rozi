@@ -1006,7 +1006,10 @@ pub(crate) fn workspace_pages(
     let mut pages = canvas;
     for (index, offset) in super::animation::workspace_offsets(ctx, viewport_changed) {
         let workspace = &ctx.state.current().workspaces[index];
+        // Retained closing panes paint above live tiles but have no pointer handlers.
+        // Let misses in those paint-only layers reach the live layout below.
         let mut page = Canvas::new()
+            .passthrough(true)
             .width(Length::Px(content_viewport.w))
             .height(Length::Px(content_viewport.h));
         if workspace.panes.iter().all(|pane| pane.closing) {

@@ -142,6 +142,7 @@ size throughout, so the program inside does not see a resize on every frame.
 
 Closing panes finish their animation above the remaining tiles while those tiles expand underneath.
 The erased areas of `portal` and `scan` reveal the live panes below, including their text and colors.
+Closing panes no longer receive mouse input; clicks reach the live panes underneath.
 Floating panes and dialogs stay above closing tiles.
 
 `portal` and `scan` move at a uniform pace and keep revealed content opaque by default. Their edge

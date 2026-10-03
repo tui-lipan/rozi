@@ -805,6 +805,7 @@ pub(crate) fn divider_title_element(
             );
             Some(
                 MouseRegion::new()
+                    .enabled(!pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(title_row)
@@ -941,6 +942,7 @@ pub(crate) fn seam_title_element(
             Some(SeamTitle {
                 inset,
                 element: MouseRegion::new()
+                    .enabled(!pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(row)
@@ -1185,6 +1187,7 @@ pub(crate) fn pane_element(
         };
 
         let mut title_bar: Element = MouseRegion::new()
+            .enabled(!pane.closing)
             .capture_click(true)
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
@@ -1247,14 +1250,20 @@ pub(crate) fn pane_element(
                 .thumb_focus_style(frame_fg_style)
                 .track_style(frame_fg_style.bg(frame_bg))
         })
+        .scrollbar(!pane.closing)
+        .h_scrollbar(!pane.closing)
         .scroll_wheel(terminal_ready && !hinting)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
             Msg::PaneResize(id, viewport.cols, viewport.rows)
-        }))
-        .on_scroll_to(
+        }));
+    // A scroll callback alone makes the terminal a hit target, even without focus or input.
+    // Retained closing panes must be paint-only all the way down to their terminal.
+    if !pane.closing {
+        terminal_widget = terminal_widget.on_scroll_to(
             ctx.link()
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
         );
+    }
     if let Some(caret_color) = theme.caret.color {
         terminal_widget = terminal_widget.caret_color(caret_color);
     }
@@ -1317,8 +1326,11 @@ pub(crate) fn pane_element(
         } else {
             ctx.state.config.pane.padding
         })
-        .style(frame_style)
-        .focus_style(Style::default());
+        .style(frame_style);
+    // An explicit focus style makes frame borders hit-testable, even when not focusable.
+    if !pane.closing {
+        body = body.focus_style(Style::default());
+    }
     let mut inset_title_row: Option<Element> = None;
     if show_titles {
         match titlebar {
@@ -1383,6 +1395,7 @@ pub(crate) fn pane_element(
                     ),
                 };
                 let header: Element = MouseRegion::new()
+                    .enabled(!pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(title_row)
@@ -1430,6 +1443,7 @@ pub(crate) fn pane_element(
                 }
                 inset_title_row = Some(
                     MouseRegion::new()
+                        .enabled(!pane.closing)
                         .capture_click(true)
                         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                         .child(title_row)
@@ -1485,6 +1499,7 @@ pub(crate) fn pane_element(
         ctx.state.config.input.modifier.key_mods()
     };
     let mut window_region = MouseRegion::new()
+        .enabled(!pane.closing)
         .capture_requires_mods(mouse_gesture_mods)
         .drag_requires_mods(mouse_gesture_mods)
         .right_drag_requires_mods(mouse_gesture_mods)

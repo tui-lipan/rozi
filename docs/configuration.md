@@ -313,7 +313,7 @@ curve = [0.16, 1.0, 0.3, 1.0]
 | --- | --- | --- | --- |
 | `curve` | curve | the style's own | all |
 | `close_curve` | curve | the reverse of `curve` | all |
-| `fade` | bool | `true` | Scale, Portal, Scan |
+| `fade` | bool | `true` for Scale, `false` for Portal and Scan | Scale, Portal, Scan |
 | `scale_from` | float in `[0.1, 1]` | `0.9` | Scale |
 | `portal_origin` | float pair in `[0, 1]` | `[0.5, 0.5]` | Portal |
 | `scan_direction` | `top-left`, `top-right`, `bottom-left`, `bottom-right` | `top-left` | Scan |

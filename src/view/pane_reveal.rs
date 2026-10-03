@@ -12,12 +12,14 @@ pub(super) fn pane_reveal_scope(
     spec: PaneAnimationSpec,
     progress: f32,
     seed: u64,
+    closing: bool,
 ) -> Element {
     let scope = EffectScope::new();
     let scope = match PaneRevealPattern::from_style(spec.kind).filter(|_| progress < 1.0) {
-        Some(pattern) => {
-            scope.custom_effect(PaneRevealEffect::with_spec(pattern, progress, seed, spec))
-        }
+        Some(pattern) => scope.custom_effect(
+            PaneRevealEffect::with_spec(pattern, progress, seed, spec)
+                .with_initial_frontier(!closing),
+        ),
         None => scope,
     };
     let scoped: Element = scope.child(pane_tree).into();
@@ -194,6 +196,7 @@ struct PaneRevealEffect {
     progress: f32,
     seed: u64,
     spec: PaneAnimationSpec,
+    initial_frontier: bool,
 }
 
 impl PaneRevealEffect {
@@ -227,6 +230,20 @@ impl PaneRevealEffect {
             progress: progress.clamp(0.0, 1.0),
             seed,
             spec,
+            initial_frontier: false,
+        }
+    }
+
+    fn with_initial_frontier(mut self, enabled: bool) -> Self {
+        self.initial_frontier = enabled;
+        self
+    }
+
+    fn initial_cell(&self, position: RevealPosition) -> RevealCell {
+        if self.initial_frontier && self.pattern == PaneRevealPattern::Scan {
+            self.scan_cell(position)
+        } else {
+            RevealCell::Backdrop
         }
     }
 
@@ -268,7 +285,9 @@ impl PaneRevealEffect {
             self.spec.scan_direction,
         );
         let frontier = frontier_width(self.progress);
-        if scan <= (self.progress - frontier).max(0.0) {
+        // Keep the first visible corner inside the frontier band. Clamping the content threshold
+        // to zero exposed the pane's corner before the scan line had passed it.
+        if scan < self.progress - frontier {
             return RevealCell::Content;
         }
         if scan <= self.progress {
@@ -282,8 +301,11 @@ impl PaneRevealEffect {
         if self.progress >= 1.0 {
             return RevealCell::Content;
         }
-        if self.progress <= 0.0 || !position.is_valid() {
+        if !position.is_valid() {
             return RevealCell::Backdrop;
+        }
+        if self.progress <= 0.0 {
+            return self.initial_cell(position);
         }
         match self.pattern {
             PaneRevealPattern::Portal => self.portal_cell(position),
@@ -443,6 +465,33 @@ fn portal_symbol(hash: u64) -> &'static str {
 mod tests {
     use super::*;
     use tui_lipan::prelude::Rect;
+
+    #[test]
+    fn scan_first_visible_frames_contain_only_the_frontier() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 41,
+            h: 13,
+        };
+        let content = EffectCell::new("pane-corner");
+        let backdrop = EffectCell::new("neighbor");
+        for progress in [0.0, 0.001, 0.025, 0.05] {
+            let effect = PaneRevealEffect::new(PaneRevealPattern::Scan, progress, 17)
+                .with_initial_frontier(true);
+            let frame = reveal_frame(&effect, bounds, &content, &backdrop);
+            assert!(
+                !frame.contains(&content),
+                "the starting corner must wait for the frontier to pass"
+            );
+            assert!(
+                frame.iter().any(|cell| cell.symbol() != backdrop.symbol()),
+                "the scan line must be visible"
+            );
+        }
+        let effect = PaneRevealEffect::new(PaneRevealPattern::Scan, 0.2, 17);
+        assert!(reveal_frame(&effect, bounds, &content, &backdrop).contains(&content));
+    }
 
     #[test]
     fn pane_reveals_restore_live_backdrop_cells_and_colors() {

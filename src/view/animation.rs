@@ -98,7 +98,9 @@ pub(crate) fn pane_reveal_progress(
     }
     let (target, enabled) = open_close_target(pane, animations);
     if !enabled {
-        return 1.0;
+        // An inactive close can still be retained while the scratchpad retracts. Its mask must
+        // stay closed even without a whole-pane fade; inactive opens appear immediately.
+        return if pane.closing { 0.0 } else { 1.0 };
     }
     ctx.transition(key, target, spec.transition(pane.closing))
 }

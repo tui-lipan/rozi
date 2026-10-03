@@ -87,8 +87,8 @@ pub struct PaneAnimationSpec {
     pub close_duration: Duration,
     pub open_curve: Easing,
     pub close_curve: Easing,
-    /// Curves for the opacity riding the effect. Kept separate because Scale's fade leads its
-    /// scale, and Slide is opaque throughout.
+    /// Curves for an optional whole-pane fade. Scale fades by default; clips and cell masks
+    /// otherwise control visibility while the revealed content stays opaque.
     pub visual_open_curve: Easing,
     pub visual_close_curve: Easing,
     pub fade: bool,
@@ -154,10 +154,10 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
             Easing::Linear,
         ),
         PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => (
-            Easing::EaseOutQuad,
-            Easing::EaseInQuad,
-            Easing::EaseOutQuad,
-            Easing::EaseInQuad,
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
+            Easing::Linear,
         ),
     };
     PaneAnimationSpec {
@@ -177,12 +177,9 @@ pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec 
         close_curve,
         visual_open_curve,
         visual_close_curve,
-        // Slide is clipped to its tile, so it genuinely emerges; a fade on top would make its
-        // leading edge ghostly instead of solid. Off has no effect to fade.
-        fade: matches!(
-            style,
-            PaneAnimationStyle::Scale | PaneAnimationStyle::Portal | PaneAnimationStyle::Scan
-        ),
+        // Wipes and clipped motion own visibility. Fading their whole rectangle makes revealed
+        // cells translucent and hides the frontier before it has finished traveling.
+        fade: style == PaneAnimationStyle::Scale,
         scale_from: 0.9,
         origin: [0.5, 0.5],
         scan_direction: ScanDirection::TopLeft,
@@ -470,11 +467,11 @@ pub fn pane_opacity_animates(animations: WindowAnimationConfig, pane: &crate::st
         && (pane_opening_transition(pane) || pane.closing)
 }
 
-/// Visibility target for a pane's open/close opacity animation.
+/// Visibility target for an optional whole-pane open/close fade.
 ///
 /// Animation gates choose whether the transition is timed, not whether a retained closing pane is
-/// visible. A pane that is opening or closing must stay at the hidden target until its lifecycle
-/// state settles; otherwise disabling close animation can make it reappear before pruning.
+/// visible. A fading pane that is opening or closing stays at the hidden target until its lifecycle
+/// state settles; effects without a fade own visibility through their clip or cell mask.
 ///
 /// [`PaneAnimationStyle::Off`] draws no effect. An opening pane is fully visible on the first
 /// frame, and a retained closing pane (the last scratch pane, held while the dropdown retracts)
@@ -1429,10 +1426,14 @@ mod tests {
     }
 
     #[test]
-    fn pane_opacity_target_stays_hidden_until_non_sliding_pane_settles() {
+    fn fading_panes_target_hidden_until_the_lifecycle_settles() {
         let mut pane = Pane::new(1, 100, FloatRect::default());
         let mut animations = WindowAnimationConfig {
             pane_style: PaneAnimationStyle::Portal,
+            pane_overrides: PaneAnimationOverrides {
+                fade: Some(true),
+                ..Default::default()
+            },
             ..WindowAnimationConfig::default()
         };
 
@@ -1517,8 +1518,8 @@ mod tests {
     fn fade_defaults_follow_builtin_style_and_can_be_disabled() {
         assert!(builtin_animation(PaneAnimationStyle::Scale).fade);
         assert!(!builtin_animation(PaneAnimationStyle::Slide).fade);
-        assert!(builtin_animation(PaneAnimationStyle::Portal).fade);
-        assert!(builtin_animation(PaneAnimationStyle::Scan).fade);
+        assert!(!builtin_animation(PaneAnimationStyle::Portal).fade);
+        assert!(!builtin_animation(PaneAnimationStyle::Scan).fade);
 
         let mut animations = WindowAnimationConfig::default();
         let mut pane = Pane::new(1, 100, FloatRect::default());
@@ -1534,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_reveal_progress_and_opacity_share_complementary_open_close_policies() {
+    fn pane_reveals_travel_uniformly_and_keep_revealed_cells_opaque() {
         let mut animations = WindowAnimationConfig {
             pane_style: PaneAnimationStyle::Portal,
             ..WindowAnimationConfig::default()
@@ -1544,17 +1545,18 @@ mod tests {
         for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
             animations.pane_style = style;
             assert!(pane_reveal_effects(animations));
-            assert!(pane_opacity_animates(animations, &pane));
+            assert!(!pane_opacity_animates(animations, &pane));
 
-            // The paint effect reads `transition`, the fade over it reads `visual_transition`. They
-            // have to agree, or the cells finish arriving before or after the pane is fully opaque.
+            // The frontier owns visibility, with uniform steps throughout both directions.
             pane.closing = false;
             let spec = pane_animation_for_pane(animations, &pane);
             let opening_effect = spec.transition(pane.closing);
             let opening_opacity = spec.visual_transition(pane.closing);
             assert_eq!(opening_effect.duration, opening_opacity.duration);
             assert_eq!(opening_effect.easing, opening_opacity.easing);
-            assert_eq!(opening_effect.easing, Easing::EaseOutQuad);
+            assert_eq!(opening_effect.easing, Easing::Linear);
+            assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+            assert!(!pane_opacity_animates(animations, &pane));
 
             pane.closing = true;
             let spec = pane_animation_for_pane(animations, &pane);
@@ -1562,10 +1564,12 @@ mod tests {
             let closing_opacity = spec.visual_transition(pane.closing);
             assert_eq!(closing_effect.duration, closing_opacity.duration);
             assert_eq!(closing_effect.easing, closing_opacity.easing);
-            assert_eq!(closing_effect.easing, Easing::EaseInQuad);
+            assert_eq!(closing_effect.easing, Easing::Linear);
+            assert_eq!(pane_opacity_target(animations, &pane), 1.0);
+            assert!(!pane_opacity_animates(animations, &pane));
 
             assert_eq!(opening_effect.duration, closing_effect.duration);
-            assert_ne!(opening_effect.easing, closing_effect.easing);
+            assert_eq!(opening_effect.easing, closing_effect.easing);
         }
     }
 

@@ -1544,10 +1544,8 @@ pub(crate) fn pane_element(
         .bubble_mouse_down(true)
         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
 
-    // A sliding pane stays fully opaque; its clip, not its alpha, is what reveals it. Off is
-    // already fully visible while opening and fully hidden while closing, with an instant
-    // transition. Every other style follows the pane lifecycle; animation gates only choose timed
-    // or instant transition policy.
+    // Clips and cell masks own visibility and keep revealed content opaque by default. An optional
+    // whole-pane fade follows the lifecycle; animation gates choose timed or instant transitions.
     let animations = ctx.state.config.animations;
     let opacity = crate::layout::anim::pane_opacity_target(animations, pane);
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
@@ -1559,6 +1557,7 @@ pub(crate) fn pane_element(
         crate::layout::anim::pane_animation_for_pane(animations, pane),
         reveal_progress,
         u64::from(id),
+        pane.closing,
     );
     // A screenshot flash rides the pane's own fade, handed over once like a backdrop dim (see
     // `animation::LayerFade`), so the images in the pane encode once rather than every frame.

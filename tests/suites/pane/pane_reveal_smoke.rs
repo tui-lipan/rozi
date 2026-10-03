@@ -278,6 +278,52 @@ fn reveal_titles_stay_inside_the_effect_scope_until_merged_or_divider_settlement
 }
 
 #[test]
+fn revealed_content_stays_opaque_and_portal_remains_visible_late_in_close() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
+                let mut backend = single_pane_backend(style);
+                backend.state_mut().current_mut().workspaces[0].panes[0]
+                    .terminal
+                    .process_server_output(b"\x1b[48;2;200;40;50m\x1b[2J");
+                backend.render();
+                let (x, y) = if style == PaneAnimationStyle::Portal {
+                    (20, 5)
+                } else {
+                    (2, 3)
+                };
+                let before = backend.capture_frame().cell(x, y).bg;
+                backend
+                    .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                    .expect("close colored pane");
+                backend.advance(Duration::from_millis(100));
+                assert_eq!(
+                    backend.capture_frame().cell(x, y).bg,
+                    before,
+                    "{style:?} content behind the frontier must cover the underlying layer"
+                );
+                if style == PaneAnimationStyle::Portal {
+                    backend.advance(Duration::from_millis(80));
+                    assert_eq!(
+                        backend.capture_frame().cell(x, y).bg,
+                        before,
+                        "Portal must keep its center visible at 90% of the close duration"
+                    );
+                    let rect = backend.rect_of_key(&pane_key(11)).expect("retained pane");
+                    assert!(
+                        contains_frontier(&mut backend, rect),
+                        "the late portal ring must still be visible"
+                    );
+                }
+            }
+        })
+        .expect("spawn opaque reveal test")
+        .join()
+        .expect("opaque reveal test completes");
+}
+
+#[test]
 fn reveal_styles_reverse_a_real_close_at_a_fixed_rectangle_and_prune_hidden() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -335,8 +381,8 @@ fn reveal_styles_reverse_a_real_close_at_a_fixed_rectangle_and_prune_hidden() {
                     .expect("closing pane retained until prune");
                 assert_eq!(
                     pane_opacity_target(backend.state().config.animations, closing_pane),
-                    0.0,
-                    "{style:?} settled close must stay hidden before prune"
+                    1.0,
+                    "{style:?} the reveal mask owns visibility, without a whole-pane fade"
                 );
                 assert_eq!(
                     retained_pane_timeout(backend.state().config.animations),

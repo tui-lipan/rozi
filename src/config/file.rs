@@ -3395,11 +3395,8 @@ mod file_tests {
         backend.render();
         backend.advance(std::time::Duration::from_millis(600));
         backend.render();
-        let live = widget_rect(&backend, "rozi-pane-clip-1");
-        assert!(
-            live.is_none(),
-            "a settled Scale pane is not wrapped in a clip: {live:?}"
-        );
+        let live = widget_rect(&backend, "rozi-pane-clip-1")
+            .expect("the Scale wrapper stays mounted while settled to preserve its fade");
 
         backend
             .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
@@ -3428,6 +3425,7 @@ mod file_tests {
         backend.render();
         let start = widget_rect(&backend, "rozi-pane-clip-1")
             .expect("a closing Scale pane renders inside a clip");
+        assert_eq!(start, live, "the close starts from the settled rectangle");
         backend.advance(std::time::Duration::from_millis(300));
         backend.render();
         let mid = widget_rect(&backend, "rozi-pane-clip-1")

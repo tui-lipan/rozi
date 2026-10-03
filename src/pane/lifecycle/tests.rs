@@ -1310,6 +1310,8 @@ mod close_animation {
                     pane.opening_animation = None;
                     pane.terminal_active = true;
                     pane.floating = floating;
+                    pane.terminal
+                        .process_server_output(b"\x1b[8;15H\x1b[97mCLOSE_ANIMATION_CONTENT");
                 }
                 backend.render();
                 backend.advance(Duration::from_millis(200));
@@ -1318,6 +1320,12 @@ mod close_animation {
                     terminal_rect(&backend).expect("pane renders");
                 let w0 = terminal_w0 + 2;
                 let h0 = terminal_h0 + 2;
+                assert!(
+                    backend
+                        .capture_frame()
+                        .plain_text()
+                        .contains("CLOSE_ANIMATION_CONTENT")
+                );
 
                 backend
                     .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
@@ -1331,6 +1339,13 @@ mod close_animation {
                 backend.advance(Duration::from_millis(25));
                 backend.render();
                 let (x1, y1, w1, h1) = pane_rect(&backend).expect("closing pane still renders");
+                assert!(
+                    backend
+                        .capture_frame()
+                        .plain_text()
+                        .contains("CLOSE_ANIMATION_CONTENT"),
+                    "closing={floating}: content must remain visible while the pane shrinks"
+                );
                 assert!(
                     w1 < w0,
                     "closing={floating}: the first tick must already move, \

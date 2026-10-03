@@ -250,22 +250,12 @@ pub(crate) fn render_workspace_panes(
             animation::pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
-        // Evaluate the animation key on every frame the pane is drawn, including the frames where
-        // `scales` below is false and nothing uses the result. This read is NOT redundant, and
-        // gating it on the pane animating is the optimization that breaks it:
-        //
-        // A keyed transition read for the first time is *created at its target*. The clip only
-        // mounts once a close begins - which is also the moment the target becomes 0.0 - so a key
-        // created there has no previous value to interpolate from and lands on 0.0 immediately.
-        // The pane snaps to its `scale_from` inset and holds it until it is pruned.
-        //
-        // Keeping the key warm while the pane sits settled leaves it at 1.0, which is the value the
-        // close departs from. Mounting the visual effect stays conditional; retaining the
-        // interpolation state does not.
+        // Evaluate the key even while settled. A keyed transition starts at its first target,
+        // so reading it only on close would initialize it at 0 and skip the shrink. Keeping it
+        // at 1 while settled gives the close a value to depart from.
         let scale_progress = animation::scale_progress(ctx, pane, layer.pane_scale_key(pane.id));
-        // Whether to actually wrap the pane in that clip. Only a lifecycle snapshot gets the
-        // fixed-allocation path; bare flags still use the legacy geometry transition that fixtures
-        // and older attach paths rely on.
+        // Whether the clip supplies the visible shrink. Only a lifecycle snapshot gets the
+        // fixed-allocation path; bare flags still use the legacy geometry transition.
         let scale_transition = pane
             .opening_animation
             .is_some_and(|snapshot| snapshot.active)
@@ -454,15 +444,20 @@ pub(crate) fn render_workspace_panes(
                     element,
                 )
                 .key(layer.pane_clip_key(pane.id))
-        } else if scales {
+        } else if animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Scale {
+            // Keep the wrapper mounted while settled so the pane's Animated node and the
+            // overlay fade retain opacity 1. Mounting them on close initializes both at the
+            // new target of 0, hiding the pane before its shrink can be seen.
+            let mut chrome = pane_frame_chrome(ctx, pane, focused_pane, kind);
+            chrome.show_border &= scales;
             scale_pane_element(
                 element,
                 render_rect,
                 animation_spec.scale_from,
-                scale_progress,
+                if scales { scale_progress } else { 1.0 },
                 layer.pane_clip_key(pane.id),
                 ScaleOverlay {
-                    chrome: pane_frame_chrome(ctx, pane, focused_pane, kind),
+                    chrome,
                     opacity: crate::layout::anim::pane_opacity_target(
                         ctx.state.config.animations,
                         pane,

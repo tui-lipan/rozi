@@ -172,6 +172,7 @@ impl Attachment {
             retired_panes: ExitQueue::with_exit_timeout(
                 crate::layout::anim::retained_pane_timeout(
                     crate::layout::anim::WindowAnimationConfig::default(),
+                    tui_lipan::prelude::DEFAULT_FRAME_RATE,
                 ),
             ),
             shared: None,

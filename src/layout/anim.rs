@@ -886,8 +886,8 @@ pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
 }
 
 /// How long a closing pane stays described before `Msg::PruneClosed` drops it. The margin
-/// covers the frame the animation finishes on.
-pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
+/// covers at least one finishing frame; another frame covers the Restart-to-Handoff delay.
+pub fn retained_pane_timeout(animations: WindowAnimationConfig, frame_rate: u16) -> Duration {
     if !animations.enabled || !animations.close {
         return Duration::ZERO;
     }
@@ -903,21 +903,29 @@ pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
         // Both paint effects run on the same geometry duration in either direction.
         PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => spec.close_duration,
     };
-    motion + Duration::from_millis(20)
+    motion + pane_finish_delay(frame_rate)
+}
+
+fn pane_finish_delay(frame_rate: u16) -> Duration {
+    let frame = Duration::from_millis(1_000_u64.div_ceil(u64::from(frame_rate.max(1))));
+    // A fade can finish between paints. Keep the finishing margin at least one frame,
+    // so even a close shorter than a frame paints its zero-opacity state before pruning.
+    frame + frame.max(Duration::from_millis(20))
 }
 
 pub fn retained_pane_timeout_for_pane(
     animations: WindowAnimationConfig,
     pane: &crate::state::Pane,
+    frame_rate: u16,
 ) -> Duration {
     if let Some(snapshot) = pane.closing_animation {
         return if snapshot.active {
-            snapshot.spec.close_duration + Duration::from_millis(20)
+            snapshot.spec.close_duration + pane_finish_delay(frame_rate)
         } else {
             Duration::ZERO
         };
     }
-    retained_pane_timeout(animations)
+    retained_pane_timeout(animations, frame_rate)
 }
 
 pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
@@ -1083,16 +1091,45 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(animations),
-            Duration::from_millis(100)
+            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(109)
         );
         assert_eq!(
-            retained_pane_timeout(WindowAnimationConfig {
-                close: false,
-                ..animations
-            }),
+            retained_pane_timeout(
+                WindowAnimationConfig {
+                    close: false,
+                    ..animations
+                },
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn low_frame_rate_retention_reaches_zero_before_the_last_paint() {
+        use tui_lipan::animation::Transition;
+        let frame = Duration::from_millis(67);
+        for close_ms in [120, 20] {
+            let animations = WindowAnimationConfig {
+                close_duration: Duration::from_millis(close_ms),
+                ..WindowAnimationConfig::default()
+            };
+            let timeout = retained_pane_timeout(animations, 15);
+            let mut fade =
+                Transition::new(1.0_f32, 0.0, animations.close_duration, Easing::EaseOutQuad);
+            // Restart is painted at t=0; Handoff starts the fade one frame later.
+            let mut last_paint = frame;
+            while last_paint + frame < timeout {
+                last_paint += frame;
+                fade.tick(frame);
+            }
+            assert!(
+                fade.current() <= 0.001,
+                "close_ms={close_ms}: last paint at {last_paint:?}, prune at {timeout:?}, opacity={}",
+                fade.current()
+            );
+        }
     }
 
     #[test]
@@ -1103,8 +1140,8 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(scale),
-            Duration::from_millis(140),
+            retained_pane_timeout(scale, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(149),
             "the scale close is a short pop the fade rides on"
         );
 
@@ -1136,15 +1173,21 @@ mod tests {
         );
 
         assert!(
-            retained_pane_timeout(slide) > leaving,
+            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE) > leaving,
             "the pane must stay described past the end of its slide"
         );
-        assert_eq!(retained_pane_timeout(slide), Duration::from_millis(220));
         assert_eq!(
-            retained_pane_timeout(WindowAnimationConfig {
-                close: false,
-                ..slide
-            }),
+            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::from_millis(229)
+        );
+        assert_eq!(
+            retained_pane_timeout(
+                WindowAnimationConfig {
+                    close: false,
+                    ..slide
+                },
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
             Duration::ZERO
         );
     }
@@ -1233,11 +1276,18 @@ mod tests {
             assert!(!pane_opacity_animates(animations, closing));
             assert_eq!(pane_opacity_target(animations, closing), 0.0);
             assert_eq!(
-                retained_pane_timeout_for_pane(animations, closing),
+                retained_pane_timeout_for_pane(
+                    animations,
+                    closing,
+                    tui_lipan::prelude::DEFAULT_FRAME_RATE
+                ),
                 Duration::ZERO
             );
         }
-        assert_eq!(retained_pane_timeout(animations), Duration::ZERO);
+        assert_eq!(
+            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            Duration::ZERO
+        );
 
         let mut neighbour = Pane::new(2, 100, FloatRect::default());
         neighbour.opening = false;
@@ -1599,8 +1649,12 @@ mod tests {
             PaneAnimationStyle::Scale
         );
         assert_eq!(
-            retained_pane_timeout_for_pane(animations, &pane),
-            Duration::from_millis(140)
+            retained_pane_timeout_for_pane(
+                animations,
+                &pane,
+                tui_lipan::prelude::DEFAULT_FRAME_RATE
+            ),
+            Duration::from_millis(149)
         );
     }
 
@@ -1820,8 +1874,12 @@ mod tests {
                 "{style:?} does not spring neighbouring tiles"
             );
             assert_eq!(
-                retained_pane_timeout(state.config.animations),
-                state.config.animations.geometry_duration + Duration::from_millis(20)
+                retained_pane_timeout(
+                    state.config.animations,
+                    tui_lipan::prelude::DEFAULT_FRAME_RATE
+                ),
+                state.config.animations.geometry_duration
+                    + pane_finish_delay(state.config.frame_rate)
             );
         }
     }

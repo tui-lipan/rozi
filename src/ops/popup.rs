@@ -125,7 +125,11 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     pane.closing = true;
     pane.begin_close_animation(animations);
     pane.terminal.kill();
-    let timeout = crate::layout::anim::retained_pane_timeout_for_pane(animations, pane);
+    let timeout = crate::layout::anim::retained_pane_timeout_for_pane(
+        animations,
+        pane,
+        ctx.state.config.frame_rate,
+    );
     ctx.state
         .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
     restore_focus(ctx);

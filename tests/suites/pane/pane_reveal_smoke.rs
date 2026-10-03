@@ -386,8 +386,11 @@ fn reveal_styles_reverse_a_real_close_at_a_fixed_rectangle_and_prune_hidden() {
                     "{style:?} the reveal mask owns visibility, without a whole-pane fade"
                 );
                 assert_eq!(
-                    retained_pane_timeout(backend.state().config.animations),
-                    Duration::from_millis(220),
+                    retained_pane_timeout(
+                        backend.state().config.animations,
+                        backend.state().config.frame_rate
+                    ),
+                    Duration::from_millis(229),
                     "{style:?} retention must cover the reveal duration"
                 );
                 backend
@@ -697,4 +700,94 @@ fn closing_raised_panes_pass_mouse_input_to_tiles() {
         .expect("spawn raised close test")
         .join()
         .expect("raised close test completes");
+}
+
+fn retained_pane(backend: &TestBackend<AppRoot>, id: u32) -> Option<&Pane> {
+    let state = backend.state();
+    state
+        .popup
+        .as_ref()
+        .filter(|pane| pane.id == id)
+        .or_else(|| {
+            state.current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == id)
+        })
+}
+
+#[test]
+fn low_frame_rate_scale_close_finishes_fading_before_prune() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for popup in [false, true] {
+                for close_ms in [120, 20] {
+                    let mut backend = if popup {
+                        popup_backend(PaneAnimationStyle::Scale)
+                    } else {
+                        single_pane_backend(PaneAnimationStyle::Scale)
+                    };
+                    let id = if popup { POPUP_PANE_ID } else { 11 };
+                    {
+                        let state = backend.state_mut();
+                        state.config.frame_rate = 15;
+                        state.config.confirm.close_pane = false;
+                        state.config.animations.close_duration = Duration::from_millis(close_ms);
+                        let pane = if popup {
+                            state.popup.as_mut().unwrap()
+                        } else {
+                            &mut state.current_mut().workspaces[0].panes[0]
+                        };
+                        pane.opening = false;
+                        pane.terminal
+                            .process_server_output(b"\x1b[48;2;200;40;50m\x1b[2J");
+                    }
+                    backend.render();
+                    backend.advance(Duration::from_millis(300));
+                    let original_bg = backend.capture_frame().cell(20, 5).bg;
+                    backend
+                        .dispatch(if popup {
+                            rozi::Msg::ClosePopup
+                        } else {
+                            rozi::Msg::RunAction(rozi::input::Action::Close)
+                        })
+                        .expect("start Scale close");
+                    let timeout = rozi::layout::anim::retained_pane_timeout_for_pane(
+                        backend.state().config.animations,
+                        retained_pane(&backend, id).expect("retained pane"),
+                        backend.state().config.frame_rate,
+                    );
+                    // TestBackend caps individual animation ticks at 50 ms. It still exercises
+                    // the delayed handoff and the real rendered opacity at the retention boundary.
+                    backend.advance(timeout - Duration::from_millis(1));
+                    let before_prune = backend.capture_frame().cell(20, 5).bg;
+                    let pane = retained_pane(&backend, id).unwrap();
+                    let generation = pane.pty_generation;
+                    assert!(pane.closing);
+                    backend
+                        .dispatch(rozi::Msg::PruneClosed(
+                            backend.state().runtime_epoch,
+                            id,
+                            generation,
+                        ))
+                        .expect("prune after retained timeout");
+                    let after_prune = backend.capture_frame().cell(20, 5).bg;
+                    assert_ne!(
+                        original_bg, after_prune,
+                        "the pane must cover the sampled cell before closing"
+                    );
+                    assert_eq!(
+                        before_prune, after_prune,
+                        "popup={popup}/close_ms={close_ms}: pruning removed a still-visible fade"
+                    );
+                    // Budget both the 67 ms handoff and a finishing paint at 15 fps.
+                    assert_eq!(timeout, Duration::from_millis(close_ms + 67 + 67));
+                    assert!(retained_pane(&backend, id).is_none());
+                }
+            }
+        })
+        .expect("spawn low frame rate fade test")
+        .join()
+        .expect("low frame rate fade test completes");
 }

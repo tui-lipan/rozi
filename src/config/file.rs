@@ -3417,8 +3417,9 @@ mod file_tests {
             crate::layout::anim::retained_pane_timeout_for_pane(
                 backend.state().config.animations,
                 crate::pane::lifecycle::find_pane(backend.state(), id).expect("closing pane"),
+                backend.state().config.frame_rate,
             ),
-            std::time::Duration::from_millis(620),
+            std::time::Duration::from_millis(629),
             "retention has to outlast the effect it is retaining the pane for"
         );
 

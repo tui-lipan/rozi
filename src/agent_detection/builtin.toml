@@ -248,6 +248,8 @@ screen = { any_of = [
 id = "codex"
 label = "Codex"
 match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
+[agents.resume]
+argv = ["codex", "resume", "{session}"]
 
 [[agents]]
 id = "pi"

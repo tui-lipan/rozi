@@ -5,7 +5,7 @@ import type { Plugin } from "vite";
 /**
  * The docs folder doubles as the source for rozi.tui-lipan.dev, so its pages link
  * to repository files that are not part of the site - `../AGENTS.md`,
- * `../examples/config.toml`, `../integrations/…`. Those resolve on GitHub and
+ * `../examples/config.toml`, `../plugins/…`. Those resolve on GitHub and
  * inside an editor, but they are dead links once only `docs/` is published.
  *
  * This plugin rewrites exactly those targets to GitHub URLs before VitePress

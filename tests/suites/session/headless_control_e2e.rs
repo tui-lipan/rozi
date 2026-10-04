@@ -897,19 +897,17 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
     // `$((40+2))`, never `42`.
     expect_ok(
         &session,
-        ControlCommand::SendText {
-            target: Some(pane),
-            text: "sleep 1; echo naive-$((40+2))\n".to_string(),
-            wait: None,
-            capture: None,
-            scale: None,
-        },
+        send_keys_waiting(pane, &["sleep 1; echo naive-$((40+2))", "Enter"], None),
     );
     let naive = capture_until(&session, pane, |text| text.contains("naive-$((40+2))"));
     assert!(
         !naive.contains("naive-42"),
         "a capture right after sending cannot have the delayed output yet:\n{naive}"
     );
+
+    // Finish the first command before submitting the next one. Shell line editors can consume
+    // input differently while a command is still running.
+    capture_until(&session, pane, |text| text.contains("naive-42"));
 
     let waited = control(
         &session,

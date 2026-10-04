@@ -225,8 +225,10 @@ class ActivityTests(unittest.TestCase):
             self.hook(event[0], **event[1])
 
         # This stress test checks concurrent state preservation, not hook latency. Allow slow
-        # CI disks to serialize twenty SQLite writers; separate tests cover production deadlines.
+        # CI disks to serialize twenty SQLite writers and deliver their reports; separate tests
+        # cover production persistence and delivery deadlines.
         with patch.object(activity, "STATE_RETRY_BUDGET", 30.0), \
+             patch.object(activity, "DELIVERY_BUDGET", 30.0), \
              patch.object(activity.subprocess, "run", side_effect=slow_record):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as pool:
                 list(pool.map(run, events))

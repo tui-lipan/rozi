@@ -108,8 +108,8 @@ jobs:
   # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
   # ships in this repository with its own tests. Linux only: it is platform-independent JavaScript,
   # so running it on all three would only buy a slower matrix.
-  integrations:
-    name: integrations
+  agent-plugins:
+    name: agent plugins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

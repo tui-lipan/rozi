@@ -1,6 +1,6 @@
 # Agent plugins
 
-First-party plugins that report coding agent activity through rozi's agent activity API.
+First-party plugins that integrate supported coding agents with rozi's activity tracking.
 
 - `claude-code/`: Claude Code hooks
 - `codex/`: Codex hooks

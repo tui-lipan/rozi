@@ -105,15 +105,14 @@ jobs:
       - name: Lint
         run: cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
 
-  # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
-  # ships in this repository with its own tests. Linux only: it is platform-independent JavaScript,
-  # so running it on all three would only buy a slower matrix.
+  # Keep a direct Node check for the OpenCode plugins. The Cargo contracts suite also runs these
+  # tests when Node is available, covering the V2 publish bridge on the primary CI platforms.
   agent-plugins:
     name: agent plugins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test the OpenCode status plugin
+      - name: Test the OpenCode plugins
         run: node --test plugins/opencode/*.test.mjs
 
   licenses:

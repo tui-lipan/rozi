@@ -347,6 +347,21 @@ A row can carry the directory its activity works in. Activity and the Agents vie
 under that directory's project and branch, so sessions that each run in their own Git worktree are
 told apart.
 
+### OpenCode sessions and worktrees
+
+The [OpenCode V2 plugin](../plugins/opencode/README.md) publishes each open root-session tab as its
+own activity row, including tabs working in different Git worktrees. Each row carries the session's
+directory and native conversation ID. Selecting a row switches OpenCode to that tab through its
+UI API. Child sessions contribute to their parent's activity, and pending permissions or input
+forms keep the relevant row blocked.
+
+Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi pane. Clients
+sharing a server each publish their own tab list. With OpenCode tabs disabled, only the viewed
+root session appears. See the plugin README for installation, lifecycle, and host requirements.
+
+The older V1 event plugin reports a single aggregate pane status. The custom
+`opencode-tui` client has its own built-in publisher and does not need the V2 CLI plugin.
+
 ### Claude Code background sessions
 
 Claude Code can run several conversations from one client, each often in its own worktree. rozi

@@ -221,10 +221,13 @@ class ActivityTests(unittest.TestCase):
             return original(args, **kwargs)
 
         def run(event):
-            barrier.wait(timeout=2)
+            barrier.wait(timeout=10)
             self.hook(event[0], **event[1])
 
-        with patch.object(activity.subprocess, "run", side_effect=slow_record):
+        # This stress test checks concurrent state preservation, not hook latency. Allow slow
+        # CI disks to serialize twenty SQLite writers; separate tests cover production deadlines.
+        with patch.object(activity, "STATE_RETRY_BUDGET", 30.0), \
+             patch.object(activity.subprocess, "run", side_effect=slow_record):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as pool:
                 list(pool.map(run, events))
         self.assertEqual(self.field("--state"), "blocked")

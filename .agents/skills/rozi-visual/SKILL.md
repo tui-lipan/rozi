@@ -18,8 +18,10 @@ and application wiring.
 
 Read `rozi skill print` from the executable you are about to control. Its embedded contract is
 authoritative for that binary's endpoint, targeting, input, and ownership rules. This does not
-require the user-facing `rozi` skill to be installed or discovered by the agent. During development,
-the executable may be `./target/debug/rozi`; use the same executable throughout the workflow.
+require the user-facing `rozi` skill to be installed or discovered by the agent. Use the same
+executable throughout the workflow. When testing the checkout, substitute `./target/debug/rozi`
+for every leading `rozi` command below, including `skill print` and `api describe`. Do not mix it
+with another `rozi` found on `PATH`. Use an absolute executable path if you change directories.
 
 Check `rozi api describe` for capabilities, then select the target according to that contract.
 Inspect live pane IDs and layout before starting the review. The commands below illustrate the

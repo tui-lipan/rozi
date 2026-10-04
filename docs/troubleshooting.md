@@ -118,9 +118,11 @@ its programs and deletes its snapshot. For a remote host, update rozi on both en
 
 ### A restored session re-ran a command I did not want
 
-When a shell pane was running a command at snapshot time, resurrection types that command back and
-runs it. Set `[session] resurrect_foreground = "hold"` to leave it at the prompt for you to confirm,
-or `"never"` to restore only the shell.
+With `[session] resurrect_foreground = "auto"`, resurrection types a shell pane's recorded command
+back and runs it. Set `"hold"`, the default, to leave it at the prompt for you to confirm, or
+`"never"` to restore only the shell.
+
+A command explicitly configured when creating a pane or in a profile still runs automatically.
 
 The session server reads this setting when it starts, so restart the session for it to apply. See
 [Commands a pane was running](sessions.md#commands-a-pane-was-running).

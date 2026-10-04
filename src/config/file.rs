@@ -1727,7 +1727,7 @@ mod file_tests {
 
         assert_eq!(
             loaded.config.session.resurrect_foreground,
-            crate::config::ForegroundRestore::Auto
+            crate::config::ForegroundRestore::Hold
         );
         assert!(
             loaded

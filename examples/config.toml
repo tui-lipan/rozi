@@ -312,7 +312,7 @@
 # launched with. "auto" types it back and runs it, so an agent or an editor comes back working.
 # "hold" types it back and waits, so running it again is a keystroke you chose. "never" restores
 # the shell and its scrollback alone, and writes no command to the snapshot at all.
-#resurrect_foreground = "auto"
+#resurrect_foreground = "hold"
 # "picker" always opens the session picker, "ephemeral" starts a
 # scratch session immediately, "last" reopens the last named session, "profile" opens the
 # session named after the [profile] default.

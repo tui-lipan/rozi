@@ -366,10 +366,10 @@ impl SessionStartup {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ForegroundRestore {
     /// Type the captured command at the restored pane's prompt and run it.
-    #[default]
     Auto,
     /// Type the captured command at the restored pane's prompt and leave it there unsubmitted.
     /// `Enter` runs it, anything else edits or discards it.
+    #[default]
     Hold,
     /// Restore the shell and its scrollback; forget what was running in it. Under this setting the
     /// command is never written to the snapshot in the first place.

@@ -498,7 +498,7 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 | `keep_awake_while_agents_work` | bool | `false` | Keeps the host awake while agents work; see [sleep policy](sessions.md#keep-the-system-awake). |
 | `autosave` | bool | `false` | Saves and restores the local layout, not running programs. |
 | `resurrect` | bool | `true` | Saves each named session's layout, commands, scrollback, and what to restart. |
-| `resurrect_foreground` | string | `"auto"` | What a restore does with a command a pane was seen running, or an agent conversation it reported: `"auto"` runs it again, `"hold"` types it at the prompt without submitting it, `"never"` restores only the shell and records neither. |
+| `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was seen running, or an agent conversation it reported: `"auto"` runs it again, `"hold"` types it at the prompt without submitting it, `"never"` restores only the shell and records neither. |
 | `resurrect_agents` | bool | `true` | Saves agents' native session references in named-session snapshots and reopens those conversations on restore. Set `false` to keep these references out of state storage. |
 | `startup` | string | `"picker"` | What a bare `rozi` launch opens: `"picker"`, `"ephemeral"` (a temporary session), `"last"`, or `"profile"`. |
 | `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is written with mode `0600` in rozi's state directory; a path you choose keeps ordinary permissions. |

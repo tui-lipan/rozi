@@ -307,14 +307,14 @@ wrapper itself adds after the script are also kept, because rozi cannot tell the
 
 | Value | Restoring a shell that was running something |
 | --- | --- |
-| `auto` (default) | Types the command back and runs it. |
-| `hold` | Types the command back and leaves it at the prompt. `Enter` runs it. |
+| `auto` | Types the command back and runs it. |
+| `hold` (default) | Types the command back and leaves it at the prompt. `Enter` runs it. |
 | `never` | Restores the shell and its scrollback. No command is written to the snapshot. |
 
-Use `hold` where re-running a command without asking, such as `terraform apply`, would be worse than
-typing it again. The session server reads this setting when it starts and applies it to every
-restore, so a server started with `never` also replays nothing from an older snapshot. To change
-the setting for a running session, restart its server.
+The default, `hold`, leaves the command ready for you to confirm with `Enter`. Set `auto` to run
+recorded commands automatically. The session server reads this setting when it starts and applies
+it to every restore, so a server started with `never` also replays nothing from an older snapshot.
+To change the setting for a running session, restart its server.
 
 ### Reopen an agent conversation
 
@@ -335,8 +335,8 @@ conversation.
 
 | Value | Restoring a pane with a reported conversation |
 | --- | --- |
-| `auto` (default) | Runs the resume command as the pane's first process. |
-| `hold` | Types the resume command at the shell's prompt and leaves it there. |
+| `auto` | Runs the resume command as the pane's first process. |
+| `hold` (default) | Types the resume command at the shell's prompt and leaves it there. |
 | `never` | Writes no conversation reference to the snapshot at all. |
 
 If the resume command fails, the pane keeps the agent's error on screen, names the failure, and

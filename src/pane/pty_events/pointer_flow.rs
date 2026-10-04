@@ -120,6 +120,28 @@ pub(crate) fn is_press_report(bytes: &[u8]) -> bool {
     code & 0x60 == 0
 }
 
+/// Whether an outgoing mouse report is a wheel notch, including modified wheel reports.
+pub(crate) fn is_scroll_report(bytes: &[u8]) -> bool {
+    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
+        if rest.last() != Some(&b'M') {
+            return false;
+        }
+        let Some(end) = rest.iter().position(|byte| *byte == b';') else {
+            return false;
+        };
+        std::str::from_utf8(&rest[..end])
+            .ok()
+            .and_then(|digits| digits.parse::<u16>().ok())
+    } else {
+        bytes
+            .strip_prefix(b"\x1b[M")
+            .and_then(|report| report.first())
+            .and_then(|code| code.checked_sub(32))
+            .map(u16::from)
+    };
+    code.is_some_and(|code| code & 0x60 == 0x40)
+}
+
 /// What a cadence wakeup found for a pane whose motion was held.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Paced {

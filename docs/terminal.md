@@ -161,6 +161,11 @@ precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes
 With `[notifications] bell = true`, a bell from a pane you are not watching marks its workspace. You
 are watching a pane only when both the terminal window and the pane have focus.
 
+Switching to a workspace preserves its panes' attention marks, including finished-agent marks,
+even when a marked pane is selected automatically. Click or explicitly focus the pane, scroll
+through it, type into it, or paste into it to clear its marks. Scrolling also clears marks when the
+pane's program handles the mouse wheel.
+
 ## Images
 
 Pane programs can show images with the Kitty graphics protocol. rozi displays them in whatever

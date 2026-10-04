@@ -205,6 +205,7 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
         Some(CopyModeAction::RequestCopy) => (true, exit(ctx, true)),
         Some(CopyModeAction::Cancel) => (true, exit(ctx, false)),
         Some(CopyModeAction::Moved | CopyModeAction::SelectionChanged) => {
+            crate::ops::focus::acknowledge_pane_input(&mut ctx.state, target);
             let offset = ctx
                 .state
                 .copy_mode

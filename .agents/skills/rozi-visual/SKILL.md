@@ -1,30 +1,29 @@
 ---
 name: rozi-visual
-description: Inspect and demonstrate live terminal applications through rozi panes, capture screenshots, and record or export visual flows. Use for a requested rozi visual review or a live preview in a verified rozi pane. This skill controls rozi's terminal presentation; it does not design tui-lipan components or use the framework's headless renderer.
+description: >-
+  Perform live visual reviews while developing rozi: launch preview panes, inspect screenshots, record flows, and export videos. Use when behavior depends on a real PTY, subprocess timing, terminal behavior, rozi chrome, pane movement, or live interaction. Use tui-lipan-visual for deterministic/headless rendering and tui-lipan-app-builder for component state, messages, props, and wiring.
 ---
 
 # rozi visual
 
-Use rozi's own CLI to inspect what a terminal application actually displays, including real
-subprocess output and timers. For component design or deterministic tui-lipan rendering, use the
-framework's visual skill separately.
+This is a repository-local workflow skill for contributors developing rozi. It is not installed
+by `rozi skill install`; that command manages the single user-facing `rozi` control skill.
 
-## Establish the target
+Use `rozi-visual` when the question depends on a real PTY, subprocess timing, terminal behavior,
+rozi chrome, pane movement, or live interaction. Use `tui-lipan-visual` for deterministic or
+headless tui-lipan rendering. Use `tui-lipan-app-builder` for component state, messages, props,
+and application wiring.
 
-Read `rozi skill print` for endpoint, targeting, and input rules, then `rozi api describe` to
-check capabilities. A UI endpoint requires `ROZI=1` and a non-empty `ROZI_SOCKET`. Do not discover
-and control an arbitrary focused UI when that context is absent. An explicitly named session
-can be inspected through `rozi --session NAME` without a UI.
+## Read the current control contract
 
-| Task | Endpoint |
-| --- | --- |
-| List panes, send input, capture a pane, record a pane | Verified UI or named session |
-| Reveal or focus a preview, capture/record chrome and overlays | Verified UI |
-| Export a completed recording | Local file; no endpoint |
+Read `rozi skill print` from the executable you are about to control. Its embedded contract is
+authoritative for that binary's endpoint, targeting, input, and ownership rules. This does not
+require the user-facing `rozi` skill to be installed or discovered by the agent. During development,
+the executable may be `./target/debug/rozi`; use the same executable throughout the workflow.
 
-Inspect live pane IDs and layout before acting. Keep all input and captures targeted to the
-returned ID; do not use focus as a target. Work on a requested pane or one you created. A requested
-preview authorizes creating its pane; changes to other panes and layouts need their own scope.
+Check `rozi api describe` for capabilities, then select the target according to that contract.
+Inspect live pane IDs and layout before starting the review. The commands below illustrate the
+workflow; the printed contract determines which endpoint and flags the binary supports.
 
 ## Show a running application
 

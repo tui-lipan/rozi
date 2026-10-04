@@ -19,10 +19,12 @@ IDs instead of guessing them, and to change only the panes and sessions you name
 controls the current UI only from inside one of that UI's panes. For the commands themselves, see
 [Control CLI](control.md) and [Scripting](scripting.md).
 
-For visual reviews in this repository, the separate
+For contributors doing visual reviews in this repository, the separate
 [rozi visual skill](../.agents/skills/rozi-visual/SKILL.md) covers preview panes, screenshots,
 live animation recordings, and playable exports. It uses rozi's capture and recording commands;
-it does not replace the tui-lipan app-development visual skill.
+it does not replace `tui-lipan-visual` or `tui-lipan-app-builder`. This repository-local workflow
+is not installed by `rozi skill install`. It reads the actual binary's control contract with
+`rozi skill print`, without requiring a separately installed user-facing skill.
 
 ## Install the skill
 

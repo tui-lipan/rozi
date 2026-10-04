@@ -309,8 +309,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     // namespace owns its help. `--advanced` is only ever read here, so it can never be silently
     // swallowed by another command.
     let help_index = args.iter().position(|arg| arg == "--help" || arg == "-h");
-    let namespace_index = help_namespace_index(&args);
-    if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {
+    let namespace_index = help_index.and_then(|help| help_namespace_index(&args[..help]));
+    if help_index.is_some_and(|_| namespace_index.is_none()) {
         return Ok(ParsedCli::Help {
             advanced: args.iter().any(|arg| arg == "--advanced"),
         });
@@ -3423,6 +3423,25 @@ mod tests {
             ),
             Ok(ParsedCli::Help { .. })
         ));
+    }
+
+    #[test]
+    fn global_help_wins_when_an_option_value_is_missing() {
+        for args in [
+            vec!["--session", "--help"],
+            vec!["--profile", "--help"],
+            vec!["--server-start", "dev", "--help"],
+            vec!["--session", "dev", "--server", "--help"],
+            vec!["--session", "-h"],
+            vec!["--profile", "--help", "--advanced"],
+        ] {
+            let advanced = args.contains(&"--advanced");
+            assert!(
+                matches!(parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()),
+                Ok(ParsedCli::Help { advanced: actual }) if actual == advanced),
+                "{args:?}"
+            );
+        }
     }
 
     fn expect_run(parsed: ParsedCli) -> CliArgs {

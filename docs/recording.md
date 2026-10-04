@@ -292,8 +292,9 @@ rozi record export agent.rozirec --to video-frames frames --scale 2
 ```
 
 Use `--to video-frames` when encoding video: it pads every frame to the maximum recorded width
-and height, keeping content at its original size and position. Padding uses that frame's default
-background color. This keeps video dimensions stable across terminal resizes. The export reads
+and height. Each frame is rendered at its native size first, then its pixels are copied without
+changes onto the larger bitmap. Glyphs and images stay clipped to the original terminal bounds.
+Padding uses that frame's default background color. This keeps video dimensions stable across terminal resizes. The export reads
 the recording twice to determine the canvas, so stop recording before exporting. A combined
 canvas larger than 1,048,576 cells is refused.
 

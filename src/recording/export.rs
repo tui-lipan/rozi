@@ -64,37 +64,63 @@ fn video_canvas<R: BufRead>(mut replay: Replay<R>) -> Result<(u16, u16), String>
     Ok((width, height))
 }
 
-fn pad_frame(frame: &mut tui_lipan::CapturedFrame, width: u16, height: u16) -> Result<(), String> {
-    if frame.width == 0 || frame.width > width || frame.height > height {
+/// Pad the rendered bitmap, never the cell grid: glyphs and images must remain clipped to
+/// their native terminal bounds before extra space is added.
+fn pad_png(
+    bytes: Vec<u8>,
+    native: (u16, u16),
+    canvas: (u16, u16),
+    background: tui_lipan::prelude::Color,
+) -> Result<Vec<u8>, String> {
+    if native.0 == 0 || native.1 == 0 || native.0 > canvas.0 || native.1 > canvas.1 {
         return Err(
             "recording dimensions changed during export; stop recording before exporting"
                 .to_string(),
         );
     }
-    use tui_lipan::CapturedCell;
-    use tui_lipan::prelude::*;
-    let blank = CapturedCell {
-        symbol: " ".to_string(),
-        fg: Color::Reset,
-        bg: Color::Reset,
-        underline_color: Color::Reset,
-        modifiers: Default::default(),
-    };
-    let mut cells = vec![blank; usize::from(width) * usize::from(height)];
-    for (y, row) in frame.cells.chunks(usize::from(frame.width)).enumerate() {
-        let start = y * usize::from(width);
-        cells[start..start + row.len()].clone_from_slice(row);
+    if native == canvas {
+        return Ok(bytes);
     }
-    frame.cells = cells;
-    frame.width = width;
-    frame.height = height;
-    frame.viewport = Rect {
-        x: 0,
-        y: 0,
-        w: width,
-        h: height,
+    // These bytes come from our bounded native-frame renderer, not from an input PNG.
+    let image = super::frame::DecodedImage::from_png(&bytes, usize::MAX)?;
+    let width = image.width / u32::from(native.0) * u32::from(canvas.0);
+    let height = image.height / u32::from(native.1) * u32::from(canvas.1);
+    let pixels = usize::try_from(u64::from(width) * u64::from(height))
+        .ok()
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "video bitmap is too large".to_string())?;
+    let tui_lipan::prelude::Color::Rgb(r, g, b) = background else {
+        return Err("video padding requires an RGB background".to_string());
     };
-    Ok(())
+    let mut rgba = vec![0; pixels];
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.copy_from_slice(&[r, g, b, 255]);
+    }
+    let source_stride = image.width as usize * 4;
+    let target_stride = width as usize * 4;
+    for (source, target) in image
+        .rgba
+        .chunks_exact(source_stride)
+        .zip(rgba.chunks_exact_mut(target_stride))
+    {
+        target[..source_stride].copy_from_slice(source);
+    }
+    encode_png(width, height, &rgba)
+}
+
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|error| error.to_string())?;
+        writer.finish().map_err(|error| error.to_string())?;
+    }
+    Ok(bytes)
 }
 
 fn write_png_frames<R: BufRead>(
@@ -114,12 +140,16 @@ fn write_png_frames<R: BufRead>(
                 let name = format!("frame-{:06}.png", frames.len() + 1);
                 let images = replay.frame_images()?.clone();
                 let frame = replay.frame().expect("a frame step has a frame");
-                let mut captured = captured_frame(frame, &images);
-                if let Some((width, height)) = canvas {
-                    pad_frame(&mut captured, width, height)?;
-                }
-                let png = crate::pane::png_bytes(&captured, palette(&frame.palette), scale)
+                let captured = captured_frame(frame, &images);
+                let colors = palette(&frame.palette);
+                let mut png = crate::pane::png_bytes(&captured, colors, scale)
                     .map_err(|error| format!("cannot draw frame {}: {error}", frames.len() + 1))?;
+                if let Some(canvas) = canvas {
+                    let background = colors
+                        .background
+                        .unwrap_or(tui_lipan::prelude::Color::Rgb(0, 0, 0));
+                    png = pad_png(png, (frame.width, frame.height), canvas, background)?;
+                }
                 write_new(&dir.join(&name), &png, overwrite)?;
                 frames.push((name, t));
             }

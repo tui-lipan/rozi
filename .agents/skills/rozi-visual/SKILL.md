@@ -106,7 +106,8 @@ ffmpeg -f concat -safe 0 -i /absolute/scratch/frames/frames.ffconcat \
 ```
 
 `video-frames` pads each frame to the maximum recorded width and height without stretching its
-content. `png-frames` preserves each frame's native dimensions. Both emit `frames.ffconcat`
+content. It renders the native frame before padding its pixels, preserving clipping at terminal
+edges. `png-frames` preserves each frame's native dimensions. Both emit `frames.ffconcat`
 with actual durations: use that listing, not a guessed `-framerate`, to preserve motion and
 pauses. Check `rozi record --help` before using `video-frames` on an older binary.
 

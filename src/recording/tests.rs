@@ -1108,7 +1108,7 @@ fn video_export_keeps_resized_frames_on_one_canvas_without_changing_timing() {
     let (dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
     let mut small = TerminalScreen::new(2, 4, 0);
-    small.process_bytes(b"\x1b[41mA");
+    small.process_bytes("\x1b[41mA\x1b[0m\x1b[1;4H\u{e0b0}\x1b[2;4H\u{f17c}".as_bytes());
     push(&recorder, 0, &small);
     let mut wide = TerminalScreen::new(1, 8, 0);
     wide.process_bytes(b"B");
@@ -1149,6 +1149,22 @@ fn video_export_keeps_resized_frames_on_one_canvas_without_changing_timing() {
             &native_image.rgba[source..source + native_image.width as usize * 4],
             &fixed_image.rgba[target..target + native_image.width as usize * 4]
         );
+    }
+    // Right-edge private-use glyphs must remain clipped. Every pixel outside the original
+    // frame is the default background, including the neighbor an expanded cell grid would add.
+    let background = frame::palette(&span(&mut small).palette)
+        .background
+        .unwrap();
+    let Color::Rgb(r, g, b) = background else {
+        panic!("RGB palette");
+    };
+    for y in 0..fixed_image.height as usize {
+        for x in 0..fixed_image.width as usize {
+            if x >= native_image.width as usize || y >= native_image.height as usize {
+                let at = (y * fixed_image.width as usize + x) * 4;
+                assert_eq!(&fixed_image.rgba[at..at + 4], &[r, g, b, 255]);
+            }
+        }
     }
     assert!(export::video_frames(&path, &fixed, 1, false).is_err());
     assert!(export::video_frames(&path, &fixed, 1, true).is_ok());

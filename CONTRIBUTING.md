@@ -5,7 +5,7 @@ the checks a change must pass, and the DCO sign-off every commit needs.
 
 ## Requirements and setup
 
-rozi uses Rust 2024 and requires Rust 1.90 or newer. Install Cargo, `rustfmt`, and Clippy through
+rozi uses Rust 2024 and requires Rust 1.96 or newer. Install Cargo, `rustfmt`, and Clippy through
 rustup, then build the repository:
 
 ```bash

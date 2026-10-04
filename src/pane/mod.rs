@@ -1453,13 +1453,12 @@ mod tests {
 
         let output = pane.process_server_output(b"\x1b]52;c;aGVsbG8=\x07");
 
+        assert_eq!(output.clipboard_events.len(), 1);
         assert_eq!(
-            output.clipboard_events,
-            vec![TerminalClipboardEvent {
-                target: TerminalClipboardTarget::Clipboard,
-                text: "hello".to_string(),
-            }]
+            output.clipboard_events[0].target,
+            TerminalClipboardTarget::Clipboard
         );
+        assert_eq!(output.clipboard_events[0].text, "hello");
     }
 
     #[test]

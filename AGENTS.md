@@ -5,7 +5,7 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
 
 ## Always
 
-- Use Cargo. The crate uses Rust 2024 and supports Rust `1.90` or newer.
+- Use Cargo. The crate uses Rust 2024 and supports Rust `1.96` or newer.
 - Every PTY belongs to a session server. A client that displays panes attaches to that server, but
   the startup launcher may remain sessionless until the user chooses or creates a session.
 - Preserve unrelated worktree changes. Never discard or overwrite changes you did not create.

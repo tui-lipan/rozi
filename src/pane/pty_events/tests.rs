@@ -206,6 +206,46 @@ fn double_prefix_forwards_one_prefix_key() {
         .expect("test thread panicked");
 }
 
+// Framework events are non-exhaustive. Obtain a widget-emitted event before varying its
+// public fields to exercise the focus-report branches that headless window focus does not emit.
+fn focus_report(kind: TerminalInputKind) -> TerminalInputEvent {
+    struct InputProbe;
+    impl Component for InputProbe {
+        type Message = TerminalInputEvent;
+        type Properties = ();
+        type State = Option<TerminalInputEvent>;
+
+        fn create_state(&self, _: &()) -> Self::State {
+            None
+        }
+
+        fn update(&mut self, event: Self::Message, ctx: &mut Context<Self>) -> Update {
+            ctx.state = Some(event);
+            Update::none()
+        }
+
+        fn view(&self, ctx: &Context<Self>) -> Element {
+            Terminal::new()
+                .on_input(ctx.link().callback(|event| event))
+                .into()
+        }
+    }
+
+    let mut probe = tui_lipan::TestBackend::new(InputProbe);
+    probe.render();
+    probe.focus_next();
+    assert!(probe.send_paste("probe").expect("emit terminal input"));
+    let mut event = probe.state().clone().expect("widget emitted input");
+    event.kind = kind;
+    event.bytes = match kind {
+        TerminalInputKind::FocusIn => focus_sequences().0,
+        TerminalInputKind::FocusOut => focus_sequences().1,
+        _ => panic!("expected a focus report"),
+    }
+    .into();
+    event
+}
+
 /// Engagement is what keeps a startup temporary session alive across a switch, so it has to
 /// mean the user put something into the session. A focus report is the terminal talking about
 /// itself — a session that was merely looked at is still untouched.
@@ -222,18 +262,17 @@ fn focus_reports_do_not_mark_a_session_as_worked_in() {
             let (client, _rx) = SessionClient::test_channel();
             backend.state_mut().current_mut().session_client = Some(client);
             backend.state_mut().current_mut().engaged = false;
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+            }
             backend.render();
+            backend.focus_next();
 
             for kind in [TerminalInputKind::FocusIn, TerminalInputKind::FocusOut] {
                 backend
-                    .dispatch(Msg::PaneInput(
-                        1,
-                        TerminalInputEvent {
-                            kind,
-                            key: None,
-                            bytes: Vec::new().into(),
-                        },
-                    ))
+                    .dispatch(Msg::PaneInput(1, focus_report(kind)))
                     .expect("dispatch focus report");
                 assert!(
                     !backend.state().current().engaged,
@@ -241,16 +280,7 @@ fn focus_reports_do_not_mark_a_session_as_worked_in() {
                 );
             }
 
-            backend
-                .dispatch(Msg::PaneInput(
-                    1,
-                    TerminalInputEvent {
-                        kind: TerminalInputKind::Paste,
-                        key: None,
-                        bytes: b"work".to_vec().into(),
-                    },
-                ))
-                .expect("dispatch paste");
+            backend.send_paste("work").expect("dispatch paste");
             assert!(
                 backend.state().current().engaged,
                 "a paste puts the user's own content into the session"
@@ -320,11 +350,14 @@ fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
                 let state = backend.state_mut();
                 state.current_mut().session_client = Some(client);
                 let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
                 pane.terminal
                     .process_server_output("history\n".repeat(80).as_bytes());
                 assert!(pane.terminal.set_scrollback(10));
             }
             backend.render();
+            backend.focus_next();
 
             backend
                 .dispatch(Msg::PaneKey(1, key(KeyCode::Char('x'), KeyMods::NONE)))
@@ -342,14 +375,7 @@ fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
                     .set_scrollback(10)
             );
             backend
-                .dispatch(Msg::PaneInput(
-                    1,
-                    TerminalInputEvent {
-                        kind: TerminalInputKind::Paste,
-                        key: None,
-                        bytes: b"pasted".to_vec().into(),
-                    },
-                ))
+                .send_paste("pasted")
                 .expect("dispatch terminal paste");
             assert_eq!(
                 backend.state().current().workspaces[0].panes[0]

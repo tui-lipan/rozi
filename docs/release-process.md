@@ -11,7 +11,7 @@ workflow is the source of truth.
 A release maintainer needs:
 
 - permission to push a tag and approve the GitHub `release` environment;
-- Rust 1.90 or newer with Cargo, rustfmt, and Clippy;
+- Rust 1.96 or newer with Cargo, rustfmt, and Clippy;
 - `cargo-audit` and `cargo-deny`;
 - the GitHub CLI, for inspecting the release after publication;
 - these secrets in the protected `release` environment:

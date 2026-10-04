@@ -50,7 +50,7 @@ You can also install with Cargo:
 cargo install rozi --locked
 ```
 
-Building from source requires Rust 1.90 or newer. See [Installation](docs/installation.md) for
+Building from source requires Rust 1.96 or newer. See [Installation](docs/installation.md) for
 PATH setup, updates, rollback, and source builds.
 
 There are also [nightly builds](docs/installation.md#nightly-builds): a disposable binary of the

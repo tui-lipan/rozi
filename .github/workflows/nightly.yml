@@ -174,9 +174,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90
+      - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
         with:
-          toolchain: "1.90"
+          toolchain: "1.96"
           targets: ${{ matrix.target }}
 
       - name: Build payload
@@ -196,7 +196,7 @@ jobs:
               bash -c '
                 set -euo pipefail
                 curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
-                  | sh -s -- -y --profile minimal --default-toolchain 1.90.0 --no-modify-path
+                  | sh -s -- -y --profile minimal --default-toolchain 1.96.0 --no-modify-path
                 export PATH=/root/.cargo/bin:$PATH
                 cargo build --locked --release --target "${{ matrix.target }}"
                 chown -R "$BUILD_UID:$BUILD_GID" target

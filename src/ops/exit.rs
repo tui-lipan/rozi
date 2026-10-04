@@ -749,13 +749,8 @@ mod tests {
                 .dispatch(Msg::SubmitRenameSession)
                 .expect("arm the close");
 
-            backend
-                .dispatch(Msg::RenameSessionChanged(InputEvent {
-                    value: "d".into(),
-                    cursor: 1,
-                    anchor: None,
-                }))
-                .expect("type a name");
+            backend.render();
+            backend.send_paste("d").expect("type a name");
 
             assert!(
                 backend

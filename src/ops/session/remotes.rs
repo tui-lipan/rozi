@@ -979,15 +979,6 @@ mod tests {
             .expect("test thread panicked");
     }
 
-    /// One form line's worth of typing, as the bound `Input` would report it.
-    fn typed(value: &str) -> InputEvent {
-        InputEvent {
-            value: value.into(),
-            cursor: value.len(),
-            anchor: None,
-        }
-    }
-
     fn primed_connecting_picker(
         backend: &mut TestBackend<AppRoot>,
         target: &RemoteTarget,
@@ -1631,12 +1622,8 @@ mod tests {
             backend
                 .dispatch(Msg::RemotePickerNewHost)
                 .expect("open the add form");
-            backend
-                .dispatch(Msg::HostFormChanged(
-                    crate::state::HostFormField::Host,
-                    typed("workbox"),
-                ))
-                .expect("type the host");
+            backend.render();
+            backend.send_paste("workbox").expect("type the host");
             backend
                 .dispatch(Msg::SubmitHostForm)
                 .expect("submit the form");
@@ -1657,11 +1644,9 @@ mod tests {
             backend
                 .dispatch(Msg::RemotePickerNewHost)
                 .expect("open the add form again");
+            backend.render();
             backend
-                .dispatch(Msg::HostFormChanged(
-                    crate::state::HostFormField::Host,
-                    typed("adam@10.0.0.5"),
-                ))
+                .send_paste("adam@10.0.0.5")
                 .expect("type the endpoint");
             backend
                 .dispatch(Msg::SubmitHostForm)

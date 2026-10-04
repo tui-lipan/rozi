@@ -107,7 +107,7 @@ more than once.
 cargo install rozi --locked
 ```
 
-This needs Rust 1.90 or newer. Cargo owns this install: update it by running the same command
+This needs Rust 1.96 or newer. Cargo owns this install: update it by running the same command
 again. `rozi update` does not manage it; see [Installs rozi does not manage](#installs-rozi-does-not-manage).
 
 ## Install with mise
@@ -128,7 +128,7 @@ mise owns this install and its versions, so `rozi update` declines and points yo
 
 ## Build from source
 
-rozi uses Rust edition 2024 and requires Rust 1.90 or newer.
+rozi uses Rust edition 2024 and requires Rust 1.96 or newer.
 
 ```bash
 git clone https://github.com/tui-lipan/rozi.git

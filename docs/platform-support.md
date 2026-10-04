@@ -22,7 +22,7 @@ All platforms need a terminal emulator that can run a full-screen terminal appli
   inherited from the build host, unless you build in an equivalent compatibility environment.
 - **Windows:** Windows 10 version 1809 (build 17763) or newer, because rozi uses ConPTY. Windows
   Terminal is recommended but not required. There is no ARM64 Windows release.
-- **Building from source:** Rust 1.90 or newer. See [Installation](installation.md#build-from-source).
+- **Building from source:** Rust 1.96 or newer. See [Installation](installation.md#build-from-source).
 
 ## Platform differences
 

@@ -2,9 +2,8 @@
 name = "rozi"
 version = "0.0.28"
 edition = "2024"
-# Set by the dependency tree, not by this crate's own source: terminal-images reaches
-# ratatui-image -> icy_sixel -> quantette, which requires 1.90.
-rust-version = "1.90"
+# Set by tui-lipan, which requires Rust 1.96.
+rust-version = "1.96"
 license = "MPL-2.0"
 description = "Modern tiling terminal multiplexer built on tui-lipan"
 repository = "https://github.com/tui-lipan/rozi"
@@ -56,7 +55,7 @@ exclude = [
 # switch crossfades.
 # 0.17.4: list descriptions choose their truncation side and keep a gap from the label, for the
 # sidebar's project branches and worktree status rail.
-tui-lipan = { version = "0.17.4", features = [
+tui-lipan = { version = "0.18.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

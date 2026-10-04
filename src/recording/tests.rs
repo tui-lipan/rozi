@@ -487,10 +487,10 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
     assert_eq!(
         listing,
         "ffconcat version 1.0\n\
-         file 'frame-000001.png'\nduration 0.250\n\
-         file 'frame-000002.png'\nduration 0.750\n\
-         file 'frame-000003.png'\nduration 0.500\n\
-         file 'frame-000003.png'\n"
+         file 'frame-000001.png'\noption framerate 1000\nduration 0.250\n\
+         file 'frame-000002.png'\noption framerate 1000\nduration 0.750\n\
+         file 'frame-000003.png'\noption framerate 1000\nduration 0.500\n\
+         file 'frame-000003.png'\noption framerate 1000\n"
     );
     let png = std::fs::read(frames.join("frame-000003.png")).unwrap();
     assert!(png.starts_with(b"\x89PNG"));
@@ -1101,4 +1101,94 @@ fn a_cast_resizes_its_terminal_with_the_pane_and_keeps_marks() {
     assert_eq!(events[2].2, "30x6");
     assert!(events[3].2.contains("corner"), "{:?}", events[3].2);
     assert_eq!(events[4].2, "10x3");
+}
+
+#[test]
+fn video_export_keeps_resized_frames_on_one_canvas_without_changing_timing() {
+    let (dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut small = TerminalScreen::new(2, 4, 0);
+    small.process_bytes("\x1b[41mA\x1b[0m\x1b[1;4H\u{e0b0}\x1b[2;4H\u{f17c}".as_bytes());
+    push(&recorder, 0, &small);
+    let mut wide = TerminalScreen::new(1, 8, 0);
+    wide.process_bytes(b"B");
+    push(&recorder, 250, &wide);
+    let mut tall = TerminalScreen::new(4, 2, 0);
+    tall.process_bytes(b"C");
+    push(&recorder, 900, &tall);
+    finish(recorder, 1_500, EndReason::Stopped);
+    let native = dir.path().join("native");
+    let fixed = dir.path().join("fixed");
+    export::png_frames(export::open(&path).unwrap(), &native, 1, false).unwrap();
+    let summary = export::video_frames(&path, &fixed, 1, false).unwrap();
+    assert_eq!(summary.frames, 3);
+    assert_eq!(summary.duration_ms, 1_500);
+    assert_eq!(
+        std::fs::read(native.join(export::CONCAT_LISTING)).unwrap(),
+        std::fs::read(fixed.join(export::CONCAT_LISTING)).unwrap()
+    );
+    let mut sizes = Vec::new();
+    for index in 1..=3 {
+        let bytes = std::fs::read(fixed.join(format!("frame-{index:06}.png"))).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .unwrap();
+        sizes.push(reader.info().size());
+    }
+    assert!(sizes.iter().all(|size| *size == sizes[0]));
+    let native_bytes = std::fs::read(native.join("frame-000001.png")).unwrap();
+    let fixed_bytes = std::fs::read(fixed.join("frame-000001.png")).unwrap();
+    let native_image = frame::DecodedImage::from_png(&native_bytes, 1 << 20).unwrap();
+    let fixed_image = frame::DecodedImage::from_png(&fixed_bytes, 1 << 20).unwrap();
+    assert!(fixed_image.width > native_image.width);
+    assert!(fixed_image.height > native_image.height);
+    for y in 0..native_image.height as usize {
+        let source = y * native_image.width as usize * 4;
+        let target = y * fixed_image.width as usize * 4;
+        assert_eq!(
+            &native_image.rgba[source..source + native_image.width as usize * 4],
+            &fixed_image.rgba[target..target + native_image.width as usize * 4]
+        );
+    }
+    // Right-edge private-use glyphs must remain clipped. Every pixel outside the original
+    // frame is the default background, including the neighbor an expanded cell grid would add.
+    let background = frame::palette(&span(&mut small).palette)
+        .background
+        .unwrap();
+    let Color::Rgb(r, g, b) = background else {
+        panic!("RGB palette");
+    };
+    for y in 0..fixed_image.height as usize {
+        for x in 0..fixed_image.width as usize {
+            if x >= native_image.width as usize || y >= native_image.height as usize {
+                let at = (y * fixed_image.width as usize + x) * 4;
+                assert_eq!(&fixed_image.rgba[at..at + 4], &[r, g, b, 255]);
+            }
+        }
+    }
+    assert!(export::video_frames(&path, &fixed, 1, false).is_err());
+    assert!(export::video_frames(&path, &fixed, 1, true).is_ok());
+}
+
+#[test]
+fn video_export_rejects_an_oversized_combined_canvas_before_creating_output() {
+    let (dir, path) = scratch();
+    let mut bytes = serde_json::to_vec(&header(2_000, 1)).unwrap();
+    bytes.push(b'\n');
+    for (t, width, height) in [(0, 2_000, 1), (100, 1, 2_000)] {
+        let mut frame = span(&mut TerminalScreen::new(1, 1, 0));
+        frame.width = width;
+        frame.height = height;
+        frame.rows = vec![Vec::new(); usize::from(height)];
+        bytes.extend(serde_json::to_vec(&RecordingEvent::Keyframe { t, frame }).unwrap());
+        bytes.push(b'\n');
+    }
+    std::fs::write(&path, bytes).unwrap();
+    let output = dir.path().join("frames");
+    assert!(
+        export::video_frames(&path, &output, 1, false)
+            .unwrap_err()
+            .contains("canvas")
+    );
+    assert!(!output.exists());
 }

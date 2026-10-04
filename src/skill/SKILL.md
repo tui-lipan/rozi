@@ -1,12 +1,13 @@
 ---
 name: rozi
-description: "Inspect and control Rozi terminal panes and sessions. Use only when the user explicitly asks to use Rozi. UI pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
+description: "Inspect and control Rozi terminal panes and sessions. Use when the user asks to use Rozi, or requests a live terminal preview in a verified Rozi pane. UI pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
 ---
 
 # Rozi
 
 Rozi is a terminal multiplexer with a CLI for controlling a running UI or a detached named session.
-Use this skill only when the user explicitly asks to use Rozi or control a Rozi pane or session.
+Use this skill when the user asks to use Rozi or control a Rozi pane or session, or requests a
+live terminal preview while this agent has a verified Rozi pane context.
 
 ## Choose the endpoint
 
@@ -152,6 +153,10 @@ To record what the user sees instead, chrome included, run `rozi record start ui
 rozi and `rozi record stop --ui` to finish; the UI writes the file on its own machine and shows a
 `● REC` chip on its bar meanwhile, or `● UI REC` in a fullscreen pane's title.
 `rozi record export <FILE> --to png-frames <DIR>` or `--to cast <FILE>` turns it into files.
+For video conversion after terminal resizes, `--to video-frames <DIR>` pads PNGs to a fixed canvas.
+Both frame exports write `frames.ffconcat` with actual durations; use it with ffmpeg rather than
+assuming a constant frame rate. For short animation reviews, request `--max-fps 60` at recording
+start. Live recordings include real timers and subprocess output.
 
 Re-read pane ids before acting after a delay or any layout or session change.
 
@@ -188,6 +193,28 @@ On a UI endpoint, omitted targets use this pane's numeric `ROZI_PANE`, then the 
 A session endpoint ignores `ROZI_PANE` because `--session` selects a different pane namespace. It
 accepts `--target`, or falls back only when that session has exactly one pane. Agents should always
 pass `--target` after reading that session's ids. `--socket` and `--session` cannot be combined.
+
+## Show a requested preview
+
+Build the app first, read live pane IDs and layout, then launch the executable directly:
+
+```bash
+rozi split --cwd /absolute/project --title 'Preview' --argv /absolute/project/target/debug/app
+rozi capture-pane --target <RETURNED_ID> --wait-for 'Ready' --timeout 30s --format json
+rozi capture-pane --target <RETURNED_ID> --render png --output /absolute/scratch/preview.png
+```
+
+Use recognizable output from that app instead of the placeholder `Ready`. Save the returned id
+and inspect the PNG. A requested preview permits creating its pane, not changing unrelated panes.
+Leave it running for approval and report its controls. In a Scrollable layout, `pane reveal`
+shows it without moving focus. `split --focus` needs a verified UI endpoint and a request that
+includes activating the preview; never combine it with `--session`.
+
+| Operation | UI endpoint | Named session |
+| --- | --- | --- |
+| Split, pane capture, input, pane recording | Yes | Yes |
+| Focus, reveal, whole-UI capture/recording | Yes | No |
+| Export or play a local file | No endpoint needed | No endpoint needed |
 
 ## Split and UI-only commands
 

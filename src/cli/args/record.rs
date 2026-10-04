@@ -53,6 +53,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "export <FILE> --to png-frames <DIR>",
                 "PNG frames and an ffmpeg listing",
             ),
+            row(
+                "export <FILE> --to video-frames <DIR>",
+                "Fixed-size PNG frames for video encoding",
+            ),
             row("export <FILE> --to cast <OUT>", "An asciinema cast"),
             row(
                 "play <FILE> [--speed <N>] [--from <MARK|TIME>]",
@@ -133,6 +137,7 @@ pub(crate) enum RecordCli {
 #[derive(Debug, PartialEq)]
 pub(crate) enum ExportTarget {
     PngFrames(PathBuf),
+    VideoFrames(PathBuf),
     Cast(PathBuf),
 }
 
@@ -412,32 +417,42 @@ fn no_selector_with_ui(id: Option<u64>, target: Option<u32>) -> Result<(), Strin
     Ok(())
 }
 
+fn export_target(kind: &str, path: PathBuf) -> Result<ExportTarget, String> {
+    match kind {
+        "png-frames" => Ok(ExportTarget::PngFrames(path)),
+        "video-frames" => Ok(ExportTarget::VideoFrames(path)),
+        "cast" => Ok(ExportTarget::Cast(path)),
+        other => Err(format!(
+            "--to accepts png-frames, video-frames, or cast, not `{other}`"
+        )),
+    }
+}
+
+fn export_scale(value: &str) -> Result<u8, String> {
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|scale| (1..=crate::control::MAX_CAPTURE_SCALE).contains(scale))
+        .ok_or_else(|| "--scale requires 1, 2, or 3".to_string())
+}
+
 fn parse_export(args: Vec<String>) -> Result<RecordCli, String> {
     let mut iter = args.into_iter();
     let (mut input, mut to, mut scale, mut force) = (None, None, None, false);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--to" => {
-                let kind = require_value(&mut iter, "--to requires png-frames or cast")?;
+                let kind =
+                    require_value(&mut iter, "--to requires png-frames, video-frames, or cast")?;
                 let path = PathBuf::from(require_value(
                     &mut iter,
                     "--to requires a destination after the format",
                 )?);
-                to = Some(match kind.as_str() {
-                    "png-frames" => ExportTarget::PngFrames(path),
-                    "cast" => ExportTarget::Cast(path),
-                    other => return Err(format!("--to accepts png-frames or cast, not `{other}`")),
-                });
+                to = Some(export_target(&kind, path)?);
             }
             "--scale" => {
                 let value = require_value(&mut iter, "--scale requires 1, 2, or 3")?;
-                scale = Some(
-                    value
-                        .parse::<u8>()
-                        .ok()
-                        .filter(|scale| (1..=crate::control::MAX_CAPTURE_SCALE).contains(scale))
-                        .ok_or_else(|| "--scale requires 1, 2, or 3".to_string())?,
-                );
+                scale = Some(export_scale(&value)?);
             }
             "--force" => force = true,
             _ if input.is_none() && !arg.starts_with('-') => input = Some(PathBuf::from(arg)),
@@ -446,11 +461,16 @@ fn parse_export(args: Vec<String>) -> Result<RecordCli, String> {
     }
     let input = input.ok_or_else(|| "record export requires a recording file".to_string())?;
     let to = to.ok_or_else(|| {
-        "record export requires --to png-frames <DIR> or --to cast <FILE>".to_string()
+        "record export requires --to png-frames <DIR>, --to video-frames <DIR>, or --to cast <FILE>".to_string()
     })?;
-    if scale.is_some() && !matches!(to, ExportTarget::PngFrames(_)) {
+    if scale.is_some()
+        && !matches!(
+            to,
+            ExportTarget::PngFrames(_) | ExportTarget::VideoFrames(_)
+        )
+    {
         return Err(format!(
-            "--scale applies to png-frames, whose listing is {CONCAT_LISTING}"
+            "--scale applies to png-frames and video-frames, whose listing is {CONCAT_LISTING}"
         ));
     }
     Ok(RecordCli::Export {
@@ -555,6 +575,19 @@ mod tests {
 
     #[test]
     fn recording_is_sent_to_a_session_and_files_are_read_here() {
+        assert!(matches!(
+            parse(&["record", "--help"]),
+            Ok(super::super::ParsedCli::RecordHelp)
+        ));
+        assert!(matches!(
+            parse(&["--session", "dev", "record", "export", "--help"]),
+            Ok(super::super::ParsedCli::RecordHelp)
+        ));
+        assert!(matches!(
+            parse(&["--help", "record"]),
+            Ok(super::super::ParsedCli::Help { .. })
+        ));
+
         let absolute_output = if cfg!(windows) {
             r"C:\tmp\a.rozirec"
         } else {
@@ -790,6 +823,23 @@ mod tests {
             .is_err()
         );
         assert!(parse(&["record", "export", "a", "--to", "cast", "b", "--scale", "2"]).is_err());
+        assert!(matches!(
+            parse(&[
+                "record",
+                "export",
+                "a",
+                "--to",
+                "video-frames",
+                "b",
+                "--scale",
+                "2"
+            ]),
+            Ok(super::super::ParsedCli::Record(RecordCli::Export {
+                to: ExportTarget::VideoFrames(_),
+                scale: 2,
+                ..
+            }))
+        ));
         let Ok(super::super::ParsedCli::Record(play)) = parse(&[
             "record",
             "play",

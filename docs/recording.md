@@ -284,12 +284,25 @@ them as recorded. Press `Ctrl+C` to stop.
 
 ## Export frames, a GIF, or a video
 
-`record export --to png-frames` writes each frame as a PNG in the recording's colors, and a
+`record export --to video-frames` writes fixed-size PNGs in the recording's colors, and a
 `frames.ffconcat` listing that gives each frame its real duration:
 
 ```sh
-rozi record export agent.rozirec --to png-frames frames --scale 2
+rozi record export agent.rozirec --to video-frames frames --scale 2
 ```
+
+Use `--to video-frames` when encoding video: it pads every frame to the maximum recorded width
+and height. Each frame is rendered at its native size first, then its pixels are copied without
+changes onto the larger bitmap. Glyphs and images stay clipped to the original terminal bounds.
+Padding uses that frame's default background color. This keeps video dimensions stable across terminal resizes. The export reads
+the recording twice to determine the canvas, so stop recording before exporting. A combined
+canvas larger than 1,048,576 cells is refused.
+
+`--to png-frames` keeps each frame's original dimensions for inspecting individual screens.
+Both exports use a millisecond time base and preserve actual frame durations. Use the listing
+instead of a guessed frame rate.
+For short animation reviews, start recording with `--max-fps 60`; this raises the capture cap but
+does not increase the application's rendering frequency.
 
 `--scale` enlarges the frames, from 1 to 3. Hand the listing to [ffmpeg](https://ffmpeg.org) to make
 a GIF or a video; rozi does not encode video itself:
@@ -298,7 +311,8 @@ a GIF or a video; rozi does not encode video itself:
 ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
   -vf "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" demo.gif
 ffmpeg -f concat -safe 0 -i frames/frames.ffconcat \
-  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -pix_fmt yuv420p -fps_mode vfr demo.mp4
+  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -bf 0 -pix_fmt yuv420p \
+  -fps_mode vfr -movflags +faststart demo.mp4
 ```
 
 `--to cast` writes an [asciinema](https://asciinema.org) cast, version 2, which plays in a browser

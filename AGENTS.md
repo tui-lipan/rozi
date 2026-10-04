@@ -52,7 +52,8 @@ does not repeat, and violating one is usually invisible until review or CI.
 | Actions, commands, config keys, hooks, or environment contracts | [.agents/instructions/config-actions.md](.agents/instructions/config-actions.md) |
 | Overlays, prompts, palettes, toasts, or animation | [.agents/instructions/ui.md](.agents/instructions/ui.md) |
 | Tests, fixtures, or benchmarks | [.agents/instructions/testing.md](.agents/instructions/testing.md) |
-| Headless UI capture or visual debugging | the `tui-lipan-visual` skill, including its "Rozi capture specifics" section |
+| Headless component capture or snapshot debugging | the `tui-lipan-visual` skill, including its "Rozi capture specifics" section |
+| Live pane/UI visual review, previews, or recordings through rozi | [.agents/skills/rozi-visual/SKILL.md](.agents/skills/rozi-visual/SKILL.md) |
 | `tui-lipan`, dependency sources, or lockfile updates | [.agents/instructions/framework.md](.agents/instructions/framework.md) |
 | Commits, history repair, push, or release work | [.agents/instructions/git-contributions.md](.agents/instructions/git-contributions.md) |
 | Agent detection rules or screen fixtures | [.agents/skills/agent-screens/SKILL.md](.agents/skills/agent-screens/SKILL.md) |

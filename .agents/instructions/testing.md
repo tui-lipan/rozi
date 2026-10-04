@@ -42,5 +42,6 @@ Benchmarks are local performance evidence, not timing assertions. `cargo check -
 compiles them. Run `cargo bench` on a stable, idle machine. Keep benchmark corpora generated and
 deterministic; do not add captured terminal output. See `docs/benchmarks.md`.
 
-For visual review and snapshot debugging, load the `tui-lipan-visual` skill and read its
-"Rozi capture specifics" section.
+For headless component captures and snapshot debugging, load the `tui-lipan-visual` skill and read
+its "Rozi capture specifics" section. For live pane/UI review and recordings through rozi, use
+`.agents/skills/rozi-visual/SKILL.md`.

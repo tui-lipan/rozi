@@ -256,6 +256,44 @@ pub(crate) enum ListFormat {
     Json,
 }
 
+/// Find a help namespace without treating global option values as command tokens.
+fn help_namespace_index(args: &[String]) -> Option<usize> {
+    let mut iter = args.iter().enumerate().peekable();
+    while let Some((index, arg)) = iter.next() {
+        if !arg.starts_with('-') {
+            return matches!(
+                arg.as_str(),
+                "agents" | "sessions" | "worktrees" | "extensions" | "skill" | "record"
+            )
+            .then_some(index);
+        }
+        let values = help_option_values(arg, iter.peek().map(|(_, value)| value.as_str()));
+        for _ in 0..values {
+            iter.next();
+        }
+    }
+    None
+}
+
+fn help_option_values(option: &str, next: Option<&str>) -> usize {
+    match option {
+        "--session"
+        | "--profile"
+        | "--cwd"
+        | "--config"
+        | "--socket"
+        | "--server"
+        | "--remote-serve"
+        | "--remote-control"
+        | "--remote-serve-existing" => 1,
+        "--server-start" => 2,
+        "--remote" => usize::from(next.is_some_and(|value| {
+            !value.starts_with('-') && !matches!(value, "sessions" | "worktrees")
+        })),
+        _ => 0,
+    }
+}
+
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
@@ -271,13 +309,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     // namespace owns its help. `--advanced` is only ever read here, so it can never be silently
     // swallowed by another command.
     let help_index = args.iter().position(|arg| arg == "--help" || arg == "-h");
-    let namespace_index = args.iter().position(|arg| {
-        matches!(
-            arg.as_str(),
-            "agents" | "sessions" | "worktrees" | "extensions" | "skill"
-        )
-    });
-    if help_index.is_some_and(|help| namespace_index.is_none_or(|namespace| help < namespace)) {
+    let namespace_index = help_index.and_then(|help| help_namespace_index(&args[..help]));
+    if help_index.is_some_and(|_| namespace_index.is_none()) {
         return Ok(ParsedCli::Help {
             advanced: args.iter().any(|arg| arg == "--advanced"),
         });
@@ -3349,6 +3382,64 @@ mod tests {
                     Ok(ParsedCli::Help { .. })
                 ),
                 "help did not win in {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn global_help_ignores_namespace_names_used_as_option_values() {
+        for flag in ["--session", "--profile", "--cwd", "--config", "--socket"] {
+            for value in [
+                "record",
+                "agents",
+                "sessions",
+                "worktrees",
+                "extensions",
+                "skill",
+            ] {
+                let args = [flag, value, "--help"].map(str::to_string).to_vec();
+                assert!(
+                    matches!(
+                        parse_cli_args(args),
+                        Ok(ParsedCli::Help { advanced: false })
+                    ),
+                    "{flag} {value}"
+                );
+            }
+        }
+        assert!(matches!(
+            parse_cli_args(
+                ["--session", "record", "record", "--help"]
+                    .map(str::to_string)
+                    .to_vec()
+            ),
+            Ok(ParsedCli::RecordHelp)
+        ));
+        assert!(matches!(
+            parse_cli_args(
+                ["split", "--title", "record", "--help"]
+                    .map(str::to_string)
+                    .to_vec()
+            ),
+            Ok(ParsedCli::Help { .. })
+        ));
+    }
+
+    #[test]
+    fn global_help_wins_when_an_option_value_is_missing() {
+        for args in [
+            vec!["--session", "--help"],
+            vec!["--profile", "--help"],
+            vec!["--server-start", "dev", "--help"],
+            vec!["--session", "dev", "--server", "--help"],
+            vec!["--session", "-h"],
+            vec!["--profile", "--help", "--advanced"],
+        ] {
+            let advanced = args.contains(&"--advanced");
+            assert!(
+                matches!(parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()),
+                Ok(ParsedCli::Help { advanced: actual }) if actual == advanced),
+                "{args:?}"
             );
         }
     }

@@ -179,7 +179,7 @@ attached.
 | `record start ui [--output FILE [--force]] [--max-fps N] [--duration DUR] [--max-bytes SIZE] [--hide-indicator]` | Record the UI as it paints, chrome included. | no |
 | `record mark --ui TEXT` | Label the current moment of the UI recording. | no |
 | `record stop --ui` | Stop the UI recording once its file is complete. | no |
-| `record export FILE --to png-frames DIR [--scale 1-3] \| --to cast OUT [--force]` | Export a recording. | — |
+| `record export FILE --to png-frames DIR \| --to video-frames DIR [--scale 1-3] \| --to cast OUT [--force]` | Export a recording. | — |
 | `record play FILE [--speed N] [--from MARK\|TIME]` | Replay a recording in this terminal. | — |
 | `switch-workspace <1-9>` | Switch the active workspace. | no |
 | `move-to-workspace <1-9>` | Move the focused pane. | no |

@@ -278,9 +278,7 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         .unwrap_or("session");
     let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable;
     let lost = ctx.state.current().remote_session_lost;
-    let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42)
-        .auto_focus(false)
-        .dismiss_on_escape(false);
+    let modal = styled_modal(ctx, &format!("Session · {name}"), 42).dismiss_on_escape(false);
     let actions = if offline {
         vec![
             OverlayAction::new(
@@ -308,29 +306,39 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
             true,
         )]
     };
-    if offline {
-        modal = modal.child(
-            VStack::new()
-                .child(
-                    Text::new(if lost { "session lost" } else { "offline" })
-                        .style(Style::new().fg(ctx.state.theme.status.warning)),
-                )
-                .child(overlay_hints(ctx, &actions)),
-        );
+    let status: Element = if offline {
+        Text::new(if lost { "session lost" } else { "offline" })
+            .style(Style::new().fg(ctx.state.theme.status.warning))
+            .into()
     } else {
-        modal = modal.child(
+        Spinner::new()
+            .spinner_style(SpinnerStyle::Dots)
+            .label(if lost { "recreating" } else { "reconnecting" })
+            .style(Style::new().fg(ctx.state.theme.status.warning))
+            .label_style(fg_only(&ctx.state.theme.primary))
+            .into()
+    };
+    modal
+        .child(
             VStack::new()
+                .height(Length::Auto)
+                .padding((1, 0, 0, 0))
+                // A modal with no focus target traps keys before root routing. Bind the same
+                // actions the clickable hints use, including Esc, inside the modal's focus ring.
                 .child(
-                    Spinner::new()
-                        .spinner_style(SpinnerStyle::Dots)
-                        .label(if lost { "recreating" } else { "reconnecting" })
-                        .style(Style::new().fg(ctx.state.theme.status.warning))
-                        .label_style(fg_only(&ctx.state.theme.primary)),
+                    KeyCapture::new()
+                        .on_key(overlay_interceptor(ctx, &actions))
+                        .key("session-connection-keys"),
+                )
+                .child(
+                    HStack::new()
+                        .height(Length::Auto)
+                        .padding((0, 1))
+                        .child(status),
                 )
                 .child(overlay_hints(ctx, &actions)),
-        );
-    }
-    modal.into()
+        )
+        .into()
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a

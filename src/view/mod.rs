@@ -869,6 +869,142 @@ mod grouped_search_tests {
     }
 
     #[test]
+    fn connection_modal_spacing_and_escape_flow() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::state::{ConnectionState, PendingSessionAttach};
+                use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+                use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+
+                for (connection, lost, label) in [
+                    (ConnectionState::Unreachable, true, "session lost"),
+                    (ConnectionState::Unreachable, false, "offline"),
+                    (ConnectionState::Reconnecting, false, "reconnecting"),
+                    (ConnectionState::Reconnecting, true, "recreating"),
+                ] {
+                    for (w, h) in [(42, 12), (100, 30)] {
+                        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                        backend.set_viewport(Rect { x: 0, y: 0, w, h });
+                        let state = backend.state_mut();
+                        state.config.animations.enabled = false;
+                        state.show_session_picker = false;
+                        state.session_picker = None;
+                        state.current_mut().session_name = Some("test".into());
+                        state.current_mut().remote_target = Some(
+                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                        );
+                        state.current_mut().remote_host = Some("workbox".into());
+                        state.current_mut().connection = connection;
+                        state.current_mut().remote_session_lost = lost;
+                        let epoch = state.runtime_epoch;
+                        state.current_mut().pending_session_attach = (connection
+                            == ConnectionState::Reconnecting)
+                            .then(|| PendingSessionAttach {
+                                epoch,
+                                name: "test".into(),
+                                client: None,
+                                autostart: false,
+                                read_only: false,
+                                reconnect: true,
+                                remote_host: Some("workbox".into()),
+                                intent: crate::state::AttachIntent::Plain,
+                                left: None,
+                                parked_epoch: None,
+                            });
+                        backend.render();
+                        let frame = backend.capture_frame().to_fixed_grid();
+                        let rows: Vec<_> = frame.lines().collect();
+                        let status = rows
+                            .iter()
+                            .position(|row| row.contains('│') && row.contains(label))
+                            .unwrap();
+                        let hints = rows
+                            .iter()
+                            .position(|row| row.contains("sessions Esc"))
+                            .unwrap();
+                        assert_eq!(hints, status + 2, "one blank row above hints:\n{frame}");
+                        let border = rows[hints].find('│').unwrap();
+                        let hint_text = &rows[hints][border + '│'.len_utf8()..];
+                        assert!(
+                            hint_text.starts_with(if connection == ConnectionState::Unreachable {
+                                if lost {
+                                    " recreate Enter"
+                                } else {
+                                    " reconnect Enter"
+                                }
+                            } else {
+                                " sessions Esc"
+                            }),
+                            "one column before hints:\n{frame}"
+                        );
+                        assert!(
+                            rows[hints + 1].contains('╰'),
+                            "no blank row below hints:\n{frame}"
+                        );
+
+                        let escape = KeyEvent {
+                            code: KeyCode::Esc,
+                            mods: KeyMods::NONE,
+                        };
+                        if w == 100 {
+                            let start = rows[hints].find("sessions Esc").unwrap();
+                            let x = rows[hints][..start].chars().count() as u16;
+                            for kind in [
+                                MouseKind::Down(MouseButton::Left),
+                                MouseKind::Up(MouseButton::Left),
+                            ] {
+                                backend
+                                    .send_mouse(MouseEvent {
+                                        x,
+                                        y: hints as u16,
+                                        kind,
+                                        mods: KeyMods::NONE,
+                                    })
+                                    .unwrap();
+                            }
+                        } else {
+                            assert!(backend.send_key(escape).unwrap());
+                        }
+                        assert!(
+                            backend.state().show_session_picker,
+                            "Esc or its hint opens Sessions"
+                        );
+                        backend.render();
+                        assert!(backend.send_key(escape).unwrap());
+                        assert!(!backend.state().show_session_picker);
+                        assert!(
+                            backend.state().is_launcher(),
+                            "second Esc leaves the launcher"
+                        );
+                        let parked = backend
+                            .state()
+                            .background
+                            .values()
+                            .find(|attachment| attachment.session_name.as_deref() == Some("test"))
+                            .expect("offline screens retained in background");
+                        assert_eq!(parked.connection, ConnectionState::Unreachable);
+                        assert_eq!(parked.remote_session_lost, lost);
+                        assert!(parked.pending_session_attach.is_none());
+                        backend.render();
+                        assert!(
+                            !backend
+                                .capture_frame()
+                                .to_fixed_grid()
+                                .contains("Session · test")
+                        );
+                        if connection == ConnectionState::Reconnecting {
+                            crate::session::bootstrap::finish_cancelled_remote_attach(epoch);
+                        }
+                    }
+                }
+            })
+            .expect("spawn connection modal regression test")
+            .join()
+            .expect("connection modal regression test completes");
+    }
+
+    #[test]
     fn ssh_askpass_covers_the_reconnecting_overlay() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -979,6 +1115,7 @@ fn search_palette_item_match_style(theme: &Theme) -> Style {
 
 /// Shared modal chrome for every overlay: a configured picker border, a chrome-colored title, and
 /// the surface-element background fill so overlays read as solid panels over the workspace.
+/// Content owns its padding: shared hint rows already supply their own inset and no bottom gap.
 pub(crate) fn overlay_border_style(ctx: &Context<AppRoot>) -> BorderStyle {
     ctx.state.config.pane.picker_border_style.to_border_style()
 }
@@ -991,6 +1128,7 @@ pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> M
         .width(Length::Px(width))
         .border_style(overlay_border_style(ctx))
         .frame_style(Style::new().bg(theme.surface.element))
+        .padding(0)
 }
 
 /// Shared cap for command-palette-shaped overlays (`OverlayPalette`, theme picker, install

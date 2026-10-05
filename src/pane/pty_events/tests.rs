@@ -318,7 +318,7 @@ fn a_press_forwarded_to_a_mouse_tracking_child_answers_the_mark() {
             }
             backend.render();
 
-            for report in [&b"\x1b[<35;4;4M"[..], b"\x1b[<64;4;4M", b"\x1b[<0;4;4m"] {
+            for report in [&b"\x1b[<35;4;4M"[..], b"\x1b[<0;4;4m"] {
                 backend
                     .dispatch(Msg::PaneMouse(id, report.to_vec()))
                     .expect("dispatch pointer report");
@@ -333,6 +333,89 @@ fn a_press_forwarded_to_a_mouse_tracking_child_answers_the_mark() {
         .expect("spawn test thread")
         .join()
         .expect("test thread panicked");
+}
+
+#[test]
+fn scrolling_answers_only_the_target_panes_marks() {
+    use crate::Msg;
+    use crate::session::client::SessionClient;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            let id = backend.state().focused_pane().expect("fresh pane focus");
+            let other_id = id + 1;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(Pane::new(other_id, 100, rect()));
+
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+            }
+            backend.render();
+            backend.focus_key(&crate::view::pane_terminal_key(id).into());
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .process_server_output("history\r\n".repeat(80).as_bytes());
+
+            // Native scrollback, including a callback at the live-view limit, and mouse-tracking
+            // reports in both supported encodings acknowledge the actual target of the gesture.
+            for scroll in [
+                Msg::PaneScroll(id, 0),
+                Msg::PaneScroll(id, 1),
+                Msg::PaneMouse(id, b"\x1b[<64;4;4M".to_vec()),
+                Msg::PaneMouse(id, b"\x1b[<65;4;4M".to_vec()),
+                Msg::PaneMouse(id, b"\x1b[<80;4;4M".to_vec()),
+                Msg::PaneMouse(id, vec![0x1b, b'[', b'M', 96, 36, 36]),
+                Msg::PaneMouse(id, vec![0x1b, b'[', b'M', 97, 36, 36]),
+            ] {
+                for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+                    pane.activity.has_unseen_output = true;
+                    pane.activity.bell = true;
+                    pane.terminal.finished_unseen = true;
+                }
+                backend.dispatch(scroll).expect("scroll pane");
+                for pane in &backend.state().current().workspaces[0].panes {
+                    let marked = pane.id == other_id;
+                    assert_eq!(pane.activity.has_unseen_output, marked);
+                    assert_eq!(pane.activity.bell, marked);
+                    assert_eq!(pane.terminal.finished_unseen, marked);
+                }
+            }
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::EnterCopyMode))
+                .expect("enter copy mode");
+            assert_eq!(backend.state().mode, crate::state::Mode::Copy);
+            for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+                pane.activity.has_unseen_output = true;
+                pane.activity.bell = true;
+                pane.terminal.finished_unseen = true;
+            }
+            backend
+                .send_key(key(KeyCode::PageUp, KeyMods::NONE))
+                .expect("scroll with copy-mode keyboard navigation");
+            let panes = &backend.state().current().workspaces[0].panes;
+            assert!(panes[0].terminal.scrollback_offset() > 0);
+            assert!(!panes[0].activity.has_unseen_output);
+            assert!(!panes[0].activity.bell);
+            assert!(!panes[0].terminal.finished_unseen);
+            assert!(panes[1].terminal.finished_unseen);
+        })
+        .expect("spawn scroll acknowledgement test")
+        .join()
+        .expect("scroll acknowledgement test completes");
 }
 
 #[test]

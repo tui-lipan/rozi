@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::input::Action;
-use crate::ops::focus::{focus_pane, focus_pane_in_place, request_current_pane_focus};
+use crate::ops::focus::{focus_pane, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId, State};
 
@@ -232,12 +232,10 @@ pub(crate) fn framework_focus_entered_pane(
     }
 
     if let Some(id) = pane {
-        // The framework catching up to a pane the app already focused is not new intent. Hover
-        // focus lands here too, and must leave a clipped Scrollable column where it is until a key
-        // or click reaches it.
-        if ctx.state.focused_pane() == Some(id) {
-            focus_pane_in_place(&mut ctx.state, id);
-        } else {
+        // The framework catching up to a pane the app already selected is not new intent.
+        // Workspace switches and hover focus land here too: preserve attention marks and leave
+        // clipped Scrollable columns in place until a key or click reaches them.
+        if ctx.state.focused_pane() != Some(id) {
             focus_pane(&mut ctx.state, id);
         }
         Update::full()
@@ -265,6 +263,64 @@ mod tests {
         *state.current_mut() = Attachment::new();
         assert!(state.is_launcher());
         state
+    }
+
+    #[test]
+    fn workspace_arrival_and_framework_focus_preserve_marks_until_pane_input() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::Msg;
+                use crate::layout::tiling::append_tiled_window;
+                use crate::state::Pane;
+                use tui_lipan::TestBackend;
+
+                for acknowledgement in [
+                    Msg::FocusPane(2),
+                    Msg::PaneKey(2, key(KeyCode::Char('x'), KeyMods::NONE)),
+                ] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    let state = backend.state_mut();
+                    state.window_focused = true;
+                    state.config.animations.enabled = false;
+                    let rect = state.current().workspaces[0].panes[0].floating_rect;
+                    let mut pane = Pane::new(2, 100, rect);
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    pane.activity.has_unseen_output = true;
+                    pane.activity.bell = true;
+                    pane.terminal.finished_unseen = true;
+                    let workspace = &mut state.current_mut().workspaces[1];
+                    workspace.panes.push(pane);
+                    append_tiled_window(workspace, 2);
+                    workspace.focused_pane = Some(2);
+
+                    backend
+                        .dispatch(Msg::RunAction(Action::SwitchWorkspace(1)))
+                        .expect("switch to marked workspace");
+                    assert_eq!(backend.state().focused_pane(), Some(2));
+                    // Include the focus-transition hook after the app restores workspace focus.
+                    // Repeated synchronization must not count as acknowledgement either.
+                    for _ in 0..2 {
+                        backend
+                            .dispatch(Msg::FrameworkFocusEnteredPane(Some(2)))
+                            .expect("framework catches up to selected pane");
+                        let pane = &backend.state().current().workspaces[1].panes[0];
+                        assert!(pane.activity.has_unseen_output);
+                        assert!(pane.activity.bell);
+                        assert!(pane.terminal.finished_unseen);
+                    }
+
+                    backend.dispatch(acknowledgement).expect("act on pane");
+                    let pane = &backend.state().current().workspaces[1].panes[0];
+                    assert!(!pane.activity.has_unseen_output);
+                    assert!(!pane.activity.bell);
+                    assert!(!pane.terminal.finished_unseen);
+                }
+            })
+            .expect("spawn workspace focus test")
+            .join()
+            .expect("workspace focus test completes");
     }
 
     #[test]

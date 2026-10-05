@@ -47,8 +47,8 @@ pub(crate) fn window_focus_changed(ctx: &mut Context<AppRoot>, focused: bool) ->
 
 /// Acknowledge attention only when the pane is selected in a focused host window.
 ///
-/// Callers are the places the user acts *on this pane*: focusing it, typing into it, pasting into
-/// it. Nothing calls this on a timer, on output, or on a redraw, so a mark stays up until it is
+/// Callers are the places the user acts *on this pane*: focusing it, typing into it, scrolling it,
+/// or pasting into it. Nothing calls this on a timer, on output, or on a redraw, so a mark stays up until it is
 /// answered rather than until the next message happens to pass through.
 ///
 /// Arriving somewhere is not acting on anything, so none of the workspace paths call this either.

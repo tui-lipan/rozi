@@ -165,11 +165,11 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     if std::mem::take(&mut ctx.state.consumed_pointer_click) {
         return Update::none();
     }
-    // Clicking a pane answers its mark. Without mouse tracking that happens on the way through
-    // `Msg::FocusPane`, but a child that tracks the mouse keeps the press of an already-focused
-    // pane for itself, so the forwarded report is the only sign of it. Motion, the wheel and the
-    // release are not a click and answer nothing.
-    let acknowledged = crate::pane::pty_events::pointer_flow::is_press_report(&bytes)
+    // Clicking or scrolling a pane answers its mark. A mouse-tracking child consumes these
+    // interactions, so the forwarded report is the only sign of them. Pointer motion and button
+    // releases leave marks intact.
+    let acknowledged = (crate::pane::pty_events::pointer_flow::is_press_report(&bytes)
+        || crate::pane::pty_events::pointer_flow::is_scroll_report(&bytes))
         && crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(
@@ -249,12 +249,14 @@ pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Updat
 }
 
 pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset: usize) -> Update {
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
-        && pane.terminal.set_scrollback(offset)
-    {
-        return Update::full();
+    let acknowledged = crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
+    let scrolled =
+        find_pane_mut(&mut ctx.state, id).is_some_and(|pane| pane.terminal.set_scrollback(offset));
+    if acknowledged || scrolled {
+        Update::full()
+    } else {
+        Update::none()
     }
-    Update::none()
 }
 
 pub(crate) fn terminal_key_event_bytes(key: KeyEvent, modes: TerminalKeyModes) -> Option<Vec<u8>> {

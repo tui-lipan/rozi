@@ -77,6 +77,9 @@ pub(super) fn tree_tab(
         // Bare arrows and h/l expand or collapse; modified arrows remain available to the sidebar
         // for tab movement and resizing.
         .keymap(TreeKeymap::ARROWS | TreeKeymap::VIM | TreeKeymap::TOGGLE)
+        // `g` / `G` for the first and last row, as the composed row lists have. The tree owns its
+        // own navigation, so the sidebar's handler never sees these keys on a tree tab.
+        .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
         .directory_label_style(super::super::rozi_fg(theme))
         .file_label_style(super::super::fg_only(&theme.primary))
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty

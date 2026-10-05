@@ -808,3 +808,90 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
         .join()
         .expect("click smoke completes");
 }
+
+/// `g` / `G` reach the first and last row on a tree tab, the same rows `Home` / `End` do. The tree
+/// owns its own navigation, so the sidebar's own `g` / `G` handling never sees these keys there.
+#[test]
+fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
+    let Some(repo) = Repo::new("vim-jump") else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.0.join(name), "x\n").expect("root file");
+    }
+
+    let cwd = repo.0.to_string_lossy().into_owned();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 90,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                state.config.sidebar.width = 34;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+            }
+            assert!(
+                pump_until(&mut backend, |backend| {
+                    backend
+                        .capture_frame()
+                        .to_fixed_grid_lines()
+                        .iter()
+                        .any(|line| line.contains("c.txt"))
+                }),
+                "the tree lists the scratch files"
+            );
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            backend.render();
+
+            let theme = &backend.state().theme;
+            let selection_bg = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
+            let mut cursor_after = |code: KeyCode, mods: KeyMods| -> Option<u16> {
+                let _ = backend.send_key(KeyEvent { code, mods });
+                backend.render();
+                let frame = backend.capture_frame();
+                (0..24u16).find(|&row| frame.cell(3, row).bg == selection_bg)
+            };
+
+            let end = cursor_after(KeyCode::End, KeyMods::NONE).expect("End shows the cursor");
+            let home = cursor_after(KeyCode::Home, KeyMods::NONE).expect("Home shows the cursor");
+            assert_ne!(home, end, "the tree needs more than one row");
+            assert_eq!(
+                cursor_after(KeyCode::Char('G'), KeyMods::SHIFT),
+                Some(end),
+                "G lands where End does"
+            );
+            assert_eq!(
+                cursor_after(KeyCode::Char('g'), KeyMods::NONE),
+                Some(home),
+                "g lands where Home does"
+            );
+        })
+        .expect("spawn vim jump thread")
+        .join()
+        .expect("vim jump completes");
+}

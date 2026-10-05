@@ -277,6 +277,8 @@ mod tests {
     fn the_overlay_lists_an_agent_on_another_machine() {
         on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().remote.agents.insert(
                 RemoteTarget::Alias("workbox".into()),
                 vec![crate::session::protocol::AgentSummary {
@@ -310,6 +312,8 @@ mod tests {
     fn the_overlay_lists_an_agent_in_another_local_session() {
         on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
                     sessions: Vec::new(),
@@ -340,6 +344,8 @@ mod tests {
     fn an_empty_view_says_how_far_it_looked() {
         on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
                 .expect("open the agents view");

@@ -59,6 +59,7 @@ fn host_sessions_backend(
 
 fn rendered_lines(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 

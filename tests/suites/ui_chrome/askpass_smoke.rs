@@ -12,6 +12,7 @@ use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 fn askpass_backend(kind: AskpassKind, prompt: &str) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -32,6 +33,7 @@ fn askpass_backend(kind: AskpassKind, prompt: &str) -> TestBackend<AppRoot> {
 
 fn rendered_lines(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 
@@ -61,6 +63,7 @@ fn prompt_msg(id: u64, session: &str, prompt: &str) -> rozi::Msg {
 fn picker_backend() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -426,6 +429,8 @@ fn an_accepted_install_shows_the_host_as_installing() {
     on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
+        backend.state_mut().config.animations.picker =
+            rozi::layout::anim::PickerAnimationStyle::Off;
         backend.set_viewport(Rect {
             x: 0,
             y: 0,

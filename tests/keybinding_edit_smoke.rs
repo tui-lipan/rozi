@@ -52,6 +52,7 @@ fn send(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
 
 fn frame(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 

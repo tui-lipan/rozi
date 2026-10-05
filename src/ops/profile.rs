@@ -800,6 +800,8 @@ mod tests {
     fn capture_prompt_is_a_plain_capture_from_ephemeral_and_named_sessions() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
             backend

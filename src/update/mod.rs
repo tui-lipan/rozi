@@ -83,6 +83,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SchedulePaintRefresh(delay) => Update::command_only(Command::after(delay, |link| {
             link.send(Msg::RefreshPaintLayers)
         })),
+        Msg::UiScreenshotFrameReady => {
+            crate::ops::control::request_pending_ui_frame(ctx);
+            Update::full()
+        }
         Msg::ScreenshotSaved { target, path } => {
             crate::ops::screenshot::screenshot_saved(ctx, target, path)
         }

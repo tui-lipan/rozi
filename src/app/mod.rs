@@ -463,6 +463,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -507,6 +509,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -543,6 +547,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -709,6 +715,8 @@ mod tests {
             .spawn(|| {
                 for initially_visible in [false, true] {
                     let mut backend = TestBackend::new(AppRoot::default());
+                    backend.state_mut().config.animations.picker =
+                        crate::layout::anim::PickerAnimationStyle::Off;
                     backend.set_viewport(Rect {
                         x: 0,
                         y: 0,
@@ -1688,6 +1696,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1837,6 +1847,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,

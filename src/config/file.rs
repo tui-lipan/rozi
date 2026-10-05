@@ -636,6 +636,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) workspace: Option<bool>,
     pub(super) workspace_ms: Option<u64>,
     pub(super) session: Option<SessionSpec>,
+    pub(super) picker: Option<String>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) pane_open_style: Option<String>,

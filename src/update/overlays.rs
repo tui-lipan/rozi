@@ -283,7 +283,9 @@ pub(super) fn settings_choice_select(ctx: &mut Context<AppRoot>, index: usize) -
         editor.index = index;
         editor.action
     };
-    apply_settings_choice(ctx, action, index, false);
+    if action.previews_choice() {
+        apply_settings_choice(ctx, action, index, false);
+    }
     ctx.request_focus(crate::view::settings_choice_key());
     Update::full()
 }
@@ -367,6 +369,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CyclePaneOpenAnimation
         | CyclePaneCloseAnimation
         | CycleSessionAnimation
+        | CyclePickerAnimation
         | CycleWhichKey
         | CycleCopyOnSelect
         | CycleMiddleClickPaste
@@ -681,19 +684,8 @@ fn cycle_settings_choice(
 }
 
 fn discard_settings_choice(ctx: &mut Context<AppRoot>) {
-    let clipboard_changed = ctx.state.settings_choice.as_ref().is_some_and(|editor| {
-        matches!(
-            editor.action,
-            crate::state::SettingsAction::CycleCopyOnSelect
-                | crate::state::SettingsAction::CycleMiddleClickPaste
-                | crate::state::SettingsAction::CycleRightClickClipboard
-        )
-    });
     if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
         ctx.set_command_chord_reveal_delay(delay);
-    }
-    if clipboard_changed {
-        ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
     }
 }
 
@@ -824,6 +816,14 @@ fn persist_applied_settings_choice(
             if let Err(err) = crate::config::persist_pane_animation_styles(
                 ctx.state.config.animations.pane_open_style.id(),
                 ctx.state.config.animations.pane_close_style.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CyclePickerAnimation => {
+            if let Err(err) = crate::config::persist_animation_string(
+                "picker",
+                ctx.state.config.animations.picker.id(),
             ) {
                 preference_error(ctx, err);
             }
@@ -1289,7 +1289,7 @@ mod tests {
             backend.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
             assert_eq!(
                 backend.state().config.pane.alert_border,
-                crate::state::AlertMode::Static
+                crate::state::AlertMode::Off
             );
             assert!(backend.state().settings_choice.is_some());
             backend.dispatch(Msg::SettingsChoiceCancel).unwrap();
@@ -1330,7 +1330,7 @@ mod tests {
             backend.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
             assert_eq!(
                 backend.state().config.workbar.alert.mode,
-                crate::state::AlertMode::Static
+                crate::state::AlertMode::Off
             );
             assert!(backend.state().settings_choice.is_some());
             backend.dispatch(Msg::SettingsChoicePick(1)).unwrap();
@@ -1361,6 +1361,8 @@ mod tests {
     fn help_filter_uses_picker_style_body_chrome() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -1430,6 +1432,8 @@ mod tests {
     fn keybindings_search_owns_every_key_and_escape_closes() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

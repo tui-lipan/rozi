@@ -381,6 +381,8 @@ fn collaborators_dialog_is_rows_and_chrome_with_no_prose_line() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = shared_controller_backend();
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
 
             backend.render();
@@ -424,6 +426,8 @@ fn plain_letters_reach_the_filter_instead_of_acting() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = shared_controller_backend();
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             let (client, rx) = SessionClient::test_channel();
             backend.state_mut().current_mut().session_client = Some(client);
             backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
@@ -476,6 +480,8 @@ fn an_empty_list_says_whether_it_is_the_filter_or_the_roster() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = shared_controller_backend();
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
             backend
                 .dispatch(crate::Msg::CollaborationQueryChanged("zzz".to_string()))
@@ -683,6 +689,8 @@ fn occupied_session_prompt_keeps_context_in_the_title() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

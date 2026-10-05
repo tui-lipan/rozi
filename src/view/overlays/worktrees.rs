@@ -38,6 +38,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             "unlock & remove",
             "again to unlock and remove (lock owner gone)",
         ),
+        Some(PendingWorktreeRemoveKind::Clean) => ("remove", "again to remove"),
         None => ("remove", ""),
     };
     let removable = selected.is_some_and(|tree| {

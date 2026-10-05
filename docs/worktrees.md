@@ -35,7 +35,7 @@ with it.
 | `Enter` | Open the checkout's session, or create one |
 | `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a new session |
 | `Ctrl+R` | Refresh the list |
-| `Ctrl+K` | Remove a linked checkout; see [Remove a worktree](#remove-a-worktree) for when it asks twice |
+| `Ctrl+K` | Remove a linked checkout; press it again to confirm |
 | `Ctrl+U` | Unlock a locked checkout |
 | `Esc` | Close the picker |
 
@@ -86,13 +86,14 @@ shell in the checkout.
 
 ## Remove a worktree
 
-Select a linked checkout and press `Ctrl+K`. Removal follows these rules:
+Select a linked checkout and press `Ctrl+K`, then press it again within three seconds to confirm.
+Removal follows these rules:
 
 - It never deletes a branch.
 - It refuses the primary checkout and any checkout owned by a running or restorable rozi session.
   Stop or forget that session first.
-- It refuses a locked checkout unless the lock is stale. Press `Ctrl+K` on a stale lock, then
-  press it again to unlock and remove the checkout. To remove a checkout with any other lock,
+- It refuses a locked checkout unless the lock is stale. On a stale lock, the confirming press
+  unlocks and removes the checkout. To remove a checkout with any other lock,
   [unlock it](#unlock-a-worktree) first.
 - If Git refuses because the checkout has uncommitted changes, press `Ctrl+K` again to force the
   removal. Forcing affects only that Git check, never a lock.

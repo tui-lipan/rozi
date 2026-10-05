@@ -537,8 +537,9 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-/// Ctrl+K in the picker. A clean checkout goes at once; one with a stale lock arms first, so the
-/// lift is a step the user sees; a dirty one arms as forced once Git has refused it.
+/// Ctrl+K in the picker. The first press arms, like every other destructive picker action, and
+/// the second removes; a stale lock arms as such, so the lift is a step the user sees, and a dirty
+/// checkout re-arms as forced once Git has refused it.
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let Some((cwd, tree, armed)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
         let tree = selected(picker)?.clone();
@@ -552,11 +553,17 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
-    if stale && armed.is_none() && writable(ctx) && !operation_in_flight(ctx) {
+    // A checkout that cannot be removed skips the arming and goes straight to the refusal toast.
+    let removable = tree.linked && !tree.bare && (tree.lock.is_none() || stale);
+    if armed.is_none() && removable && writable(ctx) && !operation_in_flight(ctx) {
         if let Some(picker) = ctx.state.worktree_picker.as_mut() {
             picker.pending_remove = Some(PendingWorktreeRemove {
                 path: tree.path,
-                kind: PendingWorktreeRemoveKind::StaleLock,
+                kind: if stale {
+                    PendingWorktreeRemoveKind::StaleLock
+                } else {
+                    PendingWorktreeRemoveKind::Clean
+                },
             });
         }
         return crate::ops::confirm::arm(ctx);

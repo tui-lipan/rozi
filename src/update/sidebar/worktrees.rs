@@ -365,6 +365,40 @@ mod tests {
         });
     }
 
+    /// In the picker, Ctrl+K on a clean checkout arms like the session picker's kill: nothing is
+    /// sent until the second press, which removes without forcing.
+    #[test]
+    fn the_picker_arms_a_clean_removal_before_sending_it() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let _ = sent_worktree_requests(&outbound);
+            let mut picker = crate::state::WorktreePickerState::new(REPO.into(), None);
+            picker.entries = vec![tree(REPO, false), tree(LINKED, true)];
+            picker.selected = 1;
+            backend.state_mut().worktree_picker = Some(picker);
+
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            assert!(sent_worktree_requests(&outbound).is_empty(), "arms first");
+            assert_eq!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .and_then(|picker| picker.pending_remove.as_ref())
+                    .map(|pending| pending.kind),
+                Some(crate::state::PendingWorktreeRemoveKind::Clean)
+            );
+
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            let requests = sent_worktree_requests(&outbound);
+            let [(_, WorktreeRequest::Remove { path, force, .. })] = requests.as_slice() else {
+                panic!("one remove request, got {requests:?}");
+            };
+            assert_eq!((path.as_str(), *force), (LINKED, false));
+        });
+    }
+
     /// In the picker, Ctrl+K on a stale lock arms before it removes, and Ctrl+U unlocks any lock.
     #[test]
     fn the_picker_arms_a_stale_removal_and_unlocks_on_request() {

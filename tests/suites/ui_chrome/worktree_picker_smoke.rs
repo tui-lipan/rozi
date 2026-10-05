@@ -292,7 +292,10 @@ fn worktree_picker_visual_reference() {
                     bare: false,
                     prunable: false,
                     linked,
-                    locked,
+                    lock: locked.then(|| rozi::git::worktrees::WorktreeLock {
+                        reason: String::new(),
+                        stale: false,
+                    }),
                 }
             };
             picker.target = None;

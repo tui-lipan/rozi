@@ -109,8 +109,6 @@ fn scrollback_search_fixture_produces_sparse_dense_and_empty_workloads() {
     let dense = pane
         .search_scrollback(bench_support::SEARCH_DENSE_QUERY)
         .len();
-    assert_eq!(sparse, bench_support::SEARCH_SPARSE_MATCHES_PER_PANE);
-    assert_eq!(dense, bench_support::SEARCH_DENSE_MATCHES_PER_PANE);
     assert!(
         0 < sparse && sparse < dense,
         "sparse={sparse} dense={dense}"

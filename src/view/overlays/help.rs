@@ -165,7 +165,19 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         ),
         HelpRow::direct(
             SIDEBAR,
+            "Ctrl+Shift+h / Ctrl+Shift+l",
+            "Reorder the active tab",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
             "Ctrl+↑ / Ctrl+↓",
+            "Focus the other panel",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Ctrl+k / Ctrl+j",
             "Focus the other panel",
             SIDEBAR_EXTRA,
         ),
@@ -177,13 +189,31 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         ),
         HelpRow::direct(
             SIDEBAR,
+            "Ctrl+Shift+k / Ctrl+Shift+j",
+            "Move tab to the other panel",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
             "Shift+← / Shift+→",
             "Resize sidebar",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
+            "Shift+h / Shift+l",
+            "Resize sidebar",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
             "Shift+↑ / Shift+↓",
+            "Resize panel split",
+            SIDEBAR_EXTRA,
+        ),
+        HelpRow::direct(
+            SIDEBAR,
+            "Shift+k / Shift+j",
             "Resize panel split",
             SIDEBAR_EXTRA,
         ),

@@ -215,11 +215,11 @@ After the `B` command key focuses the sidebar:
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle file-tree directories |
-| `Ctrl+Shift+Left/Right` | Reorder the active tab |
-| `Ctrl+Up/Down` | Focus the other panel |
-| `Ctrl+Shift+Up/Down` | Move the active tab between panels |
-| `Shift+Left/Right` | Resize the sidebar |
-| `Shift+Up/Down` | Resize the panel split |
+| `Ctrl+Shift+Left/Right`, `Ctrl+Shift+h/l` | Reorder the active tab |
+| `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the other panel |
+| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab between panels |
+| `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
+| `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
 | `s` | Toggle one or two panels |
 | `Esc` | Return focus to the pane |
 

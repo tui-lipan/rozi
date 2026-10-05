@@ -709,8 +709,14 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             };
             settle(&mut backend);
 
-            // The cursor shares the pointer-hover lift, one visual language across every tab.
-            let selection_bg = backend.state().theme.surface.element.elevate_by(0.08);
+            // The cursor is the pointer-hover lift tinted toward the active border, the same
+            // highlight the composed row lists use.
+            let theme = &backend.state().theme;
+            let selection_bg = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
 
             // Find and click the `src` directory row.
             let row_text = |backend: &TestBackend<AppRoot>, row: u16| -> String {
@@ -746,9 +752,8 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 "clicking the directory expanded it: {after:?}"
             );
 
-            // Park the pointer outside the sidebar first: hover and the keyboard cursor share one
-            // highlight, so a row still under the mouse is lit for a reason that has nothing to do
-            // with selection.
+            // Park the pointer outside the sidebar first: a row still under the mouse is lit for a
+            // reason that has nothing to do with selection.
             let _ = backend.send_mouse(MouseEvent {
                 x: 80,
                 y: 20,

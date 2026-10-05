@@ -992,7 +992,6 @@ pub(crate) fn pane_element(
     title_marker: Option<&str>,
     kind: PaneKind,
     merge: PaneMerge,
-    reveal_progress: f32,
     hide_frame_border: bool,
     fade: animation::Fade,
 ) -> Element {
@@ -1571,7 +1570,7 @@ pub(crate) fn pane_element(
         pane_tree,
         pane.keys.effect_scope.clone(),
         crate::layout::anim::pane_animation_for_pane(animations, pane),
-        reveal_progress,
+        animation::pane_paint_motion(ctx, pane),
         u64::from(id),
         pane.closing,
     );

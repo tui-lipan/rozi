@@ -105,12 +105,19 @@ pub(crate) fn backdrop_shown(state: &crate::state::State) -> bool {
 /// docked surface. Floating-only presentation still dims the workspace and keeps its outside-click
 /// catcher while the dock progress remains at zero.
 pub(crate) fn backdrop_progress(ctx: &Context<AppRoot>) -> f32 {
-    let target = if backdrop_shown(&ctx.state) { 1.0 } else { 0.0 };
-    ctx.transition::<f32>(
-        "rozi-scratch-backdrop-progress",
-        target,
-        crate::view::animation::scratch_transition_config(ctx),
-    )
+    let shown = backdrop_shown(&ctx.state);
+    let previous = ctx.state.scratch_dim_snapshot.get();
+    let transition = crate::view::animation::scratch_transition_config(ctx);
+    let snapshot =
+        crate::layout::anim::DimSnapshot::for_target(previous, shown, ctx.elapsed(), transition);
+    ctx.state.scratch_dim_snapshot.set(Some(snapshot));
+    if previous.is_some_and(|previous| previous.dimmed != shown) {
+        // Release the transparent outside-click catcher at the end of hiding, without an app
+        // rebuild for every opacity tick. The layer's Animated already paints those ticks.
+        ctx.link()
+            .send(crate::Msg::SchedulePaintRefresh(transition.duration));
+    }
+    snapshot.progress(ctx.elapsed())
 }
 
 /// Toggle the scratchpad in/out of view. The first show spawns its shell; later shows reuse
@@ -1036,7 +1043,9 @@ mod tests {
                 backend.set_viewport(VIEWPORT);
                 let generation = {
                     let state = backend.state_mut();
-                    state.config.animations.pane_style =
+                    state.config.animations.pane_open_style =
+                        crate::layout::anim::PaneAnimationStyle::Off;
+                    state.config.animations.pane_close_style =
                         crate::layout::anim::PaneAnimationStyle::Off;
                     state.config.animations.geometry_duration =
                         std::time::Duration::from_millis(220);

@@ -364,7 +364,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleWorkbarStyle
         | CycleWorkbarBadgeStyle
         | CycleWorkbarTabStyle
-        | CyclePaneAnimation
+        | CyclePaneOpenAnimation
+        | CyclePaneCloseAnimation
         | CycleSessionAnimation
         | CycleWhichKey
         | CycleCopyOnSelect
@@ -819,10 +820,18 @@ fn persist_applied_settings_choice(
             "fullscreen_border_style",
             ctx.state.config.pane.fullscreen_border_style.id(),
         ),
-        CyclePaneAnimation => {
+        CyclePaneOpenAnimation => {
             if let Err(err) = crate::config::persist_animation_string(
-                "pane_style",
-                ctx.state.config.animations.pane_style.id(),
+                "pane_open_style",
+                ctx.state.config.animations.pane_open_style.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CyclePaneCloseAnimation => {
+            if let Err(err) = crate::config::persist_animation_string(
+                "pane_close_style",
+                ctx.state.config.animations.pane_close_style.id(),
             ) {
                 preference_error(ctx, err);
             }

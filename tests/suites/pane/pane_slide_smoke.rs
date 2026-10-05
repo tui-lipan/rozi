@@ -1,4 +1,4 @@
-//! Pins the `[animations] pane_style = "slide"` open animation.
+//! Pins the `[animations] pane_open_style = "slide"` open animation.
 //!
 //! The point of the style is that the arriving pane is *clipped to its destination tile*: it emerges
 //! from behind the seam at its final size rather than scaling up inside the tile or flying across its
@@ -68,7 +68,8 @@ fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
         // contrast below would snap straight to the settled rect.
         state.animation = GeometryAnimation::Spawn;
         state.config.animations.enabled = true;
-        state.config.animations.pane_style = style;
+        state.config.animations.pane_open_style = style;
+        state.config.animations.pane_close_style = style;
         state.config.animations.geometry_duration = Duration::from_millis(200);
         state.config.animations.open_delay = Duration::ZERO;
         state.config.pane.show_workbar = false;
@@ -396,7 +397,8 @@ fn a_launcher_session_open_snaps_when_animations_are_off() {
         {
             let state = backend.state_mut();
             state.config.animations.enabled = false;
-            state.config.animations.pane_style = PaneAnimationStyle::Slide;
+            state.config.animations.pane_open_style = PaneAnimationStyle::Slide;
+            state.config.animations.pane_close_style = PaneAnimationStyle::Slide;
             state.config.animations.geometry_duration = Duration::from_millis(220);
             state.config.pane.show_workbar = false;
             state.config.pane.show_titles = false;

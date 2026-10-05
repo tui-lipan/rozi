@@ -217,7 +217,12 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ToggleAnimations => alias_list(&["motion", "transitions", "effects"]),
         ToggleWorkspaceAnimation => alias_list(&["slide"]),
         CycleSessionAnimation => alias_list(&["fade", "portal"]),
-        CyclePaneAnimation => alias_list(&["spawn", "scale", "slide", "portal", "scan"]),
+        CyclePaneOpenAnimation => {
+            alias_list(&["spawn", "scale", "slide", "portal", "scan", "particles"])
+        }
+        CyclePaneCloseAnimation => {
+            alias_list(&["despawn", "scale", "slide", "portal", "scan", "particles"])
+        }
         CycleCopyOnSelect => alias_list(&["primary selection", "mouse"]),
         CycleMiddleClickPaste => alias_list(&["primary selection", "mouse"]),
         CycleRightClickClipboard => alias_list(&["copy", "paste", "mouse"]),

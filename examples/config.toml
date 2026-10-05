@@ -183,31 +183,35 @@
 # switches at once.
 #session = "portal"
 #focus_chrome = true
-# Shape of the pane open/close animation. "off" shows and hides the pane at once while neighbouring
-# tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in
+# Choose a style independently for pane opening and closing. "off" shows and hides the pane at
+# once while neighbouring tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in
 # from the edge it was split off, clipped to its tile, and springs the tile that gave up the space;
 # "portal" materializes the full-size pane radially; "scan" reveals it along a top-left to
-# bottom-right diagonal. Portal and Scan also apply to floating panes and popups. Off stays off for
-# floats; Slide falls back to Scale.
-#pane_style = "scale"
+# bottom-right diagonal; "particles" assembles fragments on open and bursts them with gravity on
+# close. Particles opens over geometry_ms and closes over four times geometry_ms. Portal, Scan,
+# and Particles also apply to floats and popups.
+# Off stays off for floats; Slide falls back to Scale.
+#pane_open_style = "scale"
+#pane_close_style = "scale"
 # Base geometry duration; tiled Slide uses it as its slide duration in both directions. The scratchpad
 # and sidebar slides run at two-thirds of it.
 #geometry_ms = 220
 # Close duration for Scale, including floating panes and popups under "slide". Tiled Slide, Portal,
-# and Scan closes use geometry_ms to stay in step with the geometry or reveal transition.
+# and Scan closes use geometry_ms; Particles closes over four times geometry_ms.
 #close_ms = 120
 #focus_chrome_ms = 160
 #alert_pulse_ms = 1600
 #open_delay_ms = 36
-# The motion curve for the selected pane_style: CSS cubic-bezier control points, or the name of a
+# The motion curve for the selected style: CSS cubic-bezier control points, or the name of a
 # builtin easing (linear, ease_in_quad, ease_out_quad, ease_in_out_cubic, ease_in_out_sine).
 # Omitting close_curve runs `curve` backwards on the way out.
 #curve = [0.16, 1.0, 0.3, 1.0]
 #close_curve = "ease_in_quad"
-# Whole-pane fade: on for Scale by default, off for Portal and Scan to keep the frontier visible.
+# Whole-pane fade: on for Scale by default, off for Portal, Scan, and Particles to keep fragments
+# and frontiers visible.
 #fade = true
-# One geometry knob per style, read only by the style pane_style selects. The others sit dormant,
-# so a config can carry all three and switching pane_style picks up the matching one. Slide has
+# One geometry knob per style, read only by the selected open or close style. The others sit dormant,
+# so a config can carry all three and switching the selected style picks up the matching one. Slide has
 # none: it enters from the edge the split placed it on.
 #scale_from = 0.9
 #portal_origin = [0.5, 0.5]

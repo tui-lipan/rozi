@@ -4,6 +4,7 @@ pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
 mod pane;
+pub(crate) mod pane_particles;
 mod pane_reveal;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
@@ -183,11 +184,15 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     } else {
         animation::scratch_transition_config(ctx)
     };
-    let dialog_dim_progress = ctx.transition::<f32>(
-        "rozi-dialog-dim",
-        if dialog_open { 1.0 } else { 0.0 },
+    let previous_dim = ctx.state.dialog_dim_snapshot.get();
+    let dialog_snapshot = crate::layout::anim::DimSnapshot::for_target(
+        previous_dim,
+        dialog_open,
+        ctx.elapsed(),
         dim_transition,
     );
+    ctx.state.dialog_dim_snapshot.set(Some(dialog_snapshot));
+    let dialog_dim_progress = dialog_snapshot.progress(ctx.elapsed());
     // The workspace layer dims for whichever focused layer is most deployed; the dims never
     // compound.
     let workspace_dimmed = dialog_open || crate::scratchpad::backdrop_shown(&ctx.state);
@@ -239,6 +244,13 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let shown = (!holding).then_some(ctx.state.runtime_epoch);
         let (previous, previous_stage) = ctx.state.session_dim_layer.get();
         let mounted = shown.is_some() && previous != shown;
+        if mounted && workspace_dim.current != workspace_dim.target {
+            ctx.link().send(crate::Msg::SchedulePaintRefresh(
+                std::time::Duration::from_nanos(
+                    1_000_000_000 / u64::from(ctx.state.runtime_frame_rate().max(1)),
+                ),
+            ));
+        }
         let stage = match crate::layout::anim::FadeStage::next(mounted, previous_stage) {
             crate::layout::anim::FadeStage::Running => workspace_dim.stage,
             stage => stage,
@@ -292,7 +304,16 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let layer = if holding {
             Animated::new(empty()).transition(crate::layout::anim::instant_transition())
         } else {
-            animation::crossfade(reveal.opacity, Animated::new(dimmed_content()))
+            let layer = Animated::new(dimmed_content());
+            if reveal.opacity.current < 1.0 {
+                layer.visibility(
+                    true,
+                    VisibilityAnimation::new().enter(reveal.opacity.transition),
+                )
+            } else {
+                // Removing visibility also snaps an in-flight reveal when animations are disabled.
+                layer
+            }
         };
         layer.height(Length::Flex(1)).auto_exit(exit).into()
     };
@@ -585,10 +606,19 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         let content_width = viewport.w.saturating_sub(sidebar_width);
         // The splitter paints its own handle column outside both children, so it has to be dimmed
         // by hand to keep the seam from staying lit between two dimmed panes.
-        let divider_bg =
+        let divider_target =
             sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_canvas)
-                .blend_toward(sidebar_fade.color, 1.0 - sidebar_fade.shown);
-        let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
+                .blend_toward(sidebar_fade.color, 1.0 - sidebar_fade.opacity);
+        let divider_bg = ctx.animated_color_with_frame_rate(
+            "rozi-sidebar-divider",
+            divider_target,
+            sidebar_fade.transition,
+            ctx.state.runtime_frame_rate(),
+        );
+        let divider_style = Style::new()
+            .fg(divider_bg)
+            .bg(divider_bg)
+            .transform_fg(ColorTransform::elevate(0.15));
         // The same window `set_width` clamps to, handed to the splitter so the drag stops there
         // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,
         // and the columns between the panel and the pane column belong to nobody: an empty strip
@@ -1121,7 +1151,8 @@ mod pane_layer_tests {
                 });
                 let (closing, survivor) = {
                     let state = backend.state_mut();
-                    state.config.animations.pane_style = style;
+                    state.config.animations.pane_open_style = style;
+                    state.config.animations.pane_close_style = style;
                     state.config.pane.border_mode = border_mode;
                     state.config.animations.geometry_duration =
                         std::time::Duration::from_millis(900);

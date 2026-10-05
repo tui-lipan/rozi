@@ -31,6 +31,9 @@ pub enum Msg {
     /// instead of the process dying where it stands.
     Hangup,
     RunAction(Action),
+    /// One handoff or completion paint for a node-owned visual fade, never a frame ticker.
+    RefreshPaintLayers,
+    SchedulePaintRefresh(std::time::Duration),
     ClosePalette,
     CommandPaletteHandoffFinished {
         epoch: u64,

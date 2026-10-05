@@ -242,7 +242,8 @@ controls.
 ```toml
 [animations]
 enabled = true
-pane_style = "portal"   # off, scale, slide, portal, or scan
+pane_open_style = "portal"   # off, scale, slide, portal, scan, or particles
+pane_close_style = "particles"
 workspace_ms = 160      # 0 switches workspaces instantly
 session = "portal"      # fade, portal, or off
 ```
@@ -343,7 +344,8 @@ width = 34
 tab_style = "round"
 
 [animations]
-pane_style = "slide"
+pane_open_style = "slide"
+pane_close_style = "slide"
 workspace_ms = 160
 session = "portal"
 

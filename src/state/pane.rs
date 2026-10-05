@@ -35,6 +35,7 @@ pub struct Pane {
     pub closing_animation: Option<crate::layout::anim::PaneAnimationSnapshot>,
     /// Local handoff of the fade when the pane moves into its retained closing layer.
     pub(crate) fade_closing: Cell<bool>,
+    pub(crate) paint_clock: Cell<Option<crate::layout::anim::PanePaintClock>>,
     pub(crate) fade_stage: Cell<crate::layout::anim::FadeStage>,
     pub logging: bool,
     pub activity: PaneActivity,
@@ -180,6 +181,7 @@ impl Pane {
             closing: false,
             closing_animation: None,
             fade_closing: Cell::new(false),
+            paint_clock: Cell::new(None),
             fade_stage: Cell::new(crate::layout::anim::FadeStage::Running),
             logging: false,
             activity: PaneActivity::default(),
@@ -253,6 +255,7 @@ impl Pane {
         &mut self,
         animations: crate::layout::anim::WindowAnimationConfig,
     ) {
+        self.paint_clock.set(None);
         self.opening_animation = Some(crate::layout::anim::snapshot_for_open(
             animations,
             self.floating,
@@ -263,6 +266,7 @@ impl Pane {
         &mut self,
         animations: crate::layout::anim::WindowAnimationConfig,
     ) {
+        self.paint_clock.set(None);
         self.closing_animation = Some(crate::layout::anim::snapshot_for_close(
             animations,
             self.floating,

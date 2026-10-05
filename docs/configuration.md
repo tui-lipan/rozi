@@ -272,9 +272,10 @@ Border colors for pane alert states. Each value is a theme role or `"off"`. Them
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
 | `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `pane_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, or `"scan"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
-| `geometry_ms` | integer | `220` | Base geometry duration in milliseconds. |
-| `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. |
+| `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
+| `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
+| `geometry_ms` | integer | `220` | Base geometry duration in milliseconds; Particles opening uses this duration and closing takes four times it. |
+| `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. Particles uses four times `geometry_ms`. |
 | `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
 | `alert_pulse_ms` | integer | `1600` | Alert pulse period. The half-period is at least 400 ms. |
 | `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
@@ -292,18 +293,33 @@ switch sessions, when a session finishes connecting, or when you drop to the lau
 Pane geometry always snaps and the sidebar stays still. The value is case-insensitive; an unknown
 value keeps the portal and warns.
 
-`pane_style = "off"` shows or hides a pane at once, with no fade and no spawn delay. `spawn`,
-`close`, and `enabled` still decide whether neighboring panes animate, and they still reflow over
-`geometry_ms`.
+Choose opening and closing independently with `pane_open_style` and `pane_close_style`, or use
+**General › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
+open and `particles` to close. Both default to `scale`. Replace the former `pane_style` key with
+these two keys; the former key is no longer read.
+
+An `off` style shows or hides a pane at once, with no fade. Opening with `off` also skips the spawn
+delay. `spawn`, `close`, and `enabled` still decide whether neighboring panes animate, and they
+still reflow over `geometry_ms`.
+
+`particles` assembles panes from nearby motes that curve into place, revealing patches as they
+land. Opening takes `geometry_ms` (220 ms by default). Closing bursts fragments outward before
+gravity pulls them down. Sparks cool and disappear individually, with a few lasting longer.
+Closing takes four times `geometry_ms` (880 ms by default). Fragments can travel over neighboring
+panes; the terminal screen stays at its final size throughout. This style also applies to floating
+panes, popups, and scratch panes. Particles run at up to 30 FPS; a lower `frame_rate` also lowers
+that cadence. Pane movement still follows `frame_rate`.
 
 ### Pane animation curves and effect settings
 
-The four pane effects — Scale, Slide, Portal, and Scan — accept their own timing, motion curve, and
-geometry parameter. These keys also live directly under `[animations]`:
+The five pane effects — Scale, Slide, Portal, Scan, and Particles — accept timing and motion
+curves. Scale, Portal, and Scan also have geometry settings. These keys also live directly under
+`[animations]`:
 
 ```toml
 [animations]
-pane_style = "slide"
+pane_open_style = "slide"
+pane_close_style = "particles"
 geometry_ms = 130
 close_ms = 90
 curve = [0.16, 1.0, 0.3, 1.0]
@@ -313,7 +329,7 @@ curve = [0.16, 1.0, 0.3, 1.0]
 | --- | --- | --- | --- |
 | `curve` | curve | the style's own | all |
 | `close_curve` | curve | the reverse of `curve` | all |
-| `fade` | bool | `true` for Scale, `false` for Portal and Scan | Scale, Portal, Scan |
+| `fade` | bool | `true` for Scale, `false` for Portal, Scan, and Particles | Scale, Portal, Scan, Particles |
 | `scale_from` | float in `[0.1, 1]` | `0.9` | Scale |
 | `portal_origin` | float pair in `[0, 1]` | `[0.5, 0.5]` | Portal |
 | `scan_direction` | `top-left`, `top-right`, `bottom-left`, `bottom-right` | `top-left` | Scan |
@@ -323,7 +339,7 @@ easing: `linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, or `ease
 x coordinates must be in `[0, 1]`. The y coordinates must be finite and in `[-4, 4]`; a value above
 `1` overshoots and settles back. Without `close_curve`, closing runs `curve` backwards.
 
-A config can set all three geometry keys at once; only the one for the current `pane_style` is
+A config can set all three geometry keys at once; only the one for the selected open or close style is
 used. Slide has no geometry key: a pane slides in from the side its split placed it on. `fade` has
 no effect on Slide, which stays inside its tile and is always fully opaque.
 

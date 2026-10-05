@@ -28,6 +28,7 @@ pub struct ScreenshotState {
     pub next_revision: u64,
     /// The flash revision the view last started, so it restarts once per screenshot.
     pub flash_seen: Cell<Option<u64>>,
+    pub(crate) flash_started: Cell<std::time::Duration>,
     /// What the root view sampled for this frame: the target and the tint's current strength.
     /// `None` at rest. Read by the pane view, which is built later in the same frame.
     pub flash_frame: Cell<Option<(ScreenshotTarget, f32)>>,

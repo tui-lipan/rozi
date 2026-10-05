@@ -1,25 +1,33 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tui_lipan::prelude::{
-    CellEffect, Color, EffectCell, EffectContext, EffectScope, Element, Key, Paint, TerminalColor,
-    Theme,
+    CellEffect, Color, EffectCell, EffectContext, EffectPrepareContext, EffectScope, Element, Key,
+    Paint, PreparedCellEffect, Rect, TerminalColor, Theme,
 };
 
-use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, ScanDirection};
+use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, PanePaintMotion, ScanDirection};
 
 /// Apply the optional pane reveal effect while keeping an empty keyed scope mounted at rest.
 pub(super) fn pane_reveal_scope(
     pane_tree: Element,
     key: Key,
     spec: PaneAnimationSpec,
-    progress: f32,
+    motion: impl Into<PanePaintMotion>,
     seed: u64,
     closing: bool,
 ) -> Element {
+    let motion = motion.into();
     let scope = EffectScope::new();
-    let scope = match PaneRevealPattern::from_style(spec.kind).filter(|_| progress < 1.0) {
-        Some(pattern) => scope.custom_effect(
-            PaneRevealEffect::with_spec(pattern, progress, seed, spec)
-                .with_initial_frontier(!closing),
-        ),
+    let scope = match PaneRevealPattern::from_style(spec.kind)
+        .filter(|_| !matches!(motion, PanePaintMotion::Fixed(1.0)))
+    {
+        Some(pattern) => scope.custom_effect(TimedRevealEffect::new(
+            RevealRecipe::Pane(
+                PaneRevealEffect::with_spec(pattern, 0.0, seed, spec)
+                    .with_initial_frontier(!closing),
+            ),
+            motion,
+        )),
         None => scope,
     };
     let scoped: Element = scope.child(pane_tree).into();
@@ -29,17 +37,207 @@ pub(super) fn pane_reveal_scope(
 /// Wrap the session content layer in the session portal, keeping the keyed scope mounted at rest.
 pub(super) fn session_portal_scope(
     content: Element,
-    progress: f32,
+    motion: impl Into<PanePaintMotion>,
     ring: SessionPortalRing,
 ) -> Element {
+    let motion = motion.into();
     let scope = EffectScope::new();
-    let scope = if progress < 1.0 {
-        scope.custom_effect(SessionPortalEffect::new(progress, ring))
+    let scope = if !matches!(motion, PanePaintMotion::Fixed(1.0)) {
+        scope.custom_effect(TimedRevealEffect::new(
+            RevealRecipe::Session(SessionPortalEffect::new(0.0, ring)),
+            motion,
+        ))
     } else {
         scope
     };
     let scoped: Element = scope.child(content).into();
     scoped.key("rozi-session-portal")
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RevealRecipe {
+    Pane(PaneRevealEffect),
+    Session(SessionPortalEffect),
+}
+
+#[derive(Debug)]
+struct TimedRevealEffect {
+    recipe: RevealRecipe,
+    motion: PanePaintMotion,
+    finished: AtomicBool,
+}
+impl TimedRevealEffect {
+    fn new(recipe: RevealRecipe, motion: PanePaintMotion) -> Self {
+        Self {
+            recipe,
+            motion,
+            finished: AtomicBool::new(false),
+        }
+    }
+}
+impl CellEffect for TimedRevealEffect {
+    fn apply(&self, _: &mut EffectCell, _: &EffectContext) {}
+    fn uses_backdrop(&self) -> bool {
+        matches!(self.motion, PanePaintMotion::Fixed(p) if p < 1.0)
+            || matches!(self.motion, PanePaintMotion::Timed { closing: true, .. })
+            || !self.finished.load(Ordering::Relaxed)
+    }
+    fn is_animated(&self) -> bool {
+        matches!(self.motion, PanePaintMotion::Timed { .. })
+            && !self.finished.load(Ordering::Relaxed)
+    }
+    fn animation_interval(&self) -> Duration {
+        match self.motion {
+            PanePaintMotion::Timed { interval, .. } => interval,
+            _ => Duration::from_millis(16),
+        }
+    }
+    fn prepare(&self, ctx: &EffectPrepareContext) -> Option<Box<dyn PreparedCellEffect>> {
+        let (progress, finished) = self.motion.sample(ctx.elapsed);
+        self.finished.store(finished, Ordering::Relaxed);
+        if progress >= 1.0 {
+            return None;
+        }
+        let mut recipe = self.recipe;
+        match &mut recipe {
+            RevealRecipe::Pane(effect) => effect.progress = progress,
+            RevealRecipe::Session(effect) => effect.progress = progress,
+        }
+        Some(Box::new(PreparedReveal::new(recipe, ctx.bounds)))
+    }
+}
+
+/// Each scope computes its radius, corner distance, ring width and scan thresholds once per paint.
+/// The prepared mask holds decisions only: live backdrop colours are still composed per cell.
+#[derive(Debug)]
+struct PreparedReveal {
+    bounds: Rect,
+    recipe: RevealRecipe,
+    progress: f32,
+    center: (f32, f32),
+    radius: f32,
+    outer_radius: f32,
+    frontier: f32,
+    quantized: u32,
+    scan_maximum: f32,
+}
+impl PreparedReveal {
+    fn new(recipe: RevealRecipe, bounds: Rect) -> Self {
+        let (progress, origin) = match recipe {
+            RevealRecipe::Pane(effect) => (effect.progress, effect.spec.origin),
+            RevealRecipe::Session(effect) => (effect.progress, SessionPortalEffect::ORIGIN),
+        };
+        let (_, maximum) = portal_distance(0, 0, i32::from(bounds.w), i32::from(bounds.h), origin);
+        let radius = progress * maximum;
+        Self {
+            bounds,
+            recipe,
+            progress,
+            center: (
+                (i32::from(bounds.w) - 1) as f32 * origin[0],
+                (i32::from(bounds.h) - 1) as f32 * origin[1],
+            ),
+            radius,
+            outer_radius: radius + portal_ring_width(maximum, progress),
+            frontier: frontier_width(progress),
+            quantized: quantized_progress(progress),
+            scan_maximum: (i32::from(bounds.w) - 1) as f32 + (i32::from(bounds.h) - 1) as f32 * 2.0,
+        }
+    }
+    fn decision(&self, x: i32, y: i32) -> RevealCell {
+        if self.progress >= 1.0 {
+            return RevealCell::Content;
+        }
+        if let RevealRecipe::Pane(effect) = self.recipe {
+            if self.progress <= 0.0 && !effect.initial_frontier {
+                return RevealCell::Backdrop;
+            }
+            if effect.pattern == PaneRevealPattern::Scan {
+                let x = match effect.spec.scan_direction {
+                    ScanDirection::TopLeft | ScanDirection::BottomLeft => x,
+                    _ => i32::from(self.bounds.w) - 1 - x,
+                };
+                let y = match effect.spec.scan_direction {
+                    ScanDirection::TopLeft | ScanDirection::TopRight => y,
+                    _ => i32::from(self.bounds.h) - 1 - y,
+                };
+                let scan = if self.scan_maximum <= 0.0 {
+                    0.0
+                } else {
+                    (x as f32 + y as f32 * 2.0) / self.scan_maximum
+                };
+                if scan < self.progress - self.frontier {
+                    return RevealCell::Content;
+                }
+                if scan <= self.progress {
+                    // Hash the original cell coordinates, not the mirrored scan coordinates.
+                    let px = match effect.spec.scan_direction {
+                        ScanDirection::TopLeft | ScanDirection::BottomLeft => x,
+                        _ => i32::from(self.bounds.w) - 1 - x,
+                    };
+                    let py = match effect.spec.scan_direction {
+                        ScanDirection::TopLeft | ScanDirection::TopRight => y,
+                        _ => i32::from(self.bounds.h) - 1 - y,
+                    };
+                    return RevealCell::Frontier(frontier_symbol(
+                        pane_spatial_hash(px, py, effect.seed),
+                        self.quantized,
+                    ));
+                }
+                return RevealCell::Backdrop;
+            }
+        }
+        if self.progress <= 0.0 {
+            return RevealCell::Backdrop;
+        }
+        let distance = (x as f32 - self.center.0).hypot((y as f32 - self.center.1) * 2.0);
+        if distance <= self.radius {
+            return RevealCell::Content;
+        }
+        if distance <= self.outer_radius {
+            let seed = match self.recipe {
+                RevealRecipe::Pane(effect) => effect.seed,
+                _ => SessionPortalEffect::SEED,
+            };
+            let hash = pane_spatial_hash(x, y, seed);
+            if hash & 1 == 0 {
+                return RevealCell::Frontier(portal_symbol(hash));
+            }
+        }
+        RevealCell::Backdrop
+    }
+}
+impl PreparedCellEffect for PreparedReveal {
+    fn apply(&self, _: &mut EffectCell, _: &EffectContext) {}
+    fn apply_with_backdrop(
+        &self,
+        cell: &mut EffectCell,
+        backdrop: &EffectCell,
+        ctx: &EffectContext,
+    ) {
+        let x = i32::from(ctx.x) - i32::from(self.bounds.x);
+        let y = i32::from(ctx.y) - i32::from(self.bounds.y);
+        if x < 0 || y < 0 || x >= i32::from(self.bounds.w) || y >= i32::from(self.bounds.h) {
+            return;
+        }
+        let decision = self.decision(x, y);
+        let foreground = if matches!(decision, RevealCell::Frontier(_)) {
+            match self.recipe {
+                RevealRecipe::Session(effect) => {
+                    effect
+                        .ring
+                        .color_for(pane_spatial_hash(x, y, SessionPortalEffect::SEED))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        decision.composite(cell, backdrop);
+        if let Some(fg) = foreground {
+            cell.set_fg(fg);
+        }
+    }
 }
 
 /// The colours the session portal's ring is drawn in: the active theme's own accents, so the ring
@@ -84,7 +282,7 @@ impl SessionPortalRing {
 
 /// A theme colour as the terminal colour an effect paints with. Palette colours stay palette
 /// colours, so a theme that follows the terminal's own palette keeps it.
-fn terminal_color(color: Color) -> Option<TerminalColor> {
+pub(super) fn terminal_color(color: Color) -> Option<TerminalColor> {
     Some(match color {
         Color::Reset | Color::Backdrop | Color::Transparent => return None,
         Color::Black => TerminalColor::Black,
@@ -185,7 +383,10 @@ impl PaneRevealPattern {
         match style {
             PaneAnimationStyle::Portal => Some(Self::Portal),
             PaneAnimationStyle::Scan => Some(Self::Scan),
-            PaneAnimationStyle::Off | PaneAnimationStyle::Scale | PaneAnimationStyle::Slide => None,
+            PaneAnimationStyle::Off
+            | PaneAnimationStyle::Scale
+            | PaneAnimationStyle::Slide
+            | PaneAnimationStyle::Particles => None,
         }
     }
 }
@@ -315,6 +516,7 @@ impl PaneRevealEffect {
 }
 
 /// Patterns choose cell coverage; compositing and backdrop restoration are shared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RevealCell {
     Content,
     Backdrop,
@@ -900,5 +1102,178 @@ mod tests {
             !sample(bottom_right, PaneRevealPattern::Scan, 0, 0),
             "and leaves the opposite corner for later"
         );
+    }
+    #[test]
+    fn prepared_reveals_match_the_original_compositor_cell_for_cell() {
+        for (width, height) in [(1, 1), (41, 13)] {
+            let bounds = Rect {
+                x: 7,
+                y: 3,
+                w: width,
+                h: height,
+            };
+            for progress in [0.0, 0.01, 0.25, 0.6, 0.94, 1.0] {
+                for direction in [
+                    ScanDirection::TopLeft,
+                    ScanDirection::TopRight,
+                    ScanDirection::BottomLeft,
+                    ScanDirection::BottomRight,
+                ] {
+                    for pattern in [PaneRevealPattern::Portal, PaneRevealPattern::Scan] {
+                        for initial_frontier in [false, true] {
+                            let mut effect = PaneRevealEffect::new(pattern, progress, 17)
+                                .with_initial_frontier(initial_frontier);
+                            effect.spec.scan_direction = direction;
+                            effect.spec.origin = [0.2, 0.8];
+                            compare_prepared(RevealRecipe::Pane(effect), bounds);
+                        }
+                    }
+                }
+                compare_prepared(
+                    RevealRecipe::Session(SessionPortalEffect::new(
+                        progress,
+                        SessionPortalRing::from_theme(&Theme::default()),
+                    )),
+                    bounds,
+                );
+            }
+        }
+    }
+
+    fn compare_prepared(recipe: RevealRecipe, bounds: Rect) {
+        let prepared = PreparedReveal::new(recipe, bounds);
+        let backdrop = EffectCell::new("b");
+        for y in bounds.y..bounds.y + bounds.h as i16 {
+            for x in bounds.x..bounds.x + bounds.w as i16 {
+                let ctx = EffectContext::new(x, y, bounds);
+                let mut reference = EffectCell::new("A");
+                reference.set_fg(TerminalColor::Rgb(40, 150, 80));
+                reference.set_bg(TerminalColor::Rgb(12, 18, 30));
+                let mut optimized = reference.clone();
+                match recipe {
+                    RevealRecipe::Pane(effect) => {
+                        effect.apply_with_backdrop(&mut reference, &backdrop, &ctx)
+                    }
+                    RevealRecipe::Session(effect) => {
+                        effect.apply_with_backdrop(&mut reference, &backdrop, &ctx)
+                    }
+                }
+                prepared.apply_with_backdrop(&mut optimized, &backdrop, &ctx);
+                assert_eq!(optimized, reference, "cell ({x}, {y}), {recipe:?}");
+            }
+        }
+    }
+
+    struct RevealPaintProbe {
+        views: std::rc::Rc<std::cell::Cell<usize>>,
+        recipe: RevealRecipe,
+        closing: bool,
+    }
+    impl tui_lipan::prelude::Component for RevealPaintProbe {
+        type State = ();
+        type Properties = ();
+        type Message = ();
+        fn create_state(&self, _: &()) {}
+        fn update(&mut self, _: (), _: &mut tui_lipan::Context<Self>) -> tui_lipan::Update {
+            tui_lipan::Update::none()
+        }
+        fn view(&self, _: &tui_lipan::Context<Self>) -> Element {
+            self.views.set(self.views.get() + 1);
+            EffectScope::new()
+                .custom_effect(TimedRevealEffect::new(
+                    self.recipe,
+                    PanePaintMotion::Timed {
+                        started_at: Duration::ZERO,
+                        transition: tui_lipan::prelude::TransitionConfig {
+                            duration: Duration::from_millis(220),
+                            easing: tui_lipan::prelude::Easing::Linear,
+                        },
+                        closing: self.closing,
+                        interval: Duration::from_nanos(8_333_333),
+                    },
+                ))
+                .child(tui_lipan::prelude::Text::new("REVEALED CONTENT"))
+                .into()
+        }
+    }
+
+    #[test]
+    fn pane_and_session_masks_advance_without_view_rebuilds() {
+        let recipes = [
+            RevealRecipe::Pane(PaneRevealEffect::new(PaneRevealPattern::Portal, 0.0, 17)),
+            RevealRecipe::Pane(PaneRevealEffect::new(PaneRevealPattern::Scan, 0.0, 17)),
+            RevealRecipe::Session(SessionPortalEffect::new(0.0, SessionPortalRing::default())),
+        ];
+        for recipe in recipes {
+            for closing in [false, true] {
+                let views = std::rc::Rc::new(std::cell::Cell::new(0));
+                let mut backend = tui_lipan::TestBackend::new(RevealPaintProbe {
+                    views: views.clone(),
+                    recipe,
+                    closing,
+                });
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 40,
+                    h: 10,
+                });
+                backend.render();
+                let initial_views = views.get();
+                let first = backend.capture_frame().to_fixed_grid_lines();
+                for _ in 0..11 {
+                    backend.advance_frame(Duration::from_millis(10));
+                }
+                let midway = backend.capture_frame().to_fixed_grid_lines();
+                for _ in 0..11 {
+                    backend.advance_frame(Duration::from_millis(10));
+                }
+                let final_frame = backend.capture_frame().to_fixed_grid_lines();
+                assert_ne!(first, midway);
+                assert_eq!(
+                    final_frame.join("\n").contains("REVEALED CONTENT"),
+                    !closing
+                );
+                assert_eq!(views.get(), initial_views);
+            }
+        }
+    }
+
+    /// The two paths process the same cells, glyphs and backdrop at the same progress samples.
+    #[test]
+    #[ignore = "local performance measurement"]
+    fn reveal_frame_cost() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 200,
+            h: 60,
+        };
+        for pattern in [PaneRevealPattern::Portal, PaneRevealPattern::Scan] {
+            for prepared in [false, true] {
+                let started = std::time::Instant::now();
+                for frame in 0..100 {
+                    let effect = PaneRevealEffect::new(pattern, frame as f32 / 100.0, 17);
+                    let prepared_effect = PreparedReveal::new(RevealRecipe::Pane(effect), bounds);
+                    let backdrop = EffectCell::new("b");
+                    for y in 0..bounds.h {
+                        for x in 0..bounds.w {
+                            let ctx = EffectContext::new(x as i16, y as i16, bounds);
+                            let mut cell = EffectCell::new("A");
+                            if prepared {
+                                prepared_effect.apply_with_backdrop(&mut cell, &backdrop, &ctx);
+                            } else {
+                                effect.apply_with_backdrop(&mut cell, &backdrop, &ctx);
+                            }
+                            std::hint::black_box(cell);
+                        }
+                    }
+                }
+                eprintln!(
+                    "{pattern:?}, prepared={prepared}: {:?}/frame",
+                    started.elapsed() / 100
+                );
+            }
+        }
     }
 }

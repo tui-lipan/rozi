@@ -58,9 +58,14 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     CycleSessionAnimation,
                 ),
                 (
-                    "Pane open/close",
-                    animations.pane_style.label().to_string(),
-                    CyclePaneAnimation,
+                    "Pane open",
+                    animations.pane_open_style.label().to_string(),
+                    CyclePaneOpenAnimation,
+                ),
+                (
+                    "Pane close",
+                    animations.pane_close_style.label().to_string(),
+                    CyclePaneCloseAnimation,
                 ),
             ],
         ),
@@ -734,20 +739,15 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .child(list);
     let panel = super::palette::tabbed_picker_panel(ctx, "Settings", Length::Auto, body.into());
     let nested = ctx.state.pane_padding_editor.is_some() || ctx.state.settings_choice.is_some();
-    let dim_progress = ctx.transition::<f32>(
-        "rozi-settings-padding-dim",
-        if nested { 1.0 } else { 0.0 },
-        crate::view::animation::scratch_transition_config(ctx),
-    );
-    let panel: Element = if dim_progress > 0.0 {
-        Animated::new(panel)
-            .opacity(crate::scratchpad::backdrop_dim(dim_progress))
-            .opacity_target(ctx.state.theme.surface.backdrop)
-            .transition(crate::layout::anim::instant_transition())
-            .into()
-    } else {
-        panel
-    };
+    let panel: Element = Animated::new(panel)
+        .opacity(crate::scratchpad::backdrop_dim(if nested {
+            1.0
+        } else {
+            0.0
+        }))
+        .opacity_target(ctx.state.theme.surface.backdrop)
+        .transition(crate::view::animation::scratch_transition_config(ctx))
+        .into();
 
     Modal::new()
         .width(Length::Px(SETTINGS_MODAL_WIDTH))

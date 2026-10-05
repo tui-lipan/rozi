@@ -143,7 +143,7 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
             "the current value stays unmarked:\n{frame}"
         );
         assert!(
-            setting_row(&frame, "Pane open/close").contains("Pane open/close…"),
+            setting_row(&frame, "Pane open").contains("Pane open…"),
             "{frame}"
         );
         let animations = setting_row(&frame, "Play animations");
@@ -243,7 +243,8 @@ fn settings_all_keeps_every_control_available() {
             "Play animations",
             "Workspace switching",
             "Session switching",
-            "Pane open/close",
+            "Pane open",
+            "Pane close",
             "Nerd icons",
             "Which-key",
             "Copy on selection",
@@ -289,7 +290,8 @@ fn settings_all_keeps_every_control_available() {
         }
         let animations = group_rows(&frame, "Animations", "Clipboard");
         setting_row(animations, "Play animations");
-        setting_row(animations, "Pane open/close");
+        setting_row(animations, "Pane open");
+        setting_row(animations, "Pane close");
         let pickers = group_rows(&frame, "Pickers", "Background");
         setting_row(pickers, "Border");
         setting_row(pickers, "Tab strip");
@@ -538,7 +540,7 @@ fn settings_search_combines_section_and_row_terms() {
             ("active pane border", "Panes › Borders", "Focused"),
             ("workbar gap", "Bars › Workbar", "Gap"),
             ("idle mark", "Alerts › Marks", "Idle"),
-            ("pane animation", "General › Animations", "Pane open/close"),
+            ("pane animation", "General › Animations", "Pane open"),
         ] {
             let mut backend = settings_backend(100, 80);
             type_query(&mut backend, query);
@@ -884,18 +886,18 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
             backend.state().settings_navigation.tab,
             SettingsTab::General
         );
-        type_query(&mut backend, "pane open/close");
-        let original = backend.state().config.animations.pane_style;
+        type_query(&mut backend, "pane open");
+        let original = backend.state().config.animations.pane_open_style;
         backend.state_mut().config.animations.enabled = true;
         key(&mut backend, KeyCode::Enter);
         assert!(backend.state().settings_choice.is_some());
-        assert_eq!(backend.state().config.animations.pane_style, original);
+        assert_eq!(backend.state().config.animations.pane_open_style, original);
         key(&mut backend, KeyCode::Esc);
         assert!(backend.state().settings_choice.is_none());
         key_mods(&mut backend, KeyCode::Enter, KeyMods::SHIFT);
         assert!(backend.state().settings_choice.is_none());
-        assert_ne!(backend.state().config.animations.pane_style, original);
-        let cycled = backend.state().config.animations.pane_style;
+        assert_ne!(backend.state().config.animations.pane_open_style, original);
+        let cycled = backend.state().config.animations.pane_open_style;
         key(&mut backend, KeyCode::Enter);
         backend
             .dispatch(rozi::Msg::SettingsChoiceSelect(0))
@@ -905,7 +907,7 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
             .unwrap();
         key(&mut backend, KeyCode::Esc);
         assert!(backend.state().settings_choice.is_none());
-        assert_eq!(backend.state().config.animations.pane_style, cycled);
+        assert_eq!(backend.state().config.animations.pane_open_style, cycled);
         assert_eq!(
             backend.state().settings_navigation.tab,
             SettingsTab::General
@@ -1123,7 +1125,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
 
         backend
             .dispatch(rozi::Msg::SettingsActivate(
-                SettingsAction::CyclePaneAnimation,
+                SettingsAction::CyclePaneOpenAnimation,
             ))
             .unwrap();
         let choices = rendered_rows(&mut backend);
@@ -1138,7 +1140,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 16, "Pane open/close"),
+            (SettingsTab::General, 17, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
@@ -1229,5 +1231,77 @@ fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
         backend.state_mut().current_mut().remote_target = None;
         let frame = rendered_rows(&mut backend);
         assert!(setting_row(&frame, "Keep awake while agents work").contains("Enabled"));
+    });
+}
+
+#[test]
+fn pane_open_and_close_choices_preview_and_persist_independently() {
+    on_large_stack(|| {
+        use rozi::layout::anim::PaneAnimationStyle;
+        let _config = rozi::test_support::lock_config_file();
+        let mut backend = settings_backend(100, 35);
+        backend.state_mut().config.animations.enabled = true;
+        backend.state_mut().config.animations.pane_open_style = PaneAnimationStyle::Slide;
+        backend.state_mut().config.animations.pane_close_style = PaneAnimationStyle::Scale;
+        type_query(&mut backend, "pane close");
+        assert!(setting_row(&rendered_rows(&mut backend), "Pane close").contains("Scale"));
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CyclePaneCloseAnimation,
+            ))
+            .unwrap();
+        let particles = PaneAnimationStyle::all()
+            .iter()
+            .position(|s| *s == PaneAnimationStyle::Particles)
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(particles))
+            .unwrap();
+        assert_eq!(
+            backend.state().config.animations.pane_close_style,
+            PaneAnimationStyle::Particles
+        );
+        assert_eq!(
+            backend.state().config.animations.pane_open_style,
+            PaneAnimationStyle::Slide
+        );
+        backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
+        assert_eq!(
+            backend.state().config.animations.pane_close_style,
+            PaneAnimationStyle::Scale
+        );
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CyclePaneCloseAnimation,
+            ))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoicePick(particles))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CyclePaneOpenAnimation,
+            ))
+            .unwrap();
+        let slide = PaneAnimationStyle::all()
+            .iter()
+            .position(|s| *s == PaneAnimationStyle::Slide)
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoicePick(slide))
+            .unwrap();
+        let saved = rozi::config::load_config().config.animations;
+        assert_eq!(saved.pane_open_style, PaneAnimationStyle::Slide);
+        assert_eq!(saved.pane_close_style, PaneAnimationStyle::Particles);
+        backend.state_mut().config.animations.enabled = false;
+        for action in [
+            SettingsAction::CyclePaneOpenAnimation,
+            SettingsAction::CyclePaneCloseAnimation,
+        ] {
+            assert_eq!(
+                action.disabled_reason(&backend.state().config),
+                Some("Needs animations")
+            );
+        }
     });
 }

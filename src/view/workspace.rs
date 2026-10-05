@@ -86,14 +86,6 @@ impl WorkspaceLayer<'_> {
         }
     }
 
-    fn pane_reveal_key(&self, id: PaneId) -> String {
-        if self.scratch {
-            format!("rozi-scratch-pane-reveal-{id}")
-        } else {
-            format!("rozi-pane-reveal-{id}")
-        }
-    }
-
     fn badge(&self) -> Option<&'static str> {
         self.scratch.then_some("S")
     }
@@ -247,8 +239,7 @@ pub(crate) fn render_workspace_panes(
             crate::layout::anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane);
         let revealing_now = reveal_effect && (pane_opening || pane.closing);
         // Unconditional for the same reason as the two reads around it.
-        let reveal_progress =
-            animation::pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
+        let reveal_progress = animation::pane_reveal_progress(ctx, pane);
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
         // Evaluate the key even while settled. A keyed transition starts at its first target,
@@ -419,7 +410,6 @@ pub(crate) fn render_workspace_panes(
             layer.badge(),
             kind,
             merge,
-            reveal_progress,
             scales,
             fade,
         );
@@ -468,6 +458,20 @@ pub(crate) fn render_workspace_panes(
         } else {
             render_rect
         };
+        let (element_rect, element) =
+            if animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Particles {
+                super::pane_particles::particle_pane(
+                    element,
+                    element_rect,
+                    animation::pane_paint_motion(ctx, pane),
+                    pane.closing,
+                    u64::from(pane.id),
+                    layer.pane_clip_key(pane.id).into(),
+                    theme,
+                )
+            } else {
+                (element_rect, element)
+            };
         if title_on_seam && let Some(seam) = seam_title_element(ctx, pane, focused_pane) {
             seam_titles.push((
                 FloatRect {

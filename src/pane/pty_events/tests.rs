@@ -884,7 +884,8 @@ fn pane_animation_styles_keep_the_pty_grid_stable() {
             let mut shared = SharedSessionState::new(1);
             shared.controller = Some(1);
             state.current_mut().shared = Some(shared);
-            state.config.animations.pane_style = style;
+            state.config.animations.pane_open_style = style;
+            state.config.animations.pane_close_style = style;
             let pane = &mut state.current_mut().workspaces[0].panes[0];
             pane.opening = false;
             pane.opening_animation = None;
@@ -1004,7 +1005,8 @@ fn pane_animation_styles_keep_the_pty_grid_stable() {
         let mut shared = SharedSessionState::new(1);
         shared.controller = Some(1);
         state.current_mut().shared = Some(shared);
-        state.config.animations.pane_style = PaneAnimationStyle::Scale;
+        state.config.animations.pane_open_style = PaneAnimationStyle::Scale;
+        state.config.animations.pane_close_style = PaneAnimationStyle::Scale;
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.opening = false;
         pane.opening_animation = None;

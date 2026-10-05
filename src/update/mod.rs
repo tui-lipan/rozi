@@ -307,6 +307,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => sidebar::sessions_discovered(ctx, epoch, rows, host_status),
         Msg::SidebarSessionActivate(entry) => sidebar::activate_session(ctx, entry),
         Msg::ThemeError(message) => overlays::theme_error(ctx, message),
+        Msg::BackgroundError { title, message } => overlays::background_error(ctx, title, message),
         Msg::CloseSearch => prompts::close_search(ctx),
         Msg::SearchQueryChanged(query) => prompts::search_query_changed(ctx, query),
         Msg::SearchScanChunk { epoch } => crate::ops::search::search_scan_chunk(ctx, epoch),

@@ -11,6 +11,7 @@ use crate::state::{State, ThemePreset};
 use crate::{commands, config, control, events, ops, state, update, view};
 
 mod entry;
+pub(crate) mod exit_report;
 mod startup;
 
 pub use entry::run;

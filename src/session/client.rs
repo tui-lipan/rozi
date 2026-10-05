@@ -32,6 +32,11 @@ const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// suspend/resume that `Instant` (CLOCK_MONOTONIC) does not observe; monotonic time still fires
 /// when wall-clock steps backwards.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Awake time a link gets to speak after a suspend before the client drops it. A server pings every
+/// `session::server::HEARTBEAT_INTERVAL` (5s) of its own monotonic time, so a live local server or
+/// a surviving remote link is heard well inside this window; a link the sleep killed still drops
+/// promptly instead of waiting out a full [`HEARTBEAT_TIMEOUT`] awake.
+const WAKE_GRACE: Duration = Duration::from_secs(8);
 /// Read-poll interval so a silent socket or SSH pipe wakes the reader to check the watchdog.
 /// Also the attach-handshake read deadline.
 const HEARTBEAT_POLL: Duration = Duration::from_secs(2);
@@ -1172,22 +1177,58 @@ fn handle_transport_frame(
     TransportFrameDisposition::Forward
 }
 
-/// Whether inbound silence has lasted long enough to treat the transport as dead.
+/// Decides when inbound silence means the transport is dead.
 ///
-/// Wall-clock time catches a machine that slept for hours on the first poll after wake, instead of
-/// waiting another heartbeat budget of `Instant` time that did not run during suspend. Monotonic
-/// time still expires the link if NTP steps the wall clock backwards.
-fn inbound_silence_expired(
+/// Monotonic silence past the timeout always expires the link, including when NTP steps the wall
+/// clock backwards. A wall-clock gap past the timeout without matching monotonic time means the
+/// machine slept: every link sees that gap at once on wake, including healthy local sockets whose
+/// server never noticed the suspend. Instead of dropping them all, the watchdog gives the link
+/// [`WAKE_GRACE`] of awake time to be heard from and only expires it if it stays silent.
+struct SilenceWatchdog {
+    timeout: Duration,
+    wake_grace: Duration,
     last_instant: Instant,
     last_wall: SystemTime,
-    timeout: Duration,
-    now_instant: Instant,
-    now_wall: SystemTime,
-) -> bool {
-    now_instant.saturating_duration_since(last_instant) >= timeout
-        || now_wall
-            .duration_since(last_wall)
-            .is_ok_and(|elapsed| elapsed >= timeout)
+    wake_deadline: Option<Instant>,
+}
+
+impl SilenceWatchdog {
+    fn new(
+        timeout: Duration,
+        wake_grace: Duration,
+        now_instant: Instant,
+        now_wall: SystemTime,
+    ) -> Self {
+        Self {
+            timeout,
+            wake_grace,
+            last_instant: now_instant,
+            last_wall: now_wall,
+            wake_deadline: None,
+        }
+    }
+
+    fn heard(&mut self, now_instant: Instant, now_wall: SystemTime) {
+        self.last_instant = now_instant;
+        self.last_wall = now_wall;
+        self.wake_deadline = None;
+    }
+
+    fn expired(&mut self, now_instant: Instant, now_wall: SystemTime) -> bool {
+        if now_instant.saturating_duration_since(self.last_instant) >= self.timeout {
+            return true;
+        }
+        let slept = now_wall
+            .duration_since(self.last_wall)
+            .is_ok_and(|elapsed| elapsed >= self.timeout);
+        if !slept {
+            return false;
+        }
+        let deadline = *self
+            .wake_deadline
+            .get_or_insert_with(|| now_instant + self.wake_grace);
+        now_instant >= deadline
+    }
 }
 
 fn forward_inbound<R: std::io::Read>(
@@ -1201,8 +1242,12 @@ fn forward_inbound<R: std::io::Read>(
     heartbeat_timeout: Duration,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
-    let mut last_instant = Instant::now();
-    let mut last_wall = SystemTime::now();
+    let mut watchdog = SilenceWatchdog::new(
+        heartbeat_timeout,
+        WAKE_GRACE.min(heartbeat_timeout),
+        Instant::now(),
+        SystemTime::now(),
+    );
     'read: loop {
         if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
             break;
@@ -1210,18 +1255,11 @@ fn forward_inbound<R: std::io::Read>(
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
             Ok(protocol::FrameReadStatus::Read(_)) => {
-                last_instant = Instant::now();
-                last_wall = SystemTime::now();
+                watchdog.heard(Instant::now(), SystemTime::now());
                 false
             }
             Ok(protocol::FrameReadStatus::WouldBlock) => {
-                if inbound_silence_expired(
-                    last_instant,
-                    last_wall,
-                    heartbeat_timeout,
-                    Instant::now(),
-                    SystemTime::now(),
-                ) {
+                if watchdog.expired(Instant::now(), SystemTime::now()) {
                     break;
                 }
                 true
@@ -1382,49 +1420,62 @@ mod tests {
     }
 
     #[test]
-    fn inbound_silence_uses_wall_clock_so_a_sleep_expires_the_link() {
+    fn silence_watchdog_expires_after_monotonic_timeout() {
         let timeout = Duration::from_secs(15);
-        let last_instant = Instant::now();
-        let before_timeout = last_instant + timeout - Duration::from_secs(1);
-        let at_timeout = last_instant + timeout;
-        let last_wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        assert!(inbound_silence_expired(
-            last_instant,
-            last_wall,
-            timeout,
-            at_timeout,
-            last_wall,
-        ));
-        assert!(!inbound_silence_expired(
-            last_instant,
-            last_wall,
-            timeout,
-            before_timeout,
-            last_wall + timeout - Duration::from_secs(1),
-        ));
-        // A suspend that jumps the wall clock by hours must count, not wait another 15s awake.
-        assert!(inbound_silence_expired(
-            last_instant,
-            last_wall,
-            timeout,
-            before_timeout,
-            last_wall + Duration::from_secs(2 * 60 * 60),
-        ));
-        // NTP/clock stepped backwards: monotonic time still expires; wall-clock alone does not.
-        assert!(!inbound_silence_expired(
-            last_instant,
-            last_wall + Duration::from_secs(60),
-            timeout,
-            before_timeout,
-            last_wall,
-        ));
-        assert!(inbound_silence_expired(
-            last_instant,
-            last_wall + Duration::from_secs(60),
-            timeout,
-            at_timeout,
-            last_wall,
-        ));
+        let grace = Duration::from_secs(8);
+        let start = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
+        let almost = timeout - Duration::from_secs(1);
+        assert!(!watchdog.expired(start + almost, wall + almost));
+        assert!(watchdog.expired(start + timeout, wall + timeout));
+    }
+
+    #[test]
+    fn silence_watchdog_gives_a_woken_link_grace_to_speak() {
+        let timeout = Duration::from_secs(15);
+        let grace = Duration::from_secs(8);
+        let start = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let slept = Duration::from_secs(2 * 60 * 60);
+        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
+        // First poll after a two-hour suspend: the link is not dropped yet.
+        let woke = start + Duration::from_secs(2);
+        assert!(!watchdog.expired(woke, wall + slept));
+        // The server's next heartbeat arrives inside the grace window and the link survives.
+        let ping = woke + Duration::from_secs(4);
+        watchdog.heard(ping, wall + slept + Duration::from_secs(4));
+        let later = ping + Duration::from_secs(10);
+        assert!(!watchdog.expired(later, wall + slept + Duration::from_secs(14)));
+    }
+
+    #[test]
+    fn silence_watchdog_drops_a_woken_link_that_stays_silent() {
+        let timeout = Duration::from_secs(15);
+        let grace = Duration::from_secs(8);
+        let start = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let slept = Duration::from_secs(2 * 60 * 60);
+        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
+        let woke = start + Duration::from_secs(2);
+        assert!(!watchdog.expired(woke, wall + slept));
+        let almost = woke + grace - Duration::from_secs(1);
+        assert!(!watchdog.expired(almost, wall + slept + grace));
+        // Well before a full monotonic timeout, a link the sleep killed is given up.
+        assert!(watchdog.expired(woke + grace, wall + slept + grace));
+    }
+
+    #[test]
+    fn silence_watchdog_ignores_a_backwards_wall_clock_step() {
+        let timeout = Duration::from_secs(15);
+        let grace = Duration::from_secs(8);
+        let start = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let mut watchdog =
+            SilenceWatchdog::new(timeout, grace, start, wall + Duration::from_secs(60));
+        let almost = start + timeout - Duration::from_secs(1);
+        assert!(!watchdog.expired(almost, wall));
+        assert!(watchdog.expired(start + timeout, wall));
     }
 
     struct SilentReader;

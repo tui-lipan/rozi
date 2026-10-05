@@ -188,10 +188,9 @@ pub(crate) fn overlay_interceptor(ctx: &Context<AppRoot>, actions: &[OverlayActi
     })
 }
 
-/// Pages of an [`OverlayPalette`], drawn as the shared picker tab strip above the query.
+/// Pages of an [`OverlayPalette`], drawn below the query, above the results.
 ///
-/// The query sits inside the tab rather than above it because each page keeps its own filter:
-/// the palette remounts per page, seeded with that page's query and highlight.
+/// The palette remounts per page, seeded with the caller's query and highlight.
 pub(crate) struct OverlayTabs {
     labels: Vec<String>,
     active: usize,
@@ -283,7 +282,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         }
     }
 
-    /// Show `tabs` above the query. `entries`, `selected`, and `initial_query` then describe the
+    /// Show `tabs` below the query. `entries`, `selected`, and `initial_query` then describe the
     /// active page only.
     pub(crate) fn tabs(mut self, tabs: OverlayTabs) -> Self {
         self.tabs = Some(tabs);
@@ -449,13 +448,18 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         if let Some(tabs) = tabs {
             let select = tabs.select;
             let labels = tabs.labels.iter().map(String::as_str).collect::<Vec<_>>();
-            body = body.child(picker_tabs(
-                ctx,
-                &labels,
-                tabs.active,
-                ctx.link()
-                    .callback(move |event: TabsEvent| select(event.index)),
-            ));
+            palette = palette.results_header(
+                VStack::new()
+                    .height(Length::Auto)
+                    .child(picker_tabs(
+                        ctx,
+                        &labels,
+                        tabs.active,
+                        ctx.link()
+                            .callback(move |event: TabsEvent| select(event.index)),
+                    ))
+                    .child(Spacer::new().height(Length::Px(1))),
+            );
             // Keyed per page: the query field and highlight are seeded only on mount, and each
             // page brings its own.
             let palette: Element = palette.into();

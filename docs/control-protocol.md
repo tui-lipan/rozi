@@ -770,7 +770,7 @@ A `prompt` object has these fields; the string form is shorthand for `{ "title":
 
 ### Tabs
 
-`tabs` shows several pages under one title, with a tab strip above the query. Each tab keeps its own
+`tabs` shows several pages under one title, with a tab strip below the query. Each tab keeps its own
 rows, filter text, and highlight, so switching away and back keeps what was typed. `actions`,
 `placeholder`, `empty`, and `width` apply to every tab.
 

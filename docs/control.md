@@ -827,9 +827,10 @@ the picker open so the producer can send refreshed rows. `empty` is the text sho
 list while the filter is empty; a filter that matches nothing always says `No matches`. `prompt`
 may be a title string or an object with `title`, `placeholder`, `value`, and `masked`.
 
-Declare `tabs` to show several related lists in one picker. Each tab keeps its own rows, filter,
-and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch between them. Row snapshots name their
-tab, and JSON mode prints `{"tab":"…"}` on each switch so the producer can load a tab when it is
+Declare `tabs` to show several related lists in one picker, with tabs below the search field.
+Each tab keeps its own rows, filter, and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch
+between them. Row snapshots name their tab, and JSON mode prints `{"tab":"…"}` on each switch
+so the producer can load a tab when it is
 first shown:
 
 ```json

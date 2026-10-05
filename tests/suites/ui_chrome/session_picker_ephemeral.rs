@@ -282,6 +282,22 @@ fn a_host_in_play_gets_its_own_tab_and_the_launcher_opens_on_it() {
             .entries = vec![session_row("dev"), remote_row("api", "workbox")];
 
         let on_host = screen(&mut backend);
+        let search_row = on_host
+            .lines()
+            .position(|line| line.contains("Search sessions"))
+            .expect("search field");
+        let tabs_row = on_host
+            .lines()
+            .position(|line| line.contains("Local") && line.contains("workbox"))
+            .expect("host tabs");
+        let result_row = on_host
+            .lines()
+            .position(|line| line.contains("api"))
+            .expect("session row");
+        assert!(
+            search_row < tabs_row && tabs_row < result_row,
+            "search, tabs, then results:\n{on_host}"
+        );
         assert!(
             on_host.contains("Local") && on_host.contains("workbox"),
             "one tab per machine:\n{on_host}"

@@ -2703,8 +2703,10 @@ mod tests {
         use crate::platform::ipc::IpcEndpoint;
         use std::io::{Read, Write};
 
-        let dir = tempfile::tempdir().unwrap();
-        let endpoint = IpcEndpoint::at_path(dir.path().join("stream.sock"));
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("private");
+        crate::platform::fs_security::ensure_private_dir(&dir).unwrap();
+        let endpoint = IpcEndpoint::at_path(dir.join("stream.sock"));
         let listener = endpoint.bind().unwrap().into_listener();
         let server = std::thread::spawn(move || {
             let stream = listener.accept().unwrap();

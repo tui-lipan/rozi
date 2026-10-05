@@ -431,6 +431,75 @@ mod tests {
     /// The palette that ran the action is gone from the frame, and so is the dim it cast, which
     /// would otherwise still be fading out when the next frame paints.
     #[test]
+    fn screenshot_after_a_pending_control_capture_waits_for_picker_exit() {
+        on_large_stack(|| {
+            for style in [
+                crate::layout::anim::PickerAnimationStyle::Fade,
+                crate::layout::anim::PickerAnimationStyle::Portal,
+                crate::layout::anim::PickerAnimationStyle::Scan,
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut backend = backend_writing_to(dir.path());
+                backend.state_mut().config.animations.picker = style;
+                backend.render();
+                let at_rest = backend.capture_frame().to_ansi_text();
+                backend
+                    .dispatch(Msg::RunAction(Action::TogglePalette))
+                    .unwrap();
+                backend.advance(Duration::from_secs(1));
+
+                let (early, early_reply) = capture_ui_request(CaptureRender::Ansi);
+                backend.update_level(early).unwrap();
+                let immediate_batch = backend.state().pending_ui_capture.clone().unwrap();
+                backend
+                    .update_level(Msg::RunAction(Action::ScreenshotUi))
+                    .unwrap();
+                let deferred_batch = backend.state().pending_ui_capture.clone().unwrap();
+                assert!(!std::rc::Rc::ptr_eq(&immediate_batch, &deferred_batch));
+                let (late, late_reply) = capture_ui_request(CaptureRender::Ansi);
+                backend.update_level(late).unwrap();
+                let (png, png_reply) = capture_ui_request(CaptureRender::Png);
+                backend.update_level(png).unwrap();
+                backend.render();
+                let CaptureContent::Ansi { text } = capture_ui_content(&early_reply) else {
+                    panic!("expected ansi");
+                };
+                assert!(
+                    text.contains("Search commands"),
+                    "early control capture keeps its frame"
+                );
+                assert!(crate::ops::control::ui_screenshot_waiting(backend.state()));
+                assert!(
+                    pngs_in(dir.path()).is_empty(),
+                    "screenshot must still be waiting"
+                );
+
+                screenshot_toast(&mut backend);
+                let CaptureContent::Ansi { text } = capture_ui_content(&late_reply) else {
+                    panic!("expected ansi");
+                };
+                assert_eq!(
+                    text, at_rest,
+                    "deferred frame must exclude the closing palette"
+                );
+                let CaptureContent::Png { png_base64 } = capture_ui_content(&png_reply) else {
+                    panic!("expected png");
+                };
+                use base64::Engine as _;
+                let files = pngs_in(dir.path());
+                assert_eq!(files.len(), 1);
+                assert_eq!(
+                    std::fs::read(&files[0]).unwrap(),
+                    base64::engine::general_purpose::STANDARD
+                        .decode(png_base64)
+                        .unwrap(),
+                    "screenshot must save the deferred frame"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn screenshot_ui_from_the_palette_saves_the_ui_as_it_was_before_the_palette_opened() {
         on_large_stack(|| {
             for style in [

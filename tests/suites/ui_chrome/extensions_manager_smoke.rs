@@ -1065,6 +1065,88 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
     }
 }
 
+#[test]
+fn installed_and_catalog_detail_modals_retain_their_closing_animation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            for style in [
+                rozi::layout::anim::PickerAnimationStyle::Fade,
+                rozi::layout::anim::PickerAnimationStyle::Portal,
+                rozi::layout::anim::PickerAnimationStyle::Scan,
+            ] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 110,
+                    h: 45,
+                });
+                backend.state_mut().config.animations.enabled = true;
+                backend.state_mut().config.animations.picker = style;
+                backend
+                    .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                    .unwrap();
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                state.entries = vec![installed_info("retention-fixture")];
+                state.catalog_entries = serde_json::from_value(serde_json::json!([catalog_entry(
+                    "someone/retention",
+                    "retention-catalog",
+                    "Retention fixture"
+                )]))
+                .unwrap();
+                state.catalog_loading = false;
+                state.catalog_epoch = u64::MAX;
+
+                for (tab, row, modal_key) in [
+                    (
+                        rozi::state::ExtensionsTab::Installed,
+                        rozi::state::ExtensionPickerRow::Installed(0),
+                        "rozi-extension-detail-modal",
+                    ),
+                    (
+                        rozi::state::ExtensionsTab::Discover,
+                        rozi::state::ExtensionPickerRow::Catalog(0),
+                        "rozi-catalog-extension-detail-modal",
+                    ),
+                ] {
+                    backend.state_mut().extensions.as_mut().unwrap().tab = tab;
+                    backend.dispatch(rozi::Msg::ExtensionsSelect(row)).unwrap();
+                    backend.dispatch(rozi::Msg::ExtensionsOpenDetail).unwrap();
+                    backend.advance(std::time::Duration::from_millis(500));
+                    let key = tui_lipan::prelude::Key::from(modal_key);
+                    assert!(
+                        backend.rect_of_key(&key).is_some(),
+                        "{style:?}: detail is mounted"
+                    );
+                    assert_eq!(
+                        backend.focused_key().unwrap().as_ref(),
+                        "rozi-extension-detail"
+                    );
+                    backend.dispatch(rozi::Msg::CloseExtensionDetail).unwrap();
+                    backend.advance_frame(std::time::Duration::from_millis(30));
+                    assert!(
+                        backend.rect_of_key(&key).is_some(),
+                        "{style:?}: detail must retain its exit"
+                    );
+                    assert_ne!(
+                        backend.focused_key().map(|key| key.as_ref()),
+                        Some("rozi-extension-detail")
+                    );
+                    backend.advance(std::time::Duration::from_millis(500));
+                    assert!(
+                        backend.rect_of_key(&key).is_none(),
+                        "{style:?}: detail must be pruned after exit"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
     backend
         .send_key(KeyEvent {

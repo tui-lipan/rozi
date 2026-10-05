@@ -63,9 +63,10 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">
 </CaptureGallery>
 
-Once a remote host is involved, Sessions shows one tab per machine: **Local** first, then each
-host, by name. A host gets a tab while a session there is on screen or in the background, while the
-launcher is scoped to it, or while Sessions lists sessions on it. Sessions opens on the tab of the
+Once a remote host is involved, Sessions shows tabs below the search field, one per machine:
+**Local** first, then each host, by name. A host gets a tab while a session there is on screen or
+in the background, while the launcher is scoped to it, or while Sessions lists sessions on it.
+Sessions opens on the tab of the
 session you are in, or in the launcher on the tab of the host it is scoped to.
 
 The tab decides where every key acts. Each tab lists only its own host's sessions, and `Ctrl+N`,
@@ -100,7 +101,10 @@ last reported:
 
 ```text
 ╭Sessions────────────────────────────────────disconnected╮
+│ Search sessions…                                   1/1 │
+├───────────────────────────────────────────────────────┤
 │ Local   workbox                                        │
+│                                                       │
 │ dev                                3 panes · last seen │
 ```
 

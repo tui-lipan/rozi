@@ -426,6 +426,22 @@ fn a_tabbed_picker_switches_pages_and_keeps_each_filter() {
         let frame = rendered_lines(&mut backend);
         assert!(frame.contains("Branches"), "strip rendered:\n{frame}");
         assert!(frame.contains("Worktrees"), "strip rendered:\n{frame}");
+        let search_row = frame
+            .lines()
+            .position(|line| line.contains("Search"))
+            .expect("search field");
+        let tabs_row = frame
+            .lines()
+            .position(|line| line.contains("Branches") && line.contains("Worktrees"))
+            .expect("page tabs");
+        let result_row = frame
+            .lines()
+            .position(|line| line.contains("feat/tabs"))
+            .expect("result row");
+        assert!(
+            search_row < tabs_row && tabs_row < result_row,
+            "search, tabs, then results:\n{frame}"
+        );
         assert!(frame.contains("feat/tabs"), "first page shown:\n{frame}");
         assert!(
             !frame.contains("rozi-review"),

@@ -182,14 +182,18 @@ pub(crate) fn begin_move(
     } else {
         GeometryAnimation::None
     };
-    publish_tiled_drag(ctx, session);
+    publish_move_drag(ctx, session);
     Update::full()
 }
 
-/// Mirror a tiled drag to the other clients. A floating drag needs nothing: its rectangle is part
-/// of the shared document, so the ordinary layout commit already replicates it.
-fn publish_tiled_drag(ctx: &mut Context<AppRoot>, session: Option<MoveSession>) {
-    if let Some(session) = session.filter(|session| !session.was_floating) {
+/// Mirror a pane drag to the other clients, tiled or floating.
+///
+/// A floating pane's rectangle is part of the shared document too, but the layout commit alone is
+/// not enough: it is debounced, and a follower eases every revision it receives, so the pane would
+/// trail the pointer by one animation for the whole gesture. Carrying it on the drag channel marks
+/// it as under manipulation, which a follower draws at each reported position directly.
+fn publish_move_drag(ctx: &mut Context<AppRoot>, session: Option<MoveSession>) {
+    if let Some(session) = session {
         crate::ops::session::publish_drag(ctx, session.id, session.drag_rect);
     }
 }
@@ -243,7 +247,7 @@ pub(crate) fn move_pane(
         pane.floating_rect = rect;
     }
     let session = ctx.state.moving_pane.filter(|session| session.id == id);
-    publish_tiled_drag(ctx, session);
+    publish_move_drag(ctx, session);
     Update::full()
 }
 
@@ -257,6 +261,8 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
             if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
                 pane.floating_rect = session.drag_rect;
             }
+            // Same order as a tiled drop: commit the resting rectangle before releasing the pane.
+            crate::ops::session::finish_published_drag(ctx);
         } else {
             let viewport = ctx.viewport();
             drop_tiled_pane_at(&mut ctx.state, id, x, y, viewport);
@@ -2011,16 +2017,13 @@ mod tests {
             });
         }
 
-        /// A floating pane's rectangle is part of the shared document already, so dragging one
-        /// must not also open a transient - the two would replicate the same motion twice.
+        /// A floating drag goes on the wire too. The layout commit alone is debounced and eased
+        /// on every follower, which leaves the pane trailing the controller's pointer.
         #[test]
-        fn dragging_a_floating_pane_publishes_no_transient() {
+        fn dragging_a_floating_pane_publishes_every_position_and_commits_before_release() {
             in_test_stack(|| {
                 let (mut backend, rx) = shared_backend(true);
-                {
-                    let state = backend.state_mut();
-                    state.active_workspace_mut().panes[0].floating = true;
-                }
+                backend.state_mut().active_workspace_mut().panes[0].floating = true;
                 let start = placement_of(backend.state(), 1);
                 backend
                     .dispatch(Msg::BeginMove(1, start, 0, 0, 10, 5, true))
@@ -2029,11 +2032,32 @@ mod tests {
                     .dispatch(Msg::MovePane(1, 4, 0, true))
                     .expect("drag");
 
+                let lifted: Vec<_> = control_messages(&rx)
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        ClientMessage::DragUpdate { pane_id, rect } => Some((pane_id, rect.x)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(lifted.len(), 2, "one for the pickup and one for the move");
+                assert!(lifted.iter().all(|(pane_id, _)| *pane_id == 1));
+                assert!(lifted[0].1 < lifted[1].1, "the move is carried: {lifted:?}");
+
+                backend
+                    .dispatch(Msg::EndMove(1, 50, 10))
+                    .expect("release the pane");
+                let messages = control_messages(&rx);
+                let commit = messages
+                    .iter()
+                    .position(|message| matches!(message, ClientMessage::CommitLayout { .. }))
+                    .expect("the release commits the resting rectangle");
+                let end = messages
+                    .iter()
+                    .position(|message| matches!(message, ClientMessage::DragEnd))
+                    .expect("the release ends the transient");
                 assert!(
-                    !control_messages(&rx)
-                        .iter()
-                        .any(|message| matches!(message, ClientMessage::DragUpdate { .. })),
-                    "a float replicates through the layout commit alone"
+                    commit < end,
+                    "commit must precede DragEnd, got {messages:?}"
                 );
             });
         }
@@ -2239,6 +2263,48 @@ mod tests {
                     (f32::from(lifted.x) - 10.0).abs() <= 1.0
                         && (f32::from(lifted.y) - (0.2 * 29.0 + top)).abs() <= 1.0,
                     "the lifted pane follows the published rect, got {lifted:?}"
+                );
+            });
+        }
+
+        /// A carried floating pane stays in its layer: it is drawn at the published rectangle
+        /// without vacating any tile.
+        #[test]
+        fn a_follower_carries_a_floating_pane_without_reflowing_tiles() {
+            in_test_stack(|| {
+                let (mut backend, _rx) = shared_backend(false);
+                backend.state_mut().active_workspace_mut().panes[0].floating = true;
+                backend.render();
+                let settled = backend
+                    .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                    .expect("pane 2 is on screen");
+
+                backend.state_mut().current_mut().remote_drag = Some(RemoteDrag {
+                    pane_id: 1,
+                    rect: crate::layout::shared::FracRect {
+                        x: 0.1,
+                        y: 0.2,
+                        w: 0.3,
+                        h: 0.4,
+                    },
+                });
+                backend.render();
+
+                assert_eq!(
+                    backend
+                        .rect_of_key(&crate::view::pane_window_key(2, 0).into())
+                        .expect("pane 2 is still on screen"),
+                    settled,
+                    "moving a float leaves the tiling alone"
+                );
+                let carried = backend
+                    .rect_of_key(&crate::view::pane_window_key(1, 0).into())
+                    .expect("the floating pane is drawn");
+                let top = f32::from(backend.state().content_top_offset());
+                assert!(
+                    (f32::from(carried.x) - 10.0).abs() <= 1.0
+                        && (f32::from(carried.y) - (0.2 * 29.0 + top)).abs() <= 1.0,
+                    "the floating pane is drawn at the published rect, got {carried:?}"
                 );
             });
         }

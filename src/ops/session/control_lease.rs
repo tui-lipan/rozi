@@ -364,12 +364,11 @@ pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Updat
     Update::full()
 }
 
-/// Tell the other clients where a lifted tiled pane is now.
+/// Tell the other clients where a dragged pane is now - a lifted tile or a moving floating pane.
 ///
 /// Undebounced, unlike [`schedule_layout_commit`]: the intermediate positions *are* the message
 /// here, and one pointer event carries one id and four floats. Sent only for a shared workspace
-/// drag - the scratchpad is client-local, and a floating pane's rectangle already replicates
-/// through the layout document.
+/// drag - the scratchpad is client-local.
 pub(crate) fn publish_drag(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, rect: FloatRect) {
     if ctx.state.scratch_visible || !ctx.state.current().session_attached {
         return;

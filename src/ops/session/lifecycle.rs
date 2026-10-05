@@ -340,12 +340,19 @@ pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
 /// Close the session picker. With a session in the foreground this just returns focus to the
 /// current pane; dismissed with nothing attached it leaves the client in the launcher, which is a
 /// state the app is allowed to sit in. Dismissing a picker is not a request for a session, so it
-/// no longer starts an ephemeral one — the launcher says how to start one.
+/// no longer starts an ephemeral one — the launcher says how to start one. An offline foreground
+/// session is parked so dismissal shows the launcher rather than reopening its connection modal.
 pub(crate) fn close_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
+    if ctx.state.current().connection == crate::state::ConnectionState::Unreachable {
+        // Keep the offline screens available in Sessions, but stop showing their blocking
+        // connection modal when the user backs out of the picker.
+        super::attach::park_current_session(ctx);
+        super::attach::enter_sessionless(ctx);
+    }
     if ctx.state.is_launcher() {
         return Update::full();
     }

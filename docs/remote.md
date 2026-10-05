@@ -366,6 +366,9 @@ in place for up to two minutes. It reuses the rozi binary it already found on th
 - If the host is still unreachable after two minutes, the session stays on screen as **offline**.
   `Enter` retries and `Esc` opens Sessions.
 
+Dismissing Sessions with `Esc` while the current session is offline shows the launcher. The offline
+session remains available in Sessions with its retained panes.
+
 Named remote sessions keep running when the SSH connection drops. Temporary ones close after 45
 seconds with no client attached; see
 [Recover a temporary session](sessions.md#recover-a-temporary-session).

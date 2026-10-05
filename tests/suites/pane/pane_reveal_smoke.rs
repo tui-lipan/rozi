@@ -1026,3 +1026,76 @@ fn every_open_style_can_close_with_a_different_effect() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn mixed_styles_preserve_terminal_node_identity_and_survivor_focus() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for &open in PaneAnimationStyle::all() {
+                for &close in PaneAnimationStyle::all() {
+                    if close == PaneAnimationStyle::Off {
+                        continue;
+                    }
+                    let mut backend = backend(open);
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 30,
+                    });
+                    {
+                        let state = backend.state_mut();
+                        state.config.animations.pane_close_style = close;
+                        state.config.confirm.close_pane = false;
+
+                        for pane in &mut state.current_mut().workspaces[0].panes {
+                            pane.opening = false;
+                        }
+                        state.current_mut().focused_pane = Some(11);
+                        state.current_mut().workspaces[0].focused_pane = Some(11);
+                    }
+                    backend.render();
+                    backend.advance(Duration::from_millis(400));
+                    let closing_key = backend.state().current().workspaces[0].panes[1]
+                        .keys
+                        .terminal
+                        .clone();
+                    let survivor_key = backend.state().current().workspaces[0].panes[0]
+                        .keys
+                        .terminal
+                        .clone();
+                    assert!(backend.focus_key(&survivor_key));
+                    let survivor_id = backend.focused().unwrap();
+                    assert!(backend.focus_key(&closing_key));
+                    let closing_id = backend.focused().unwrap();
+                    backend
+                        .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                        .unwrap();
+                    backend.render();
+                    assert!(backend.focus_key(&survivor_key));
+                    assert_eq!(
+                        backend.focused(),
+                        Some(survivor_id),
+                        "{open:?} -> {close:?}: survivor remounted"
+                    );
+                    // Closing terminals intentionally stop accepting focus/input. TestBackend's raw
+                    // focus setter lets us inspect the saved generational node id without re-enabling it.
+                    backend.set_focused(closing_id);
+                    let snapshot = backend.capture_ui_snapshot();
+                    assert!(
+                        snapshot
+                            .widgets
+                            .iter()
+                            .any(|widget| widget.key.as_ref() == Some(&closing_key)
+                                && widget.focused),
+                        "{open:?} -> {close:?}: closing terminal remounted"
+                    );
+                    backend.set_focused(survivor_id);
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

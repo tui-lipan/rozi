@@ -272,6 +272,7 @@ Border colors for pane alert states. Each value is a theme role or `"off"`. Them
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
 | `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
+| `pane_style` | string | unset | Deprecated shared-style fallback for opening and closing; explicit action-specific keys override it. Settings migrates it automatically. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds; Particles opening uses this duration and closing takes four times it. |
@@ -295,8 +296,9 @@ value keeps the portal and warns.
 
 Choose opening and closing independently with `pane_open_style` and `pane_close_style`, or use
 **General › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
-open and `particles` to close. Both default to `scale`. Replace the former `pane_style` key with
-these two keys; the former key is no longer read.
+open and `particles` to close. Both default to `scale`. The deprecated `pane_style` key remains a fallback for both actions;
+each explicit new key overrides it independently. Changing either style in Settings saves both
+resolved choices and removes the legacy key, preserving the other action's style.
 
 An `off` style shows or hides a pane at once, with no fade. Opening with `off` also skips the spawn
 delay. `spawn`, `close`, and `enabled` still decide whether neighboring panes animate, and they

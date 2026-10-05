@@ -54,6 +54,7 @@ const ANIMATION_KEYS: &[&str] = &[
     "workspace_ms",
     "session",
     "focus_chrome",
+    "pane_style",
     "pane_open_style",
     "pane_close_style",
     "geometry_ms",

@@ -1241,6 +1241,23 @@ fn pane_open_and_close_choices_preview_and_persist_independently() {
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 35);
         backend.state_mut().config.animations.enabled = true;
+        let path = rozi::config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[animations]\npane_style = \"portal\"\ngeometry_ms = 220\n",
+        )
+        .unwrap();
+        let loaded = rozi::config::load_config();
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("animations.")),
+            "{:?}",
+            loaded.warnings
+        );
+        backend.state_mut().config.animations = loaded.config.animations;
         backend.state_mut().config.animations.pane_open_style = PaneAnimationStyle::Slide;
         backend.state_mut().config.animations.pane_close_style = PaneAnimationStyle::Scale;
         type_query(&mut backend, "pane close");
@@ -1290,7 +1307,19 @@ fn pane_open_and_close_choices_preview_and_persist_independently() {
         backend
             .dispatch(rozi::Msg::SettingsChoicePick(slide))
             .unwrap();
-        let saved = rozi::config::load_config().config.animations;
+        let text = std::fs::read_to_string(&path).unwrap();
+        let table: toml::Value = toml::from_str(&text).unwrap();
+        assert!(table["animations"].get("pane_style").is_none());
+        let reloaded = rozi::config::load_config();
+        assert!(
+            reloaded
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("animations.")),
+            "{:?}",
+            reloaded.warnings
+        );
+        let saved = reloaded.config.animations;
         assert_eq!(saved.pane_open_style, PaneAnimationStyle::Slide);
         assert_eq!(saved.pane_close_style, PaneAnimationStyle::Particles);
         backend.state_mut().config.animations.enabled = false;

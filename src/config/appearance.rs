@@ -69,13 +69,15 @@ pub(super) fn apply_animations(
     apply_animation_durations(target, &raw);
     apply_animation_style(
         &mut target.pane_open_style,
-        raw.pane_open_style.as_deref(),
+        raw.pane_open_style.as_deref().or(raw.pane_style.as_deref()),
         "pane_open_style",
         warnings,
     );
     apply_animation_style(
         &mut target.pane_close_style,
-        raw.pane_close_style.as_deref(),
+        raw.pane_close_style
+            .as_deref()
+            .or(raw.pane_style.as_deref()),
         "pane_close_style",
         warnings,
     );
@@ -343,6 +345,42 @@ mod tests {
         apply_animations(&mut animations, raw, &mut warnings);
         assert_eq!(animations.alert_pulse_duration, Duration::from_millis(2400));
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn legacy_pane_style_is_the_fallback_for_each_action() {
+        for (source, open, close) in [
+            (
+                "pane_style = \"off\"",
+                PaneAnimationStyle::Off,
+                PaneAnimationStyle::Off,
+            ),
+            (
+                "pane_style = \"portal\"\npane_open_style = \"slide\"",
+                PaneAnimationStyle::Slide,
+                PaneAnimationStyle::Portal,
+            ),
+            (
+                "pane_style = \"portal\"\npane_close_style = \"particles\"",
+                PaneAnimationStyle::Portal,
+                PaneAnimationStyle::Particles,
+            ),
+            (
+                "pane_style = \"off\"\npane_open_style = \"scale\"\npane_close_style = \"scan\"",
+                PaneAnimationStyle::Scale,
+                PaneAnimationStyle::Scan,
+            ),
+        ] {
+            let raw = toml::from_str(source).unwrap();
+            let mut animations = WindowAnimationConfig::default();
+            let mut warnings = Vec::new();
+            apply_animations(&mut animations, raw, &mut warnings);
+            assert_eq!(
+                (animations.pane_open_style, animations.pane_close_style),
+                (open, close)
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
     }
 
     #[test]

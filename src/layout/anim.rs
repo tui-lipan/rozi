@@ -242,6 +242,7 @@ pub struct PaneAnimationSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaneEventAnimationSnapshot {
     pub duration: Duration,
+    pub kind: PaneAnimationStyle,
 }
 
 pub(crate) fn builtin_animation(style: PaneAnimationStyle) -> PaneAnimationSpec {
@@ -1167,7 +1168,15 @@ pub(crate) fn geometry_transition_for_pane(
     };
     // Under Slide, the tiles *around* an arriving or leaving pane are where the spring lives:
     // this is the tile that gave up the space, or the one taking it back.
-    if spec.kind == PaneAnimationStyle::Slide
+    let event_kind = state.pane_event_animation.map_or_else(
+        || {
+            animations
+                .selected_animation(state.animation == GeometryAnimation::Close)
+                .kind
+        },
+        |snapshot| snapshot.kind,
+    );
+    if event_kind == PaneAnimationStyle::Slide
         && matches!(
             state.animation,
             GeometryAnimation::Spawn | GeometryAnimation::Close
@@ -1931,6 +1940,58 @@ mod tests {
         let settled = &state.current().workspaces[0].panes[0];
         let scale_neighbour = geometry_transition_for_pane(&state, settled, false, Some(tile));
         assert_eq!(scale_neighbour.easing, Easing::EaseInOutCubic);
+    }
+
+    #[test]
+    fn close_event_style_controls_neighbours_and_survives_reload() {
+        for (open, close) in [
+            (PaneAnimationStyle::Scale, PaneAnimationStyle::Slide),
+            (PaneAnimationStyle::Slide, PaneAnimationStyle::Scale),
+            (PaneAnimationStyle::Slide, PaneAnimationStyle::Particles),
+        ] {
+            let mut state = State::new(crate::config::Config::default(), Default::default());
+            state.config.animations.pane_open_style = open;
+            state.config.animations.pane_close_style = close;
+            state.config.animations.geometry_duration = Duration::from_millis(300);
+            let mut neighbour = Pane::new(1, 100, FloatRect::default());
+            neighbour.opening = false;
+            let mut departing = Pane::new(2, 100, FloatRect::default());
+            departing.opening = false;
+            departing.closing = true;
+            departing.begin_close_animation(state.config.animations);
+            state.begin_pane_event(GeometryAnimation::Close);
+            let tile = FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 30.0,
+                h: 20.0,
+            };
+            for reloaded in [false, true] {
+                if reloaded {
+                    state.config.animations.pane_open_style = close;
+                    state.config.animations.pane_close_style = open;
+                    state.config.animations.geometry_duration = Duration::from_millis(900);
+                }
+                let transition =
+                    geometry_transition_for_pane(&state, &neighbour, false, Some(tile));
+                assert_eq!(transition.duration, Duration::from_millis(300));
+                assert_eq!(
+                    matches!(transition.easing, Easing::EaseOutBack { .. }),
+                    close == PaneAnimationStyle::Slide,
+                    "{open:?} -> {close:?}, reloaded={reloaded}"
+                );
+                if close == PaneAnimationStyle::Slide {
+                    let slide = pane_animation_for_pane(state.config.animations, &departing)
+                        .transition(true);
+                    assert_eq!(
+                        slide.duration, transition.duration,
+                        "the shared edge uses one event duration"
+                    );
+                    assert_eq!(slide.easing.apply(1.0), 1.0);
+                    assert_eq!(transition.easing.apply(1.0), 1.0);
+                }
+            }
+        }
     }
 
     /// The spring is scoped to spawn and close. A fullscreen toggle or an axis flip under Slide is

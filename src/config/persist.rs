@@ -334,6 +334,30 @@ pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<P
     Ok(path)
 }
 
+/// Save the resolved pair before removing the legacy shared style, preserving the other action.
+pub fn persist_pane_animation_styles(
+    open: &str,
+    close: &str,
+) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated = pane_animation_styles_text(&text, open, close);
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+fn pane_animation_styles_text(text: &str, open: &str, close: &str) -> String {
+    let text = upsert_value_in_section(text, "animations", "pane_open_style", &toml_string(open));
+    let text =
+        upsert_value_in_section(&text, "animations", "pane_close_style", &toml_string(close));
+    remove_value_in_section(&text, "animations", "pane_style")
+}
+
 fn toml_string(value: &str) -> String {
     toml::Value::String(value.to_string()).to_string()
 }
@@ -1290,6 +1314,25 @@ fn upsert_default_profile(text: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pane_animation_migration_preserves_other_settings_and_comments() {
+        let source = "# personal config\n[animations]\npane_style = \"portal\" # legacy comment\ngeometry_ms = 330\n[theme]\nname = \"nord\"\n";
+        let migrated = super::pane_animation_styles_text(source, "slide", "portal");
+        let parsed: toml::Value = toml::from_str(&migrated).unwrap();
+        assert!(parsed["animations"].get("pane_style").is_none());
+        assert_eq!(
+            parsed["animations"]["pane_open_style"].as_str(),
+            Some("slide")
+        );
+        assert_eq!(
+            parsed["animations"]["pane_close_style"].as_str(),
+            Some("portal")
+        );
+        assert_eq!(parsed["animations"]["geometry_ms"].as_integer(), Some(330));
+        assert_eq!(parsed["theme"]["name"].as_str(), Some("nord"));
+        assert!(migrated.contains("# personal config"));
+    }
+
     use super::*;
 
     #[test]

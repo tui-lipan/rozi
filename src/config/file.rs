@@ -634,6 +634,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) workspace_ms: Option<u64>,
     pub(super) session: Option<SessionSpec>,
     pub(super) focus_chrome: Option<bool>,
+    pub(super) pane_style: Option<String>,
     pub(super) pane_open_style: Option<String>,
     pub(super) pane_close_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,
@@ -3327,22 +3328,16 @@ mod file_tests {
                         "{name} clips to a fixed tile, not to a shrinking window"
                     );
                 }
-                // The paint effects repaint cells inside the settled rectangle, so there is no
-                // geometry wrapper at all.
-                PaneAnimationStyle::Particles => {
-                    assert!(mid_clip.is_some(), "particles need room outside the pane");
-                }
-                PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => {
+                // All styles keep the same clip hierarchy. Paint effects and Off leave its
+                // viewport at the settled allocation; only Scale changes the clip dimensions.
+                PaneAnimationStyle::Particles
+                | PaneAnimationStyle::Portal
+                | PaneAnimationStyle::Scan
+                | PaneAnimationStyle::Off => {
+                    assert_eq!(mid_clip, start_clip, "{name} keeps the neutral clip fixed");
                     assert!(
-                        mid_clip.is_none(),
-                        "{name} must not be wrapped in a geometry clip: {mid_clip:?}"
-                    );
-                }
-                // Off is not part of this sweep. It draws no clip and no reveal.
-                PaneAnimationStyle::Off => {
-                    assert!(
-                        mid_clip.is_none(),
-                        "{name} must not wrap the pane in an effect clip: {mid_clip:?}"
+                        mid_clip.is_some(),
+                        "{name} keeps its presentation wrapper mounted"
                     );
                 }
             }

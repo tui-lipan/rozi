@@ -20,8 +20,14 @@ pub(crate) fn particle_pane(
 ) -> (FloatRect, Element) {
     // Keep this wrapper mounted at rest as well: changing terminal ancestry on the final frame
     // would lose focus and force a terminal remount. Only the effect itself comes and goes.
-    let left = (rect.x - f32::from(PAD_X)).max(0.0);
-    let top = (rect.y - f32::from(PAD_Y)).max(0.0);
+    // Keep the same ancestry without a padded hit/paint region while the effect is idle.
+    let (pad_x, pad_y) = if matches!(motion, PanePaintMotion::Fixed(1.0)) {
+        (0, 0)
+    } else {
+        (PAD_X, PAD_Y)
+    };
+    let left = (rect.x - f32::from(pad_x)).max(0.0);
+    let top = (rect.y - f32::from(pad_y)).max(0.0);
     let inner = Rect {
         x: (rect.x - left).round() as i16,
         y: (rect.y - top).round() as i16,
@@ -42,8 +48,8 @@ pub(crate) fn particle_pane(
     let outer = FloatRect {
         x: left,
         y: top,
-        w: rect.x + rect.w + f32::from(PAD_X) - left,
-        h: rect.y + rect.h + f32::from(PAD_Y) - top,
+        w: rect.x + rect.w + f32::from(pad_x) - left,
+        h: rect.y + rect.h + f32::from(pad_y) - top,
     };
     (outer, Element::from(scope).key(key))
 }

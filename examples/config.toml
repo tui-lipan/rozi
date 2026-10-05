@@ -191,6 +191,9 @@
 # close. Particles opens over geometry_ms and closes over four times geometry_ms. Portal, Scan,
 # and Particles also apply to floats and popups.
 # Off stays off for floats; Slide falls back to Scale.
+# Legacy shared style remains a fallback for both actions; explicit keys below override it.
+# Changing a style in Settings migrates this key to the resolved pair.
+#pane_style = "scale"
 #pane_open_style = "scale"
 #pane_close_style = "scale"
 # Base geometry duration; tiled Slide uses it as its slide duration in both directions. The scratchpad

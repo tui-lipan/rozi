@@ -208,21 +208,20 @@ pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> 
         false,
         crate::view::animation::pane_fade(ctx, pane),
     );
-    Some(
-        if spec.kind == crate::layout::anim::PaneAnimationStyle::Particles {
-            crate::view::pane_particles::particle_pane(
-                element,
-                rect,
-                crate::view::animation::pane_paint_motion(ctx, pane),
-                pane.closing,
-                u64::from(pane.id),
-                "rozi-popup-particles".into(),
-                &ctx.state.theme,
-            )
-        } else {
-            (rect, element)
-        },
-    )
+    let motion = if spec.kind == crate::layout::anim::PaneAnimationStyle::Particles {
+        crate::view::animation::pane_paint_motion(ctx, pane)
+    } else {
+        crate::layout::anim::PanePaintMotion::Fixed(1.0)
+    };
+    Some(crate::view::pane_particles::particle_pane(
+        element,
+        rect,
+        motion,
+        pane.closing,
+        u64::from(pane.id),
+        "rozi-popup-presentation".into(),
+        &ctx.state.theme,
+    ))
 }
 
 pub(crate) fn backdrop(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {

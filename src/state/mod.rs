@@ -505,6 +505,11 @@ impl State {
             // step with. Captured here so a reload mid-transition cannot retime them either.
             self.pane_event_animation = Some(crate::layout::anim::PaneEventAnimationSnapshot {
                 duration: self.config.animations.geometry_duration,
+                kind: self
+                    .config
+                    .animations
+                    .selected_animation(animation == GeometryAnimation::Close)
+                    .kind,
             });
         }
     }

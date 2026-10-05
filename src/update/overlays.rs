@@ -820,17 +820,9 @@ fn persist_applied_settings_choice(
             "fullscreen_border_style",
             ctx.state.config.pane.fullscreen_border_style.id(),
         ),
-        CyclePaneOpenAnimation => {
-            if let Err(err) = crate::config::persist_animation_string(
-                "pane_open_style",
+        CyclePaneOpenAnimation | CyclePaneCloseAnimation => {
+            if let Err(err) = crate::config::persist_pane_animation_styles(
                 ctx.state.config.animations.pane_open_style.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CyclePaneCloseAnimation => {
-            if let Err(err) = crate::config::persist_animation_string(
-                "pane_close_style",
                 ctx.state.config.animations.pane_close_style.id(),
             ) {
                 preference_error(ctx, err);

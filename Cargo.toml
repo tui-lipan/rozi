@@ -230,3 +230,8 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
+
+# Temporary upstream scrollbar-routing fix required by the stable pane presentation tree.
+# Replace with a released tui-lipan version and remove this patch when available.
+[patch.crates-io]
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "968b6c3e229458eb5ee5551a56e3ac3e3454457c" }

@@ -1933,7 +1933,8 @@ mod tests {
                 // so canonical and local coordinates coincide and the assertions stay readable.
                 shared.canonical_canvas = Some((100, 29));
                 state.current_mut().shared = Some(shared);
-                state.config.animations.pane_style = PaneAnimationStyle::Slide;
+                state.config.animations.pane_open_style = PaneAnimationStyle::Slide;
+                state.config.animations.pane_close_style = PaneAnimationStyle::Slide;
 
                 let workspace = state.active_workspace_mut();
                 workspace.panes.clear();

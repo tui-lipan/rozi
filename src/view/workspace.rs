@@ -86,14 +86,6 @@ impl WorkspaceLayer<'_> {
         }
     }
 
-    fn pane_reveal_key(&self, id: PaneId) -> String {
-        if self.scratch {
-            format!("rozi-scratch-pane-reveal-{id}")
-        } else {
-            format!("rozi-pane-reveal-{id}")
-        }
-    }
-
     fn badge(&self) -> Option<&'static str> {
         self.scratch.then_some("S")
     }
@@ -214,6 +206,7 @@ pub(crate) fn render_workspace_panes(
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut closing_tiles: Vec<(FloatRect, Element)> = Vec::new();
+    canvas = canvas.passthrough(true);
     let mut floating_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
     let mut fullscreen_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
     for pane in ordered_panes(workspace, focused_pane, |pane| {
@@ -247,8 +240,7 @@ pub(crate) fn render_workspace_panes(
             crate::layout::anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane);
         let revealing_now = reveal_effect && (pane_opening || pane.closing);
         // Unconditional for the same reason as the two reads around it.
-        let reveal_progress =
-            animation::pane_reveal_progress(ctx, pane, layer.pane_reveal_key(pane.id));
+        let reveal_progress = animation::pane_reveal_progress(ctx, pane);
         let animation_spec =
             crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
         // Evaluate the key even while settled. A keyed transition starts at its first target,
@@ -419,55 +411,47 @@ pub(crate) fn render_workspace_panes(
             layer.badge(),
             kind,
             merge,
-            reveal_progress,
             scales,
             fade,
         );
-        // Everything below places the pane at `render_rect`, so the clip window takes that rect and
-        // the pane moves *inside* it. A `Canvas` clips its descendants to its own allocation, which
-        // is what makes the pane emerge from behind the seam instead of flying across its neighbour.
-        // Mounted for the pane's whole life, not just while it moves, so arriving never remounts the
-        // terminal underneath it.
-        let element: Element = if slides {
-            let (offset_x, offset_y) =
-                crate::layout::anim::slide_offset(render_rect, pane.slide_edge, slide_progress);
-            Canvas::new()
-                // While the pane is only part-way in, the rest of the clip window is empty. Let a
-                // click there fall through to the layer beneath instead of being swallowed by a
-                // wrapper that exists purely to clip.
-                .passthrough(true)
-                .child_at(
-                    FloatRect {
-                        x: offset_x,
-                        y: offset_y,
-                        w: render_rect.w,
-                        h: render_rect.h,
-                    }
-                    .to_rect(),
-                    element,
-                )
-                .key(layer.pane_clip_key(pane.id))
-        } else if animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Scale {
-            // Keep the clip wrapper while settled so terminal allocation stays fixed. The
-            // shared fade seeds both pane and border if closing moves them to a new layer.
-            let mut chrome = pane_frame_chrome(ctx, pane, focused_pane, kind);
-            chrome.show_border &= scales;
-            scale_pane_element(
-                element,
-                render_rect,
-                animation_spec.scale_from,
-                if scales { scale_progress } else { 1.0 },
-                layer.pane_clip_key(pane.id),
-                ScaleOverlay { chrome, fade },
-            )
+        // A fixed EffectScope -> Canvas -> clip hierarchy hosts every style. Only offsets,
+        // clip dimensions and the effect change, so mixed open/close styles cannot remount
+        // the terminal when the lifecycle switches recipes.
+        let offset = if slides {
+            crate::layout::anim::slide_offset(render_rect, pane.slide_edge, slide_progress)
         } else {
-            element
+            (0.0, 0.0)
         };
+        let mut chrome = pane_frame_chrome(ctx, pane, focused_pane, kind);
+        chrome.show_border &= scales;
+        let element = clipped_pane_element(
+            element,
+            render_rect,
+            animation_spec.scale_from,
+            if scales { scale_progress } else { 1.0 },
+            offset,
+            layer.pane_clip_key(pane.id),
+            ScaleOverlay { chrome, fade },
+        );
         let element_rect = if scales {
             scale_clip_rect(render_rect, animation_spec.scale_from, scale_progress)
         } else {
             render_rect
         };
+        let motion = if animation_spec.kind == crate::layout::anim::PaneAnimationStyle::Particles {
+            animation::pane_paint_motion(ctx, pane)
+        } else {
+            crate::layout::anim::PanePaintMotion::Fixed(1.0)
+        };
+        let (element_rect, element) = super::pane_particles::particle_pane(
+            element,
+            element_rect,
+            motion,
+            pane.closing,
+            u64::from(pane.id),
+            format!("{}-presentation", layer.pane_clip_key(pane.id)).into(),
+            theme,
+        );
         if title_on_seam && let Some(seam) = seam_title_element(ctx, pane, focused_pane) {
             seam_titles.push((
                 FloatRect {
@@ -612,25 +596,14 @@ pub(crate) fn render_workspace_panes(
             canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
     }
-    let viewport = ctx.state.content_viewport(ctx.viewport());
-    let area = Rect {
-        x: 0,
-        y: 0,
-        w: viewport.w,
-        h: viewport.h,
-    };
-    let canvas = paint_only_pane_layer(canvas, closing_tiles, area);
-    let canvas = raised_pane_layer(canvas, floating_panes, area);
-    raised_pane_layer(canvas, fullscreen_panes, area)
+    let canvas = paint_only_pane_layer(canvas, closing_tiles);
+    let canvas = raised_pane_layer(canvas, floating_panes);
+    raised_pane_layer(canvas, fullscreen_panes)
 }
 
 /// Live panes occlude lower pointer targets and scrollbar zones. Retained closing panes
 /// paint above their own layer but pass input through to that live canvas.
-fn raised_pane_layer(
-    mut canvas: Canvas,
-    panes: Vec<(FloatRect, Element, bool)>,
-    area: Rect,
-) -> Canvas {
+fn raised_pane_layer(mut canvas: Canvas, panes: Vec<(FloatRect, Element, bool)>) -> Canvas {
     let mut closing = Vec::new();
     for (rect, element, retained) in panes {
         if retained {
@@ -639,20 +612,17 @@ fn raised_pane_layer(
             canvas = canvas.child_at(rect.to_rect(), element);
         }
     }
-    paint_only_pane_layer(canvas, closing, area)
+    paint_only_pane_layer(canvas, closing)
 }
 
-fn paint_only_pane_layer(canvas: Canvas, panes: Vec<(FloatRect, Element)>, area: Rect) -> Canvas {
-    let mut closing = Canvas::new().passthrough(true);
+fn paint_only_pane_layer(mut canvas: Canvas, panes: Vec<(FloatRect, Element)>) -> Canvas {
+    // Reorder siblings to paint retained panes above live tiles; never relocate them to a
+    // different parent. Their permanent passthrough presentation canvas and disabled input
+    // callbacks keep retained terminals inert without a separate closing subtree.
     for (rect, element) in panes {
-        closing = closing.child_at(rect.to_rect(), element);
+        canvas = canvas.child_at(rect.to_rect(), element);
     }
-    // Always mount the group, including its empty closing layer, so starting or finishing
-    // a close does not reparent live terminal widgets. The outer Canvas stays occluding.
-    Canvas::new().child_at(
-        area,
-        ZStack::new().passthrough(true).child(canvas).child(closing),
-    )
+    canvas
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -876,11 +846,12 @@ struct ScaleOverlay {
     fade: animation::Fade,
 }
 
-fn scale_pane_element(
+fn clipped_pane_element(
     pane: Element,
     rect: FloatRect,
     scale_from: f32,
     progress: f32,
+    slide_offset: (f32, f32),
     key: String,
     overlay: ScaleOverlay,
 ) -> Element {
@@ -896,8 +867,8 @@ fn scale_pane_element(
         .width(Length::Px(viewport.w))
         .height(Length::Px(viewport.h))
         .offset((
-            (visible.x - rect.x).round() as i32,
-            (visible.y - rect.y).round() as i32,
+            (visible.x - rect.x - slide_offset.0).round() as i32,
+            (visible.y - rect.y - slide_offset.1).round() as i32,
         ))
         .clamp(false)
         .drag_to_pan(false)

@@ -635,6 +635,8 @@ pub(super) struct AnimationFileConfig {
     pub(super) session: Option<SessionSpec>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
+    pub(super) pane_open_style: Option<String>,
+    pub(super) pane_close_style: Option<String>,
     pub(super) geometry_ms: Option<u64>,
     pub(super) close_ms: Option<u64>,
     pub(super) focus_chrome_ms: Option<u64>,
@@ -645,7 +647,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) fade: Option<bool>,
     /// One geometry knob per style: where Scale grows from, where Portal opens, which corner Scan
     /// sweeps from. Slide has none - its edge comes from the split that placed the pane. They are
-    /// named for their style so a config can set all three and `pane_style` decides which is live.
+    /// named for their style so a config can set all three and `pane_open_style` decides which is live.
     pub(super) scale_from: Option<f32>,
     pub(super) portal_origin: Option<[f32; 2]>,
     pub(super) scan_direction: Option<String>,
@@ -2494,7 +2496,8 @@ mod file_tests {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "portal"
+            pane_open_style = "portal"
+            pane_close_style = "portal"
             geometry_ms = 180
             close_ms = 110
             curve = [0.16, 1.0, 0.3, 1.0]
@@ -2509,7 +2512,7 @@ mod file_tests {
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 
         let animations = loaded.config.animations;
-        let portal = animations.selected_animation();
+        let portal = animations.selected_animation(false);
         assert_eq!(portal.kind, crate::layout::anim::PaneAnimationStyle::Portal);
         assert_eq!(portal.open_duration, std::time::Duration::from_millis(180));
         assert!(matches!(
@@ -2523,11 +2526,13 @@ mod file_tests {
         // The knobs for the other styles were parsed and are simply waiting for their style. This
         // is the point of naming them per style rather than validating them against the selection.
         let mut switched = animations;
-        switched.pane_style = crate::layout::anim::PaneAnimationStyle::Scale;
-        assert_eq!(switched.selected_animation().scale_from, 0.5);
-        switched.pane_style = crate::layout::anim::PaneAnimationStyle::Scan;
+        switched.pane_open_style = crate::layout::anim::PaneAnimationStyle::Scale;
+        switched.pane_close_style = crate::layout::anim::PaneAnimationStyle::Scale;
+        assert_eq!(switched.selected_animation(false).scale_from, 0.5);
+        switched.pane_open_style = crate::layout::anim::PaneAnimationStyle::Scan;
+        switched.pane_close_style = crate::layout::anim::PaneAnimationStyle::Scan;
         assert_eq!(
-            switched.selected_animation().scan_direction,
+            switched.selected_animation(false).scan_direction,
             crate::layout::anim::ScanDirection::BottomRight
         );
     }
@@ -2540,7 +2545,7 @@ mod file_tests {
             Path::new("test.toml"),
         );
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        let spec = loaded.config.animations.selected_animation();
+        let spec = loaded.config.animations.selected_animation(false);
         assert_eq!(spec.open_curve, tui_lipan::animation::Easing::EaseOutQuad);
         assert_eq!(spec.close_curve, tui_lipan::animation::Easing::EaseInQuad);
     }
@@ -3231,7 +3236,9 @@ mod file_tests {
             ("portal", PaneAnimationStyle::Portal),
             ("scan", PaneAnimationStyle::Scan),
         ] {
-            let text = format!("[animations]\npane_style = \"{name}\"\n{SETTINGS}");
+            let text = format!(
+                "[animations]\npane_open_style = \"{name}\"\npane_close_style = \"{name}\"\n{SETTINGS}"
+            );
             let loaded = load_config_from_text(&text, Path::new("test.toml"));
             assert!(loaded.warnings.is_empty(), "{name}: {:?}", loaded.warnings);
 
@@ -3321,19 +3328,16 @@ mod file_tests {
                         "{name} clips to a fixed tile, not to a shrinking window"
                     );
                 }
-                // The paint effects repaint cells inside the settled rectangle, so there is no
-                // geometry wrapper at all.
-                PaneAnimationStyle::Portal | PaneAnimationStyle::Scan => {
+                // All styles keep the same clip hierarchy. Paint effects and Off leave its
+                // viewport at the settled allocation; only Scale changes the clip dimensions.
+                PaneAnimationStyle::Particles
+                | PaneAnimationStyle::Portal
+                | PaneAnimationStyle::Scan
+                | PaneAnimationStyle::Off => {
+                    assert_eq!(mid_clip, start_clip, "{name} keeps the neutral clip fixed");
                     assert!(
-                        mid_clip.is_none(),
-                        "{name} must not be wrapped in a geometry clip: {mid_clip:?}"
-                    );
-                }
-                // Off is not part of this sweep. It draws no clip and no reveal.
-                PaneAnimationStyle::Off => {
-                    assert!(
-                        mid_clip.is_none(),
-                        "{name} must not wrap the pane in an effect clip: {mid_clip:?}"
+                        mid_clip.is_some(),
+                        "{name} keeps its presentation wrapper mounted"
                     );
                 }
             }
@@ -3359,7 +3363,8 @@ mod file_tests {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "scale"
+            pane_open_style = "scale"
+            pane_close_style = "scale"
             geometry_ms = 200
             close_ms = 600
             "#,
@@ -3474,7 +3479,8 @@ mod file_tests {
         let loaded = load_config_from_text(
             r#"
             [animations]
-            pane_style = "slide"
+            pane_open_style = "slide"
+            pane_close_style = "slide"
             geometry_ms = 400
             close_ms = 120
             scale_from = 0.4
@@ -3485,7 +3491,7 @@ mod file_tests {
         let animations = loaded.config.animations;
 
         // Tiled, the selection is what the file said, and `scale_from` sits dormant.
-        let tiled = animations.resolved_animation(false);
+        let tiled = animations.resolved_animation(false, false);
         assert_eq!(tiled.kind, crate::layout::anim::PaneAnimationStyle::Slide);
         assert_eq!(tiled.open_duration, std::time::Duration::from_millis(400));
         assert_eq!(
@@ -3496,7 +3502,7 @@ mod file_tests {
 
         // Floating, Slide is not something the pane can perform. It resolves to Scale *before*
         // anything else is applied, so it picks up Scale's close timing and Scale's knob.
-        let floating = animations.resolved_animation(true);
+        let floating = animations.resolved_animation(true, false);
         assert_eq!(
             floating.kind,
             crate::layout::anim::PaneAnimationStyle::Scale

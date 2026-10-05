@@ -79,6 +79,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::pane::pty_events::notify_error(ctx, "Command failed", message);
             Update::full()
         }
+        Msg::RefreshPaintLayers => Update::full(),
+        Msg::SchedulePaintRefresh(delay) => Update::command_only(Command::after(delay, |link| {
+            link.send(Msg::RefreshPaintLayers)
+        })),
         Msg::ScreenshotSaved { target, path } => {
             crate::ops::screenshot::screenshot_saved(ctx, target, path)
         }

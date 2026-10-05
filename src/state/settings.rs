@@ -127,7 +127,8 @@ pub enum SettingsAction {
     TogglePickerTabBackground,
     CyclePickerTabStyle,
     CyclePickerSelectionStyle,
-    CyclePaneAnimation,
+    CyclePaneOpenAnimation,
+    CyclePaneCloseAnimation,
     ToggleSidebarBackgroundFollowsCanvas,
     ToggleSidebarPosition,
     ToggleSidebarGap,
@@ -175,7 +176,8 @@ impl SettingsAction {
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
             Self::CycleSessionAnimation,
-            Self::CyclePaneAnimation,
+            Self::CyclePaneOpenAnimation,
+            Self::CyclePaneCloseAnimation,
             // Clipboard
             Self::CycleCopyOnSelect,
             Self::CycleMiddleClickPaste,
@@ -357,10 +359,16 @@ impl SettingsAction {
                 config.animations.session,
                 crate::layout::anim::SessionAnimationStyle::label,
             )),
-            Self::CyclePaneAnimation => Some(choice_ring(
-                "Pane open/close animation",
+            Self::CyclePaneOpenAnimation => Some(choice_ring(
+                "Pane open animation",
                 PaneAnimationStyle::all(),
-                config.animations.pane_style,
+                config.animations.pane_open_style,
+                PaneAnimationStyle::label,
+            )),
+            Self::CyclePaneCloseAnimation => Some(choice_ring(
+                "Pane close animation",
+                PaneAnimationStyle::all(),
+                config.animations.pane_close_style,
                 PaneAnimationStyle::label,
             )),
             Self::CycleSidebarTabStyle => Some(choice_ring(
@@ -492,10 +500,15 @@ impl SettingsAction {
                 index,
                 &mut config.animations.session,
             ),
-            Self::CyclePaneAnimation => assign_choice(
+            Self::CyclePaneOpenAnimation => assign_choice(
                 PaneAnimationStyle::all(),
                 index,
-                &mut config.animations.pane_style,
+                &mut config.animations.pane_open_style,
+            ),
+            Self::CyclePaneCloseAnimation => assign_choice(
+                PaneAnimationStyle::all(),
+                index,
+                &mut config.animations.pane_close_style,
             ),
             Self::CycleSidebarTabStyle => {
                 assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)
@@ -557,7 +570,8 @@ impl SettingsAction {
             {
                 Some("Unsupported in this mode")
             }
-            Self::CyclePaneAnimation
+            Self::CyclePaneOpenAnimation
+            | Self::CyclePaneCloseAnimation
             | Self::ToggleWorkspaceAnimation
             | Self::CycleSessionAnimation
                 if !config.animations.enabled =>
@@ -886,7 +900,7 @@ mod tests {
         assert!(SettingsAction::CycleCopyOnSelect.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleMiddleClickPaste.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleRightClickClipboard.shows_choice_ellipsis(&config));
-        assert!(SettingsAction::CyclePaneAnimation.shows_choice_ellipsis(&config));
+        assert!(SettingsAction::CyclePaneOpenAnimation.shows_choice_ellipsis(&config));
         assert!(SettingsAction::ChooseTitlebar.shows_choice_ellipsis(&config));
         assert!(SettingsAction::ChooseWorkbar.shows_choice_ellipsis(&config));
         assert!(SettingsAction::CycleStartupMode.shows_choice_ellipsis(&config));

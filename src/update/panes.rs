@@ -753,7 +753,10 @@ mod tests {
         let (id, generation, original) = {
             let state = backend.state_mut();
             let id = state.focused_pane().expect("fresh pane focus");
-            state.config.animations.pane_style = crate::layout::anim::PaneAnimationStyle::Scale;
+            state.config.animations.pane_open_style =
+                crate::layout::anim::PaneAnimationStyle::Scale;
+            state.config.animations.pane_close_style =
+                crate::layout::anim::PaneAnimationStyle::Scale;
             state.config.animations.geometry_duration = std::time::Duration::from_millis(300);
             let animations = state.config.animations;
             let pane = crate::pane::lifecycle::find_pane_mut(state, id).expect("fresh pane");
@@ -771,7 +774,10 @@ mod tests {
             .expect("finish open");
         {
             let state = backend.state_mut();
-            state.config.animations.pane_style = crate::layout::anim::PaneAnimationStyle::Portal;
+            state.config.animations.pane_open_style =
+                crate::layout::anim::PaneAnimationStyle::Portal;
+            state.config.animations.pane_close_style =
+                crate::layout::anim::PaneAnimationStyle::Portal;
             state.config.animations.close_duration = std::time::Duration::from_millis(800);
             let pane = crate::pane::lifecycle::find_pane(state, id).expect("finished pane");
             assert!(!pane.opening);

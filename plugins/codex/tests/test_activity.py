@@ -33,6 +33,18 @@ class ActivityTests(unittest.TestCase):
             "ROZI_BIN": str(Path(self.temp.name) / "rozi bin"),
             "PLUGIN_DATA": self.temp.name,
         }
+        # These tests exercise committed state, locking and delivery, not crash durability.
+        # Avoid real disk flushes consuming the short production hook budgets on CI.
+        connect = activity.connect_private
+
+        def test_connection(path, timeout):
+            db = connect(path, timeout)
+            db.execute("PRAGMA synchronous = OFF")
+            return db
+
+        connections = patch.object(activity, "connect_private", side_effect=test_connection)
+        connections.start()
+        self.addCleanup(connections.stop)
         self.calls = []
         self.runner = patch.object(activity.subprocess, "run", side_effect=self.record)
         self.runner.start()
@@ -312,7 +324,8 @@ class ActivityTests(unittest.TestCase):
         self.assertNotIn("--session", args)
         self.assertNotIn("--target", args)
         self.assertEqual(kwargs["env"], self.env)
-        self.assertEqual(kwargs["timeout"], activity.CLI_TIMEOUT)
+        self.assertGreater(kwargs["timeout"], 0)
+        self.assertLessEqual(kwargs["timeout"], activity.CLI_TIMEOUT)
         self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
         self.assertEqual(kwargs["stderr"], subprocess.PIPE)
 

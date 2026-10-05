@@ -298,7 +298,8 @@ fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
 fn breathing_config(backend: &mut TestBackend<AppRoot>, paint: rozi::state::PaneAlertPaint) {
     let state = backend.state_mut();
     state.config.animations.enabled = true;
-    state.config.animations.pane_style = rozi::layout::anim::PaneAnimationStyle::Off;
+    state.config.animations.pane_open_style = rozi::layout::anim::PaneAnimationStyle::Off;
+    state.config.animations.pane_close_style = rozi::layout::anim::PaneAnimationStyle::Off;
     state.theme.status.error = Color::rgb(255, 0, 1);
     state.config.pane.highlight_focused_border = false;
     state.config.pane.alert_paint = paint;

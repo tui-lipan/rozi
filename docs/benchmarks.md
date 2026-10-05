@@ -173,6 +173,32 @@ cargo bench --bench terminal_ingest -- 'sgr_heavy' --baseline before-sgr
 `--save-baseline` replaces an existing baseline with the same name. Use a new name when you need to
 keep the earlier measurement.
 
+## Particle preparation probe
+
+```bash
+cargo test --locked --release --lib particle_frame_cost -- --ignored --nocapture
+```
+
+This optional timing probe measures 2,000 prepared particle frames in a 200×60 effect scope,
+with a 156×24 pane and a fixed seed, sweeping the close progress in 100 steps. It excludes
+trajectory setup, application view/layout, cell compositing, and terminal I/O. Compare it with
+the same toolchain and profile before and after a particle change; it is not whole-client CPU
+usage. The ordinary particle tests also verify that paint-only frames advance the effect without
+calling the component's `view()`.
+
+## Reveal compositing probe
+
+```bash
+cargo test --locked --release --lib reveal_frame_cost -- --ignored --nocapture
+```
+
+This optional paired probe compares the original per-cell Portal and Scan calculations with
+prepared frame constants. Both paths composite the same 200×60 cells against a backdrop over
+100 progress samples. It includes cell construction and compositing, and excludes application
+view/layout, renderer traversal, and terminal I/O. Run on the same idle machine and profile;
+the result is not whole-client CPU usage. The ordinary reveal tests compare both paths cell
+for cell and verify pane and session masks advance without calling the component's `view()`.
+
 ## Linux process-memory harness
 
 `tools/memory-matrix.sh` is an opt-in Linux harness for release builds. It reads PSS and RSS from

@@ -66,7 +66,8 @@ fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
 fn configure_reveal(state: &mut rozi::state::State, style: PaneAnimationStyle) {
     state.animation = GeometryAnimation::Spawn;
     state.config.animations.enabled = true;
-    state.config.animations.pane_style = style;
+    state.config.animations.pane_open_style = style;
+    state.config.animations.pane_close_style = style;
     state.config.animations.geometry_duration = Duration::from_millis(200);
     state.config.animations.open_delay = Duration::ZERO;
     state.config.pane.show_workbar = false;
@@ -831,7 +832,7 @@ fn frame_rate_reload_keeps_scale_close_retention_at_client_cadence() {
                 rozi::config::load_config();
                 std::fs::write(
                     &path,
-                    "frame_rate = 480\n[animations]\npane_style = \"scale\"\nclose_ms = 120\n",
+                    "frame_rate = 480\n[animations]\npane_open_style = \"scale\"\npane_close_style = \"scale\"\nclose_ms = 120\n",
                 )
                 .unwrap();
                 backend.dispatch(rozi::Msg::ConfigFileChanged).unwrap();
@@ -863,6 +864,235 @@ fn frame_rate_reload_keeps_scale_close_retention_at_client_cadence() {
                 std::fs::write(path, original).unwrap();
             } else {
                 std::fs::remove_file(path).unwrap();
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn particles_keep_terminal_geometry_and_finish_both_directions() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            for mut backend in [
+                backend(PaneAnimationStyle::Particles),
+                popup_backend(PaneAnimationStyle::Particles),
+            ] {
+                backend.set_viewport(viewport);
+                let popup = backend.state().popup.is_some();
+                let id = if popup { POPUP_PANE_ID } else { 11 };
+                backend.render();
+                let key = pane_key(id);
+                let initial = backend.rect_of_key(&key).expect("pane");
+                if popup {
+                    backend.state_mut().popup.as_mut().unwrap().opening = false;
+                } else {
+                    begin_arrival(&mut backend);
+                }
+                backend.render();
+                backend.advance(Duration::from_millis(100));
+                assert_eq!(backend.rect_of_key(&key), Some(initial));
+                let text = rect_text(&mut backend, viewport);
+                assert!(
+                    text.chars().any(|c| "·•▪⠶".contains(c)),
+                    "no particles: {text}"
+                );
+                backend.advance(Duration::from_millis(300));
+                assert_eq!(backend.rect_of_key(&key), Some(initial));
+                assert!(rect_text(&mut backend, initial).contains(if popup {
+                    "popup-original"
+                } else {
+                    "abcdefgh"
+                }));
+                if !popup {
+                    backend.state_mut().current_mut().focused_pane = Some(11);
+                    backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
+                }
+                backend
+                    .dispatch(if popup {
+                        rozi::Msg::ClosePopup
+                    } else {
+                        rozi::Msg::RunAction(rozi::input::Action::Close)
+                    })
+                    .unwrap();
+                backend.render();
+                let closing_rect = backend.rect_of_key(&key).expect("retained close");
+                backend.advance(Duration::from_millis(300));
+                assert_eq!(backend.rect_of_key(&key), Some(closing_rect));
+                assert!(
+                    rect_text(&mut backend, viewport)
+                        .chars()
+                        .any(|c| "·•▪⠶".contains(c))
+                );
+                backend.advance(Duration::from_millis(700));
+                assert!(
+                    !rect_text(&mut backend, viewport)
+                        .chars()
+                        .any(|c| "·•▪⠶".contains(c))
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn every_open_style_can_close_with_a_different_effect() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for &open in PaneAnimationStyle::all() {
+                for &close in PaneAnimationStyle::all() {
+                    let mut backend = single_pane_backend(open);
+                    let viewport = Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 30,
+                    };
+                    backend.set_viewport(viewport);
+                    {
+                        let state = backend.state_mut();
+                        state.config.animations.pane_close_style = close;
+                        state.config.confirm.close_pane = false;
+                        state.current_mut().workspaces[0].panes[0].opening = true;
+                    }
+                    backend.render();
+                    begin_arrival(&mut backend);
+                    backend.advance(Duration::from_millis(300));
+                    assert!(
+                        rect_text(&mut backend, viewport).contains("closing-pane-content"),
+                        "{open:?} never opened"
+                    );
+                    backend
+                        .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                        .unwrap();
+                    backend.render();
+                    if close != PaneAnimationStyle::Off {
+                        assert!(
+                            rect_text(&mut backend, viewport).contains("closing-pane-content"),
+                            "{open:?} -> {close:?} skipped the start of the close"
+                        );
+                        backend.advance(Duration::from_millis(60));
+                        assert!(
+                            backend.state().current().workspaces[0]
+                                .panes
+                                .iter()
+                                .any(|p| p.id == 11 && p.closing),
+                            "{open:?} -> {close:?} pruned early"
+                        );
+                    }
+                    let timeout = retained_pane_timeout(
+                        backend.state().config.animations,
+                        backend.state().runtime_frame_rate(),
+                    );
+                    backend.advance(timeout + Duration::from_millis(100));
+                    // TestBackend does not execute returned async commands. Deliver the same
+                    // generation-fenced prune that the runtime schedules after the close.
+                    if let Some(pane) = backend.state().current().workspaces[0]
+                        .panes
+                        .iter()
+                        .find(|p| p.id == 11)
+                    {
+                        let generation = pane.pty_generation;
+                        backend
+                            .dispatch(rozi::Msg::PruneClosed(
+                                backend.state().runtime_epoch,
+                                11,
+                                generation,
+                            ))
+                            .unwrap();
+                    }
+                    assert!(
+                        !backend.state().current().workspaces[0]
+                            .panes
+                            .iter()
+                            .any(|p| p.id == 11),
+                        "{open:?} -> {close:?} was not pruned"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn mixed_styles_preserve_terminal_node_identity_and_survivor_focus() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for &open in PaneAnimationStyle::all() {
+                for &close in PaneAnimationStyle::all() {
+                    if close == PaneAnimationStyle::Off {
+                        continue;
+                    }
+                    let mut backend = backend(open);
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 30,
+                    });
+                    {
+                        let state = backend.state_mut();
+                        state.config.animations.pane_close_style = close;
+                        state.config.confirm.close_pane = false;
+
+                        for pane in &mut state.current_mut().workspaces[0].panes {
+                            pane.opening = false;
+                        }
+                        state.current_mut().focused_pane = Some(11);
+                        state.current_mut().workspaces[0].focused_pane = Some(11);
+                    }
+                    backend.render();
+                    backend.advance(Duration::from_millis(400));
+                    let closing_key = backend.state().current().workspaces[0].panes[1]
+                        .keys
+                        .terminal
+                        .clone();
+                    let survivor_key = backend.state().current().workspaces[0].panes[0]
+                        .keys
+                        .terminal
+                        .clone();
+                    assert!(backend.focus_key(&survivor_key));
+                    let survivor_id = backend.focused().unwrap();
+                    assert!(backend.focus_key(&closing_key));
+                    let closing_id = backend.focused().unwrap();
+                    backend
+                        .dispatch(rozi::Msg::RunAction(rozi::input::Action::Close))
+                        .unwrap();
+                    backend.render();
+                    assert!(backend.focus_key(&survivor_key));
+                    assert_eq!(
+                        backend.focused(),
+                        Some(survivor_id),
+                        "{open:?} -> {close:?}: survivor remounted"
+                    );
+                    // Closing terminals intentionally stop accepting focus/input. TestBackend's raw
+                    // focus setter lets us inspect the saved generational node id without re-enabling it.
+                    backend.set_focused(closing_id);
+                    let snapshot = backend.capture_ui_snapshot();
+                    assert!(
+                        snapshot
+                            .widgets
+                            .iter()
+                            .any(|widget| widget.key.as_ref() == Some(&closing_key)
+                                && widget.focused),
+                        "{open:?} -> {close:?}: closing terminal remounted"
+                    );
+                    backend.set_focused(survivor_id);
+                }
             }
         })
         .unwrap()

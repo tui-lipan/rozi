@@ -126,8 +126,8 @@ the old one returns to its place.
 
 ## Pane open and close animation styles
 
-Set `[animations].pane_style`, or use **General › Animations › Pane open/close** in Settings, to
-choose how panes appear and disappear.
+Set `[animations].pane_open_style` and `pane_close_style`, or use **General › Animations ›
+Pane open** and **Pane close** in Settings, to choose how panes appear and disappear independently.
 
 | Style | Effect |
 | --- | --- |
@@ -136,8 +136,9 @@ choose how panes appear and disappear.
 | `slide` | A tiled pane slides in from its split edge, clipped to its tile, while neighbors spring into their new size. Floating panes use `scale`. |
 | `portal` | The pane's contents appear radially from the center, ringed by sparse punctuation. |
 | `scan` | The pane's contents appear along a diagonal sweep from the top-left corner. |
+| `particles` | Motes gather into place on open. Closing fragments burst outward, fall under gravity, and fade at different times. |
 
-`portal` and `scan` work for tiled and floating panes, including popups. The pane keeps its final
+`portal`, `scan`, and `particles` work for tiled and floating panes, including popups. The pane keeps its final
 size throughout, so the program inside does not see a resize on every frame.
 
 Closing panes finish their animation above the remaining tiles while those tiles expand underneath.

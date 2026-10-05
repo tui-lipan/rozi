@@ -43,3 +43,11 @@ private styling helpers only to share three lines.
 
 Geometry animation is app-driven. Position and opacity may animate; terminal dimensions snap to
 avoid repeated PTY resize and SIGWINCH reflow.
+
+Prefer the least expensive animation path that preserves the visuals. Colour, tint, opacity,
+and cell masks should use paint-only framework animation or render-time effects rather than
+view-resolved `Context::transition` values. Keep view/layout ticks for values that actually move
+or resize layout. Prepare frame-constant effect work once per frame, stop requesting ticks at
+rest, and preserve timing, curves, layering, image handling, and terminal allocation. Verify
+appearance and paint-only behaviour before lowering cadence; a lower frame rate is a visual
+tradeoff, not an automatic optimization. Reusable missing primitives belong in `tui-lipan`.

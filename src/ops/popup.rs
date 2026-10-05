@@ -178,12 +178,13 @@ fn restore_focus(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
     // Portal and Scan reveal in place. Off has no collapsed geometry. The kind is the lifecycle
-    // snapshot, so a pane_style reload does not resize a transition already running.
+    // snapshot, so a pane_open_style reload does not resize a transition already running.
     let spec = crate::layout::anim::pane_animation_for_pane(ctx.state.config.animations, pane);
     let full_size = matches!(
         spec.kind,
         crate::layout::anim::PaneAnimationStyle::Portal
             | crate::layout::anim::PaneAnimationStyle::Scan
+            | crate::layout::anim::PaneAnimationStyle::Particles
             | crate::layout::anim::PaneAnimationStyle::Off
     );
     let target = if (pane.opening || pane.closing) && !full_size {
@@ -196,24 +197,30 @@ pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> 
         target,
         crate::view::animation::transition_config_for(ctx, pane, false, target),
     );
-    Some((
+    let element = crate::view::pane_element(
+        ctx,
+        pane,
         rect,
-        crate::view::pane_element(
-            ctx,
-            pane,
-            rect,
-            Some(POPUP_PANE_ID),
-            Some("P"),
-            crate::view::PaneKind::Popup,
-            crate::view::PaneMerge::default(),
-            crate::view::animation::pane_reveal_progress(
-                ctx,
-                pane,
-                format!("rozi-popup-pane-reveal-{}", pane.id),
-            ),
-            false,
-            crate::view::animation::pane_fade(ctx, pane),
-        ),
+        Some(POPUP_PANE_ID),
+        Some("P"),
+        crate::view::PaneKind::Popup,
+        crate::view::PaneMerge::default(),
+        false,
+        crate::view::animation::pane_fade(ctx, pane),
+    );
+    let motion = if spec.kind == crate::layout::anim::PaneAnimationStyle::Particles {
+        crate::view::animation::pane_paint_motion(ctx, pane)
+    } else {
+        crate::layout::anim::PanePaintMotion::Fixed(1.0)
+    };
+    Some(crate::view::pane_particles::particle_pane(
+        element,
+        rect,
+        motion,
+        pane.closing,
+        u64::from(pane.id),
+        "rozi-popup-presentation".into(),
+        &ctx.state.theme,
     ))
 }
 
@@ -305,7 +312,9 @@ mod tests {
                 };
                 {
                     let state = backend.state_mut();
-                    state.config.animations.pane_style =
+                    state.config.animations.pane_open_style =
+                        crate::layout::anim::PaneAnimationStyle::Off;
+                    state.config.animations.pane_close_style =
                         crate::layout::anim::PaneAnimationStyle::Off;
                     state.config.animations.open_delay = std::time::Duration::ZERO;
                     state.config.pane.show_titles = false;
@@ -354,10 +363,10 @@ mod tests {
             .expect("off popup test thread panicked");
     }
 
-    /// A popup keeps the geometry of the snapshot it opened with. Reloading `pane_style` to Scale
+    /// A popup keeps the geometry of the snapshot it opened with. Reloading `pane_open_style` to Scale
     /// must not pull an in-flight Portal reveal down to the close inset.
     #[test]
-    fn a_portal_popup_keeps_its_full_rect_when_pane_style_changes() {
+    fn a_portal_popup_keeps_its_full_rect_when_pane_open_style_changes() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -377,7 +386,9 @@ mod tests {
                 };
                 {
                     let state = backend.state_mut();
-                    state.config.animations.pane_style =
+                    state.config.animations.pane_open_style =
+                        crate::layout::anim::PaneAnimationStyle::Portal;
+                    state.config.animations.pane_close_style =
                         crate::layout::anim::PaneAnimationStyle::Portal;
                     state.config.pane.show_titles = false;
                     state.config.pane.show_workbar = false;
@@ -385,7 +396,9 @@ mod tests {
                     popup.opening = true;
                     popup.terminal_active = true;
                     popup.begin_open_animation(state.config.animations);
-                    state.config.animations.pane_style =
+                    state.config.animations.pane_open_style =
+                        crate::layout::anim::PaneAnimationStyle::Scale;
+                    state.config.animations.pane_close_style =
                         crate::layout::anim::PaneAnimationStyle::Scale;
                     state.popup = Some(popup);
                 }

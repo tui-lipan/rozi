@@ -67,7 +67,20 @@ pub(super) fn apply_animations(
     warnings: &mut Vec<String>,
 ) {
     apply_animation_durations(target, &raw);
-    apply_animation_style(target, raw.pane_style.as_deref(), warnings);
+    apply_animation_style(
+        &mut target.pane_open_style,
+        raw.pane_open_style.as_deref().or(raw.pane_style.as_deref()),
+        "pane_open_style",
+        warnings,
+    );
+    apply_animation_style(
+        &mut target.pane_close_style,
+        raw.pane_close_style
+            .as_deref()
+            .or(raw.pane_style.as_deref()),
+        "pane_close_style",
+        warnings,
+    );
     apply_session_animation(target, raw.session.as_ref(), warnings);
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
@@ -75,15 +88,18 @@ pub(super) fn apply_animations(
 }
 
 fn apply_animation_style(
-    target: &mut WindowAnimationConfig,
-    pane_style: Option<&str>,
+    target: &mut PaneAnimationStyle,
+    value: Option<&str>,
+    key: &str,
     warnings: &mut Vec<String>,
 ) {
-    let Some(pane_style) = pane_style else { return };
-    match PaneAnimationStyle::parse(pane_style) {
-        Some(style) => target.pane_style = style,
+    let Some(value) = value else {
+        return;
+    };
+    match PaneAnimationStyle::parse(value) {
+        Some(style) => *target = style,
         None => warnings.push(format!(
-            "Ignored unknown animations.pane_style \"{pane_style}\" (expected one of: off, scale, slide, portal, scan)"
+            "Ignored unknown animations.{key} \"{value}\" (expected one of: off, scale, slide, portal, scan, particles)"
         )),
     }
 }
@@ -332,24 +348,63 @@ mod tests {
     }
 
     #[test]
-    fn animations_apply_pane_style_and_warn_on_an_unknown_one() {
+    fn legacy_pane_style_is_the_fallback_for_each_action() {
+        for (source, open, close) in [
+            (
+                "pane_style = \"off\"",
+                PaneAnimationStyle::Off,
+                PaneAnimationStyle::Off,
+            ),
+            (
+                "pane_style = \"portal\"\npane_open_style = \"slide\"",
+                PaneAnimationStyle::Slide,
+                PaneAnimationStyle::Portal,
+            ),
+            (
+                "pane_style = \"portal\"\npane_close_style = \"particles\"",
+                PaneAnimationStyle::Portal,
+                PaneAnimationStyle::Particles,
+            ),
+            (
+                "pane_style = \"off\"\npane_open_style = \"scale\"\npane_close_style = \"scan\"",
+                PaneAnimationStyle::Scale,
+                PaneAnimationStyle::Scan,
+            ),
+        ] {
+            let raw = toml::from_str(source).unwrap();
+            let mut animations = WindowAnimationConfig::default();
+            let mut warnings = Vec::new();
+            apply_animations(&mut animations, raw, &mut warnings);
+            assert_eq!(
+                (animations.pane_open_style, animations.pane_close_style),
+                (open, close)
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+    }
+
+    #[test]
+    fn animations_apply_pane_open_style_and_warn_on_an_unknown_one() {
         let mut animations = WindowAnimationConfig::default();
         let mut warnings = Vec::new();
         for style in PaneAnimationStyle::all().iter().copied() {
             let token = style.id().to_ascii_uppercase();
-            let raw: AnimationFileConfig =
-                toml::from_str(&format!("pane_style = \"{token}\"")).expect("config parses");
+            let raw: AnimationFileConfig = toml::from_str(&format!(
+                "pane_open_style = \"{token}\"\npane_close_style = \"{token}\""
+            ))
+            .expect("config parses");
             apply_animations(&mut animations, raw, &mut warnings);
-            assert_eq!(animations.pane_style, style);
+            assert_eq!(animations.pane_open_style, style);
+            assert_eq!(animations.pane_close_style, style);
         }
         assert!(warnings.is_empty());
 
         let raw: AnimationFileConfig =
-            toml::from_str("pane_style = \"springy\"").expect("config parses");
+            toml::from_str("pane_open_style = \"springy\"").expect("config parses");
         let mut animations = WindowAnimationConfig::default();
         apply_animations(&mut animations, raw, &mut warnings);
         // An unknown token leaves the default rather than silently disabling pane animation.
-        assert_eq!(animations.pane_style, PaneAnimationStyle::Scale);
+        assert_eq!(animations.pane_open_style, PaneAnimationStyle::Scale);
         assert_eq!(warnings.len(), 1);
         assert!(
             warnings[0].contains("off, scale, slide, portal, scan"),

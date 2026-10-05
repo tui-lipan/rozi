@@ -144,6 +144,9 @@ pub struct State {
     pub session_dim_layer: Cell<(Option<u64>, crate::layout::anim::FadeStage)>,
     /// Last [`Self::session_view_revision`] the view rendered, so the reveal starts exactly once.
     pub session_reveal_seen: Cell<Option<u64>>,
+    pub(crate) session_reveal_started: Cell<Option<std::time::Duration>>,
+    pub(crate) dialog_dim_snapshot: Cell<Option<crate::layout::anim::DimSnapshot>>,
+    pub(crate) scratch_dim_snapshot: Cell<Option<crate::layout::anim::DimSnapshot>>,
     /// Whether the frame being rendered is the first to show a new session view. Focus chrome
     /// snaps on that frame: its keyed transitions are named by pane id and workspace index, which
     /// repeat across sessions, so without the snap the incoming session's chrome would fade from
@@ -502,6 +505,11 @@ impl State {
             // step with. Captured here so a reload mid-transition cannot retime them either.
             self.pane_event_animation = Some(crate::layout::anim::PaneEventAnimationSnapshot {
                 duration: self.config.animations.geometry_duration,
+                kind: self
+                    .config
+                    .animations
+                    .selected_animation(animation == GeometryAnimation::Close)
+                    .kind,
             });
         }
     }
@@ -541,6 +549,9 @@ impl State {
             dim_targets: Cell::new((false, false)),
             session_dim_layer: Cell::new((None, crate::layout::anim::FadeStage::Running)),
             session_reveal_seen: Cell::new(None),
+            session_reveal_started: Cell::new(None),
+            dialog_dim_snapshot: Cell::new(None),
+            scratch_dim_snapshot: Cell::new(None),
             session_view_changed: Cell::new(false),
             screenshot: ScreenshotState::default(),
             recording_mark: None,

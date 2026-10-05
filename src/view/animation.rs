@@ -28,12 +28,17 @@ pub(crate) fn slide_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -
         | anim::PaneAnimationStyle::Scale
         | anim::PaneAnimationStyle::Portal
         | anim::PaneAnimationStyle::Scan
-        | anim::PaneAnimationStyle::Slide => return 1.0,
+        | anim::PaneAnimationStyle::Particles
+        | anim::PaneAnimationStyle::Slide => {
+            ctx.transition(key, 1.0, anim::instant_transition());
+            return 1.0;
+        }
     }
     let (target, enabled) = open_close_target(pane, animations);
     // Disabled means no motion, not a pane parked outside its own tile: snap to deployed rather
     // than letting an instant transition land the target of 0.0 and hide it.
     if !enabled {
+        ctx.transition(key, 1.0, anim::instant_transition());
         return 1.0;
     }
     ctx.transition(key, target, spec.transition(pane.closing))
@@ -72,37 +77,82 @@ pub(crate) fn scale_progress(ctx: &Context<AppRoot>, pane: &Pane, key: String) -
         anim::PaneAnimationStyle::Off
         | anim::PaneAnimationStyle::Slide
         | anim::PaneAnimationStyle::Portal
-        | anim::PaneAnimationStyle::Scan => return 1.0,
+        | anim::PaneAnimationStyle::Scan
+        | anim::PaneAnimationStyle::Particles => {
+            ctx.transition(key, 1.0, anim::instant_transition());
+            return 1.0;
+        }
     }
     let (target, enabled) = open_close_target(pane, animations);
     if !enabled {
+        ctx.transition(key, 1.0, anim::instant_transition());
         return 1.0;
     }
     ctx.transition(key, target, spec.transition(pane.closing))
 }
 
-/// Progress for a full-size pane paint effect. The same keyed transition runs in reverse when a
-/// pane closes, while its rectangle remains at the destination for the whole effect.
-pub(crate) fn pane_reveal_progress(
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    key: impl Into<tui_lipan::prelude::Key>,
-) -> f32 {
+/// Progress for a full-size pane paint effect, sampled without a view transition.
+/// Its rectangle remains at the destination while the renderer advances the mask.
+pub(crate) fn pane_reveal_progress(ctx: &Context<AppRoot>, pane: &Pane) -> f32 {
+    if anim::pane_reveal_effects_for_pane(ctx.state.config.animations, pane) {
+        pane_paint_motion(ctx, pane).sample(ctx.elapsed()).0
+    } else {
+        1.0
+    }
+}
+
+/// Pane masks sample the renderer's clock, preserving their lifecycle snapshot and cadence.
+/// Lifecycle changes set an anchor once; unrelated updates never restart it.
+pub(crate) fn pane_paint_motion(ctx: &Context<AppRoot>, pane: &Pane) -> anim::PanePaintMotion {
     let animations = ctx.state.config.animations;
-    let spec = anim::pane_animation_for_pane(animations, pane);
-    match spec.kind {
-        anim::PaneAnimationStyle::Portal | anim::PaneAnimationStyle::Scan => {}
-        anim::PaneAnimationStyle::Off
-        | anim::PaneAnimationStyle::Scale
-        | anim::PaneAnimationStyle::Slide => return 1.0,
+    let previous = pane.paint_clock.get();
+    let clock = match previous {
+        Some(clock) if clock.opening == pane.opening && clock.closing == pane.closing => clock,
+        _ => {
+            let clock = anim::PanePaintClock {
+                opening: pane.opening,
+                closing: pane.closing,
+                started_at: ctx.elapsed(),
+                animating: pane.closing
+                    || anim::pane_opening_transition(pane)
+                    || previous.is_some_and(|clock| clock.opening),
+            };
+            pane.paint_clock.set(Some(clock));
+            clock
+        }
+    };
+    if !anim::lifecycle_motion_enabled(animations, pane) {
+        return anim::PanePaintMotion::Fixed(if pane.closing { 0.0 } else { 1.0 });
     }
-    let (target, enabled) = open_close_target(pane, animations);
-    if !enabled {
-        // An inactive close can still be retained while the scratchpad retracts. Its mask must
-        // stay closed even without a whole-pane fade; inactive opens appear immediately.
-        return if pane.closing { 0.0 } else { 1.0 };
+    if pane.opening && !pane.closing {
+        return anim::PanePaintMotion::Fixed(0.0);
     }
-    ctx.transition(key, target, spec.transition(pane.closing))
+    if !clock.animating {
+        return anim::PanePaintMotion::Fixed(1.0);
+    }
+    let motion = anim::PanePaintMotion::Timed {
+        started_at: clock.started_at,
+        transition: anim::pane_animation_for_pane(animations, pane).transition(pane.closing),
+        closing: pane.closing,
+        interval: std::time::Duration::from_nanos(
+            1_000_000_000
+                / u64::from(ctx.state.runtime_frame_rate().clamp(
+                    1,
+                    if anim::pane_animation_for_pane(animations, pane).kind
+                        == anim::PaneAnimationStyle::Particles
+                    {
+                        30
+                    } else {
+                        480
+                    },
+                )),
+        ),
+    };
+    if !pane.closing && motion.sample(ctx.elapsed()).1 {
+        anim::PanePaintMotion::Fixed(1.0)
+    } else {
+        motion
+    }
 }
 
 /// Preserve the fade's current value when a pane moves from its live canvas into the
@@ -327,6 +377,12 @@ pub(crate) fn chrome_paint_with_frame_rate(
     }
 }
 
+fn paint_frame_interval(ctx: &Context<AppRoot>) -> std::time::Duration {
+    std::time::Duration::from_nanos(
+        1_000_000_000 / u64::from(ctx.state.runtime_frame_rate().max(1)),
+    )
+}
+
 /// How far a newly shown session has taken over the screen.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SessionReveal {
@@ -334,7 +390,7 @@ pub(crate) struct SessionReveal {
     /// beneath it, heading for `1.0`. Below 1 only while a fade reveal is running.
     pub(crate) opacity: Fade,
     /// How far the portal has opened, `1.0` when there is no portal to draw.
-    pub(crate) portal: f32,
+    pub(crate) portal: anim::PanePaintMotion,
 }
 
 /// The reveal of the session content layer, for the configured [`anim::SessionAnimationStyle`].
@@ -347,7 +403,6 @@ pub(crate) struct SessionReveal {
 ///
 /// [`State::session_view_revision`]: crate::state::State::session_view_revision
 pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
-    const KEY: &str = "rozi-session-reveal";
     let revision = ctx.state.session_view_revision;
     let previous = ctx.state.session_reveal_seen.replace(Some(revision));
     let changed = previous.is_some_and(|seen| seen != revision);
@@ -361,15 +416,24 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
         },
     );
     if changed {
-        // Seeded even when the reveal is off: retargeting from a distinct value is what applies
-        // the instant config, so a reveal still in flight when animations were disabled stops
-        // rather than finishing on its old duration (see `workspace_offset`).
-        ctx.transition(KEY, 0.0, anim::instant_transition());
+        // Anchor the incoming session once. Disabling animations makes the sampled duration
+        // instant, so an in-flight reveal immediately settles.
+        ctx.state.session_reveal_started.set(Some(ctx.elapsed()));
     }
     let animations = ctx.state.config.animations;
     let config =
         anim::session_reveal_transition(animations).unwrap_or_else(anim::instant_transition);
-    let progress = ctx.transition(KEY, 1.0, config);
+    let motion = if let Some(started_at) = ctx.state.session_reveal_started.get() {
+        anim::PanePaintMotion::Timed {
+            started_at,
+            transition: config,
+            closing: false,
+            interval: paint_frame_interval(ctx),
+        }
+    } else {
+        anim::PanePaintMotion::Fixed(1.0)
+    };
+    let progress = motion.sample(ctx.elapsed()).0;
     match animations.session {
         anim::SessionAnimationStyle::Off | anim::SessionAnimationStyle::Fade => SessionReveal {
             opacity: Fade {
@@ -378,11 +442,11 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
                 transition: config,
                 stage,
             },
-            portal: 1.0,
+            portal: anim::PanePaintMotion::Fixed(1.0),
         },
         anim::SessionAnimationStyle::Portal => SessionReveal {
             opacity: Fade::settled(),
-            portal: progress,
+            portal: motion,
         },
     }
 }
@@ -390,12 +454,11 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
 /// The screenshot flash for this frame: what it covers and how strongly it tints, or `None` at rest.
 ///
 /// Restarted from its peak on the first frame after each screenshot, the same way
-/// [`session_reveal`] restarts. The key is only read while a flash has ever run, and then on every
-/// frame, so a finished flash rests at 1.0 rather than being recreated at its target.
+/// [`session_reveal`] restarts. Its clock is sampled only on view updates; Animated owns the
+/// intermediate paints. Two bounded refreshes hand over its target and restore the normal tint.
 pub(crate) fn screenshot_flash(
     ctx: &Context<AppRoot>,
 ) -> Option<(crate::state::ScreenshotTarget, f32)> {
-    const KEY: &str = "rozi-screenshot-flash";
     let flash = ctx.state.screenshot.flash?;
     if !anim::screenshot_flash_enabled(ctx.state.config.animations) {
         return None;
@@ -407,11 +470,24 @@ pub(crate) fn screenshot_flash(
         .replace(Some(flash.revision));
     let restarted = previous != Some(flash.revision);
     if restarted {
-        ctx.transition(KEY, 0.0, anim::instant_transition());
+        ctx.state.screenshot.flash_started.set(ctx.elapsed());
+        // The tint needs a handoff even if the flash is currently suppressed by a dim/reveal,
+        // or its layer already has the peak opacity and emits no transition-end callback.
+        ctx.link()
+            .send(crate::Msg::SchedulePaintRefresh(paint_frame_interval(ctx)));
+        ctx.link()
+            .send(crate::Msg::SchedulePaintRefresh(anim::SCREENSHOT_FLASH));
     }
     let stage = &ctx.state.screenshot.flash_stage;
     stage.set(anim::FadeStage::next(restarted, stage.get()));
-    let progress = ctx.transition(KEY, 1.0, anim::screenshot_flash_transition());
+    let progress = anim::PanePaintMotion::Timed {
+        started_at: ctx.state.screenshot.flash_started.get(),
+        transition: anim::screenshot_flash_transition(),
+        closing: false,
+        interval: paint_frame_interval(ctx),
+    }
+    .sample(ctx.elapsed())
+    .0;
     (progress < 1.0).then_some((flash.target, anim::SCREENSHOT_FLASH_PEAK * (1.0 - progress)))
 }
 
@@ -475,8 +551,6 @@ impl Fade {
 pub(crate) struct LayerFade {
     /// The opacity handed to the `Animated`.
     pub opacity: f32,
-    /// The opacity the layer shows this frame, for cells painted by hand to match it.
-    pub shown: f32,
     pub color: Color,
     pub transition: TransitionConfig,
 }
@@ -487,7 +561,6 @@ impl LayerFade {
         let (opacity, transition) = fade.staged();
         Self {
             opacity,
-            shown: fade.current,
             color,
             transition,
         }
@@ -905,6 +978,25 @@ mod tests {
         });
     }
 
+    #[test]
+    fn disabling_an_in_flight_session_fade_settles_immediately() {
+        in_stack(|| {
+            let mut backend = backend();
+            backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Fade;
+            backend.render();
+            let settled = backgrounds(&backend);
+            backend.state_mut().session_view_revision += 1;
+            backend.render();
+            for _ in 0..5 {
+                backend.advance_frame(Duration::from_millis(10));
+            }
+            assert_ne!(backgrounds(&backend), settled);
+            backend.state_mut().config.animations.enabled = false;
+            backend.render();
+            assert_eq!(backgrounds(&backend), settled);
+        });
+    }
+
     fn fade(current: f32, target: f32, stage: anim::FadeStage) -> super::Fade {
         super::Fade {
             current,
@@ -933,11 +1025,10 @@ mod tests {
             opening.opacity, 0.5,
             "images under the layer dim once, to where the fade ends"
         );
-        assert_eq!(opening.shown, 1.0, "the cells still start undimmed");
         assert_eq!(opening.transition.duration, Duration::from_millis(200));
 
         let midway = super::layer_fade(fade(0.75, 0.5, Running), backdrop, None);
-        assert_eq!((midway.opacity, midway.shown), (0.5, 0.75));
+        assert_eq!(midway.opacity, 0.5);
         assert!(
             midway.transition.duration.is_zero(),
             "later frames snap, so a resize does not animate the layer's height"
@@ -956,7 +1047,7 @@ mod tests {
         assert!(restart.transition.duration.is_zero());
 
         let handoff = super::LayerFade::new(fade(0.8, 1.0, Handoff), backdrop);
-        assert_eq!((handoff.opacity, handoff.shown), (1.0, 0.8));
+        assert_eq!(handoff.opacity, 1.0);
         assert_eq!(handoff.transition.duration, Duration::from_millis(200));
     }
 
@@ -1011,6 +1102,10 @@ mod tests {
                 state.runtime_epoch += 1;
                 state.session_view_revision += 1;
                 backend.render();
+                // TestBackend does not execute Command::after. Deliver the one scheduled
+                // mount handoff explicitly; subsequent opacity frames require no app messages.
+                backend.advance_frame(Duration::from_millis(9));
+                backend.dispatch(crate::Msg::RefreshPaintLayers).unwrap();
                 let animations = backend.state().config.animations;
                 let backdrop = anim::scratch_transition_duration(animations.geometry_duration);
                 backend.advance(backdrop + Duration::from_millis(40));

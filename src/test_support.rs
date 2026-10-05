@@ -230,8 +230,14 @@ pub(crate) fn isolated_env() -> PlatformEnv {
 /// Idempotent and permanent: the first call wins and there is no way to restore the real
 /// directories, because a test that restored them would hand the next test a live write path.
 /// Call it before building anything that can persist - see the module docs.
+///
+/// The config file's directory exists on return, so a test can write the config directly without
+/// depending on an earlier test's save having created it.
 pub fn isolate_user_dirs() -> &'static Path {
     crate::platform::paths::install_process_env_override(isolated_env());
+    if let Some(dir) = crate::config::config_path().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     scratch_root()
 }
 

@@ -819,7 +819,6 @@ fn frame_rate_reload_keeps_scale_close_retention_at_client_cadence() {
             rozi::test_support::isolate_user_dirs();
             let _config = rozi::test_support::lock_config_file();
             let path = rozi::config::config_path();
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             let original = std::fs::read(&path).ok();
             for popup in [false, true] {
                 let mut backend = if popup {

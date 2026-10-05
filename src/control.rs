@@ -2149,6 +2149,14 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
 /// a publisher that has stopped reading is wedged rather than busy.
 const PUBLISH_ACTIVATION_BACKLOG: usize = 32;
 
+/// Clone the reader for a long-lived control stream without the handshake deadline.
+/// Timeout settings may be copied by a transport's `try_clone`, so clear the actual reader.
+fn control_stream_reader(stream: &IpcConnection) -> io::Result<IpcConnection> {
+    let reader = stream.try_clone()?;
+    reader.set_read_timeout(None)?;
+    Ok(reader)
+}
+
 /// Serve one pane's `publish` stream until its publisher goes away.
 ///
 /// The only bidirectional command: after the acknowledgement, the publisher writes one row list
@@ -2161,7 +2169,7 @@ fn run_publish_stream(
     requested_pane: Option<PaneId>,
     extension: Option<crate::config::ExtensionProvenance>,
 ) {
-    let Ok(reader_stream) = stream.try_clone() else {
+    let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
     };
     let Ok(mut writer_stream) = stream.try_clone() else {
@@ -2206,8 +2214,7 @@ fn run_publish_stream(
             return;
         }
     };
-    // A publisher is silent between state changes, and those can be minutes apart.
-    let _ = stream.set_read_timeout(None);
+    // The dedicated reader allows silence between state changes, which can be minutes apart.
     let writer = std::thread::spawn(move || {
         while let Ok(line) = rx.recv() {
             if writer_stream.write_all(line.as_bytes()).is_err() {
@@ -2275,7 +2282,7 @@ fn run_pick_stream(
     tab: Option<String>,
     extension: Option<crate::config::ExtensionProvenance>,
 ) {
-    let Ok(reader_stream) = stream.try_clone() else {
+    let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
     };
     let Ok(mut writer_stream) = stream.try_clone() else {
@@ -2311,8 +2318,6 @@ fn run_pick_stream(
     if !ack_response.ok {
         return;
     }
-
-    let _ = stream.set_read_timeout(None);
 
     // Every reply line goes out, not just the first: actions and tab switches keep the picker
     // open and report again later. The loop ends after the terminal line, or when the picker is
@@ -2691,6 +2696,45 @@ mod tests {
         assert_eq!(mode, 0o777);
 
         let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn control_stream_reader_outlives_the_handshake_deadline() {
+        use crate::platform::ipc::IpcEndpoint;
+        use std::io::{Read, Write};
+
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = IpcEndpoint::at_path(dir.path().join("stream.sock"));
+        let listener = endpoint.bind().unwrap().into_listener();
+        let server = std::thread::spawn(move || {
+            let stream = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(1)))
+                .unwrap();
+            let mut reader = control_stream_reader(&stream).unwrap();
+            let (ready, started) = mpsc::channel();
+            let (result, completed) = mpsc::channel();
+            let reading = std::thread::spawn(move || {
+                ready.send(()).unwrap();
+                let mut byte = [0];
+                result
+                    .send(reader.read_exact(&mut byte).map(|()| byte))
+                    .unwrap();
+            });
+            started.recv().unwrap();
+            (stream, reading, completed)
+        });
+        let mut client = endpoint.connect().unwrap();
+        let (_stream, reading, completed) = server.join().unwrap();
+        let early = completed.recv_timeout(Duration::from_millis(20));
+        client.write_all(b"x").unwrap();
+        drop(client);
+        reading.join().unwrap();
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "idle reader exited: {early:?}"
+        );
+        assert_eq!(completed.recv().unwrap().unwrap(), *b"x");
     }
 
     #[test]

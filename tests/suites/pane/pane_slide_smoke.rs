@@ -23,8 +23,8 @@ const WIDTH: u16 = 40;
 const HEIGHT: u16 = 10;
 
 /// Vertical border columns of the two settled tiles in this fixture, left pane then right pane.
-/// Asserted by [`the_fixture_geometry_is_what_the_other_tests_assume`] so a layout change fails
-/// there with an explanation instead of making the slide assertions quietly meaningless.
+/// Checked by [`assert_fixture_geometry`] at the top of every test that reads it, so a layout change
+/// fails with an explanation instead of making the slide assertions quietly meaningless.
 const SETTLED_BORDERS: [usize; 4] = [0, 22, 24, 39];
 /// First column of the arriving pane's tile.
 const RIGHT_TILE_START: usize = SETTLED_BORDERS[2];
@@ -143,24 +143,23 @@ fn grid(backend: &mut TestBackend<AppRoot>) -> String {
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 
-#[test]
-fn the_fixture_geometry_is_what_the_other_tests_assume() {
-    on_large_stack(|| {
-        let mut backend = backend(PaneAnimationStyle::Slide);
-        begin_arrival(&mut backend);
-        backend.advance(Duration::from_millis(400));
-        assert_eq!(
-            border_columns(&mut backend),
-            SETTLED_BORDERS.to_vec(),
-            "the two tiles moved; the slide assertions below are written against these columns:\n{}",
-            grid(&mut backend)
-        );
-    });
+/// Fail first, and say why, when the fixture no longer settles where [`SETTLED_BORDERS`] says.
+fn assert_fixture_geometry() {
+    let mut backend = backend(PaneAnimationStyle::Slide);
+    begin_arrival(&mut backend);
+    backend.advance(Duration::from_millis(400));
+    assert_eq!(
+        border_columns(&mut backend),
+        SETTLED_BORDERS.to_vec(),
+        "the two tiles moved; the slide assertions are written against these columns:\n{}",
+        grid(&mut backend)
+    );
 }
 
 #[test]
-fn an_opening_pane_starts_entirely_outside_its_tile() {
+fn a_sliding_pane_is_clipped_to_its_tile_and_never_leaks_into_its_neighbour() {
     on_large_stack(|| {
+        assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         backend.render();
         // Still `opening`, so slide progress rests at 0.0: the pane sits a full tile to the right of
@@ -171,14 +170,7 @@ fn an_opening_pane_starts_entirely_outside_its_tile() {
             "a pane that has not started arriving must not be drawn: {columns:?}\n{}",
             grid(&mut backend)
         );
-    });
-}
 
-#[test]
-fn a_sliding_pane_is_clipped_to_its_tile_and_never_leaks_into_its_neighbour() {
-    on_large_stack(|| {
-        let mut backend = backend(PaneAnimationStyle::Slide);
-        backend.render();
         begin_arrival(&mut backend);
         backend.advance(Duration::from_millis(100));
 
@@ -229,6 +221,7 @@ fn a_sliding_pane_is_clipped_to_its_tile_and_never_leaks_into_its_neighbour() {
 #[test]
 fn the_tile_making_room_overshoots_its_new_size_and_settles() {
     on_large_stack(|| {
+        assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         // Start with pane 10 alone, so its rect transition is resting at the full-width tile.
         {
@@ -301,6 +294,7 @@ fn the_tile_making_room_overshoots_its_new_size_and_settles() {
 #[test]
 fn a_slid_pane_is_still_clickable_once_it_has_arrived() {
     on_large_stack(|| {
+        assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         begin_arrival(&mut backend);
         backend.advance(Duration::from_millis(400));
@@ -331,6 +325,7 @@ fn a_slid_pane_is_still_clickable_once_it_has_arrived() {
 #[test]
 fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
     on_large_stack(|| {
+        assert_fixture_geometry();
         // Scale keeps the terminal at its settled allocation while its visible frame grows from the
         // centre. The opening state is retained until Activate, at which point the wrapper is allowed
         // to drop and the pane is already at its final geometry.

@@ -572,6 +572,9 @@ pub(super) fn wrap_palette(
         .child(body)
         .into();
     Modal::new()
+        .animation(crate::view::animation::picker_animation(
+            ctx.state.config.animations,
+        ))
         .width(Length::Px(width))
         .height(Length::Auto)
         .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))

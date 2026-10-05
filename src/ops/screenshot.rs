@@ -112,7 +112,7 @@ pub(crate) fn screenshot_pane(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Save the whole client as the next frame paints it.
 ///
-/// Running this from the palette has already closed it, so that frame no longer draws the palette.
+/// Running this from the palette closes it; capture waits for its retained closing animation.
 /// It would still draw the dim the palette left on everything else, fading out, so until that frame
 /// is taken [`crate::ops::control::ui_screenshot_waiting`] has the view settle it at once.
 pub(crate) fn screenshot_ui(ctx: &mut Context<AppRoot>) -> Update {
@@ -258,6 +258,16 @@ mod tests {
 
     /// Pump until a screenshot reports back, and return its toast: title and body, space-joined.
     fn screenshot_toast(backend: &mut TestBackend<AppRoot>) -> String {
+        backend.render();
+        backend.advance(
+            backend
+                .state()
+                .config
+                .animations
+                .picker
+                .exit_transition()
+                .duration,
+        );
         // The PNG encoder may load a system font on its first use.
         let deadline = Instant::now() + Duration::from_secs(if cfg!(windows) { 30 } else { 10 });
         loop {
@@ -423,92 +433,99 @@ mod tests {
     #[test]
     fn screenshot_ui_from_the_palette_saves_the_ui_as_it_was_before_the_palette_opened() {
         on_large_stack(|| {
-            let dir = tempfile::tempdir().unwrap();
-            let mut backend = backend_writing_to(dir.path());
-            backend.render();
-            let at_rest = backend.capture_frame().to_ansi_text();
+            for style in [
+                crate::layout::anim::PickerAnimationStyle::Fade,
+                crate::layout::anim::PickerAnimationStyle::Portal,
+                crate::layout::anim::PickerAnimationStyle::Scan,
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut backend = backend_writing_to(dir.path());
+                backend.state_mut().config.animations.picker = style;
+                backend.render();
+                let at_rest = backend.capture_frame().to_ansi_text();
 
-            // A script's capture-ui is not the action: it takes the frame without a flash.
-            let (request, reply) = capture_ui_request(CaptureRender::Text);
-            backend.dispatch(request).unwrap();
-            capture_ui_content(&reply);
-            assert_eq!(backend.state().screenshot.flash, None);
+                // A script's capture-ui is not the action: it takes the frame without a flash.
+                let (request, reply) = capture_ui_request(CaptureRender::Text);
+                backend.dispatch(request).unwrap();
+                capture_ui_content(&reply);
+                assert_eq!(backend.state().screenshot.flash, None);
 
-            backend
-                .dispatch(Msg::RunAction(Action::TogglePalette))
-                .unwrap();
-            // Long enough for the dim behind the palette to finish deepening.
-            backend.advance(Duration::from_secs(1));
-            assert!(backend.state().show_palette);
-            assert!(
                 backend
-                    .capture_frame()
-                    .plain_text()
-                    .contains("Search commands")
-            );
+                    .dispatch(Msg::RunAction(Action::TogglePalette))
+                    .unwrap();
+                // Long enough for the dim behind the palette to finish deepening.
+                backend.advance(Duration::from_secs(1));
+                assert!(backend.state().show_palette);
+                assert!(
+                    backend
+                        .capture_frame()
+                        .plain_text()
+                        .contains("Search commands")
+                );
 
-            backend
-                .update_level(Msg::RunAction(Action::ScreenshotUi))
-                .unwrap();
-            assert!(!backend.state().show_palette);
-            // Waiting for the same frame as the screenshot, so they show what it shows.
-            let (ansi, ansi_reply) = capture_ui_request(CaptureRender::Ansi);
-            let (png, png_reply) = capture_ui_request(CaptureRender::Png);
-            backend.update_level(ansi).unwrap();
-            backend.update_level(png).unwrap();
-            let toast = screenshot_toast(&mut backend);
+                backend
+                    .update_level(Msg::RunAction(Action::ScreenshotUi))
+                    .unwrap();
+                assert!(!backend.state().show_palette);
+                // Waiting for the same frame as the screenshot, so they show what it shows.
+                let (ansi, ansi_reply) = capture_ui_request(CaptureRender::Ansi);
+                let (png, png_reply) = capture_ui_request(CaptureRender::Png);
+                backend.update_level(ansi).unwrap();
+                backend.update_level(png).unwrap();
+                let toast = screenshot_toast(&mut backend);
 
-            let CaptureContent::Ansi { text } = capture_ui_content(&ansi_reply) else {
-                panic!("expected ansi");
-            };
-            assert!(
-                !text.contains("Search commands"),
-                "the palette was captured"
-            );
-            assert_eq!(text, at_rest, "the frame still carries the palette's dim");
+                let CaptureContent::Ansi { text } = capture_ui_content(&ansi_reply) else {
+                    panic!("expected ansi");
+                };
+                assert!(
+                    !text.contains("Search commands"),
+                    "the palette was captured"
+                );
+                assert_eq!(text, at_rest, "the frame still carries the palette's dim");
 
-            let files = pngs_in(dir.path());
-            assert_eq!(files.len(), 1, "{files:?}");
-            let name = files[0].file_name().unwrap().to_string_lossy().into_owned();
-            assert!(name.starts_with("rozi-ui-"), "{name}");
-            assert!(toast.contains(&name), "{toast}");
-            let CaptureContent::Png { png_base64 } = capture_ui_content(&png_reply) else {
-                panic!("expected png");
-            };
-            use base64::Engine as _;
-            assert_eq!(
-                std::fs::read(&files[0]).unwrap(),
-                base64::engine::general_purpose::STANDARD
-                    .decode(png_base64)
-                    .unwrap(),
-                "the file is capture-ui's PNG of that frame"
-            );
-            assert!(!crate::ops::control::ui_screenshot_waiting(backend.state()));
-            assert_eq!(
-                backend.state().screenshot.flash.map(|flash| flash.target),
-                Some(ScreenshotTarget::Ui)
-            );
+                let files = pngs_in(dir.path());
+                assert_eq!(files.len(), 1, "{files:?}");
+                let name = files[0].file_name().unwrap().to_string_lossy().into_owned();
+                assert!(name.starts_with("rozi-ui-"), "{name}");
+                assert!(toast.contains(&name), "{toast}");
+                let CaptureContent::Png { png_base64 } = capture_ui_content(&png_reply) else {
+                    panic!("expected png");
+                };
+                use base64::Engine as _;
+                assert_eq!(
+                    std::fs::read(&files[0]).unwrap(),
+                    base64::engine::general_purpose::STANDARD
+                        .decode(png_base64)
+                        .unwrap(),
+                    "the file is capture-ui's PNG of that frame"
+                );
+                assert!(!crate::ops::control::ui_screenshot_waiting(backend.state()));
+                assert_eq!(
+                    backend.state().screenshot.flash.map(|flash| flash.target),
+                    Some(ScreenshotTarget::Ui)
+                );
 
-            // The flash is drawn after the frame was taken, never before.
-            backend.render();
-            let (target, strength) = backend
-                .state()
-                .screenshot
-                .flash_frame
-                .get()
-                .expect("the flash is running");
-            assert_eq!(target, ScreenshotTarget::Ui);
-            assert!(strength > 0.0);
-            let workbar = |ansi: &str| ansi.lines().next().unwrap_or_default().to_owned();
-            let rest_bar = workbar(&at_rest);
-            assert_ne!(
-                workbar(&backend.capture_frame().to_ansi_text()),
-                rest_bar,
-                "the flash is not drawn over the UI"
-            );
-            backend.advance(Duration::from_secs(1));
-            assert_eq!(backend.state().screenshot.flash_frame.get(), None);
-            assert_eq!(workbar(&backend.capture_frame().to_ansi_text()), rest_bar);
+                // The flash is drawn after the frame was taken, never before.
+                backend.render();
+                let (target, strength) = backend
+                    .state()
+                    .screenshot
+                    .flash_frame
+                    .get()
+                    .expect("the flash is running");
+                assert_eq!(target, ScreenshotTarget::Ui);
+                assert!(strength > 0.0);
+                let workbar = |ansi: &str| ansi.lines().next().unwrap_or_default().to_owned();
+                let rest_bar = workbar(&at_rest);
+                assert_ne!(
+                    workbar(&backend.capture_frame().to_ansi_text()),
+                    rest_bar,
+                    "the flash is not drawn over the UI"
+                );
+                backend.advance(Duration::from_secs(1));
+                assert_eq!(backend.state().screenshot.flash_frame.get(), None);
+                assert_eq!(workbar(&backend.capture_frame().to_ansi_text()), rest_bar);
+            }
         });
     }
 

@@ -1550,6 +1550,45 @@ fn wait_for_ui_frame(ctx: &mut Context<AppRoot>, waiter: UiCaptureWaiter) {
         served: false,
     }));
     ctx.state.pending_ui_capture = Some(std::rc::Rc::clone(&batch));
+    if ui_screenshot_waiting(&ctx.state)
+        && !ctx.state.has_modal_overlay()
+        && ctx
+            .state
+            .dialog_dim_snapshot
+            .get()
+            .is_some_and(|snapshot| snapshot.dimmed)
+        && ctx.state.config.animations.enabled
+        && ctx.state.config.animations.picker != crate::layout::anim::PickerAnimationStyle::Off
+    {
+        // The palette is retained for its exit. Wait for that paint lifecycle before saving
+        // the underlying UI, and keep simultaneous control captures in the same batch.
+        ctx.state
+            .command_link
+            .as_ref()
+            .expect("screenshot requires a command link")
+            .send_after(
+                ctx.state
+                    .config
+                    .animations
+                    .picker
+                    .exit_transition()
+                    .duration,
+                crate::Msg::UiScreenshotFrameReady,
+            );
+        return;
+    }
+    request_pending_ui_frame(ctx);
+}
+
+pub(crate) fn request_pending_ui_frame(ctx: &mut Context<AppRoot>) {
+    let Some(batch) = ctx
+        .state
+        .pending_ui_capture
+        .clone()
+        .filter(|batch| !batch.borrow().served)
+    else {
+        return;
+    };
     let theme = &ctx.state.theme;
     let palette = TerminalColorPalette::from_theme(theme, theme.surface.backdrop);
     ctx.request_ui_snapshot(Callback::new(move |snapshot: tui_lipan::UiSnapshot| {

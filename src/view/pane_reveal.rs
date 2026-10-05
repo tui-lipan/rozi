@@ -7,6 +7,32 @@ use tui_lipan::prelude::{
 
 use crate::layout::anim::{PaneAnimationSpec, PaneAnimationStyle, PanePaintMotion, ScanDirection};
 
+/// Use the prepared cell masks for picker visibility too; the portal owns its clock and tail.
+pub(super) fn picker_reveal_effect(
+    style: crate::layout::anim::PickerAnimationStyle,
+    progress: f32,
+    opening: bool,
+) -> tui_lipan::prelude::VisualEffect {
+    use crate::layout::anim::PickerAnimationStyle;
+    let (pattern, pane_style) = match style {
+        PickerAnimationStyle::Portal => (PaneRevealPattern::Portal, PaneAnimationStyle::Portal),
+        PickerAnimationStyle::Scan => (PaneRevealPattern::Scan, PaneAnimationStyle::Scan),
+        PickerAnimationStyle::Off | PickerAnimationStyle::Fade => unreachable!(),
+    };
+    tui_lipan::prelude::VisualEffect::Custom(std::sync::Arc::new(TimedRevealEffect::new(
+        RevealRecipe::Pane(
+            PaneRevealEffect::with_spec(
+                pattern,
+                progress,
+                0,
+                crate::layout::anim::builtin_animation(pane_style),
+            )
+            .with_initial_frontier(opening),
+        ),
+        PanePaintMotion::Fixed(progress),
+    )))
+}
+
 /// Apply the optional pane reveal effect while keeping an empty keyed scope mounted at rest.
 pub(super) fn pane_reveal_scope(
     pane_tree: Element,
@@ -667,6 +693,69 @@ fn portal_symbol(hash: u64) -> &'static str {
 mod tests {
     use super::*;
     use tui_lipan::prelude::Rect;
+
+    #[test]
+    fn picker_scan_starts_at_the_corner_and_advances_through_overlapping_frontiers() {
+        use crate::layout::anim::PickerAnimationStyle;
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 28,
+        };
+        let transition = PickerAnimationStyle::Scan.enter_transition();
+        let content = EffectCell::new("picker");
+        let backdrop = EffectCell::new("underneath");
+        for millis in [0, 16, 33] {
+            let progress = transition
+                .easing
+                .apply(millis as f32 / transition.duration.as_millis() as f32);
+            let tui_lipan::prelude::VisualEffect::Custom(effect) =
+                picker_reveal_effect(PickerAnimationStyle::Scan, progress, true)
+            else {
+                panic!("scan must use a cell effect")
+            };
+            let prepared = effect.prepare(&EffectPrepareContext::new(bounds)).unwrap();
+            let mut frontier = 0;
+            for y in 0..bounds.h {
+                for x in 0..bounds.w {
+                    let mut cell = content.clone();
+                    prepared.apply_with_backdrop(
+                        &mut cell,
+                        &backdrop,
+                        &EffectContext::new(x as i16, y as i16, bounds),
+                    );
+                    if cell != backdrop {
+                        frontier += 1;
+                        assert_ne!(
+                            cell, content,
+                            "the first frames should show the frontier before text"
+                        );
+                        assert!(
+                            x < 7 && y < 4,
+                            "the initial line must stay near the top-left corner"
+                        );
+                    }
+                }
+            }
+            assert!(
+                frontier > 0,
+                "even the opening frame must show the scan line"
+            );
+        }
+        let tui_lipan::prelude::VisualEffect::Custom(effect) =
+            picker_reveal_effect(PickerAnimationStyle::Scan, 0.0, false)
+        else {
+            unreachable!()
+        };
+        let prepared = effect.prepare(&EffectPrepareContext::new(bounds)).unwrap();
+        let mut cell = content.clone();
+        prepared.apply_with_backdrop(&mut cell, &backdrop, &EffectContext::new(0, 0, bounds));
+        assert_eq!(
+            cell, backdrop,
+            "closing endpoint must fully restore the backdrop"
+        );
+    }
 
     #[test]
     fn scan_first_visible_frames_contain_only_the_frontier() {

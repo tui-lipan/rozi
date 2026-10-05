@@ -174,6 +174,9 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     }
     body = body.child(overlay_hints(ctx, &actions));
     Modal::new()
+        .animation(crate::view::animation::picker_animation(
+            ctx.state.config.animations,
+        ))
         .width(Length::Px(EXTENSIONS_WIDTH))
         // Content-sized and capped, with the top edge pinned so filtering shrinks it downward. The
         // reserve matches the install prompt's, which stacks one row below this frame.
@@ -190,7 +193,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
             Length::Auto,
             body.into(),
         ))
-        .into()
+        .key("rozi-extensions-modal")
 }
 
 fn empty_text(state: &crate::state::ExtensionsState, searching: bool) -> &'static str {

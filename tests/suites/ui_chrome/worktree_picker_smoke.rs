@@ -20,6 +20,7 @@ fn on_large_stack(body: impl FnOnce() + Send + 'static) {
 fn picker() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
     backend.set_viewport(Rect {
         x: 0,
         y: 0,

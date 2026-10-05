@@ -182,6 +182,8 @@
 # over geometry_ms; "fade" crossfades into it in place over one and a half times geometry_ms; "off"
 # switches at once.
 #session = "portal"
+# Picker opening and closing: "off", "fade", "portal", or "scan".
+#picker = "fade"
 #focus_chrome = true
 # Choose a style independently for pane opening and closing. "off" shows and hides the pane at
 # once while neighbouring tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in

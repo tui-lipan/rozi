@@ -99,6 +99,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
             })
             .unwrap();
     }
+    backend.advance(std::time::Duration::from_millis(200));
     let palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(palette.contains("Run extension probe"), "{palette}");
     backend
@@ -179,6 +180,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
             })
             .unwrap();
     }
+    backend.advance(std::time::Duration::from_millis(200));
     let changed_palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(
         changed_palette.contains("Changed extension probe"),
@@ -206,6 +208,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
         .dispatch(Msg::RunAction(Action::TogglePalette))
         .unwrap();
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     let reloaded = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(!reloaded.contains("Run extension probe"), "{reloaded}");
 

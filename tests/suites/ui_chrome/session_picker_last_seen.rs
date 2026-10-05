@@ -73,6 +73,7 @@ fn picker_showing(rows: Vec<DiscoveredSession>) -> TestBackend<AppRoot> {
 
 fn screen(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     backend.capture_frame().plain_text()
 }
 

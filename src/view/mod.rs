@@ -874,6 +874,8 @@ mod grouped_search_tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                backend.state_mut().config.animations.picker =
+                    crate::layout::anim::PickerAnimationStyle::Off;
                 backend.set_viewport(tui_lipan::prelude::Rect {
                     x: 0,
                     y: 0,
@@ -1023,6 +1025,7 @@ pub(crate) fn action_palette_modal_with_width(
     width: u16,
 ) -> Modal {
     styled_modal(ctx, title, width)
+        .animation(animation::picker_animation(ctx.state.config.animations))
         .height(Length::Auto)
         .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
         .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))

@@ -93,37 +93,27 @@ fn bench_style_setup_renders_populated_tiled_panes() {
         .unwrap();
 }
 
+// The two fixture checks below guard workload validity only: benchmark dimensions are free to
+// change, but a corpus that stops producing matches or history would measure nothing. Replay
+// correctness itself is covered by tui-lipan's `TerminalScreen` tests.
+
 #[test]
-fn scrollback_search_fixture_pins_dimensions_corpus_and_matches() {
-    assert_eq!(bench_support::SEARCH_PANE_COUNTS, [1, 8, 16]);
-    assert_eq!(
-        (
-            bench_support::SEARCH_COLS,
-            bench_support::SEARCH_ROWS,
-            bench_support::SEARCH_SCROLLBACK,
-            bench_support::SEARCH_LINES,
-        ),
-        (250, 60, 5_000, 5_000)
-    );
-
-    let corpus = bench_support::scrollback_search_corpus();
-    assert_eq!(
-        corpus.windows(2).filter(|bytes| *bytes == b"\r\n").count(),
-        bench_support::SEARCH_LINES
-    );
-
+fn scrollback_search_fixture_produces_sparse_dense_and_empty_workloads() {
     let mut pane = rozi::pane::TerminalPane::new(bench_support::SEARCH_SCROLLBACK);
     pane.apply_server_resize(bench_support::SEARCH_COLS, bench_support::SEARCH_ROWS);
-    pane.process_server_output(&corpus);
-    assert_eq!(
-        pane.search_scrollback(bench_support::SEARCH_SPARSE_QUERY)
-            .len(),
-        bench_support::SEARCH_SPARSE_MATCHES_PER_PANE
-    );
-    assert_eq!(
-        pane.search_scrollback(bench_support::SEARCH_DENSE_QUERY)
-            .len(),
-        bench_support::SEARCH_DENSE_MATCHES_PER_PANE
+    pane.process_server_output(&bench_support::scrollback_search_corpus());
+
+    let sparse = pane
+        .search_scrollback(bench_support::SEARCH_SPARSE_QUERY)
+        .len();
+    let dense = pane
+        .search_scrollback(bench_support::SEARCH_DENSE_QUERY)
+        .len();
+    assert_eq!(sparse, bench_support::SEARCH_SPARSE_MATCHES_PER_PANE);
+    assert_eq!(dense, bench_support::SEARCH_DENSE_MATCHES_PER_PANE);
+    assert!(
+        0 < sparse && sparse < dense,
+        "sparse={sparse} dense={dense}"
     );
     assert!(
         pane.search_scrollback(bench_support::SEARCH_NO_MATCH_QUERY)
@@ -132,14 +122,7 @@ fn scrollback_search_fixture_pins_dimensions_corpus_and_matches() {
 }
 
 #[test]
-fn resurrection_snapshot_fixture_pins_matrix_dimensions_and_history() {
-    assert_eq!(bench_support::SNAPSHOT_PANE_COUNTS, [1, 8, 16]);
-    assert_eq!(bench_support::SNAPSHOT_HISTORY_ROWS, [0, 1_000, 5_000]);
-    assert_eq!(
-        (bench_support::SNAPSHOT_COLS, bench_support::SNAPSHOT_ROWS),
-        (250, 60)
-    );
-
+fn resurrection_snapshot_fixture_fills_requested_history() {
     for history_rows in bench_support::SNAPSHOT_HISTORY_ROWS {
         let mut screen = tui_lipan::prelude::TerminalScreen::new(
             bench_support::SNAPSHOT_ROWS,
@@ -151,14 +134,5 @@ fn resurrection_snapshot_fixture_pins_matrix_dimensions_and_history() {
             history_rows,
         ));
         assert_eq!(screen.total_scrollback_rows(), history_rows);
-
-        let replay = screen.export_replay_bytes();
-        let mut restored = tui_lipan::prelude::TerminalScreen::new(
-            bench_support::SNAPSHOT_ROWS,
-            bench_support::SNAPSHOT_COLS,
-            history_rows,
-        );
-        restored.process_bytes(&replay);
-        assert_eq!(restored.total_scrollback_rows(), history_rows);
     }
 }

@@ -446,20 +446,14 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
 
         let mut body = VStack::new().height(Length::Auto);
         if let Some(tabs) = tabs {
-            let select = tabs.select;
-            let labels = tabs.labels.iter().map(String::as_str).collect::<Vec<_>>();
-            palette = palette.results_header(
-                VStack::new()
-                    .height(Length::Auto)
-                    .child(picker_tabs(
-                        ctx,
-                        &labels,
-                        tabs.active,
-                        ctx.link()
-                            .callback(move |event: TabsEvent| select(event.index)),
-                    ))
-                    .child(Spacer::new().height(Length::Px(1))),
-            );
+            palette = palette.results_header(ElementSlot::new(
+                PickerTabHeaderProps {
+                    tabs: picker_tabs_props(ctx, tabs.labels, tabs.active),
+                    link: ctx.link().clone(),
+                    select: tabs.select,
+                },
+                render_picker_tab_header,
+            ));
             // Keyed per page: the query field and highlight are seeded only on mount, and each
             // page brings its own.
             let palette: Element = palette.into();
@@ -584,6 +578,46 @@ pub(super) fn wrap_palette(
         .key(key)
 }
 
+#[derive(Clone, PartialEq)]
+struct PickerTabsProps {
+    labels: Vec<String>,
+    active: usize,
+    caps: Option<(char, char)>,
+    style: Style,
+    active_style: Style,
+    overflow_style: Style,
+    overflow_hover_style: Style,
+}
+
+#[derive(Clone)]
+struct PickerTabHeaderProps {
+    tabs: PickerTabsProps,
+    link: Link<Msg>,
+    select: fn(usize) -> Msg,
+}
+
+impl PartialEq for PickerTabHeaderProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.tabs == other.tabs
+            && self.link == other.link
+            && std::ptr::fn_addr_eq(self.select, other.select)
+    }
+}
+
+fn render_picker_tab_header(props: &PickerTabHeaderProps) -> Element {
+    let select = props.select;
+    VStack::new()
+        .height(Length::Auto)
+        .child(render_picker_tabs(
+            &props.tabs,
+            props
+                .link
+                .callback(move |event: TabsEvent| select(event.index)),
+        ))
+        .child(Spacer::new().height(Length::Px(1)))
+        .into()
+}
+
 /// Shared category navigation. Query inputs retain keyboard focus while tabs accept clicks.
 pub(super) fn picker_tabs(
     ctx: &Context<AppRoot>,
@@ -591,6 +625,19 @@ pub(super) fn picker_tabs(
     active: usize,
     on_change: Callback<TabsEvent>,
 ) -> Element {
+    let props = picker_tabs_props(
+        ctx,
+        labels.iter().map(|label| (*label).to_owned()).collect(),
+        active,
+    );
+    render_picker_tabs(&props, on_change)
+}
+
+fn picker_tabs_props(
+    ctx: &Context<AppRoot>,
+    labels: Vec<String>,
+    active: usize,
+) -> PickerTabsProps {
     let theme = &ctx.state.theme;
     let host = theme.surface.element;
     let strip = if ctx.state.config.pane.picker_tab_background {
@@ -604,36 +651,49 @@ pub(super) fn picker_tabs(
         .effective_cap_style(ctx.state.config.pane.picker_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+    PickerTabsProps {
+        labels,
+        active,
+        caps,
+        style: Style::new()
+            .fg(crate::ops::theme::chrome_label_fg(theme, strip))
+            .bg(strip),
+        active_style: Style::new()
+            .fg(crate::ops::theme::chrome_label_fg(
+                theme,
+                theme.border_active,
+            ))
+            .bg(theme.border_active)
+            .bold(),
+        overflow_style: Style::new().fg(theme.border_active),
+        overflow_hover_style: Style::new()
+            .fg(theme.border_active)
+            .bg(strip.elevate_by(0.08)),
+    }
+}
+
+fn render_picker_tabs(props: &PickerTabsProps, on_change: Callback<TabsEvent>) -> Element {
     DraggableTabBar::new()
-        .tabs(labels.iter().map(|label| DraggableTab::new(*label)))
-        .active(active)
+        .tabs(
+            props
+                .labels
+                .iter()
+                .map(|label| DraggableTab::new(label.clone())),
+        )
+        .active(props.active)
         .draggable(false)
         .focusable(false)
         .tab_stop(false)
         .show_close_buttons(false)
         .height(Length::Px(1))
         .divider(' ')
-        .caps(caps)
+        .caps(props.caps)
         .overflow_left_label(|_| Arc::from("❮ "))
         .overflow_right_label(|_| Arc::from(" ❯"))
-        .overflow_style(Style::new().fg(theme.border_active))
-        .overflow_hover_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(strip.elevate_by(0.08)),
-        )
-        .style(
-            Style::new()
-                .fg(crate::ops::theme::chrome_label_fg(theme, strip))
-                .bg(strip),
-        )
-        .active_style({
-            let active_bg = theme.border_active;
-            Style::new()
-                .fg(crate::ops::theme::chrome_label_fg(theme, active_bg))
-                .bg(active_bg)
-                .bold()
-        })
+        .overflow_style(props.overflow_style)
+        .overflow_hover_style(props.overflow_hover_style)
+        .style(props.style)
+        .active_style(props.active_style)
         .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
         .on_change(on_change)
         .into()

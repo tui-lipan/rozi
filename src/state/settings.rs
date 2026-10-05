@@ -948,6 +948,31 @@ mod tests {
         assert!(!SettingsAction::Theme.shows_choice_ellipsis(&config));
     }
 
+    /// Every motion row below the master switch greys out with it, and only with it.
+    #[test]
+    fn animation_rows_need_animations() {
+        let rows = [
+            SettingsAction::ToggleWorkspaceAnimation,
+            SettingsAction::CycleSessionAnimation,
+            SettingsAction::CyclePickerAnimation,
+            SettingsAction::CyclePaneOpenAnimation,
+            SettingsAction::CyclePaneCloseAnimation,
+        ];
+        let mut config = Config::default();
+        config.animations.enabled = true;
+        for action in rows {
+            assert_eq!(action.disabled_reason(&config), None, "{action:?}");
+        }
+        config.animations.enabled = false;
+        for action in rows {
+            assert_eq!(
+                action.disabled_reason(&config),
+                Some("Needs animations"),
+                "{action:?}"
+            );
+        }
+    }
+
     #[test]
     fn settings_dependencies_cover_appearance_and_alert_rows() {
         let mut config = Config::default();

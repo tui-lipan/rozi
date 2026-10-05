@@ -249,6 +249,7 @@ pub(crate) fn apply_copy_search_match(
     copy.navigation
         .goto(matched.line, matched.start_col, matched.offset);
     let target = copy.target;
+    crate::ops::focus::acknowledge_pane_input(&mut ctx.state, target);
     if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
         pane.terminal.set_scrollback(matched.offset);
     }
@@ -302,6 +303,64 @@ mod tests {
         );
         assert_eq!(action, CopyModeAction::Moved);
         assert_eq!(navigation.cursor(), (0, 3));
+    }
+
+    #[test]
+    fn copy_search_navigation_acknowledges_marks_in_both_directions() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let target = backend.state().focused_pane().expect("focused pane");
+                find_pane_mut(backend.state_mut(), target)
+                    .expect("pane")
+                    .terminal
+                    .process_server_output("history\r\n".repeat(80).as_bytes());
+                backend.state_mut().mode = Mode::Copy;
+                backend.state_mut().copy_mode = Some(CopyModeState {
+                    target,
+                    navigation: TerminalCopyMode::new(0, 0, 0),
+                    search_matches: vec![
+                        crate::state::CopySearchMatch {
+                            offset: 2,
+                            line: 3,
+                            start_col: 1,
+                            end_col: 4,
+                        },
+                        crate::state::CopySearchMatch {
+                            offset: 8,
+                            line: 5,
+                            start_col: 2,
+                            end_col: 5,
+                        },
+                    ],
+                    search_current: 0,
+                    search_truncated: false,
+                });
+
+                for (key, expected_index, expected_offset) in [('n', 1, 8), ('N', 0, 2)] {
+                    let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+                    pane.activity.has_unseen_output = true;
+                    pane.activity.bell = true;
+                    pane.terminal.finished_unseen = true;
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(key),
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("navigate retained search matches");
+                    let copy = backend.state().copy_mode.as_ref().expect("copy mode");
+                    assert_eq!(copy.search_current, expected_index);
+                    let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+                    assert_eq!(pane.terminal.scrollback_offset(), expected_offset);
+                    assert!(!pane.activity.has_unseen_output);
+                    assert!(!pane.activity.bell);
+                    assert!(!pane.terminal.finished_unseen);
+                }
+            })
+            .expect("spawn search navigation test")
+            .join()
+            .expect("search navigation test completes");
     }
 
     #[test]

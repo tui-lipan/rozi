@@ -3,8 +3,8 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    PaneAnimationOverrides, PaneAnimationStyle, ScanDirection, SessionAnimationStyle,
-    WindowAnimationConfig,
+    PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle, ScanDirection,
+    SessionAnimationStyle, WindowAnimationConfig,
 };
 
 use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec, SessionSpec};
@@ -82,6 +82,14 @@ pub(super) fn apply_animations(
         warnings,
     );
     apply_session_animation(target, raw.session.as_ref(), warnings);
+    if let Some(value) = raw.picker.as_deref() {
+        match PickerAnimationStyle::parse(value) {
+            Some(style) => target.picker = style,
+            None => warnings.push(format!(
+                "Ignored unknown animations.picker \"{value}\" (expected one of: off, fade, portal, scan)"
+            )),
+        }
+    }
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
     target.pane_overrides = resolve_pane_overrides(&raw, warnings);
@@ -280,6 +288,29 @@ mod tests {
     #[derive(Deserialize)]
     struct PaddingOnly {
         padding: PaddingSpec,
+    }
+
+    #[test]
+    fn picker_styles_parse_and_unknown_styles_warn() {
+        for style in PickerAnimationStyle::all() {
+            let raw =
+                toml::from_str(&format!("picker = \"{}\"", style.id().to_uppercase())).unwrap();
+            let mut config = WindowAnimationConfig::default();
+            let mut warnings = Vec::new();
+            apply_animations(&mut config, raw, &mut warnings);
+            assert_eq!(config.picker, *style);
+            assert!(warnings.is_empty());
+        }
+        let mut config = WindowAnimationConfig::default();
+        let mut warnings = Vec::new();
+        apply_animations(
+            &mut config,
+            toml::from_str("picker = \"zoom\"").unwrap(),
+            &mut warnings,
+        );
+        assert_eq!(config.picker, PickerAnimationStyle::Fade);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("animations.picker"));
     }
 
     #[test]

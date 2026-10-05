@@ -315,7 +315,7 @@ pub(super) fn prompt_overlay(
             .focus_style(armed_frame)
             .title_style(Style::new().fg(theme.status.error).bold());
     }
-    modal.into()
+    modal.key(format!("rozi-prompts-{title}"))
 }
 
 pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Element {

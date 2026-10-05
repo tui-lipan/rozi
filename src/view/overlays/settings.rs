@@ -58,6 +58,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     CycleSessionAnimation,
                 ),
                 (
+                    "Pickers",
+                    animations.picker.label().to_string(),
+                    CyclePickerAnimation,
+                ),
+                (
                     "Pane open",
                     animations.pane_open_style.label().to_string(),
                     CyclePaneOpenAnimation,
@@ -750,6 +755,9 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .into();
 
     Modal::new()
+        .animation(crate::view::animation::picker_animation(
+            ctx.state.config.animations,
+        ))
         .width(Length::Px(SETTINGS_MODAL_WIDTH))
         .height(Length::Auto)
         .max_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
@@ -760,7 +768,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::CloseSettings))
         .child(panel)
-        .into()
+        .key("rozi-settings-modal")
 }
 
 fn settings_group(
@@ -974,7 +982,7 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
         .width(Length::Auto)
         .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
         .child(body)
-        .into()
+        .key("rozi-padding-modal")
 }
 
 pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {

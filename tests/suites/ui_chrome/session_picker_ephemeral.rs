@@ -44,6 +44,7 @@ fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
 
 fn screen(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     backend.capture_frame().plain_text()
 }
 

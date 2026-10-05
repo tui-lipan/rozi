@@ -144,7 +144,7 @@ fn tui_command(root: &Path, case: &str) -> Command {
         .env("TUI_LIPAN_SNAPSHOT_SETTLE_MS", "500")
         .env(
             "TUI_LIPAN_SNAPSHOT_SCRIPT",
-            format!("key:ctrl+r; sleep:200; key:enter; sleep:1000; {answer}; sleep:2000"),
+            format!("key:ctrl+r; sleep:200; key:enter; sleep:1000; {answer}; sleep:2000; wait:500"),
         );
     command
 }

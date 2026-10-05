@@ -515,7 +515,7 @@ fn host_form_overlay(ctx: &Context<AppRoot>, form: &crate::state::HostFormState)
     action_palette_modal(ctx, form.title())
         .on_close(ctx.link().callback(|_| Msg::CloseHostForm))
         .child(body)
-        .into()
+        .key("rozi-host-form-modal")
 }
 
 pub(crate) fn remote_picker_overlay(ctx: &Context<AppRoot>) -> Element {

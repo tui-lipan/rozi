@@ -655,6 +655,9 @@ pub(crate) fn help_overlay(
         .child(list)
         .child(hints);
     Modal::new()
+        .animation(crate::view::animation::picker_animation(
+            ctx.state.config.animations,
+        ))
         .width(Length::Px(HELP_MODAL_WIDTH))
         // Content-sized so filtering down to a handful of rows shrinks the modal, capped at 70% of
         // the viewport. `reserve_height` pins the top edge, so the modal shrinks downward while you
@@ -673,7 +676,7 @@ pub(crate) fn help_overlay(
             Length::Auto,
             body.into(),
         ))
-        .into()
+        .key("rozi-help-modal")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1155,7 +1158,7 @@ fn keybinding_change_overlay(ctx: &Context<AppRoot>) -> Element {
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::KeybindingCancelCapture))
         .child(body)
-        .into()
+        .key("rozi-keybinding-capture-modal")
 }
 
 /// Alt, Super, or Off, chosen with the arrows rather than recorded: Mod is a choice between known
@@ -1269,7 +1272,7 @@ fn keybinding_modifier_overlay(ctx: &Context<AppRoot>) -> Element {
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::KeybindingCancelCapture))
         .child(body)
-        .into()
+        .key("rozi-keybinding-modifier-modal")
 }
 
 fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {

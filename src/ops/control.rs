@@ -1494,6 +1494,8 @@ enum UiCaptureWaiter {
 #[derive(Default)]
 pub(crate) struct UiCaptureBatch {
     waiters: Vec<UiCaptureWaiter>,
+    /// A snapshot callback is already queued for the next paint.
+    requested: bool,
     /// The frame has arrived; a request after this waits for the next one.
     served: bool,
 }
@@ -1537,9 +1539,18 @@ pub(crate) fn capture_ui_for_screenshot(
 }
 
 fn wait_for_ui_frame(ctx: &mut Context<AppRoot>, waiter: UiCaptureWaiter) {
+    let wait_for_exit = matches!(waiter, UiCaptureWaiter::Screenshot(_))
+        && !ctx.state.has_modal_overlay()
+        && ctx
+            .state
+            .dialog_dim_snapshot
+            .get()
+            .is_some_and(|snapshot| snapshot.dimmed)
+        && ctx.state.config.animations.enabled
+        && ctx.state.config.animations.picker != crate::layout::anim::PickerAnimationStyle::Off;
     if let Some(batch) = &ctx.state.pending_ui_capture {
         let mut batch = batch.borrow_mut();
-        if !batch.served {
+        if !(batch.served || wait_for_exit && batch.requested) {
             batch.waiters.push(waiter);
             return;
         }
@@ -1547,9 +1558,40 @@ fn wait_for_ui_frame(ctx: &mut Context<AppRoot>, waiter: UiCaptureWaiter) {
 
     let batch = std::rc::Rc::new(std::cell::RefCell::new(UiCaptureBatch {
         waiters: vec![waiter],
+        requested: false,
         served: false,
     }));
     ctx.state.pending_ui_capture = Some(std::rc::Rc::clone(&batch));
+    if wait_for_exit {
+        // The palette is retained for its exit. Wait for that paint lifecycle before saving
+        // the underlying UI. An already-requested batch keeps its own control waiters;
+        // subsequent captures join this deferred batch instead.
+        ctx.state
+            .command_link
+            .as_ref()
+            .expect("screenshot requires a command link")
+            .send_after(
+                ctx.state
+                    .config
+                    .animations
+                    .picker
+                    .exit_transition()
+                    .duration,
+                crate::Msg::UiScreenshotFrameReady,
+            );
+        return;
+    }
+    request_pending_ui_frame(ctx);
+}
+
+pub(crate) fn request_pending_ui_frame(ctx: &mut Context<AppRoot>) {
+    let Some(batch) = ctx.state.pending_ui_capture.clone().filter(|batch| {
+        let batch = batch.borrow();
+        !batch.served && !batch.requested
+    }) else {
+        return;
+    };
+    batch.borrow_mut().requested = true;
     let theme = &ctx.state.theme;
     let palette = TerminalColorPalette::from_theme(theme, theme.surface.backdrop);
     ctx.request_ui_snapshot(Callback::new(move |snapshot: tui_lipan::UiSnapshot| {

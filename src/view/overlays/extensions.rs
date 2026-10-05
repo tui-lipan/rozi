@@ -174,6 +174,9 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
     }
     body = body.child(overlay_hints(ctx, &actions));
     Modal::new()
+        .animation(crate::view::animation::picker_animation(
+            ctx.state.config.animations,
+        ))
         .width(Length::Px(EXTENSIONS_WIDTH))
         // Content-sized and capped, with the top edge pinned so filtering shrinks it downward. The
         // reserve matches the install prompt's, which stacks one row below this frame.
@@ -190,7 +193,7 @@ pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
             Length::Auto,
             body.into(),
         ))
-        .into()
+        .key("rozi-extensions-modal")
 }
 
 fn empty_text(state: &crate::state::ExtensionsState, searching: bool) -> &'static str {
@@ -569,7 +572,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     action_palette_modal_with_width(ctx, &title, EXTENSION_DETAIL_WIDTH)
         .on_close(ctx.link().callback(|_| Msg::CloseExtensionDetail))
         .child(content)
-        .into()
+        .key("rozi-extension-detail-modal")
 }
 
 fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -631,7 +634,7 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     action_palette_modal_with_width(ctx, &title, EXTENSION_DETAIL_WIDTH)
         .on_close(ctx.link().callback(|_| Msg::CloseExtensionDetail))
         .child(content)
-        .into()
+        .key("rozi-catalog-extension-detail-modal")
 }
 
 /// Height for the report body: content-sized while the report fits, capped once it does not.

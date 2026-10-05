@@ -43,7 +43,8 @@ Changes made in rozi's Settings, Appearance, Profiles, or Themes UI are written 
 and take effect at once. rozi replaces the whole file on save, so an interrupted write cannot leave
 it truncated. If `config.toml` is a symlink, rozi writes the file it points to and keeps the link.
 
-**Settings…** in the command palette browses and previews most options by category. It has no
+**Settings…** in the command palette browses options by category and previews static appearance
+choices. Behavior and animation choices apply when confirmed with `Enter`. It has no
 default key; bind the `settings` action under [`[keys]`](#keys) to add one. See
 [Use the Settings picker](customize.md#use-the-settings-picker).
 
@@ -273,6 +274,7 @@ Border colors for pane alert states. Each value is a theme role or `"off"`. Them
 | `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `pane_style` | string | unset | Deprecated shared-style fallback for opening and closing; explicit action-specific keys override it. Settings migrates it automatically. |
+| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds; Particles opening uses this duration and closing takes four times it. |

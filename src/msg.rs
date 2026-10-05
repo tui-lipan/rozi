@@ -10,6 +10,8 @@ use crate::{control, session};
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
+    /// Capture the UI after the invoking picker has finished closing.
+    UiScreenshotFrameReady,
     /// A public release newer than this build was found, by the check a client runs shortly after
     /// it starts or by one of the periodic re-checks that follow.
     ///

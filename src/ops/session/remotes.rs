@@ -1490,6 +1490,8 @@ mod tests {
     #[test]
     fn a_failed_monitor_under_a_live_attachment_still_reconnects() {
         with_backend(|backend| {
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
             let target = RemoteTarget::Alias("workbox".into());
             primed_connecting_picker(backend, &target, 8);
             backend

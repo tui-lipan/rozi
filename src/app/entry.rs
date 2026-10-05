@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 use crate::config::Config;
 use crate::{cli, config, control, ops, platform};
 
-use super::{AppRoot, startup::StartupPlan};
+use super::{AppRoot, exit_report, startup::StartupPlan};
 
 pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
     // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
@@ -381,6 +381,8 @@ pub fn run() -> Result<()> {
         )
         .exit_view(crate::view::exit::exit_view)
         .run();
+    // The terminal is ours to write to again.
+    exit_report::flush();
     // The control socket has a guard the app owns; the askpass endpoint is reached from worker
     // threads with no such owner, so it is retired here.
     crate::session::remote::askpass::shutdown();

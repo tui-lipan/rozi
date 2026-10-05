@@ -1063,6 +1063,15 @@ pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update
     Update::full()
 }
 
+pub(super) fn background_error(
+    ctx: &mut Context<AppRoot>,
+    title: &'static str,
+    message: String,
+) -> Update {
+    crate::pane::pty_events::notify_error(ctx, title, message);
+    Update::full()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,6 +1115,22 @@ mod tests {
             ),
             announce: true,
         }
+    }
+
+    #[test]
+    fn a_background_error_becomes_a_toast() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .dispatch(Msg::BackgroundError {
+                    title: "Control endpoint accept failed",
+                    message: "too many open files".to_string(),
+                })
+                .unwrap();
+            let toast = last_toast(&backend);
+            assert!(toast.contains("Control endpoint accept failed"), "{toast}");
+            assert!(toast.contains("too many open files"), "{toast}");
+        });
     }
 
     #[test]

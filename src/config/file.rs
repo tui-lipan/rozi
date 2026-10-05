@@ -50,6 +50,9 @@ impl LoadedConfig {
     }
 }
 
+/// Report config warnings on stderr, for processes with no UI of their own (the session server,
+/// CLI subcommands). Never call this from the TUI client: its stderr is the terminal it is drawing
+/// on, so the text would land inside whichever pane holds the cursor. Use a toast there instead.
 pub(crate) fn log_config_warnings(warnings: &[String]) {
     for warning in warnings {
         eprintln!("rozi: {warning}");

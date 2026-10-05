@@ -2127,16 +2127,26 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
     listener
         .set_nonblocking(false)
         .expect("control listener supports blocking accept");
+    // Accept failures repeat every retry while the condition lasts, so only the first of a run is
+    // reported. stderr is not an option: it is the terminal the TUI is drawing on.
+    let mut failing = false;
     loop {
         match listener.accept() {
             Ok(stream) => {
+                failing = false;
                 let link = link.clone();
                 let event_hub = event_hub.clone();
                 std::thread::spawn(move || handle_connection(stream, link, event_hub));
             }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(err) => {
-                eprintln!("rozi: control endpoint accept failed: {err}");
+                if !failing {
+                    failing = true;
+                    link.send(Msg::BackgroundError {
+                        title: "Control endpoint accept failed",
+                        message: err.to_string(),
+                    });
+                }
                 std::thread::sleep(Duration::from_millis(50));
             }
         }

@@ -101,7 +101,10 @@ impl StartupTasks {
             if let Err(err) = platform::server_lifecycle::on_hangup(move || {
                 hangup_link.send(Msg::Hangup);
             }) {
-                eprintln!("rozi: could not watch for terminal hangup: {err}");
+                link.send(Msg::BackgroundError {
+                    title: "Terminal hangup watch unavailable",
+                    message: err.to_string(),
+                });
             }
         }
         if let Some(listener) = self.control_listener.take() {

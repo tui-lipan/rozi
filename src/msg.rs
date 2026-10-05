@@ -251,6 +251,12 @@ pub enum Msg {
     },
     SidebarSessionActivate(crate::session::discovery::DiscoveredSession),
     ThemeError(String),
+    /// A failure on a worker thread, shown as an error toast. Worker threads must not write to
+    /// stderr: it is the terminal the TUI is drawing on.
+    BackgroundError {
+        title: &'static str,
+        message: String,
+    },
     CloseSearch,
     SearchQueryChanged(String),
     SearchScanChunk {

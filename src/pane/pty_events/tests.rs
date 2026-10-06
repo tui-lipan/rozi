@@ -1230,3 +1230,127 @@ fn pane_scroll_repaints_unless_the_view_reads_the_offset() {
         .join()
         .expect("pane scroll level test completes");
 }
+
+mod finished_rows_notice {
+    use crate::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PublishedRow,
+        SessionInstanceId,
+    };
+
+    fn row(id: &str, title: &str, active: bool) -> PublishedRow {
+        PublishedRow {
+            id: id.to_string(),
+            title: title.to_string(),
+            status: "done".to_string(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        }
+    }
+
+    /// A Claude client in pane 23 publishing `rows`, as a sessions extension does.
+    fn publisher(rows: Vec<PublishedRow>) -> crate::state::Pane {
+        let mut pane = crate::state::Pane::new(
+            23,
+            100,
+            tui_lipan::prelude::FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 10.0,
+            },
+        );
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Idle,
+        });
+        pane.agent_refs = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| AgentRef {
+                pane: PaneRef {
+                    session_instance: SessionInstanceId::for_test("server"),
+                    pane_id: pane.id,
+                    generation: pane.pty_generation,
+                },
+                slot: Some(row.id.clone()),
+                incarnation: index as u64 + 2,
+            })
+            .collect();
+        pane.terminal.published_rows = rows;
+        pane
+    }
+
+    fn finished(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn a_background_row_is_named_by_its_own_title_not_the_panes() {
+        let pane = publisher(vec![
+            row("shown", "stale code after extension update", true),
+            row("bg", "fix login redirect", false),
+        ]);
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["bg"])).as_deref(),
+            Some("fix login redirect in pane 23 is done")
+        );
+    }
+
+    #[test]
+    fn an_untitled_row_is_named_as_the_sidebar_numbers_it() {
+        let pane = publisher(vec![row("shown", "", true), row("bg", "  ", false)]);
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["bg"])).as_deref(),
+            Some("Claude Code #2 in pane 23 is done")
+        );
+    }
+
+    #[test]
+    fn several_rows_finishing_together_are_named_together() {
+        let pane = publisher(vec![
+            row("a", "docs", false),
+            row("shown", "on screen", true),
+            row("c", "tests", false),
+        ]);
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["a", "shown", "c"])).as_deref(),
+            Some("docs, tests in pane 23 are done"),
+            "the row on screen is the pane's own news, not this notice's"
+        );
+    }
+
+    #[test]
+    fn an_untitled_row_without_a_detected_agent_never_shows_its_opaque_id() {
+        // A generic publisher: no detected agent, and a row that has not titled itself yet.
+        let mut pane = publisher(vec![
+            row("shown", "on screen", true),
+            row("ses_9f2c", "", false),
+        ]);
+        pane.terminal.detected_agent = None;
+        pane.title = "build watcher".to_string();
+        let notice = super::super::finished_rows_notice(&pane, &finished(&["ses_9f2c"]))
+            .expect("a background row finished");
+        assert!(!notice.contains("ses_9f2c"), "{notice}");
+        assert_eq!(notice, "build watcher in pane 23 is done");
+    }
+
+    #[test]
+    fn rows_on_screen_or_unknown_raise_nothing() {
+        let pane = publisher(vec![
+            row("shown", "on screen", true),
+            row("bg", "work", false),
+        ]);
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["shown"])),
+            None
+        );
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["gone"])),
+            None
+        );
+    }
+}

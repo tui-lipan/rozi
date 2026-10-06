@@ -502,6 +502,64 @@ pub(crate) fn maybe_notify_pane_status(
     crate::platform::notifications::notify("rozi", &body);
 }
 
+/// What to say when rows a publisher is not showing finish a run, or `None` when none of `finished`
+/// is such a row.
+///
+/// A row is named by its own title, which says which conversation or task it is. The sidebar shows
+/// that title as the row's detail for a detected agent; a notification has one line, and the title
+/// is what tells the rows apart. An untitled row falls back to what the sidebar's name column
+/// shows: `<agent> #<n>` behind a detected agent, the pane's own title otherwise. Never the row ID,
+/// an opaque handle, and never the pane's title for a titled row, since that belongs to whatever
+/// the pane shows, which is exactly not the row that finished.
+pub(crate) fn finished_rows_notice(
+    pane: &crate::state::Pane,
+    finished: &[String],
+) -> Option<String> {
+    let runtimes = pane.agent_runtimes();
+    let names: Vec<String> = pane
+        .terminal
+        .published_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !row.active && finished.contains(&row.id))
+        .map(|(index, row)| {
+            let title = row.title.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+            // Only a detected agent's identity is a name; without one, a published row's runtime
+            // identity is built from the row itself and would be its ID.
+            let agent = pane.terminal.detected_agent.is_some().then(|| {
+                runtimes
+                    .iter()
+                    .find(|runtime| runtime.reference.slot.as_deref() == Some(row.id.as_str()))
+            });
+            match agent.flatten() {
+                Some(runtime) => format!("{} #{}", runtime.identity.label, index + 1),
+                None => pane.display_title(pane.terminal.title()),
+            }
+        })
+        .collect();
+    let id = pane.id;
+    match names.as_slice() {
+        [] => None,
+        [name] => Some(format!("{name} in pane {id} is done")),
+        names => Some(format!("{} in pane {id} are done", names.join(", "))),
+    }
+}
+
+/// Raise [`finished_rows_notice`]'s text, under the same settings as a pane finishing. The rows
+/// were not on screen, so attending the pane does not silence it.
+pub(crate) fn maybe_notify_rows_done(
+    config: &crate::config::Config,
+    is_controller: bool,
+    notice: &str,
+) {
+    if should_notify_pane_status(config, is_controller, false, false, true) {
+        crate::platform::notifications::notify("rozi", notice);
+    }
+}
+
 pub(crate) fn should_notify_pane_status(
     config: &crate::config::Config,
     is_controller: bool,

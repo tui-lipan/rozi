@@ -2,7 +2,9 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::pane::lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut};
-use crate::pane::pty_events::maybe_notify_pane_status;
+use crate::pane::pty_events::{
+    finished_rows_notice, maybe_notify_pane_status, maybe_notify_rows_done,
+};
 use crate::session::protocol::PaneRuntimeState;
 use crate::state::PaneId;
 use crate::update::session::control_replies::{flush_attachment_replay_input, flush_replay_input};
@@ -247,32 +249,14 @@ pub(crate) fn pane_runtime_changed(
         );
     }
     // A row the publisher is not showing finished. Attending the pane cannot have acknowledged
-    // it - the user was looking at a different tab of the same program - so it alerts regardless.
-    if !finished_rows.is_empty()
-        && let Some(title) = title.clone()
-    {
-        let background = find_pane_in_namespace(&ctx.state, pane_id, local).is_some_and(|pane| {
-            finished_rows.iter().any(|id| {
-                pane.terminal
-                    .published_rows
-                    .iter()
-                    .any(|row| &row.id == id && !row.active)
-            })
-        });
-        if background {
+    // it - the user was looking at a different tab of the same program - so it alerts regardless,
+    // naming the rows that finished rather than the pane, whose title is the one on screen.
+    if !finished_rows.is_empty() && title.is_some() {
+        let notice = find_pane_in_namespace(&ctx.state, pane_id, local)
+            .and_then(|pane| finished_rows_notice(pane, &finished_rows));
+        if let Some(notice) = notice {
             if !ctx.state.do_not_disturb {
-                maybe_notify_pane_status(
-                    &ctx.state.config,
-                    ctx.state.is_controller(),
-                    false,
-                    pane_id,
-                    &title,
-                    crate::pane::pty_events::PaneStatusNotification {
-                        blocked: false,
-                        done: true,
-                        reported_status: None,
-                    },
-                );
+                maybe_notify_rows_done(&ctx.state.config, ctx.state.is_controller(), &notice);
             }
             if ctx.state.is_controller() {
                 crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);

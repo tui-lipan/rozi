@@ -145,16 +145,60 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
         assert!(!text.contains("wt-feat-login"), "{text}");
         assert!(lines[row("release/0.1")].contains("locked ○"), "{text}");
 
-        // A checkout named after its branch is one line; a folder the branch does not imply is
-        // noted under it.
+        // Checkouts without PR metadata occupy one line, regardless of folder names.
         assert_eq!(row("worktree-extensions-spinner"), login + 1, "{text}");
         let race = row("fix/config-test-race");
-        assert!(lines[race + 1].contains("session-fade-duration"), "{text}");
+        assert_eq!(row("release/0.1"), race + 1, "{text}");
+        assert!(!text.contains("session-fade-duration"), "{text}");
         assert!(
             !text.contains(".claude/worktrees"),
             "no repeated path prefix:\n{text}"
         );
         assert!(text.contains("+ New worktree"), "{text}");
+    });
+}
+
+#[test]
+fn work_status_uses_the_detail_line_and_keeps_session_state_on_the_rail() {
+    on_large_stack(|| {
+        use rozi::git::pull_requests::{PullRequestStatus, WorkStatus};
+        let mut backend = seeded(100, 30);
+        let listing = &mut backend.state_mut().sidebar.worktrees;
+        for (index, number, status) in [
+            (1, 114, WorkStatus::Passed),
+            (2, 113, WorkStatus::Failed),
+            (3, 112, WorkStatus::Merged),
+            (4, 115, WorkStatus::Running),
+        ] {
+            listing.statuses.checkouts.insert(
+                listing.entries[index].path.clone(),
+                PullRequestStatus { number, status },
+            );
+        }
+        let lines = sidebar_lines(&mut backend, 32);
+        let text = lines.join("\n");
+        for (branch, status) in [
+            ("feat/login", "#114 · passed"),
+            ("worktree-extensions-spinner", "#113 · failed"),
+            ("fix/config-test-race", "#112 · merged"),
+            ("release/0.1", "#115 · running"),
+        ] {
+            let row = lines.iter().position(|line| line.contains(branch)).unwrap();
+            assert!(lines[row + 1].contains(status), "{text}");
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("feat/login") && line.contains('●')),
+            "{text}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("release/0.1") && line.contains("locked ○")),
+            "{text}"
+        );
+        assert!(!text.contains("session-fade-duration"), "{text}");
     });
 }
 

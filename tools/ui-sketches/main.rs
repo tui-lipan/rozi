@@ -25,7 +25,12 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 4] = [
+const SCENARIOS: [(&str, &str, fn()); 5] = [
+    (
+        "worktree-detail-dimming",
+        "the real Worktrees sidebar with 0%, 20%, 40%, and 60% detail dimming",
+        worktree_detail_dimming,
+    ),
     (
         "floating-title-caps",
         "floating titlebar caps over dim and decorated terminal text",
@@ -114,6 +119,36 @@ fn worktree(path: &str, branch: &str, linked: bool, locked: bool) -> WorktreeInf
     }
 }
 
+fn work_statuses(trees: &[WorktreeInfo]) -> rozi::git::pull_requests::WorktreeStatuses {
+    use rozi::git::pull_requests::{PullRequestStatus, WorkStatus, WorktreeStatuses};
+    let states = [
+        WorkStatus::Passed,
+        WorkStatus::Failed,
+        WorkStatus::Merged,
+        WorkStatus::Running,
+        WorkStatus::Open,
+        WorkStatus::Draft,
+    ];
+    WorktreeStatuses {
+        checkouts: trees
+            .iter()
+            .filter(|tree| tree.linked)
+            .zip(states)
+            .enumerate()
+            .map(|(index, (tree, status))| {
+                (
+                    tree.path.clone(),
+                    PullRequestStatus {
+                        number: 114 + index as u64,
+                        status,
+                    },
+                )
+            })
+            .collect(),
+        unavailable: false,
+    }
+}
+
 // --- workbar-alerts --------------------------------------------------------------------------
 
 fn live_pane(id: u32) -> Pane {
@@ -199,12 +234,97 @@ fn workbar_alerts() {
 /// agent checkout named after its branch, one whose folder differs from its branch, and a locked
 /// one whose session can only be restored.
 fn sidebar_worktrees() {
+    let mut backend = sidebar_worktrees_fixture();
+    for (width, height) in [(72, 22), (100, 26), (140, 40)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-worktrees-{width}x{height}"));
+    }
+    {
+        let state = backend.state_mut();
+        // The pointer on `feat/login` (header, master, then it) shows what Enter would do.
+        state.sidebar.panels[0].hovered_row = Some(2);
+        state.sidebar.pending_row_close = Some(rozi::state::SidebarClose::Worktree {
+            path: "/home/me/src/rozi/.claude/worktrees/extensions-spinner".into(),
+            force: false,
+        });
+    }
+    backend.render();
+    write_png(&mut backend, "sidebar-worktrees-armed");
+}
+
+fn worktree_detail_dimming() {
+    let mut backend = sidebar_worktrees_fixture();
+    let mut comparisons = Vec::new();
+    for (name, amount) in [
+        ("current", 0.0),
+        ("light", 0.2),
+        ("medium", 0.4),
+        ("strong", 0.6),
+    ] {
+        backend.state_mut().sidebar.worktrees.detail_dim_preview = Some(amount);
+        for (width, height) in [(72, 22), (100, 26)] {
+            backend.set_viewport(viewport(width, height));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!("worktree-detail-{name}-{width}x{height}"),
+            );
+            if width == 72 {
+                comparisons.push((
+                    format!("{name} · {:.0}%", amount * 100.0),
+                    backend.capture_frame(),
+                ));
+            }
+        }
+    }
+    // Assemble captured terminal cells, preserving the real sidebar rendering and colours,
+    // while leaving out the empty workspace area for a compact visual comparison.
+    let panel_width = 31;
+    let height = 16;
+    let width = (panel_width + 2) * comparisons.len() as u16 - 2;
+    let mut blank = comparisons[0].1.cell(1, 1).clone();
+    blank.symbol = " ".into();
+    let mut frame = tui_lipan::CapturedFrame {
+        viewport: viewport(width, height),
+        width,
+        height,
+        cells: vec![blank; usize::from(width * height)],
+        cursor: None,
+        images: Vec::new(),
+    };
+    for (index, (label, sidebar)) in comparisons.iter().enumerate() {
+        let offset = index as u16 * (panel_width + 2);
+        for (x, ch) in label.chars().enumerate() {
+            let cell = &mut frame.cells[usize::from(offset) + x];
+            cell.symbol = ch.to_string();
+            cell.fg = sidebar.cell(2, 3).fg;
+        }
+        for y in 0..height - 2 {
+            for x in 0..panel_width {
+                frame.cells[usize::from((y + 2) * width + offset + x)] = sidebar.cell(x, y).clone();
+            }
+        }
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/ui-sketches/worktree-detail-comparison.png");
+    std::fs::write(
+        &path,
+        frame.to_png(&tui_lipan::PngOptions::default()).unwrap(),
+    )
+    .unwrap();
+    println!("wrote {}", path.display());
+}
+
+fn sidebar_worktrees_fixture() -> TestBackend<AppRoot> {
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(viewport(100, 26));
     {
         let state = backend.state_mut();
         state.sidebar_visible = true;
         state.config.animations.sidebar = false;
+        state.config.sidebar.split = false;
+        state.sidebar.panels.truncate(1);
         state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
         state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("worktrees"));
@@ -238,6 +358,7 @@ fn sidebar_worktrees() {
                 true,
             ),
         ];
+        listing.statuses = work_statuses(&listing.entries);
         let session = |name: &str, running: bool| WorktreeSession {
             name: name.into(),
             running,
@@ -253,16 +374,8 @@ fn sidebar_worktrees() {
             "/home/me/src/rozi-worktrees/release".into(),
             vec![session("release", false)],
         );
-
-        // The pointer on `feat/login` (header, master, then it) shows what Enter would do.
-        state.sidebar.panels[0].hovered_row = Some(2);
-        state.sidebar.pending_row_close = Some(rozi::state::SidebarClose::Worktree {
-            path: "/home/me/src/rozi/.claude/worktrees/extensions-spinner".into(),
-            force: false,
-        });
     }
-    backend.render();
-    write_png(&mut backend, "sidebar-worktrees");
+    backend
 }
 
 // --- worktree-picker -------------------------------------------------------------------------
@@ -294,6 +407,27 @@ fn worktree_picker() {
             false,
         ),
     ];
+    picker.entries.extend([
+        worktree(
+            "/home/me/src/rozi-worktrees/floating-drag",
+            "fix/follower-floating-drag-live",
+            true,
+            false,
+        ),
+        worktree(
+            "/home/me/src/rozi-worktrees/keep-links",
+            "fix/keep-links-alive-across-suspend",
+            true,
+            false,
+        ),
+        worktree(
+            "/home/me/src/rozi-worktrees/sidebar",
+            "fix/sidebar-mode-polish",
+            true,
+            false,
+        ),
+    ]);
+    picker.statuses = work_statuses(&picker.entries);
     picker.sessions.push(DiscoveredSession {
         name: "review".into(),
         origin: SessionOrigin {
@@ -314,6 +448,35 @@ fn worktree_picker() {
         backend.set_viewport(viewport(width, height));
         backend.render();
         write_png(&mut backend, &format!("worktree-picker-{width}x{height}"));
+    }
+
+    let (entries, statuses) = {
+        let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+        let statuses = std::mem::take(&mut picker.statuses);
+        picker.statuses.unavailable = true;
+        (picker.entries.clone(), statuses)
+    };
+    backend.set_viewport(viewport(72, 22));
+    backend.render();
+    write_png(&mut backend, "worktree-picker-unavailable");
+    for (name, error, pending) in [
+        ("empty", None, None),
+        ("loading", None, Some(999)),
+        ("error", Some("Repository unavailable"), None),
+    ] {
+        let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+        picker.entries.clear();
+        picker.pending_list = pending;
+        picker.error = error.map(str::to_string);
+        backend.render();
+        write_png(&mut backend, &format!("worktree-picker-{name}"));
+    }
+    {
+        let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+        picker.entries = entries;
+        picker.statuses = statuses;
+        picker.error = None;
+        picker.pending_list = None;
     }
 
     backend.dispatch(Msg::WorktreeNew).expect("open the form");

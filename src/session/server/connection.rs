@@ -785,7 +785,9 @@ impl SessionServer {
         }
         if !matches!(
             &request,
-            protocol::WorktreeRequest::List { .. } | protocol::WorktreeRequest::Preview { .. }
+            protocol::WorktreeRequest::List { .. }
+                | protocol::WorktreeRequest::Preview { .. }
+                | protocol::WorktreeRequest::Status { .. }
         ) && self.client_read_only(client_id)
         {
             return Some(failed("worktree mutation requires a writable client"));

@@ -1044,12 +1044,7 @@ fn keybinding_change_hints(ctx: &Context<AppRoot>, change: &KeybindingChangeView
         ),
         _ => row,
     };
-    let (esc, msg) = if change.mode == KeybindingCaptureMode::Recording {
-        ("cancel", Msg::KeybindingCancelCapture)
-    } else {
-        ("record again", Msg::KeybindingRetryCapture)
-    };
-    row.child(hint_button(ctx, esc, "esc", msg)).into()
+    row.into()
 }
 
 struct ChangeHeading {

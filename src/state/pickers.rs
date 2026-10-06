@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
-use tui_lipan::prelude::{OverlayId, TextInput};
+use tui_lipan::prelude::{ItemDescription, OverlayId, SearchItem, SearchMatchMode, TextInput};
+use tui_lipan::rank_search_palette_indices_with_mode;
 
 use crate::config::ProfileEntry;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
@@ -35,6 +36,8 @@ pub struct WorktreePickerState {
     pub input: TextInput,
     pub selected: usize,
     pub pending_list: Option<u64>,
+    pub pending_status: Option<u64>,
+    pub statuses: crate::git::pull_requests::WorktreeStatuses,
     /// A checkout whose removal waits for a second Ctrl+K.
     pub pending_remove: Option<PendingWorktreeRemove>,
     pub form: Option<WorktreeFormState>,
@@ -45,6 +48,56 @@ pub struct WorktreePickerState {
 }
 
 impl WorktreePickerState {
+    /// The same searchable fields for palette ranking and action selection validation.
+    pub(crate) fn search_item(&self, index: usize) -> Option<SearchItem<usize>> {
+        let tree = self.entries.get(index)?;
+        let branch = match (&tree.branch, tree.bare) {
+            (_, true) => "(bare)",
+            (Some(branch), false) => branch,
+            (None, false) => "(detached)",
+        };
+        let state = if !tree.linked {
+            "primary"
+        } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
+            "stale lock"
+        } else if tree.lock.is_some() {
+            "locked"
+        } else if tree.prunable {
+            "prunable"
+        } else {
+            ""
+        };
+        let work_status = match self.statuses.checkouts.get(&tree.path) {
+            Some(pr) => format!("#{} {}", pr.number, pr.status.picker_label()),
+            None if tree.linked && tree.branch.is_some() && self.statuses.unavailable => {
+                "PR unavailable".into()
+            }
+            None => String::new(),
+        };
+        let description = [work_status.as_str(), state]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        Some(
+            SearchItem::new(branch, index)
+                .aliases([tree.path.clone()])
+                .description(ItemDescription::new().right(format!("  {description}"))),
+        )
+    }
+
+    pub(crate) fn selected_entry(&self) -> Option<&crate::git::worktrees::WorktreeInfo> {
+        let item = self.search_item(self.selected)?;
+        (!rank_search_palette_indices_with_mode(
+            &[item],
+            self.input.text(),
+            SearchMatchMode::Hybrid,
+            |_, _, score| score as f64,
+        )
+        .is_empty())
+        .then(|| &self.entries[self.selected])
+    }
+
     pub fn new(cwd: String, target: Option<crate::session::remote::RemoteTarget>) -> Self {
         Self {
             cwd,
@@ -54,6 +107,8 @@ impl WorktreePickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_list: None,
+            pending_status: None,
+            statuses: Default::default(),
             pending_remove: None,
             form: None,
             error: None,
@@ -137,6 +192,53 @@ impl WorktreeListCache {
     pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
         self.lists
             .retain(|(host, repo, _)| !(host.as_ref() == target && repo == cwd));
+    }
+}
+
+#[derive(Default)]
+pub struct WorktreeStatusCache {
+    entries: Vec<WorktreeStatusEntry>,
+}
+
+struct WorktreeStatusEntry {
+    target: Option<crate::session::remote::RemoteTarget>,
+    cwd: String,
+    statuses: crate::git::pull_requests::WorktreeStatuses,
+}
+
+impl WorktreeStatusCache {
+    pub fn get(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+    ) -> crate::git::pull_requests::WorktreeStatuses {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.target.as_ref() == target
+                    && (entry.cwd == cwd || entry.statuses.checkouts.contains_key(cwd))
+            })
+            .map(|entry| entry.statuses.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn put(
+        &mut self,
+        target: Option<crate::session::remote::RemoteTarget>,
+        cwd: String,
+        statuses: crate::git::pull_requests::WorktreeStatuses,
+    ) {
+        self.entries
+            .retain(|entry| entry.target != target || entry.cwd != cwd);
+        self.entries.insert(
+            0,
+            WorktreeStatusEntry {
+                target,
+                cwd,
+                statuses,
+            },
+        );
+        self.entries.truncate(8);
     }
 }
 

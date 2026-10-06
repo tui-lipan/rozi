@@ -49,7 +49,7 @@ Press `Ctrl+A`, then `o` to open **Profiles**.
 | `Ctrl+N` | Capture the current session under a new profile name |
 | `Ctrl+R` twice | Replace the current session's panes with the selected profile |
 | `Ctrl+F` | Set or clear the selected profile as the default |
-| `Ctrl+D` twice | Delete the profile file |
+| `Ctrl+K` twice | Delete the profile file |
 
 If you are in a temporary session with running panes and opening the profile would end that
 session, `Enter` asks you to press it again. Set `[confirm] load_profile = false` to skip this.

@@ -177,7 +177,7 @@ def picker_request(snippets: list[Snippet]) -> dict[str, object]:
             },
             {
                 "id": "delete",
-                "key": "ctrl-d",
+                "key": "ctrl-k",
                 "label": "delete",
                 "confirm": True,
             },

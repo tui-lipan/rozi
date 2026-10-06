@@ -126,7 +126,7 @@ Check that:
 1. `Ctrl+N` creates a branch and refreshes the open picker.
 2. `Enter` switches to an eligible branch.
 3. A dirty worktree disables branch switching.
-4. `Ctrl+D` needs a second press and deletes without forcing.
+4. `Ctrl+K` needs a second press and deletes without forcing.
 5. `r` refreshes without closing the picker.
 6. `Esc` cancels without an error notification.
 

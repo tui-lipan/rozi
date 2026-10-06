@@ -188,7 +188,7 @@ def picker_request(rows: list[dict[str, object]]) -> dict[str, object]:
             {"id": "shell", "key": "e", "label": "shell", "close": True},
             {
                 "id": "remove",
-                "key": "ctrl-d",
+                "key": "ctrl-k",
                 "label": "remove",
                 "confirm": True,
             },

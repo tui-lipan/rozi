@@ -38,8 +38,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             "unlock & remove",
             "again to unlock and remove (lock owner gone)",
         ),
-        Some(PendingWorktreeRemoveKind::Clean) => ("remove", "again to remove"),
-        None => ("remove", ""),
+        Some(PendingWorktreeRemoveKind::Clean) | None => ("remove", "again to remove"),
     };
     let removable = selected.is_some_and(|tree| {
         tree.linked && !tree.bare && tree.lock.as_ref().is_none_or(|lock| lock.stale)
@@ -55,13 +54,14 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .hint_only(),
         OverlayAction::new("ctrl-n", "new", Msg::WorktreeNew, writable && !busy),
         OverlayAction::new("ctrl-r", "refresh", Msg::WorktreeRefresh, !busy),
-        OverlayAction::new(
-            "ctrl-k",
+        OverlayAction::destructive(
+            ctx,
             remove_label,
             Msg::WorktreeRemoveSelected,
             writable && !busy && removable,
+            armed,
         )
-        .confirm_if(armed, confirm, ctx.state.theme.status.error, true),
+        .with_confirm_cue(confirm),
         OverlayAction::new(
             "ctrl-u",
             "unlock",

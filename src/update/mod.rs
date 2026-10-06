@@ -386,6 +386,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionPickerDisconnectHost => prompts::session_picker_disconnect_host(ctx),
         Msg::SessionPickerRemoteHosts => prompts::session_picker_remote_hosts(ctx),
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),
+        Msg::AgentPickerTab(index) => crate::ops::agents::select_tab(ctx, index),
         Msg::CloseAgentPicker => crate::ops::agents::close_agent_picker(ctx),
         Msg::AgentPickerQueryChanged(query) => crate::ops::agents::query_changed(ctx, query),
         Msg::AgentPickerSelect(location) => crate::ops::agents::select(ctx, location),
@@ -1021,6 +1022,10 @@ fn post_update_sync(
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);
     hosts::sync(ctx);
+    if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
+        let command = update.command.take();
+        update = Update::with_command(command);
+    }
 
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();

@@ -1136,9 +1136,9 @@ pub(crate) fn disconnect_host(
     // disconnect transition so the badge and the picker's create/scratch actions still agree.
     if ctx.state.is_launcher()
         && let Some(picker) = ctx.state.session_picker.as_mut()
-        && picker.tab.as_ref() == Some(target)
+        && picker.tab.remote_target() == Some(target)
     {
-        picker.tab = None;
+        picker.tab = crate::state::SessionPickerTab::Host(None);
         picker.keep_selection_in_tab();
     }
     // Close every retained background attachment on this host; their servers keep running, except

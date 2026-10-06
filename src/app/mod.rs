@@ -495,8 +495,34 @@ mod tests {
                 assert!(lines.iter().any(|line| line.contains("launch as Ctrl+O")));
                 assert!(lines.iter().any(|line| line.contains("default Ctrl+F")));
                 assert!(lines.iter().any(|line| line.contains("replace Ctrl+R")));
-                assert!(lines.iter().any(|line| line.contains("• running")));
+                assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
+                assert!(lines.iter().any(|line| line.contains("default · running")));
                 assert!(lines.iter().any(|line| line.contains("new Ctrl+N")));
+
+                let mut background = crate::state::Attachment::new();
+                background.session_name = Some("rust-dev".into());
+                background.session_attached = true;
+                background.connection = crate::state::ConnectionState::Connected;
+                backend.state_mut().background.insert(1, background);
+                backend.render();
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                assert!(lines.iter().any(|line| line.contains("◐ rust-dev")));
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("default · background"))
+                );
+
+                backend
+                    .state_mut()
+                    .background
+                    .get_mut(&1)
+                    .unwrap()
+                    .connection = crate::state::ConnectionState::Disconnected;
+                backend.render();
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
+                assert!(lines.iter().any(|line| line.contains("default · running")));
             })
             .expect("spawn test thread")
             .join()

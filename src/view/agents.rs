@@ -35,6 +35,22 @@ pub(crate) struct GlobalAgentRow {
 }
 
 impl GlobalAgentRow {
+    /// The host and session identity a tab uses, including the attached session's target.
+    pub fn session_tab(&self, state: &State) -> crate::state::AgentPickerTab {
+        let target = match &self.location {
+            AgentLocation::Here { .. } => state.current().remote_target.clone(),
+            AgentLocation::OtherSession { target, .. } => target.clone(),
+        };
+        crate::state::AgentPickerTab::Session {
+            target,
+            session: self.session.clone(),
+        }
+    }
+
+    pub fn in_tab(&self, state: &State, tab: &crate::state::AgentPickerTab) -> bool {
+        *tab == crate::state::AgentPickerTab::All || self.session_tab(state) == *tab
+    }
+
     /// How much this row wants attention, lowest first — the Agents tab's own ranking, so blocked
     /// leads, idle trails, and a publisher's custom word sits with the states still in progress.
     pub fn rank(&self) -> u8 {
@@ -61,6 +77,16 @@ impl GlobalAgentRow {
             Some(host) => format!("{agent} · {host}/{session}"),
             None => format!("{agent} · {session}"),
         }
+    }
+
+    pub fn search_aliases(&self, state: &State) -> Vec<String> {
+        let target = match &self.location {
+            AgentLocation::Here { .. } => state.current().remote_target.as_ref(),
+            AgentLocation::OtherSession { target, .. } => target.as_ref(),
+        };
+        target
+            .map(|target| vec![target.to_spec()])
+            .unwrap_or_default()
     }
 
     pub fn description(&self) -> String {
@@ -102,7 +128,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
     let here_target = state.current().remote_target.clone();
     let here_host = here_target
         .as_ref()
-        .map(crate::session::remote::RemoteTarget::display_label);
+        .map(|target| state.remote_target_label(target));
     let here_session = state.current().session_name.clone();
     let mut rows = Vec::new();
     if let Some(session) = here_session.as_deref() {
@@ -152,7 +178,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
         }
     }
     for (target, agents) in &state.remote.agents {
-        let host = target.display_label();
+        let host = state.remote_target_label(target);
         for agent in agents {
             // The session on screen is already listed from its live panes, which are fresher than a
             // snapshot taken between polls. Two answers for one agent, disagreeing by up to a poll

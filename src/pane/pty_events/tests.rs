@@ -1137,3 +1137,96 @@ fn synchronized_targets_exclude_floating_and_scratch() {
     assert_eq!(synchronized_key_targets(&state, 3), vec![3]);
     assert_eq!(synchronized_key_targets(&state, 5), vec![5]);
 }
+
+/// Moving a pane's scrollback is a repaint: the terminal reads its screen when it paints. A fast
+/// wheel or scrollbar drag sends one of these per pointer report, so a rebuild here is paid for
+/// every pane, the workbar, and the sidebar each time. What the view itself derives from the rows
+/// on screen - search highlights and hint labels - and acknowledged attention marks still rebuild.
+#[test]
+fn pane_scroll_repaints_unless_the_view_reads_the_offset() {
+    use crate::Msg;
+    use crate::state::{HintModeState, ScrollbackMatch, ScrollbackSearchState};
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let id = backend.state().focused_pane().expect("fresh pane focus");
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.terminal
+                    .process_server_output("history\r\n".repeat(80).as_bytes());
+                pane.activity.has_unseen_output = false;
+            }
+            backend.render();
+
+            let level = |backend: &mut TestBackend<AppRoot>, offset| {
+                backend
+                    .update_level(Msg::PaneScroll(id, offset))
+                    .expect("scroll pane")
+            };
+            assert_eq!(level(&mut backend, 3), UpdateLevel::Paint);
+            assert_eq!(
+                level(&mut backend, 3),
+                UpdateLevel::None,
+                "an unmoved offset"
+            );
+
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .activity
+                .has_unseen_output = true;
+            assert_eq!(
+                level(&mut backend, 4),
+                UpdateLevel::Full,
+                "acknowledging the pane changes its chrome"
+            );
+
+            let mut search = ScrollbackSearchState::new(id);
+            search.replace_results(
+                vec![ScrollbackMatch {
+                    offset: 0,
+                    line: 0,
+                    end_line: 0,
+                    start_col: 0,
+                    end_col: 7,
+                    start_byte: 0,
+                    end_byte: 7,
+                    text: "history".into(),
+                    pane: id,
+                }],
+                false,
+            );
+            backend.state_mut().search = Some(search);
+            assert_eq!(
+                level(&mut backend, 5),
+                UpdateLevel::Full,
+                "search highlights are found in the rows on screen"
+            );
+            backend.state_mut().search = None;
+
+            backend.state_mut().hint_mode = Some(HintModeState {
+                target: id,
+                matches: Vec::new(),
+                labels: Vec::new(),
+                input: String::new(),
+                offset: 5,
+            });
+            assert_eq!(
+                level(&mut backend, 6),
+                UpdateLevel::Full,
+                "hint labels are pinned to the rows on screen"
+            );
+        })
+        .expect("spawn pane scroll level test")
+        .join()
+        .expect("pane scroll level test completes");
+}

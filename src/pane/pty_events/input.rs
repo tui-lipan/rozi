@@ -252,11 +252,30 @@ pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset:
     let acknowledged = crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     let scrolled =
         find_pane_mut(&mut ctx.state, id).is_some_and(|pane| pane.terminal.set_scrollback(offset));
-    if acknowledged || scrolled {
+    if acknowledged || (scrolled && scroll_offset_shapes_view(&ctx.state, id)) {
         Update::full()
+    } else if scrolled {
+        // The terminal reads its screen at paint time, so a moved offset needs no `view()`. A
+        // fast wheel or scrollbar drag lands here once per pointer report, and rebuilding every
+        // pane, the workbar, and the sidebar for each one is what made scrolling cost half a core.
+        Update::paint()
     } else {
         Update::none()
     }
+}
+
+/// Whether the view itself reads what `id` shows, so moving its scrollback needs a rebuild rather
+/// than a repaint. Search highlights and hint labels are both found in the rows on screen.
+fn scroll_offset_shapes_view(state: &crate::state::State, id: PaneId) -> bool {
+    let searched = state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.matches.iter().any(|matched| matched.pane == id));
+    let hinted = state
+        .hint_mode
+        .as_ref()
+        .is_some_and(|hints| hints.target == id);
+    searched || hinted
 }
 
 pub(crate) fn terminal_key_event_bytes(key: KeyEvent, modes: TerminalKeyModes) -> Option<Vec<u8>> {

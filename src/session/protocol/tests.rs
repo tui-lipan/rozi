@@ -79,6 +79,7 @@ fn golden_layout_commit_json_shape() {
             rev: 4,
             author: 3,
             layout,
+            live: false,
         })
         .unwrap(),
         serde_json::json!({

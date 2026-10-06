@@ -55,10 +55,12 @@ fn concurrent_commits_reject_the_stale_base_revision_with_authoritative_layout()
     controller.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: accepted.clone(),
+        live: false,
     });
     controller.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: stale,
+        live: false,
     });
 
     let mut committed = false;
@@ -69,6 +71,7 @@ fn concurrent_commits_reject_the_stale_base_revision_with_authoritative_layout()
                 rev,
                 author,
                 layout,
+                live: _,
             }) => {
                 assert_eq!((*rev, *author, layout), (1, controller_id, &accepted));
                 committed = true;
@@ -111,6 +114,7 @@ fn controller_drop_promotes_oldest_survivor_and_accepts_its_commit() {
     oldest.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: layout.clone(),
+        live: false,
     });
     read_until(&mut newest, |frame| {
         matches!(
@@ -119,6 +123,7 @@ fn controller_drop_promotes_oldest_survivor_and_accepts_its_commit() {
                 rev: 1,
                 author,
                 layout: received,
+                live: _,
             }) if *author == oldest_id && received == &layout
         )
     });
@@ -156,6 +161,7 @@ fn heartbeat_expiry_promotes_a_live_follower() {
     follower.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: layout.clone(),
+        live: false,
     });
     read_until(&mut follower, |frame| {
         matches!(
@@ -164,6 +170,7 @@ fn heartbeat_expiry_promotes_a_live_follower() {
                 rev: 1,
                 author,
                 layout: received,
+                live: _,
             }) if *author == follower_id && received == &layout
         )
     });
@@ -229,6 +236,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     controller.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: layout.clone(),
+        live: false,
     });
     controller.write_pane_input(PANE_ID, PANE_GENERATION, b"after\r");
 
@@ -242,6 +250,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
                 rev: 1,
                 author,
                 layout: received,
+                live: _,
             }) => {
                 assert_eq!(*author, controller_id);
                 assert_eq!(received, &layout);
@@ -326,11 +335,13 @@ fn unparking_never_steals_a_session_someone_else_took() {
     background.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: empty_layout(111),
+        live: false,
     });
     let held = empty_layout(222);
     arriving.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: held.clone(),
+        live: false,
     });
     read_until(&mut arriving, |frame| {
         matches!(
@@ -339,6 +350,7 @@ fn unparking_never_steals_a_session_someone_else_took() {
                 rev: 1,
                 author,
                 layout,
+                live: _,
             }) if *author == arriving_id && layout == &held
         )
     });

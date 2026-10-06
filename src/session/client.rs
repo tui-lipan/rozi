@@ -771,8 +771,13 @@ impl SessionClient {
     }
     /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only
     /// while this client holds the lease and `base_rev` matches the current revision.
-    pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {
-        self.send_control(ClientMessage::CommitLayout { base_rev, layout });
+    /// `live` marks a commit made mid-gesture; see [`ClientMessage::CommitLayout`].
+    pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout, live: bool) {
+        self.send_control(ClientMessage::CommitLayout {
+            base_rev,
+            layout,
+            live,
+        });
     }
     /// Ask the current controller for the layout-control lease. The server auto-grants only when no
     /// controller holds it; otherwise it flags the request for the controller to grant or decline.

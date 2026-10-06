@@ -3041,6 +3041,7 @@ fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
                         rev,
                         author,
                         layout: layout.clone(),
+                        live: false,
                     })
                     .unwrap();
                 let event: serde_json::Value =
@@ -3052,6 +3053,39 @@ fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
                         "data": {"revision": rev.to_string(), "author": expected}
                     })
                 );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// A live revision is a step of the controller's gesture: the follower draws it where it lands
+/// instead of easing toward it. An ordinary revision keeps the default transition.
+#[test]
+fn a_live_layout_revision_is_applied_without_easing() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            backend.state_mut().current_mut().shared =
+                Some(crate::state::SharedSessionState::new(1));
+            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
+            for (rev, live, expected) in [
+                (5, true, crate::layout::anim::GeometryAnimation::None),
+                (6, false, crate::layout::anim::GeometryAnimation::TileFloat),
+            ] {
+                backend
+                    .update_level(Msg::SessionLayoutCommitted {
+                        epoch,
+                        rev,
+                        author: 2,
+                        layout: layout.clone(),
+                        live,
+                    })
+                    .unwrap();
+                assert_eq!(backend.state().animation, expected, "live: {live}");
             }
         })
         .unwrap()

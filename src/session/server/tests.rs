@@ -2321,6 +2321,7 @@ fn non_controller_commit_is_ignored() {
         ClientMessage::CommitLayout {
             base_rev: 0,
             layout,
+            live: false,
         },
     );
     assert!(responses.is_empty());
@@ -2342,6 +2343,7 @@ fn controller_commit_increments_rev_and_broadcasts_author() {
         ClientMessage::CommitLayout {
             base_rev: 0,
             layout,
+            live: false,
         },
     );
     assert_eq!(server.layout_rev, 1);
@@ -2352,6 +2354,36 @@ fn controller_commit_increments_rev_and_broadcasts_author() {
     };
     assert_eq!(*rev, 1);
     assert_eq!(*author, controller);
+}
+
+/// The server keeps no gesture state, but it must hand the controller's `live` mark on to every
+/// follower: it decides whether they ease toward the revision or draw it as it lands.
+#[test]
+fn controller_commit_relays_live_mark() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _s1) = attach_client(&mut server);
+    for (base_rev, live) in [(0, true), (1, false)] {
+        let layout = SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: 80 + base_rev as u16,
+            canvas_rows: 24,
+            workspaces: Vec::new(),
+        };
+        let responses = server.handle_message(
+            controller,
+            ClientMessage::CommitLayout {
+                base_rev,
+                layout,
+                live,
+            },
+        );
+        let [(Target::Broadcast, ServerMessage::LayoutCommitted { live: relayed, .. })] =
+            responses.as_slice()
+        else {
+            panic!("expected broadcast commit, got {responses:?}");
+        };
+        assert_eq!(*relayed, live);
+    }
 }
 
 #[test]
@@ -2369,6 +2401,7 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
         ClientMessage::CommitLayout {
             base_rev: 0,
             layout: layout.clone(),
+            live: false,
         },
     );
     let responses = server.handle_message(
@@ -2376,6 +2409,7 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
         ClientMessage::CommitLayout {
             base_rev: 0,
             layout,
+            live: false,
         },
     );
     let [
@@ -2409,6 +2443,7 @@ fn malformed_layout_commit_is_rejected() {
         ClientMessage::CommitLayout {
             base_rev: 0,
             layout: invalid_layout,
+            live: false,
         },
     );
     let [

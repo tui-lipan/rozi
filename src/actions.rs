@@ -245,6 +245,10 @@ fn execute_action_inner(
     if !crate::commands::command_available(action, &ctx.state) {
         return Update::full();
     }
+    // A shared-layout action ends any pointer gesture first; see `finish_shared_pointer_gesture`.
+    if is_layout_mutating(&ctx.state, action) {
+        crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
+    }
     match action {
         // In the launcher (or any no-client resting state) there is no session to spawn into, and
         // queueing the spawn against a client that will never arrive would look like a hang. Asking

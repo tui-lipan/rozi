@@ -75,8 +75,9 @@ A drag in progress is not part of the shared layout. It is never saved into a pr
 with a session. If the controller disconnects mid-drag, the pane returns to the last committed
 layout.
 
-Each follower animates layout changes with its own animation settings. A dragged pane is the
-exception: it tracks the controller's pointer directly.
+Each follower animates layout changes with its own animation settings. Changes the controller
+makes with the mouse are the exception: a dragged pane, a floating-pane move, a mouse pane resize
+(floating or tiled), and a dragged split all track the controller's pointer directly.
 
 ## Terminal size
 

@@ -173,6 +173,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     first.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: layout.clone(),
+        live: false,
     });
     let mut committed = None;
     read_until(&mut first, |frame| {
@@ -189,6 +190,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
             rev: 1,
             author: first_client_id,
             layout: layout.clone(),
+            live: false,
         })
     );
 

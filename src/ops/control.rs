@@ -608,11 +608,16 @@ fn layout_write_gate(ctx: &Context<AppRoot>) -> std::result::Result<(), ControlR
 }
 
 /// The checks every layout write makes before looking at its target: authority, then revision.
+///
+/// A pointer gesture ends between the two. Ending a lifted tiled pane's drag drops it, which is a
+/// revision of its own, so `if_revision` is checked against the layout the write will actually edit.
+/// A write refused for its revision has still ended the gesture; one refused for authority has not.
 fn layout_write_preflight(
     ctx: &mut Context<AppRoot>,
     if_revision: Option<u64>,
 ) -> std::result::Result<(), ControlResponse> {
     layout_write_gate(ctx)?;
+    crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     let (revision, _) = flushed_revision(ctx);
     crate::control::check_if_revision(if_revision, revision)
 }
@@ -3004,6 +3009,148 @@ mod tests {
             }))
             .expect("dispatch control request");
         response.recv().unwrap()
+    }
+
+    /// A controller of a shared session with two tiled panes side by side, plus an observer on the
+    /// outbound stream.
+    fn shared_controller() -> (TestBackend<crate::AppRoot>, mpsc::Receiver<ClientOutbound>) {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let (client, rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
+            let mut shared = crate::state::SharedSessionState::new(1);
+            shared.controller = Some(1);
+            shared.canonical_canvas = Some((100, 29));
+            state.current_mut().shared = Some(shared);
+            let workspace = state.active_workspace_mut();
+            workspace.panes.clear();
+            for id in 1..=2 {
+                let mut pane = Pane::new(id, 100, FloatRect::default());
+                pane.opening = false;
+                workspace.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(workspace, id);
+            }
+            workspace.focused_pane = Some(1);
+            state.current_mut().focused_pane = Some(1);
+        }
+        backend.render();
+        (backend, rx)
+    }
+
+    /// Whether each `CommitLayout` sent since the last drain was marked live.
+    fn commit_liveness(rx: &mpsc::Receiver<ClientOutbound>) -> Vec<bool> {
+        rx.try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::CommitLayout { live, .. }) => Some(live),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Hold a split drag with one step not yet committed, as a mouse still held down leaves it.
+    fn mid_split_drag(backend: &mut TestBackend<crate::AppRoot>) {
+        backend
+            .dispatch(crate::Msg::BeginResizeSplit(1, true, 50, 10))
+            .expect("grab the split");
+        backend
+            .dispatch(crate::Msg::ResizeSplit(1, true, 50, 10, 60, 10))
+            .expect("drag before the commit goes out");
+    }
+
+    /// A control write is a discrete layout change, like an action: it ends a pointer gesture
+    /// first, so the gesture's last step is live and the write is an ordinary revision.
+    #[test]
+    fn a_layout_write_during_a_split_drag_is_an_ordinary_commit() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, rx) = shared_controller();
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                    .expect("publish the starting layout");
+                let _ = commit_liveness(&rx);
+                mid_split_drag(&mut backend);
+
+                let response = dispatch(
+                    &mut backend,
+                    ControlCommand::LayoutSet {
+                        workspace: 1,
+                        layout: Some(crate::control::ControlLayoutKind::Grid),
+                        master_ratio: None,
+                        if_revision: None,
+                    },
+                );
+                assert!(response.ok, "{:?}", response.error);
+                assert_eq!(
+                    commit_liveness(&rx),
+                    vec![true, false],
+                    "the gesture's last step is live; the layout write is its own ordinary revision"
+                );
+                assert!(
+                    backend.state().split_drag.is_none(),
+                    "the write ended the gesture"
+                );
+            })
+            .expect("spawn layout write test thread")
+            .join()
+            .expect("layout write test thread completes");
+    }
+
+    /// `new-pane` adds a shared pane outside the action dispatcher, so it ends the gesture too.
+    #[test]
+    fn a_new_pane_during_a_split_drag_ends_the_gesture_first() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (mut backend, rx) = shared_controller();
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                    .expect("publish the starting layout");
+                let _ = commit_liveness(&rx);
+                mid_split_drag(&mut backend);
+
+                let panes_before = backend.state().current().workspaces[0].panes.len();
+                // The reply waits for the PTY; the spawn itself is what this test is about.
+                let (envelope, _response) = new_pane_request(false);
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .expect("dispatch new-pane");
+                assert_eq!(
+                    backend.state().current().workspaces[0].panes.len(),
+                    panes_before + 1,
+                    "the controller spawns a shared pane"
+                );
+                assert!(
+                    backend.state().split_drag.is_none(),
+                    "the spawn ended the gesture"
+                );
+                assert_eq!(
+                    commit_liveness(&rx),
+                    vec![true],
+                    "only the gesture's step is live"
+                );
+                backend
+                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                    .expect("publish the spawn");
+                assert_eq!(
+                    commit_liveness(&rx),
+                    vec![false],
+                    "the spawn is an ordinary revision"
+                );
+            })
+            .expect("spawn new pane test thread")
+            .join()
+            .expect("new pane test thread completes");
     }
 
     fn pane_set(

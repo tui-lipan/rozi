@@ -769,11 +769,13 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 rev,
                 author,
                 layout,
+                live,
             } => Msg::SessionLayoutCommitted {
                 epoch,
                 rev,
                 author,
                 layout,
+                live,
             },
             ServerMessage::LayoutRejected {
                 current_rev,

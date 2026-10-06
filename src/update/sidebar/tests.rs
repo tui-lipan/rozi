@@ -2003,3 +2003,173 @@ fn sessions_and_command_panels_refresh_together() {
         backend.state_mut().sidebar_visible = false;
     });
 }
+
+/// An attached session with `tabs` in the first sidebar panel, rendered, with the sidebar holding
+/// the keyboard. Animations are off so the sidebar is on screen at its full width from the start.
+fn focused_sidebar_backend(tabs: Vec<SidebarTab>) -> TestBackend<AppRoot> {
+    let mut backend = settled_backend();
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 12,
+    });
+    let state = backend.state_mut();
+    let session = state.current_mut();
+    session.session_name = Some("dev".into());
+    session.session_attached = true;
+    session.connection = crate::state::ConnectionState::Connected;
+    session.pending_session_attach = None;
+    state.config.animations.enabled = false;
+    state.sidebar_visible = true;
+    state.sidebar.panels[0].tabs = tabs.iter().map(SidebarTab::id).collect();
+    state.sidebar.panels[0].active_tab = tabs.first().map(SidebarTab::id);
+    state.config.sidebar.tabs = tabs;
+    backend.render();
+    backend
+        .dispatch(crate::Msg::RunAction(crate::input::Action::FocusSidebar))
+        .expect("focus the sidebar");
+    backend.render();
+    assert!(backend.state().sidebar.focused);
+    backend
+}
+
+fn send_sidebar_key(backend: &mut TestBackend<AppRoot>, code: KeyCode, mods: KeyMods) {
+    backend
+        .send_key(KeyEvent { code, mods })
+        .expect("send sidebar key");
+    backend.render();
+}
+
+/// Sidebar tabs with nothing to show still have to hold the keyboard. In an empty workspace the
+/// file tree has no root and Worktrees has no repository, and cycling between them used to drop
+/// SIDEBAR mode because the tree's placeholder was not a focus target.
+#[test]
+fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
+    on_test_thread(|| {
+        let files = SidebarTab::Tree {
+            view: crate::config::SidebarTreeView::Files,
+            config: crate::config::SidebarTreeConfig::for_view(
+                crate::config::SidebarTreeView::Files,
+            ),
+        };
+        let mut backend =
+            focused_sidebar_backend(vec![SidebarTab::Worktrees, files, SidebarTab::Activity]);
+        let workspace = backend.state_mut().active_workspace_mut();
+        workspace.panes.clear();
+        workspace.focused_pane = None;
+        backend.render();
+
+        for step in 0..4 {
+            send_sidebar_key(&mut backend, KeyCode::Tab, KeyMods::NONE);
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(
+                backend.state().sidebar.focused,
+                "step {step} left SIDEBAR mode on {:?}:\n{frame}",
+                backend.state().sidebar.panels[0].active_tab
+            );
+        }
+    });
+}
+
+/// Every modified arrow in the sidebar has an `hjkl` twin. Shifted letters arrive uppercase with
+/// `shift` set, and Ctrl+Shift letters in either case, so both spellings are exercised.
+#[test]
+fn modified_vim_keys_mirror_the_modified_arrows() {
+    on_test_thread(|| {
+        let _config = crate::test_support::lock_config_file();
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Activity, SidebarTab::Panes]);
+        assert_eq!(backend.state().sidebar.panels.len(), 2, "two panels");
+        let ctrl_shift = KeyMods {
+            ctrl: true,
+            shift: true,
+            ..KeyMods::NONE
+        };
+
+        let width = backend.state().config.sidebar.width;
+        send_sidebar_key(&mut backend, KeyCode::Char('L'), KeyMods::SHIFT);
+        assert_eq!(
+            backend.state().config.sidebar.width,
+            width + 2,
+            "Shift+l widens"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Char('H'), KeyMods::SHIFT);
+        assert_eq!(
+            backend.state().config.sidebar.width,
+            width,
+            "Shift+h narrows"
+        );
+
+        let ratio = backend.state().config.sidebar.split_ratio;
+        send_sidebar_key(&mut backend, KeyCode::Char('J'), KeyMods::SHIFT);
+        assert!(
+            backend.state().config.sidebar.split_ratio > ratio,
+            "Shift+j moves the split down"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Char('K'), KeyMods::SHIFT);
+        assert!(
+            (backend.state().config.sidebar.split_ratio - ratio).abs() < 0.001,
+            "Shift+k moves it back"
+        );
+
+        send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::CTRL);
+        assert_eq!(
+            backend.state().sidebar.active_panel,
+            1,
+            "Ctrl+j focuses the lower panel"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Char('k'), KeyMods::CTRL);
+        assert_eq!(
+            backend.state().sidebar.active_panel,
+            0,
+            "Ctrl+k focuses the upper panel"
+        );
+
+        let activity = SidebarTab::Activity.id();
+        send_sidebar_key(&mut backend, KeyCode::Char('L'), ctrl_shift);
+        assert_eq!(
+            backend.state().sidebar.panels[0].tabs.get(1),
+            Some(&activity),
+            "Ctrl+Shift+l reorders right"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Char('h'), ctrl_shift);
+        assert_eq!(
+            backend.state().sidebar.panels[0].tabs.first(),
+            Some(&activity),
+            "Ctrl+Shift+h reorders left"
+        );
+
+        send_sidebar_key(&mut backend, KeyCode::Char('J'), ctrl_shift);
+        assert_eq!(backend.state().sidebar.active_panel, 1);
+        assert!(
+            backend.state().sidebar.panels[1].tabs.contains(&activity),
+            "Ctrl+Shift+j moves the tab to the lower panel"
+        );
+        assert!(backend.state().sidebar.focused);
+    });
+}
+
+/// `G` is Shift+g, and the shifted-key branch must not swallow it before it reaches the cursor.
+#[test]
+fn shift_g_still_jumps_to_the_last_row() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Panes]);
+        let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+        for id in [2, 3] {
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(Pane::new(id, 100, rect));
+        }
+        backend.render();
+
+        send_sidebar_key(&mut backend, KeyCode::End, KeyMods::NONE);
+        let last = backend.state().sidebar.panels[0].cursor;
+        send_sidebar_key(&mut backend, KeyCode::Home, KeyMods::NONE);
+        let first = backend.state().sidebar.panels[0].cursor;
+        assert_ne!(first, last, "the list needs more than one row");
+
+        send_sidebar_key(&mut backend, KeyCode::Char('G'), KeyMods::SHIFT);
+        assert_eq!(backend.state().sidebar.panels[0].cursor, last);
+        assert!(backend.state().sidebar.focused);
+    });
+}

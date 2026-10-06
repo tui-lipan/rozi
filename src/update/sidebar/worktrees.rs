@@ -336,6 +336,36 @@ mod tests {
         });
     }
 
+    /// Closing every pane leaves nothing to follow. The tab says so instead of holding the last
+    /// repository's checkouts, which no pane on screen points at any more.
+    #[test]
+    fn closing_every_pane_drops_the_list_instead_of_holding_it() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            assert_eq!(backend.state().sidebar.worktrees.entries.len(), 2);
+
+            {
+                // Attached: the attach that delivered the panes is over.
+                backend.state_mut().current_mut().pending_session_attach = None;
+                let workspace = backend.state_mut().active_workspace_mut();
+                workspace.panes.clear();
+                workspace.focused_pane = None;
+            }
+            nudge(&mut backend);
+            let listing = &backend.state().sidebar.worktrees;
+            assert_eq!(listing.source, None);
+            assert!(listing.entries.is_empty(), "{:?}", listing.entries);
+            assert_eq!(
+                listing.unavailable.as_deref(),
+                Some("Focus a pane in a Git repository")
+            );
+            assert!(sent_worktree_requests(&outbound).is_empty());
+        });
+    }
+
     fn stale_lock() -> Option<crate::git::worktrees::WorktreeLock> {
         Some(crate::git::worktrees::WorktreeLock {
             reason: "claude session feat (pid 9 start 1)".into(),

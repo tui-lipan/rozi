@@ -305,7 +305,7 @@ impl Row {
             })
             .height(Length::Px(lines))
             .style(if selected {
-                super::row_highlight(super::fill(ctx))
+                super::cursor_highlight(theme, super::fill(ctx))
             } else if self.active {
                 Style::new().bg(super::fill(ctx).elevate_by(0.04))
             } else {

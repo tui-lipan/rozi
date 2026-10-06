@@ -73,7 +73,23 @@ impl Drop for Repo {
     }
 }
 
-fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
+/// The sidebar's leftmost `width` columns of the current frame.
+fn sidebar_rows(backend: &TestBackend<AppRoot>, width: usize) -> Vec<String> {
+    backend
+        .capture_frame()
+        .to_fixed_grid_lines()
+        .iter()
+        .map(|line| line.chars().take(width).collect())
+        .collect()
+}
+
+/// Render a tree tab rooted at `cwd`, pumping until `ready` holds for its rows (or the deadline
+/// passes, leaving the caller's assertion to report what was on screen instead).
+fn render_tree(
+    view: SidebarTreeView,
+    cwd: &str,
+    ready: impl Fn(&[String]) -> bool + Send + 'static,
+) -> Vec<String> {
     let cwd = cwd.to_string();
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -106,18 +122,9 @@ fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
             }
             // Directory reads and `git status` both run as background commands, so the tree needs
             // a few pump/render cycles before its rows exist.
-            for _ in 0..40 {
-                backend.render();
-                let _ = backend.pump();
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
+            pump_until(&mut backend, |backend| ready(&sidebar_rows(backend, 32)));
             backend.render();
-            backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .iter()
-                .map(|line| line.chars().take(32).collect())
-                .collect()
+            sidebar_rows(&backend, 32)
         })
         .expect("spawn tree smoke thread")
         .join()
@@ -130,7 +137,9 @@ fn files_tab_lists_the_focused_pane_directory() {
         eprintln!("skipping: git is unavailable");
         return;
     };
-    let lines = render_tree(SidebarTreeView::Files, &repo.0.to_string_lossy());
+    let lines = render_tree(SidebarTreeView::Files, &repo.0.to_string_lossy(), |lines| {
+        lines.iter().any(|line| line.contains("src"))
+    });
     assert!(
         lines.iter().any(|line| line.contains("src")),
         "files tab lists the directory: {lines:?}"
@@ -174,17 +183,12 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
-            for _ in 0..40 {
-                backend.render();
-                let _ = backend.pump();
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .iter()
-                .map(|line| line.chars().take(32).collect())
-                .collect::<Vec<String>>()
+            pump_until(&mut backend, |backend| {
+                let joined = sidebar_rows(backend, 32).join("\n");
+                (joined.contains('▶') || joined.contains('▼')) && joined.contains("Find files")
+            });
+            backend.render();
+            sidebar_rows(&backend, 32)
         })
         .expect("spawn unicode-icon tree smoke thread")
         .join()
@@ -295,6 +299,10 @@ fn git_tab_shows_changed_paths_with_diff_stats() {
     let lines = render_tree(
         SidebarTreeView::Changes,
         &repo.0.join("src").to_string_lossy(),
+        |lines| {
+            let joined = lines.join("\n");
+            joined.contains("tracked.rs") && joined.contains("fresh.rs") && joined.contains('+')
+        },
     );
     let joined = lines.join("\n");
 
@@ -434,14 +442,10 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                             .push(rozi::state::Pane::new(id, 100, rect));
                     }
                 }
-                for _ in 0..40 {
-                    backend.render();
-                    let _ = backend.pump();
-                    std::thread::sleep(std::time::Duration::from_millis(15));
-                }
-                backend.render();
-                let frame = backend.capture_frame();
-                (0..12u16).any(|y| (0..34u16).any(|x| frame.cell(x, y).symbol == "▐"))
+                pump_until(&mut backend, |backend| {
+                    let frame = backend.capture_frame();
+                    (0..12u16).any(|y| (0..34u16).any(|x| frame.cell(x, y).symbol == "▐"))
+                })
             };
 
             let tree = SidebarTab::Tree {
@@ -500,7 +504,12 @@ fn git_tab_names_why_it_is_empty() {
     // One leading cell, so the message lines up with every other tab's empty state rather than
     // starting hard against the panel edge. The rest of the row is padding and the panel border.
     let says = |cwd: &std::path::Path, text: &str| {
-        let lines = render_tree(SidebarTreeView::Changes, &cwd.to_string_lossy());
+        let wanted = text.to_string();
+        let lines = render_tree(
+            SidebarTreeView::Changes,
+            &cwd.to_string_lossy(),
+            move |lines| lines.iter().any(|line| line.contains(&wanted)),
+        );
         let row = lines
             .iter()
             .find(|line| line.contains(text))
@@ -562,23 +571,22 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
                 pane
             };
-            let settle = |backend: &mut TestBackend<AppRoot>| {
-                for _ in 0..40 {
-                    backend.render();
-                    let _ = backend.pump();
-                    std::thread::sleep(std::time::Duration::from_millis(15));
+            let rows = |backend: &TestBackend<AppRoot>| sidebar_rows(backend, 34);
+            let shows = |text: &'static str| {
+                move |backend: &mut TestBackend<AppRoot>| {
+                    sidebar_rows(backend, 34)
+                        .iter()
+                        .any(|line| line.contains(text))
                 }
-                backend.render();
             };
-            let rows = |backend: &TestBackend<AppRoot>| -> Vec<String> {
-                backend
-                    .capture_frame()
-                    .to_fixed_grid_lines()
-                    .iter()
-                    .map(|line| line.chars().take(34).collect())
-                    .collect()
+            let lacks = |text: &'static str| {
+                move |backend: &mut TestBackend<AppRoot>| {
+                    !sidebar_rows(backend, 34)
+                        .iter()
+                        .any(|line| line.contains(text))
+                }
             };
-            settle(&mut backend);
+            pump_until(&mut backend, shows("src"));
 
             let src_row = (3u16..16)
                 .find(|&row| rows(&backend)[row as usize].contains("src"))
@@ -594,7 +602,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                     mods: Default::default(),
                 });
             }
-            settle(&mut backend);
+            pump_until(&mut backend, shows("inner"));
             assert!(
                 rows(&backend).iter().any(|line| line.contains("inner")),
                 "the directory starts out expanded: {:?}",
@@ -611,7 +619,14 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                     .expect("refocus the pane");
             };
             reroot(&mut backend, &other);
-            settle(&mut backend);
+            // The repository's tree is gone once its `src` row is: only then does the absence of
+            // `inner` say anything about the new root.
+            pump_until(&mut backend, lacks("src"));
+            assert!(
+                !rows(&backend).iter().any(|line| line.contains("src")),
+                "the tab re-rooted: {:?}",
+                rows(&backend)
+            );
             assert!(
                 !rows(&backend).iter().any(|line| line.contains("inner")),
                 "the other directory has a tree of its own: {:?}",
@@ -619,7 +634,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
             );
 
             reroot(&mut backend, &repo.0.to_string_lossy());
-            settle(&mut backend);
+            pump_until(&mut backend, shows("inner"));
             assert!(
                 rows(&backend).iter().any(|line| line.contains("inner")),
                 "coming back restores the expanded directory: {:?}",
@@ -641,11 +656,30 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                     mods: Default::default(),
                 });
             }
-            settle(&mut backend);
+            let remembers_src = |backend: &TestBackend<AppRoot>| {
+                backend
+                    .state()
+                    .sidebar
+                    .tree_expanded
+                    .values()
+                    .any(|expanded| expanded.iter().any(|path| path.ends_with("src")))
+            };
+            pump_until(&mut backend, |backend| !remembers_src(backend));
+            assert!(
+                !remembers_src(&backend),
+                "collapsing forgets the expansion: {:?}",
+                backend.state().sidebar.tree_expanded
+            );
             reroot(&mut backend, &other);
-            settle(&mut backend);
+            pump_until(&mut backend, lacks("src"));
             reroot(&mut backend, &repo.0.to_string_lossy());
-            settle(&mut backend);
+            pump_until(&mut backend, shows("src"));
+            // A wrongly restored expansion would list `src` in the background; give that listing
+            // the time a correct restore took above before calling its absence a pass.
+            backend
+                .settle(std::time::Duration::from_millis(150))
+                .expect("settle");
+            backend.render();
             assert!(
                 !rows(&backend).iter().any(|line| line.contains("inner")),
                 "a collapsed directory stays collapsed: {:?}",
@@ -699,18 +733,28 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
-            let settle = |backend: &mut TestBackend<AppRoot>| {
-                for _ in 0..40 {
-                    backend.render();
-                    let _ = backend.pump();
-                    std::thread::sleep(std::time::Duration::from_millis(15));
+            let shows = |text: &'static str| {
+                move |backend: &mut TestBackend<AppRoot>| {
+                    sidebar_rows(backend, 34)
+                        .iter()
+                        .any(|line| line.contains(text))
                 }
+            };
+            // Pointer and key handling is synchronous; one frame shows its result.
+            let frame = |backend: &mut TestBackend<AppRoot>| {
+                let _ = backend.pump();
                 backend.render();
             };
-            settle(&mut backend);
+            pump_until(&mut backend, shows("src"));
 
-            // The cursor shares the pointer-hover lift, one visual language across every tab.
-            let selection_bg = backend.state().theme.surface.element.elevate_by(0.08);
+            // The cursor is the pointer-hover lift tinted toward the active border, the same
+            // highlight the composed row lists use.
+            let theme = &backend.state().theme;
+            let selection_bg = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
 
             // Find and click the `src` directory row.
             let row_text = |backend: &TestBackend<AppRoot>, row: u16| -> String {
@@ -735,7 +779,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                     mods: Default::default(),
                 });
             }
-            settle(&mut backend);
+            pump_until(&mut backend, shows("inner"));
 
             // The directory expanded: a child now sits directly below it. The action never ran, so
             // no pane input was produced — asserted structurally by the tree still being the only
@@ -746,16 +790,15 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 "clicking the directory expanded it: {after:?}"
             );
 
-            // Park the pointer outside the sidebar first: hover and the keyboard cursor share one
-            // highlight, so a row still under the mouse is lit for a reason that has nothing to do
-            // with selection.
+            // Park the pointer outside the sidebar first: a row still under the mouse is lit for a
+            // reason that has nothing to do with selection.
             let _ = backend.send_mouse(MouseEvent {
                 x: 80,
                 y: 20,
                 kind: MouseKind::Moved,
                 mods: Default::default(),
             });
-            settle(&mut backend);
+            frame(&mut backend);
 
             // A click is a one-shot gesture, not a "this row is now current" state: the sidebar is
             // a `FocusScope::Exclude` subtree, so clicking never focuses the tree and the row the
@@ -774,7 +817,16 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
-            settle(&mut backend);
+            pump_until(&mut backend, |backend| {
+                (3u16..16).any(|row| {
+                    backend.capture_frame().to_fixed_grid_lines()[row as usize]
+                        .chars()
+                        .take(34)
+                        .collect::<String>()
+                        .contains("src")
+                        && backend.capture_frame().cell(3, row).bg == selection_bg
+                })
+            });
             let focused_row = (3u16..16)
                 .find(|&row| row_text(&backend, row).contains("src"))
                 .expect("src row visible while focused");
@@ -789,7 +841,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 code: KeyCode::Esc,
                 mods: KeyMods::NONE,
             });
-            settle(&mut backend);
+            frame(&mut backend);
             let blurred_row = (3u16..16)
                 .find(|&row| row_text(&backend, row).contains("src"))
                 .expect("src row visible after blur");
@@ -802,4 +854,91 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
         .expect("spawn click smoke thread")
         .join()
         .expect("click smoke completes");
+}
+
+/// `g` / `G` reach the first and last row on a tree tab, the same rows `Home` / `End` do. The tree
+/// owns its own navigation, so the sidebar's own `g` / `G` handling never sees these keys there.
+#[test]
+fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
+    let Some(repo) = Repo::new("vim-jump") else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.0.join(name), "x\n").expect("root file");
+    }
+
+    let cwd = repo.0.to_string_lossy().into_owned();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 90,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.animations.sidebar = false;
+                state.config.sidebar.width = 34;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+            }
+            assert!(
+                pump_until(&mut backend, |backend| {
+                    backend
+                        .capture_frame()
+                        .to_fixed_grid_lines()
+                        .iter()
+                        .any(|line| line.contains("c.txt"))
+                }),
+                "the tree lists the scratch files"
+            );
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            backend.render();
+
+            let theme = &backend.state().theme;
+            let selection_bg = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
+            let mut cursor_after = |code: KeyCode, mods: KeyMods| -> Option<u16> {
+                let _ = backend.send_key(KeyEvent { code, mods });
+                backend.render();
+                let frame = backend.capture_frame();
+                (0..24u16).find(|&row| frame.cell(3, row).bg == selection_bg)
+            };
+
+            let end = cursor_after(KeyCode::End, KeyMods::NONE).expect("End shows the cursor");
+            let home = cursor_after(KeyCode::Home, KeyMods::NONE).expect("Home shows the cursor");
+            assert_ne!(home, end, "the tree needs more than one row");
+            assert_eq!(
+                cursor_after(KeyCode::Char('G'), KeyMods::SHIFT),
+                Some(end),
+                "G lands where End does"
+            );
+            assert_eq!(
+                cursor_after(KeyCode::Char('g'), KeyMods::NONE),
+                Some(home),
+                "g lands where Home does"
+            );
+        })
+        .expect("spawn vim jump thread")
+        .join()
+        .expect("vim jump completes");
 }

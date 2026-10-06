@@ -2,11 +2,12 @@
 //!
 //! A fullscreen pane covers every tile behind it, so anything that moves the focus off it — or
 //! spawns a pane beside it — would otherwise leave the keyboard on a pane nobody can see. Moving,
-//! resizing, and split dragging already refuse while fullscreen; these cover the two paths that
-//! did not.
+//! resizing, and split dragging already refuse while fullscreen. Directional focus is pinned by
+//! `ops::focus`'s `fullscreen_pins_focus_to_the_pane_covering_the_workspace`; this covers the
+//! spawn path, which hands the fullscreen to the new pane.
 
 use rozi::input::Action;
-use rozi::state::{Direction, Pane};
+use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
@@ -101,49 +102,4 @@ fn spawning_while_fullscreen_hands_the_screen_to_the_new_pane() {
         .expect("spawn fullscreen thread")
         .join()
         .expect("fullscreen spawn completes");
-}
-
-/// Directional focus walks the tiled placements, which are all hidden while a pane is fullscreen.
-#[test]
-fn directional_focus_is_locked_while_fullscreen() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_fullscreen();
-
-            for direction in [
-                Direction::Left,
-                Direction::Right,
-                Direction::Up,
-                Direction::Down,
-            ] {
-                backend
-                    .dispatch(Msg::RunAction(Action::Focus(direction)))
-                    .expect("focus action");
-                settle(&mut backend);
-                assert_eq!(
-                    backend.state().current().focused_pane,
-                    Some(1),
-                    "focus must stay on the fullscreen pane going {direction:?}"
-                );
-            }
-
-            // Toggling fullscreen off releases the lock.
-            backend
-                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
-                .expect("leave fullscreen");
-            settle(&mut backend);
-            backend
-                .dispatch(Msg::RunAction(Action::Focus(Direction::Right)))
-                .expect("focus action");
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().current().focused_pane,
-                Some(2),
-                "leaving fullscreen restores normal navigation"
-            );
-        })
-        .expect("spawn focus lock thread")
-        .join()
-        .expect("focus lock completes");
 }

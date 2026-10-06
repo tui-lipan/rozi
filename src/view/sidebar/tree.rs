@@ -18,7 +18,10 @@ pub(super) fn tree_tab(
     let theme = &ctx.state.theme;
     let fill = super::fill(ctx);
     let Some(root) = root_for(ctx, config.root) else {
-        return super::placeholder(ctx, empty_reason(ctx, config.root));
+        // The keyed, focusable empty body rather than a bare placeholder: `body_focus_key_for` aims
+        // at it when there is no root, and with nothing under that key the sidebar's keyboard focus
+        // fell out of the region and SIDEBAR mode ended on the next tab switch.
+        return super::empty_body(ctx, panel, Some(empty_reason(ctx, config.root)));
     };
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
@@ -27,8 +30,8 @@ pub(super) fn tree_tab(
     let tree_focus_key = tree_focus_key(panel, view, &root);
     let explorer_focus_key = format!("{}-explorer", tree_key(panel, view, &root));
 
-    // The same lift the composed row lists use, so the cursor means one thing across every tab.
-    let selection = super::row_highlight(fill);
+    // The same highlight the composed row lists use, so the cursor means one thing across every tab.
+    let selection = super::cursor_highlight(theme, fill);
 
     let mut tree = FileTree::new(root.clone())
         .show_hidden(config.show_hidden)
@@ -74,6 +77,9 @@ pub(super) fn tree_tab(
         // Bare arrows and h/l expand or collapse; modified arrows remain available to the sidebar
         // for tab movement and resizing.
         .keymap(TreeKeymap::ARROWS | TreeKeymap::VIM | TreeKeymap::TOGGLE)
+        // `g` / `G` for the first and last row, as the composed row lists have. The tree owns its
+        // own navigation, so the sidebar's handler never sees these keys on a tree tab.
+        .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
         .directory_label_style(super::super::rozi_fg(theme))
         .file_label_style(super::super::fg_only(&theme.primary))
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty

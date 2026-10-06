@@ -613,71 +613,16 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
     );
 }
 
+/// Requests a session server refuses on purpose reach a script as a refusal that says why, over the
+/// real endpoint. Which requests are refused, and the full reasons, are pinned by the server's own
+/// unit tests (`every_ui_only_command_is_refused_with_a_reason_rather_than_silently_accepted`,
+/// `a_request_carrying_extension_provenance_is_refused_rather_than_trusted`,
+/// `an_inherited_pane_id_never_addresses_a_pane_in_the_session_being_targeted`); this proves the
+/// refusal survives the trip and that nothing behind it ran.
 #[test]
-fn commands_that_need_a_screen_say_so_instead_of_failing_obscurely() {
+fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
     let server = spawn_listener(headless_settings());
     let session = server.session().to_string();
-
-    for command in [
-        ControlCommand::Focus { target: 1 },
-        ControlCommand::SwitchWorkspace { index: 2 },
-        ControlCommand::RunAction {
-            action: "toggle-float".to_string(),
-        },
-        ControlCommand::Notify {
-            message: "hi".to_string(),
-            title: None,
-            level: rozi::control::NotifyLevel::Info,
-        },
-        ControlCommand::Subscribe { events: Vec::new() },
-    ] {
-        let response = control(&session, command.clone());
-        assert!(!response.ok, "{command:?} must be refused by a server");
-        let error = response.error.unwrap_or_default();
-        assert!(
-            error.contains("session server") || error.contains("client-local"),
-            "{command:?} was refused without saying a UI is what it needs: {error}"
-        );
-    }
-}
-
-/// The CLI attaches extension provenance automatically from the environment, so this is the shape
-/// a real extension's request arrives in. A session server cannot check the fencing token, so it
-/// declines to act on the extension's behalf at all rather than becoming the way around it.
-#[test]
-fn an_extension_cannot_use_a_session_endpoint_to_escape_its_own_generation_fence() {
-    let server = spawn_listener(headless_settings());
-    let session = server.session().to_string();
-
-    let response = run_session_control(
-        &session,
-        ControlRequest {
-            command: ControlCommand::ListPanes,
-            source_pane: None,
-            source_session: None,
-            extension: Some(ExtensionProvenance {
-                id: "git-tools".to_string(),
-                generation: "a-token-only-a-client-could-mint".to_string(),
-            }),
-        },
-    )
-    .expect("the session answered");
-    assert!(!response.ok);
-    let error = response.error.unwrap_or_default();
-    assert!(error.contains("git-tools"), "{error}");
-
-    // The same command without provenance is ordinary and works.
-    expect_ok(&session, ControlCommand::ListPanes);
-}
-
-/// A script running inside pane 3 of one session, addressing another with `--session`, must not
-/// have its inherited `ROZI_PANE` treated as a target. The id says nothing about which session it
-/// belongs to, and the session being addressed may well have a pane 3 of its own.
-#[test]
-fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
-    let server = spawn_listener(headless_settings());
-    let session = server.session().to_string();
-
     let first = expect_ok(
         &session,
         ControlCommand::NewPane {
@@ -692,7 +637,9 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
         },
     )["id"]
         .as_u64()
-        .expect("first spawn reported a pane id") as u32;
+        .expect("spawn reported a pane id") as u32;
+
+    // A second pane, so a targetless send is ambiguous and only the inherited id could resolve it.
     expect_ok(
         &session,
         ControlCommand::NewPane {
@@ -707,31 +654,63 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
         },
     );
 
-    // The caller is sitting in a pane whose id this session also happens to use.
-    let response = run_session_control(
-        &session,
-        ControlRequest {
-            command: ControlCommand::SendText {
-                target: None,
-                text: "this must not be typed anywhere\n".to_string(),
-                wait: None,
-                capture: None,
-                scale: None,
+    let untyped = "this must not be typed anywhere";
+    let ui_only =
+        |command: ControlCommand| (request(command), &["session server", "client-local"][..]);
+    let cases: Vec<(ControlRequest, &[&str])> = vec![
+        ui_only(ControlCommand::Focus { target: 1 }),
+        ui_only(ControlCommand::SwitchWorkspace { index: 2 }),
+        ui_only(ControlCommand::RunAction {
+            action: "toggle-float".to_string(),
+        }),
+        ui_only(ControlCommand::Notify {
+            message: "hi".to_string(),
+            title: None,
+            level: rozi::control::NotifyLevel::Info,
+        }),
+        ui_only(ControlCommand::Subscribe { events: Vec::new() }),
+        // The CLI attaches extension provenance from the environment. A session server cannot check
+        // the fencing token, so it declines to act on the extension's behalf at all.
+        (
+            ControlRequest {
+                extension: Some(ExtensionProvenance {
+                    id: "git-tools".to_string(),
+                    generation: "a-token-only-a-client-could-mint".to_string(),
+                }),
+                ..request(ControlCommand::ListPanes)
             },
-            source_pane: Some(first),
-            source_session: None,
-            extension: None,
-        },
-    )
-    .expect("the session answered");
-    assert!(
-        !response.ok,
-        "an inherited pane id must not silently become the target"
-    );
-    let error = response.error.unwrap_or_default();
-    assert!(error.contains("--target"), "{error}");
+            &["git-tools"][..],
+        ),
+        // A script inside pane `first` of another session addressing this one: its inherited
+        // `ROZI_PANE` says nothing about this session, which happens to have a pane with that id.
+        (
+            ControlRequest {
+                source_pane: Some(first),
+                ..request(ControlCommand::SendText {
+                    target: None,
+                    text: format!("{untyped}\n"),
+                    wait: None,
+                    capture: None,
+                    scale: None,
+                })
+            },
+            &["--target"][..],
+        ),
+    ];
+    for (request, reasons) in cases {
+        let command = request.command.clone();
+        let response = run_session_control(&session, request).expect("the session answered");
+        assert!(!response.ok, "{command:?} must be refused");
+        let error = response.error.unwrap_or_default();
+        assert!(
+            reasons.iter().any(|reason| error.contains(reason)),
+            "{command:?} was refused without saying why ({reasons:?}): {error}"
+        );
+    }
 
-    // Nothing was typed: the pane's screen is still whatever its shell drew.
+    // The same command without provenance is ordinary and works.
+    expect_ok(&session, ControlCommand::ListPanes);
+    // And the refused send typed nothing.
     let text = expect_ok(
         &session,
         ControlCommand::CapturePane {
@@ -749,7 +728,7 @@ fn an_inherited_pane_id_does_not_leak_across_the_session_boundary() {
         .unwrap_or_default()
         .to_string();
     assert!(
-        !text.contains("this must not be typed anywhere"),
+        !text.contains(untyped),
         "the refused command still reached a pane:\n{text}"
     );
 }
@@ -872,9 +851,10 @@ fn captured_text(response: &ControlResponse) -> String {
 
 /// The pattern the waits replace is send, sleep, capture - which reads the screen before a slow
 /// program has answered. A send that waits answers with the program's output instead, in one
-/// request, and only with output that came after its input.
+/// request, and only with output that came after its input. The wait semantics themselves are
+/// unit-tested in `capture_waits`; this proves they hold over the real endpoint and PTY.
 #[test]
-fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
+fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
     let server = spawn_listener(headless_settings());
     let session = server.session().to_string();
     let spawned = expect_ok(
@@ -893,27 +873,13 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
     let timeout_ms = u64::try_from(io_timeout().as_millis()).unwrap();
 
-    // The markers only exist once the shell has evaluated them: the echoed command line reads
-    // `$((40+2))`, never `42`.
-    expect_ok(
-        &session,
-        send_keys_waiting(pane, &["sleep 1; echo naive-$((40+2))", "Enter"], None),
-    );
-    let naive = capture_until(&session, pane, |text| text.contains("naive-$((40+2))"));
-    assert!(
-        !naive.contains("naive-42"),
-        "a capture right after sending cannot have the delayed output yet:\n{naive}"
-    );
-
-    // Finish the first command before submitting the next one. Shell line editors can consume
-    // input differently while a command is still running.
-    capture_until(&session, pane, |text| text.contains("naive-42"));
-
+    // The marker only exists once the shell has evaluated it: the echoed command line reads
+    // `$((40+2))`, never `42`, so only output produced after the delay can satisfy the wait.
     let waited = control(
         &session,
         send_keys_waiting(
             pane,
-            &["sleep 0.5; echo waited-$((40+2))", "Enter"],
+            &["sleep 0.15; echo waited-$((40+2))", "Enter"],
             pane_wait(Some("waited-42"), None, timeout_ms),
         ),
     );
@@ -927,7 +893,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
         send_keys_waiting(
             pane,
             &["true", "Enter"],
-            pane_wait(Some("waited-42"), None, 700),
+            pane_wait(Some("waited-42"), None, 150),
         ),
     );
     assert_eq!(stale.code, Some(ControlErrorCode::Timeout), "{stale:?}");
@@ -957,7 +923,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
             render: CaptureRender::Text,
             scale: None,
             image_pixels: false,
-            wait: pane_wait(None, Some(300), timeout_ms),
+            wait: pane_wait(None, Some(100), timeout_ms),
         },
     );
     assert!(settled.ok, "{settled:?}");

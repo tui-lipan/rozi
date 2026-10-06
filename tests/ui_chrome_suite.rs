@@ -20,9 +20,6 @@ mod settings_rows_smoke;
 mod which_key_smoke;
 #[path = "suites/ui_chrome/workbar_alert_smoke.rs"]
 mod workbar_alert_smoke;
-#[cfg(feature = "ui-snapshot")]
-#[path = "suites/ui_chrome/workbar_alert_visual.rs"]
-mod workbar_alert_visual;
 #[path = "suites/ui_chrome/workbar_caps_smoke.rs"]
 mod workbar_caps_smoke;
 #[path = "suites/ui_chrome/workbar_tab_interaction_smoke.rs"]

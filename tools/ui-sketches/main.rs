@@ -25,7 +25,12 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 7] = [
+const SCENARIOS: [(&str, &str, fn()); 8] = [
+    (
+        "profile-picker",
+        "attached, running, inactive, and default profiles",
+        profile_picker,
+    ),
     (
         "session-picker",
         "All, host browsing, and global session search",
@@ -112,6 +117,55 @@ fn viewport(width: u16, height: u16) -> Rect {
         w: width,
         h: height,
     }
+}
+
+fn profile_picker() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    let state = backend.state_mut();
+    state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
+    state.current_mut().session_name = Some("dev".into());
+    state.config.profile.default = Some("dev".into());
+    let mut picker = rozi::state::ProfilePickerState::new(
+        [
+            "dev",
+            "review",
+            "scratch",
+            "very-long-profile-name-for-another-project",
+        ]
+        .into_iter()
+        .map(|name| rozi::config::ProfileEntry {
+            name: name.into(),
+            path: format!("/profiles/{name}.toml").into(),
+        })
+        .collect(),
+    );
+    picker.running.insert(
+        "review".into(),
+        DiscoveredSessionStatus::Running {
+            panes: 2,
+            clients: 0,
+            has_layout: true,
+        },
+    );
+    state.profile_picker = Some(picker);
+    state.show_profile_picker = true;
+    if std::env::var_os("TUI_LIPAN_SNAPSHOT_DIAGNOSTIC").is_some() {
+        println!(
+            "{}",
+            backend
+                .capture_ui_snapshot_with_options(&tui_lipan::UiSnapshotOptions::diagnostic())
+                .to_markdown()
+        );
+    }
+    for (width, height) in [(100, 30), (60, 20)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(&mut backend, &format!("profile-picker-{width}x{height}"));
+    }
+    backend.state_mut().profile_picker.as_mut().unwrap().input =
+        tui_lipan::prelude::TextInput::new("review");
+    backend.render();
+    write_png(&mut backend, "profile-picker-filtered");
 }
 
 fn worktree(path: &str, branch: &str, linked: bool, locked: bool) -> WorktreeInfo {

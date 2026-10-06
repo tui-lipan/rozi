@@ -155,6 +155,15 @@ rozi takes the prefix and the held-modifier chords before the pane sees them.
 
 ## Terminal display, shell integration, and clipboard
 
+### `this terminal does not display UTF-8 text`
+
+rozi checks at startup that the terminal draws UTF-8 text, because every border, icon, and badge
+needs it. A terminal that reads text one byte at a time, such as a bare BSD console, would turn
+the interface into noise. rozi then stops with this message instead of drawing anything.
+
+Run rozi in a terminal emulator with UTF-8 support, or switch your terminal's character set to
+UTF-8. When the terminal does not report its cursor position, rozi cannot tell and starts anyway.
+
 ### Icons show as boxes
 
 `nerd_icons` is on by default and draws [Nerd Font](https://www.nerdfonts.com/) glyphs in pane

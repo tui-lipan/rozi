@@ -359,7 +359,7 @@ fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Vec::new();
     };
-    let selected = selected_session(picker);
+    let selected = selected_session(&ctx.state, picker);
     let restorable = selected.is_some_and(crate::ops::session::session_row_is_restorable);
     let last_seen = selected.is_some_and(crate::ops::session::session_row_is_last_seen);
     let mut actions = Vec::new();
@@ -387,10 +387,10 @@ fn push_session_activation(
     last_seen: bool,
     actions: &mut Vec<OverlayAction>,
 ) {
-    if picker_list_is_empty(picker) {
+    if picker_list_is_empty(&ctx.state, picker) {
         actions.push(OverlayAction::new(
             "enter",
-            "ephemeral shell",
+            session_creation_label(ctx, picker, "ephemeral shell"),
             Msg::SessionPickerEphemeral,
             true,
         ));
@@ -433,24 +433,42 @@ fn push_session_activation(
     }
 }
 
+fn session_creation_label(
+    ctx: &Context<AppRoot>,
+    picker: &SessionPickerState,
+    action: &str,
+) -> String {
+    if picker.effective_tab() != crate::state::SessionPickerTab::All {
+        return action.to_string();
+    }
+    let host = crate::ops::session::session_picker_creation_target(&ctx.state).map_or_else(
+        || "Local".to_string(),
+        |target| ctx.state.remote_target_label(&target),
+    );
+    format!("{action} on {host}")
+}
+
 fn push_session_creation_actions(
     ctx: &Context<AppRoot>,
     picker: &SessionPickerState,
     actions: &mut Vec<OverlayAction>,
 ) {
-    // Both keys act on the active tab's host.
+    // Creation retains the browsing host during global search.
     actions.push(OverlayAction::new(
         "ctrl-n",
-        "new",
+        session_creation_label(ctx, picker, "new"),
         Msg::SessionPickerCreateFromQuery,
         true,
     ));
-    let show_ephemeral = !picker_list_is_empty(picker)
-        && crate::ops::session::held_ephemeral_session_in(&ctx.state, picker.tab.as_ref())
-            .is_none();
+    let show_ephemeral = !picker_list_is_empty(&ctx.state, picker)
+        && crate::ops::session::held_ephemeral_session_in(
+            &ctx.state,
+            crate::ops::session::session_picker_creation_target(&ctx.state).as_ref(),
+        )
+        .is_none();
     actions.push(OverlayAction::new(
         "ctrl-t",
-        "ephemeral shell",
+        session_creation_label(ctx, picker, "ephemeral shell"),
         Msg::SessionPickerEphemeral,
         show_ephemeral,
     ));
@@ -513,8 +531,8 @@ fn push_session_management_actions(
         ));
     }
     if picker
-        .tab
-        .as_ref()
+        .effective_tab()
+        .remote_target()
         .is_some_and(|target| crate::ops::session::host_can_disconnect(&ctx.state, target))
     {
         actions.push(OverlayAction::new(
@@ -531,39 +549,25 @@ use crate::view::session_status::{
 };
 
 /// The currently highlighted session, if it is still on screen after filtering.
-fn selected_session(
-    picker: &SessionPickerState,
-) -> Option<&crate::session::discovery::DiscoveredSession> {
+fn selected_session<'a>(
+    state: &crate::state::State,
+    picker: &'a SessionPickerState,
+) -> Option<&'a crate::session::discovery::DiscoveredSession> {
     let query_lower = picker.input.text().trim().to_ascii_lowercase();
     picker
         .entries
         .get(picker.selected)
-        .filter(|entry| picker.in_tab(entry) && matches_session_query(entry, &query_lower))
-}
-
-/// Whether a session row survives the picker's filter. The list, the footer hints, and the keys
-/// that only apply to a listed row all have to agree on what is on screen, so they share one
-/// predicate rather than each spelling the match out.
-fn matches_session_query(
-    entry: &crate::session::discovery::DiscoveredSession,
-    query_lower: &str,
-) -> bool {
-    query_lower.is_empty()
-        || entry.name.to_ascii_lowercase().contains(query_lower)
-        || entry
-            .host
-            .as_deref()
-            .is_some_and(|host| host.to_ascii_lowercase().contains(query_lower))
+        .filter(|entry| picker.in_tab(entry) && state.matches_session_query(entry, &query_lower))
 }
 
 /// Whether the active tab is showing no session at all — nothing discovered, or nothing left by the
 /// query. There is then no row for Enter to activate, which is what frees it to start a shell.
-fn picker_list_is_empty(picker: &SessionPickerState) -> bool {
+fn picker_list_is_empty(state: &crate::state::State, picker: &SessionPickerState) -> bool {
     let query = picker.input.text().trim().to_ascii_lowercase();
     !picker
         .entries
         .iter()
-        .any(|entry| picker.in_tab(entry) && matches_session_query(entry, &query))
+        .any(|entry| picker.in_tab(entry) && state.matches_session_query(entry, &query))
 }
 
 fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> Element {
@@ -600,25 +604,36 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         .entries
         .iter()
         .take(picker.selected)
-        .filter(|entry| picker.in_tab(entry))
+        .filter(|entry| picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query))
         .count();
-    for (index, entry) in picker
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| picker.in_tab(entry) && matches_session_query(entry, &query))
+    for (index, entry) in
+        picker.entries.iter().enumerate().filter(|(_, entry)| {
+            picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
+        })
     {
         reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
         // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
-        let label = if entry.ephemeral {
+        let name = if entry.ephemeral {
             "ephemeral"
         } else {
             entry.name.as_str()
         };
-        // The tab already names the host, so the row shows the bare session name. The raw name
-        // and `name@host` stay matchable as hidden aliases, so a query for the host keeps its rows.
+        let label = if picker.effective_tab() == crate::state::SessionPickerTab::All {
+            entry.remote_target.as_ref().map_or_else(
+                || name.to_string(),
+                |target| format!("{name}@{}", ctx.state.remote_target_label(target)),
+            )
+        } else {
+            name.to_string()
+        };
+        // Host pages use bare names; All identifies remote destinations in the visible label.
+        // The raw name and `name@host` remain searchable on every page.
         let mut aliases = Vec::new();
+        if let Some(target) = &entry.remote_target {
+            aliases.push(target.to_spec());
+            aliases.push(format!("{}@{}", entry.name, target.to_spec()));
+        }
         if entry.ephemeral {
             aliases.push(entry.name.clone());
         }
@@ -700,20 +715,16 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
     }
-    // One strip per host only once there is a second place to be; a client that has never touched
-    // a remote host sees the plain list it always did.
+    // All remains available beside Local; a nonempty query temporarily highlights All.
     if tabs.len() > 1 {
-        let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
-        let labels = tabs
+        let active = tabs
             .iter()
-            .map(|tab| match tab {
-                Some(target) => target.display_label(),
-                None => "Local".to_string(),
-            })
-            .collect();
+            .position(|tab| *tab == picker.effective_tab())
+            .unwrap_or(0);
+        let labels = tabs.iter().map(|tab| tab.label(&ctx.state)).collect();
         overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab));
     }
-    if let Some(target) = picker.tab.as_ref() {
+    if let Some(target) = picker.effective_tab().remote_target() {
         overlay = overlay.header_right(remote_tab_status(ctx, target));
     }
     overlay.render(ctx)

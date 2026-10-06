@@ -25,7 +25,17 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 5] = [
+const SCENARIOS: [(&str, &str, fn()); 7] = [
+    (
+        "session-picker",
+        "All, host browsing, and global session search",
+        session_picker,
+    ),
+    (
+        "agent-picker",
+        "agent identity, checkout context, and status at three sizes",
+        agent_picker,
+    ),
     (
         "worktree-detail-dimming",
         "the real Worktrees sidebar with 0%, 20%, 40%, and 60% detail dimming",
@@ -551,4 +561,195 @@ fn floating_title_caps() {
             );
         }
     }
+}
+
+// --- agent-picker ---------------------------------------------------------------------------
+
+fn agent_picker() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PublishedRow,
+        SessionInstanceId,
+    };
+    use rozi::state::{AgentLocation, AgentPickerState, AgentPickerTab};
+
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar_visible = false;
+        state.current_mut().session_name = Some("eph-1234".into());
+        let mut pane = Pane::new(
+            1,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Working,
+        });
+        pane.terminal.cwd = Some("/home/me/src/rozi".into());
+        pane.terminal.project_root = Some("/home/me/src/rozi".into());
+        pane.terminal.git_branch = Some("feat/worktree-work-status".into());
+        for (id, title, status) in [
+            ("review", "github issue review", "working"),
+            ("fix", "fix login redirect", "blocked"),
+            ("unicode", "Review 日本語 changes", "idle"),
+        ] {
+            pane.terminal.published_rows.push(PublishedRow {
+                id: id.into(),
+                title: title.into(),
+                status: status.into(),
+                reason: None,
+                active: id == "review",
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+            });
+            pane.agent_refs.push(AgentRef {
+                pane: PaneRef {
+                    session_instance: SessionInstanceId::generate(),
+                    pane_id: 1,
+                    generation: 0,
+                },
+                slot: Some(id.into()),
+                incarnation: pane.agent_refs.len() as u64 + 1,
+            });
+        }
+        state.current_mut().workspaces[0].panes = vec![pane];
+        state.agent_picker = Some(AgentPickerState::new(Some(AgentLocation::Here {
+            pane: 1,
+            row: Some("fix".into()),
+        })));
+    }
+    backend.state_mut().local_agent_snapshot = Some(rozi::session::discovery::LocalAgentSnapshot {
+        sessions: Vec::new(),
+        agents: vec![rozi::session::protocol::AgentSummary {
+            session: "backend".into(),
+            pane: 9,
+            generation: 0,
+            row: None,
+            agent: "codex".into(),
+            label: "Codex".into(),
+            state: "blocked".into(),
+            changed_at: 0,
+        }],
+    });
+    for (width, height) in [(64, 22), (100, 30), (180, 40)] {
+        backend.set_viewport(viewport(width, height));
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.render();
+        write_png(&mut backend, &format!("agent-picker-{width}x{height}"));
+    }
+    backend.state_mut().agent_picker.as_mut().unwrap().tab = AgentPickerTab::Session {
+        target: None,
+        session: "eph-1234".into(),
+    };
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("agent-picker-session-{width}x{height}"),
+        );
+    }
+    backend.state_mut().agent_picker.as_mut().unwrap().tab = AgentPickerTab::Session {
+        target: None,
+        session: "backend".into(),
+    };
+    backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+    backend.render();
+    write_png(&mut backend, "agent-picker-other-session");
+    backend.state_mut().agent_picker.as_mut().unwrap().tab = AgentPickerTab::All;
+    backend.set_viewport(viewport(180, 40));
+    backend.state_mut().current_mut().workspaces[0].panes[0].terminal.published_rows[0].title =
+        "Investigate a very long activity title that exceeds the available terminal width and must truncate cleanly".into();
+    backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+    backend.render();
+    write_png(&mut backend, "agent-picker-overflow");
+    backend.state_mut().local_agent_snapshot = None;
+    backend.state_mut().current_mut().workspaces[0]
+        .panes
+        .clear();
+    backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+    backend.render();
+    write_png(&mut backend, "agent-picker-empty");
+}
+
+fn session_picker() {
+    use rozi::session::remote::RemoteTarget;
+    use rozi::state::{SessionPickerState, SessionPickerTab};
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.show_session_picker = true;
+        state.session_picker = Some(SessionPickerState::new(
+            [
+                ("dev", None),
+                ("dev", Some("workbox")),
+                ("backend", Some("buildbox")),
+            ]
+            .into_iter()
+            .map(|(name, host)| DiscoveredSession {
+                name: name.into(),
+                host: host.map(str::to_string),
+                remote_target: host.map(|host| RemoteTarget::Alias(host.into())),
+                origin: Default::default(),
+                ephemeral: false,
+                status: DiscoveredSessionStatus::Running {
+                    panes: 3,
+                    clients: 1,
+                    has_layout: true,
+                },
+            })
+            .collect(),
+        ));
+    }
+    for (name, tab, query) in [
+        ("all", SessionPickerTab::All, ""),
+        (
+            "host",
+            SessionPickerTab::Host(Some(RemoteTarget::Alias("workbox".into()))),
+            "",
+        ),
+        ("search", SessionPickerTab::Host(None), "dev@workbox"),
+    ] {
+        let picker = backend.state_mut().session_picker.as_mut().unwrap();
+        picker.tab = tab;
+        picker.input.set_text(query);
+        picker.keep_selection_in_tab();
+        for (width, height) in [(64, 22), (100, 30)] {
+            backend.set_viewport(viewport(width, height));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!("session-picker-{name}-{width}x{height}"),
+            );
+        }
+    }
+    let picker = backend.state_mut().session_picker.as_mut().unwrap();
+    let mut url = picker.entries[1].clone();
+    url.remote_target = Some(RemoteTarget::Url {
+        user: None,
+        host: "workbox".into(),
+        port: None,
+    });
+    picker.entries.retain(|entry| entry.name == "dev");
+    picker.entries.push(url);
+    picker.selected = 0;
+    picker.tab = SessionPickerTab::All;
+    picker.input.set_text(String::new());
+    backend.state_mut().show_session_picker = false;
+    backend.render();
+    backend.state_mut().show_session_picker = true;
+    backend.set_viewport(viewport(120, 30));
+    backend.render();
+    write_png(&mut backend, "session-picker-colliding-targets");
 }

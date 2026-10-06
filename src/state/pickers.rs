@@ -353,6 +353,34 @@ pub enum WorktreeOperationKind {
     Unlock { path: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionPickerTab {
+    All,
+    Host(Option<crate::session::remote::RemoteTarget>),
+}
+
+impl Default for SessionPickerTab {
+    fn default() -> Self {
+        Self::Host(None)
+    }
+}
+
+impl SessionPickerTab {
+    pub fn remote_target(&self) -> Option<&crate::session::remote::RemoteTarget> {
+        match self {
+            Self::Host(target) => target.as_ref(),
+            Self::All => None,
+        }
+    }
+    pub fn label(&self, state: &super::State) -> String {
+        match self {
+            Self::All => "All".into(),
+            Self::Host(None) => "Local".into(),
+            Self::Host(Some(target)) => state.remote_target_label(target),
+        }
+    }
+}
+
 pub struct SessionPickerState {
     pub entries: Vec<DiscoveredSession>,
     pub input: TextInput,
@@ -363,9 +391,9 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
     pub pending_restart: Option<usize>,
-    /// The host whose tab is showing, `None` for **Local**. Rows, `Enter` on an empty list,
-    /// `Ctrl+N`, and `Ctrl+T` all act on this host, so the tab strip says where they land.
-    pub tab: Option<crate::session::remote::RemoteTarget>,
+    /// The browsing page. A nonempty query temporarily shows All without changing this choice.
+    pub tab: SessionPickerTab,
+    pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -418,8 +446,39 @@ impl AgentLocation {
     }
 }
 
+/// A stable session identity, rather than an index into a changing tab strip.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum AgentPickerTab {
+    #[default]
+    All,
+    Session {
+        target: Option<crate::session::remote::RemoteTarget>,
+        session: String,
+    },
+}
+
+impl AgentPickerTab {
+    pub fn label(&self, state: &super::State) -> String {
+        match self {
+            Self::All => "All".into(),
+            Self::Session { target, session } => {
+                let name = if super::is_ephemeral_session_name(session) {
+                    "ephemeral"
+                } else {
+                    session.as_str()
+                };
+                target.as_ref().map_or_else(
+                    || name.to_string(),
+                    |target| format!("{}/{name}", state.remote_target_label(target)),
+                )
+            }
+        }
+    }
+}
+
 /// The global Agents view: every agent this client knows about, wherever it is running.
 pub struct AgentPickerState {
+    pub tab: AgentPickerTab,
     pub input: TextInput,
     /// The highlighted row, held by location rather than by index. Rows are rebuilt from live pane
     /// state and from host-monitor polls that land on their own schedule, so an index would move
@@ -431,6 +490,7 @@ pub struct AgentPickerState {
 impl AgentPickerState {
     pub fn new(selected: Option<AgentLocation>) -> Self {
         Self {
+            tab: AgentPickerTab::All,
             input: TextInput::new(""),
             selected,
         }
@@ -949,7 +1009,8 @@ pub enum OverlayOrigin {
     SessionPicker {
         query: String,
         selected_session: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
-        tab: Option<crate::session::remote::RemoteTarget>,
+        tab: SessionPickerTab,
+        browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
     },
     RemoteHosts {
         query: String,
@@ -1003,20 +1064,32 @@ impl SessionPickerState {
             selected: 0,
             pending_kill: None,
             pending_restart: None,
-            tab: None,
+            tab: SessionPickerTab::default(),
+            browse_selected: None,
         }
     }
 
     /// Open on `tab`, highlighting its first row.
     pub fn on_tab(mut self, tab: Option<crate::session::remote::RemoteTarget>) -> Self {
-        self.tab = tab;
+        self.tab = SessionPickerTab::Host(tab);
         self.keep_selection_in_tab();
         self
     }
 
+    pub fn effective_tab(&self) -> SessionPickerTab {
+        if self.input.text().trim().is_empty() {
+            self.tab.clone()
+        } else {
+            SessionPickerTab::All
+        }
+    }
+
     /// Whether `entry` is listed under the active tab.
     pub fn in_tab(&self, entry: &DiscoveredSession) -> bool {
-        entry.remote_target.as_ref() == self.tab.as_ref()
+        match self.effective_tab() {
+            SessionPickerTab::All => true,
+            SessionPickerTab::Host(target) => entry.remote_target == target,
+        }
     }
 
     /// Index of the active tab's first row.

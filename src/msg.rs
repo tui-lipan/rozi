@@ -350,6 +350,7 @@ pub enum Msg {
     SessionPickerRemoteHosts,
     SessionPickerNameCurrent,
     CloseAgentPicker,
+    AgentPickerTab(usize),
     AgentPickerQueryChanged(String),
     /// Move the Agents view's cursor. Carries the row's location rather than its index: the list is
     /// rebuilt from live panes and host-monitor polls that land on their own schedule, so an index

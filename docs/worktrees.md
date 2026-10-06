@@ -16,8 +16,13 @@ checkouts. The palette lists **Worktrees** only while the focused pane is in a G
 **Worktrees** has no default command key.
 
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
-marks the checkout the focused pane is in. Each row shows the branch, then its path and, after a
-`·`, the checkout's sessions or a state such as `primary` or `locked`. The picker opens with the list it last showed for the repository and refreshes it in place.
+marks the checkout the focused pane is in. Each row shows the branch and its PR/CI status, with
+`primary`, `locked`, `stale lock`, or `prunable` alongside it when applicable. Paths stay searchable
+without appearing in rows. Press `Ctrl+C` or click **copy path** to copy the selected checkout's full
+path, including a remote host's path, to your clipboard.
+
+The picker refreshes the checkout list when opened. Press `Ctrl+R` to refresh both checkouts and
+PR status.
 
 Press `Enter` on a checkout to open it:
 
@@ -30,14 +35,45 @@ A session is associated with a checkout when the checkout is its recorded origin
 was created for. A pane that later changes directory into a checkout does not associate its session
 with it.
 
+Press `Ctrl+Enter` or click **pane** to open a shell in the selected worktree as a new pane in the
+current session's workspace. Normal pane placement rules apply. This action requires a writable
+client with layout control and is unavailable while the scratchpad is open.
+
 | Key | Action |
 | --- | --- |
 | `Enter` | Open the checkout's session, or create one |
+| `Ctrl+Enter` | Open a pane in the current session at the selected checkout |
+| `Ctrl+C` | Copy the selected checkout's full path |
 | `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a new session |
-| `Ctrl+R` | Refresh the list |
+| `Ctrl+R` | Refresh checkouts and PR/CI status |
 | `Ctrl+K` | Remove a linked checkout; press it again to confirm |
 | `Ctrl+U` | Unlock a locked checkout |
 | `Esc` | Close the picker |
+
+### Read work status
+
+For GitHub repositories, install [GitHub CLI](https://cli.github.com/) and authenticate with
+`gh auth login` on the host running the session. Remote sessions use that host's GitHub account.
+
+| Picker | Sidebar detail | Meaning |
+| --- | --- | --- |
+| `#114 ✓` | `#114 · passed` | CI passed for the current branch commit |
+| `#113 ✕` | `#113 · failed` | CI failed for the current branch commit |
+| `#115 ◌` | `#115 · running` | CI is pending or running |
+| `#116 open` | `#116 · open` | Open PR without checks for the current branch commit |
+| `#111 draft` | `#111 · draft` | Draft PR |
+| `#112 merged` | `#112 · merged` | Merged PR, including squash merges |
+| `#110 closed` | `#110 · closed` | Closed without merging |
+| `PR unavailable` | `PR unavailable` | GitHub status could not be read |
+
+Merged, closed, and draft states take precedence over CI. Passing or failing checks on an older
+pushed commit are not shown for a newer local branch commit. PR status does not describe uncommitted
+changes or imply a checkout is safe to remove. A branch without an associated PR has no work status.
+For same-named branches, rozi uses the newest matching PR; a PR from a fork is matched only when
+its head commit matches the local branch. Other hosting providers currently have no PR integration.
+
+While the Worktrees sidebar is visible, work status refreshes about once a minute. `Ctrl+R` in the
+picker checks immediately.
 
 ## Create a worktree
 

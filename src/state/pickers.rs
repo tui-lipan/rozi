@@ -35,6 +35,8 @@ pub struct WorktreePickerState {
     pub input: TextInput,
     pub selected: usize,
     pub pending_list: Option<u64>,
+    pub pending_status: Option<u64>,
+    pub statuses: crate::git::pull_requests::WorktreeStatuses,
     /// A checkout whose removal waits for a second Ctrl+K.
     pub pending_remove: Option<PendingWorktreeRemove>,
     pub form: Option<WorktreeFormState>,
@@ -54,6 +56,8 @@ impl WorktreePickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_list: None,
+            pending_status: None,
+            statuses: Default::default(),
             pending_remove: None,
             form: None,
             error: None,
@@ -137,6 +141,53 @@ impl WorktreeListCache {
     pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
         self.lists
             .retain(|(host, repo, _)| !(host.as_ref() == target && repo == cwd));
+    }
+}
+
+#[derive(Default)]
+pub struct WorktreeStatusCache {
+    entries: Vec<WorktreeStatusEntry>,
+}
+
+struct WorktreeStatusEntry {
+    target: Option<crate::session::remote::RemoteTarget>,
+    cwd: String,
+    statuses: crate::git::pull_requests::WorktreeStatuses,
+}
+
+impl WorktreeStatusCache {
+    pub fn get(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+    ) -> crate::git::pull_requests::WorktreeStatuses {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.target.as_ref() == target
+                    && (entry.cwd == cwd || entry.statuses.checkouts.contains_key(cwd))
+            })
+            .map(|entry| entry.statuses.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn put(
+        &mut self,
+        target: Option<crate::session::remote::RemoteTarget>,
+        cwd: String,
+        statuses: crate::git::pull_requests::WorktreeStatuses,
+    ) {
+        self.entries
+            .retain(|entry| entry.target != target || entry.cwd != cwd);
+        self.entries.insert(
+            0,
+            WorktreeStatusEntry {
+                target,
+                cwd,
+                statuses,
+            },
+        );
+        self.entries.truncate(8);
     }
 }
 

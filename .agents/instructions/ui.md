@@ -13,6 +13,9 @@
   Put explanations in documentation.
 - Boolean rows use `Enabled` and `Disabled`. Grey unavailable rows through `disabled_reason`.
 - Rozi has no checkbox glyph convention. Do not introduce one.
+- Pickers, prompts, and dialogs do not show `Esc` in footer hints. Keep its close, back, cancel,
+  or other keyboard behavior; document it in help or keybinding docs instead of advertising it
+  in each overlay. Use `OverlayAction::hide_hint()` when an explicit Esc interceptor is needed.
 
 See `docs/configuration.md#in-app-toasts` for the feedback policy.
 

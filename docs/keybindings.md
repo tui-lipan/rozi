@@ -292,8 +292,10 @@ Worktrees tab.
 | Key | Action |
 | --- | --- |
 | `Enter` | Open the checkout's session |
+| `Ctrl+Enter` | Open a pane in the current session at the selected checkout |
+| `Ctrl+C` | Copy the selected checkout's full path |
 | `Ctrl+N` | Create a checkout |
-| `Ctrl+R` | Refresh |
+| `Ctrl+R` | Refresh checkouts and PR/CI status |
 | `Ctrl+K` | Remove a linked checkout |
 
 In the new-worktree form, `Ctrl+E` adds a worktree directory inside the repository to

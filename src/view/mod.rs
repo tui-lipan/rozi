@@ -58,6 +58,21 @@ use overlays::{
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
+/// Consistent work-status colours in the picker and sidebar.
+pub(crate) fn worktree_status_style(
+    theme: &Theme,
+    status: crate::git::pull_requests::WorkStatus,
+) -> Style {
+    use crate::git::pull_requests::WorkStatus;
+    match status {
+        WorkStatus::Passed => Style::new().fg(theme.status.success),
+        WorkStatus::Failed => Style::new().fg(theme.status.error),
+        WorkStatus::Running => Style::new().fg(theme.status.warning),
+        WorkStatus::Merged => fg_only(&theme.accent),
+        WorkStatus::Open | WorkStatus::Draft | WorkStatus::Closed => fg_only(&theme.muted),
+    }
+}
+
 /// How far a surface lifts under the pointer or the keyboard cursor. One constant across the
 /// sidebar and the workbar so the two never drift to different hover weights.
 pub(crate) const HOVER_LIFT: f32 = 0.08;

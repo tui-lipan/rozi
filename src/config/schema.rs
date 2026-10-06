@@ -1317,9 +1317,21 @@ pub struct NamedCommand {
     /// into [`Config::extension_key_defaults`] at load, and dropped there if anything already
     /// answers to that chord. Always `None` for a `config.toml` command, which has `[keys]`.
     pub default_key: Option<String>,
+    /// Left out of the command palette until its extension shows it. The manifest's starting
+    /// choice; an extension changes it at runtime with `command-visibility`, which a UI keeps per
+    /// extension generation. Always `false` for a `config.toml` command.
+    pub hidden: bool,
 }
 
 impl NamedCommand {
+    /// The extension that declared this command, or `None` for a `config.toml` command.
+    pub fn extension(&self) -> Option<&str> {
+        self.env
+            .iter()
+            .find(|(key, _)| key == "ROZI_EXTENSION")
+            .map(|(_, value)| value.as_str())
+    }
+
     pub fn label(&self) -> String {
         if let Some(label) = &self.label {
             return label.clone();

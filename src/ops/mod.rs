@@ -1,6 +1,7 @@
 pub(crate) mod agents;
 pub(crate) mod attached_control;
 pub(crate) mod capture_wait;
+pub(crate) mod command_visibility;
 pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;

@@ -278,6 +278,14 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "notify <MESSAGE> [--title T] [--level info|error]",
                 "Raise a toast from a script",
             ),
+            row(
+                "show-command <ID>",
+                "Show an extension's command in the palette",
+            ),
+            row(
+                "hide-command <ID>",
+                "Hide an extension's command from the palette",
+            ),
             row("publish", "Publish activity rows over stdio"),
             row("subscribe [EVENT...]", "Stream application events as JSON"),
             row(

@@ -316,6 +316,7 @@ pub(super) fn validate_command(
             category: category.to_string(),
             env: env.to_vec(),
             default_key,
+            hidden: raw.hidden.unwrap_or(false),
         });
     }
 }

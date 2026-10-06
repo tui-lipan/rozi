@@ -34,9 +34,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
 /// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
-/// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, and version 15 with
-/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`.
-pub const API_SCHEMA_VERSION: u32 = 15;
+/// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, version 15 with
+/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, and version 16 with
+/// `command-visibility`.
+pub const API_SCHEMA_VERSION: u32 = 16;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -76,6 +77,9 @@ pub const PANE_REVEAL_CAPABILITY: &str = "pane-reveal";
 /// `new-pane` honors `size`, starting the pane at that terminal size. An older binary ignores the
 /// field and starts the pane at its default size.
 pub const SPLIT_SIZE_CAPABILITY: &str = "split-size";
+/// A UI answers `command-visibility`, which shows or hides an extension's own command in the
+/// command palette, and extension manifests accept `hidden` on `[[commands]]`.
+pub const COMMAND_VISIBILITY_CAPABILITY: &str = "command-visibility";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -103,6 +107,7 @@ impl ApiDescription {
                 CAPTURE_SPANS_CAPABILITY,
                 CAPTURE_UI_CAPABILITY,
                 CAPTURE_WAIT_CAPABILITY,
+                COMMAND_VISIBILITY_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PANE_REVEAL_CAPABILITY,
@@ -620,6 +625,20 @@ pub enum ControlCommand {
         title: Option<String>,
         #[serde(default)]
         level: NotifyLevel,
+    },
+    /// Show or hide one of the calling extension's own commands in the command palette.
+    ///
+    /// Only an extension process may send it, for a command its own manifest declares. The choice
+    /// lasts as long as the extension's runtime generation, even after the calling command exits.
+    /// A process-facing change rotates the generation and restarts its services, resetting the
+    /// choice to the manifest's `hidden`. A presentation-only or no-op reload keeps both the
+    /// generation and the choice. A hidden command still runs from its key binding and
+    /// `run-action`: the palette lists what is worth
+    /// offering now, and the extension knows that better than the manifest can.
+    CommandVisibility {
+        /// The command's ID: its manifest `id`, or the public `<extension>.<id>`.
+        command: String,
+        visible: bool,
     },
     /// Start recording a pane's screen to a file on the session server's host. Served by a session
     /// server, which records the pane's canonical screen with or without a UI; a UI forwards it.

@@ -1201,6 +1201,7 @@ mod tests {
                     category: "Tools".to_string(),
                     env: vec![("ROZI_EXTENSION".to_string(), "tools".to_string())],
                     default_key: None,
+                    hidden: false,
                 }];
                 state.commands_dirty = true;
             }

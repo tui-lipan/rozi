@@ -356,6 +356,9 @@ A command ID must match `[a-z0-9_-]+`. Its public ID is `<extension-id>.<command
 
 Prefer `exec`: it preserves argument boundaries and avoids shell interpretation.
 
+Set `hidden = true` to leave a command out of the command palette until the extension shows it;
+see [Show a command only when it applies](#show-a-command-only-when-it-applies).
+
 - Commands run in the focused pane's working directory.
 - An executable path starting with `./` or `../` resolves from the extension directory when the
   manifest loads.
@@ -371,6 +374,38 @@ Prefer `exec`: it preserves argument boundaries and avoids shell interpretation.
   message.
 
 A command can also suggest a key; see [Suggested keybindings](#suggested-keybindings).
+
+#### Show a command only when it applies
+
+Some commands are worth offering only in some situations, such as an installer whose work is
+already done. The extension knows that, so it decides at runtime:
+
+```toml
+[[commands]]
+id = "install-hooks"
+label = "Install hooks"
+exec = ["python", "{extension_dir}/bin/install_hooks.py"]
+hidden = true
+```
+
+```sh
+"$ROZI_BIN" show-command install-hooks   # list it in the command palette
+"$ROZI_BIN" hide-command install-hooks   # and take it out again
+```
+
+- Only the command palette honors this. A hidden command still runs from a key binding and from
+  `rozi run-action`.
+- An extension shows or hides only its own commands, by manifest `id` or public
+  `<extension-id>.<command-id>`, and only from its own commands and services. Any other caller is
+  refused.
+- The choice lasts as long as the extension's runtime generation, even after the command that
+  made it exits. A process-facing change (a changed command, service, or setting) rotates the
+  generation and restarts its services, resetting the choice to the manifest's `hidden`. Disabling
+  and enabling the extension also starts a new generation. A presentation-only or no-op reload
+  keeps both the generation and the choice.
+- An older `rozi` rejects an unknown manifest field such as `hidden`. Set `min_rozi` to a release
+  with the `command-visibility` capability (see
+  [Check the installed API](control.md#check-the-installed-api)).
 
 ### Services
 

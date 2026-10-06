@@ -1212,6 +1212,29 @@ mod tests {
     }
 
     #[test]
+    fn a_command_can_start_out_of_the_palette() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "tools",
+            &format!(
+                "{}[[commands]]\nid = \"install\"\nsend = \"x\"\nhidden = true\n\
+                 [[commands]]\nid = \"open\"\nsend = \"y\"\n",
+                manifest("tools", "1")
+            ),
+        );
+        let scan = scan_extensions_in(temp.path());
+        assert_eq!(scan.entries()[0].status, ExtensionStatus::Loaded);
+        let contributions = scan.into_contributions(&[], &Default::default());
+        let hidden: Vec<_> = contributions
+            .commands
+            .iter()
+            .map(|command| (command.id.as_str(), command.hidden))
+            .collect();
+        assert_eq!(hidden, [("tools.install", true), ("tools.open", false)]);
+    }
+
+    #[test]
     fn an_invalid_navigation_target_invalidates_the_extension_atomically() {
         let temp = tempfile::tempdir().unwrap();
         write_manifest(

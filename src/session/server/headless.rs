@@ -121,6 +121,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Notify { .. } => {
             Some("toasts are drawn by a UI; a session server has nowhere to show one")
         }
+        ControlCommand::CommandVisibility { .. } => {
+            Some("the command palette belongs to a UI; a session server has no palette to change")
+        }
         ControlCommand::Pick { .. } => {
             Some("pick opens a modal in a UI; a session server cannot show one")
         }
@@ -3533,6 +3536,10 @@ mod tests {
                 actions: Vec::new(),
                 tabs: Vec::new(),
                 tab: None,
+            },
+            ControlCommand::CommandVisibility {
+                command: "my-extension.choose".to_string(),
+                visible: false,
             },
             ControlCommand::Publish,
             ControlCommand::Subscribe { events: Vec::new() },

@@ -1664,6 +1664,28 @@
           "type": "object"
         },
         {
+          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts as long as the extension's runtime generation, even after the calling command exits.\nA process-facing change rotates the generation and restarts its services, resetting the\nchoice to the manifest's `hidden`. A presentation-only or no-op reload keeps both the\ngeneration and the choice. A hidden command still runs from its key binding and\n`run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
+          "properties": {
+            "cmd": {
+              "const": "command-visibility",
+              "type": "string"
+            },
+            "command": {
+              "description": "The command's ID: its manifest `id`, or the public `<extension>.<id>`.",
+              "type": "string"
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "command",
+            "visible"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Start recording a pane's screen to a file on the session server's host. Served by a session\nserver, which records the pane's canonical screen with or without a UI; a UI forwards it.\nEvery change is written, at most `max_fps` times a second, until `record-stop`, the pane\nexiting, the session ending, or a limit. `follow` holds the reply until the recording ends\nand stops it when the request's connection closes. Limits left out come from the server's\n`[recording]` config.",
           "properties": {
             "cmd": {
@@ -2999,6 +3021,28 @@
           "required": [
             "cmd",
             "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts as long as the extension's runtime generation, even after the calling command exits.\nA process-facing change rotates the generation and restarts its services, resetting the\nchoice to the manifest's `hidden`. A presentation-only or no-op reload keeps both the\ngeneration and the choice. A hidden command still runs from its key binding and\n`run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
+          "properties": {
+            "cmd": {
+              "const": "command-visibility",
+              "type": "string"
+            },
+            "command": {
+              "description": "The command's ID: its manifest `id`, or the public `<extension>.<id>`.",
+              "type": "string"
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "command",
+            "visible"
           ],
           "type": "object"
         },
@@ -5987,5 +6031,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 15
+  "x-rozi-schema-version": 16
 }

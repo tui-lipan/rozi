@@ -59,6 +59,8 @@ pub(super) struct ExtensionCommandFile {
     pub(super) exec: Option<Vec<String>>,
     pub(super) shell: Option<String>,
     pub(super) send: Option<String>,
+    /// Start out of the command palette until the extension shows it with `command-visibility`.
+    pub(super) hidden: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

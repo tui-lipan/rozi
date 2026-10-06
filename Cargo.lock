@@ -3661,9 +3661,9 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tui-lipan"
-version = "0.18.4"
+version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58db758b69993d6f1e062422262c132c71f821567fa555c5895bc8611f340b97"
+checksum = "df8477372c5aaa10cced6c78ef0f4ce357fa686e2b552533bc90f404d264a19c"
 dependencies = [
  "ab_glyph_rasterizer",
  "alacritty_terminal",
@@ -3704,9 +3704,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.18.4"
+version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b04f33cdb7aee8b265a11fa581c338a65427df3979f6399dd6f18e4925a14ae3"
+checksum = "575b1ce4579c2fcdfbe29f47d47f5e02588051066322c98fa16ad6b48f22789e"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

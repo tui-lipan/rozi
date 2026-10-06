@@ -55,7 +55,7 @@ exclude = [
 # switch crossfades.
 # 0.17.4: list descriptions choose their truncation side and keep a gap from the label, for the
 # sidebar's project branches and worktree status rail.
-tui-lipan = { version = "0.18.4", features = [
+tui-lipan = { version = "0.18.5", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

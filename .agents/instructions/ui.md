@@ -41,6 +41,10 @@ For a new picker:
 4. Add the opening `Action` to both `input.rs` and `commands/catalog.rs`.
 5. Use `ops/overlay_return.rs` only when the picker can open from another overlay.
 
+Build a picker's kill, remove, delete, forget, or kick action with `OverlayAction::destructive`. It
+binds the shared `ctrl-k` key, arms on the first press, and shows the error-coloured
+`again to <label>` cue. Do not bind destructive row actions to another key.
+
 Right-align row status with `ItemDescription`. Follow nearby overlays rather than exporting tiny
 private styling helpers only to share three lines.
 

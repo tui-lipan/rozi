@@ -115,40 +115,43 @@ fn remote_hosts_overlay(
         format!("No hosts match `{}`", picker.host_input.text().trim())
     };
     let pending_forget = picker.pending_forget.clone();
-    let error_bg = ctx.state.theme.status.error;
     // `Enter` connects a host that is not connected and opens one that is, so the hint says which
     // of the two the highlighted row will get. Reconnecting only means something once a host is
     // connected; before that it would be `Enter` under a second name.
     let selected_connected = selected_target
         .as_ref()
         .is_some_and(|target| crate::ops::session::remotes::host_is_connected(&ctx.state, target));
-    let actions =
-        vec![
-            OverlayAction::new(
-                "enter",
-                if selected_connected {
-                    "open"
-                } else {
-                    "connect"
-                },
-                selected_target
-                    .clone()
-                    .map(Msg::RemotePickerHostActivate)
-                    .unwrap_or(Msg::CloseRemotePicker),
-                selected_target.is_some() && !connecting,
-            )
-            .hint_only(),
-            OverlayAction::new("ctrl-n", "add host", Msg::RemotePickerNewHost, true),
-            OverlayAction::new("ctrl-e", "edit", Msg::RemotePickerEditHost, can_edit),
-            OverlayAction::new(
-                "ctrl-r",
-                "reconnect",
-                Msg::RemotePickerReconnectHost,
-                selected_connected && !connecting,
-            ),
-            OverlayAction::new("ctrl-k", "forget", Msg::RemotePickerForgetHost, can_forget)
-                .confirm_if(pending_forget.is_some(), "again to forget", error_bg, true),
-        ];
+    let actions = vec![
+        OverlayAction::new(
+            "enter",
+            if selected_connected {
+                "open"
+            } else {
+                "connect"
+            },
+            selected_target
+                .clone()
+                .map(Msg::RemotePickerHostActivate)
+                .unwrap_or(Msg::CloseRemotePicker),
+            selected_target.is_some() && !connecting,
+        )
+        .hint_only(),
+        OverlayAction::new("ctrl-n", "add host", Msg::RemotePickerNewHost, true),
+        OverlayAction::new("ctrl-e", "edit", Msg::RemotePickerEditHost, can_edit),
+        OverlayAction::new(
+            "ctrl-r",
+            "reconnect",
+            Msg::RemotePickerReconnectHost,
+            selected_connected && !connecting,
+        ),
+        OverlayAction::destructive(
+            ctx,
+            "forget",
+            Msg::RemotePickerForgetHost,
+            can_forget,
+            pending_forget.is_some(),
+        ),
+    ];
     let overlay = OverlayPalette::new(
         "Remote hosts",
         remote_picker_key(),
@@ -266,7 +269,6 @@ fn remote_host_sessions_overlay(
     };
     let pending_kill = picker.pending_kill.clone();
     let pending_restart = picker.pending_restart.clone();
-    let error_bg = ctx.state.theme.status.error;
     let warning_bg = ctx.state.theme.status.warning;
     let selected_session = remote_selected_session(picker).cloned();
     let can_restart = selected_session
@@ -314,21 +316,12 @@ fn remote_host_sessions_overlay(
             warning_bg,
             false,
         ),
-        OverlayAction::new(
-            "ctrl-k",
+        OverlayAction::destructive(
+            ctx,
             if last_seen { "forget" } else { "kill" },
             Msg::RemotePickerKillSession,
             selected_session.is_some(),
-        )
-        .confirm_if(
             pending_kill.is_some(),
-            if last_seen {
-                "again to forget"
-            } else {
-                "again to kill"
-            },
-            error_bg,
-            true,
         ),
         OverlayAction::new(
             "ctrl-x",

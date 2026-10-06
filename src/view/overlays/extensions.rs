@@ -339,13 +339,13 @@ fn installed_actions(
             Msg::ExtensionsOpenManifest,
             manifest,
         ),
-        OverlayAction::new(
-            "ctrl-k",
-            if armed { "confirm remove" } else { "remove" },
+        OverlayAction::destructive(
+            ctx,
+            "remove",
             Msg::ExtensionsRemoveSelected,
             removable,
-        )
-        .confirm_if(armed, "again to remove", ctx.state.theme.status.error, true),
+            armed,
+        ),
     ]
 }
 

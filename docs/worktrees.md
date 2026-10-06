@@ -46,7 +46,7 @@ client with layout control and is unavailable while the scratchpad is open.
 | `Ctrl+C` | Copy the selected checkout's full path |
 | `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a new session |
 | `Ctrl+R` | Refresh checkouts and PR/CI status |
-| `Ctrl+K` | Remove a linked checkout; press it again to confirm |
+| `Ctrl+K` twice | Remove a linked checkout |
 | `Ctrl+U` | Unlock a locked checkout |
 | `Esc` | Close the picker |
 

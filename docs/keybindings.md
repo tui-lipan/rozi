@@ -280,7 +280,7 @@ the agent is in the session on screen, or attaches to its session first if it is
 | `Ctrl+N` | Capture the current session |
 | `Ctrl+R` twice | Replace the current session |
 | `Ctrl+F` | Toggle the default profile |
-| `Ctrl+D` twice | Delete the profile |
+| `Ctrl+K` twice | Delete the profile |
 
 See [Profiles](profiles.md#use-the-profile-picker).
 
@@ -296,7 +296,7 @@ Worktrees tab.
 | `Ctrl+C` | Copy the selected checkout's full path |
 | `Ctrl+N` | Create a checkout |
 | `Ctrl+R` | Refresh checkouts and PR/CI status |
-| `Ctrl+K` | Remove a linked checkout |
+| `Ctrl+K` twice | Remove a linked checkout |
 
 In the new-worktree form, `Ctrl+E` adds a worktree directory inside the repository to
 `.git/info/exclude` when Git does not already ignore it. See [Worktrees](worktrees.md).

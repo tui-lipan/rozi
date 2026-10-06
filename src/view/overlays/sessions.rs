@@ -176,17 +176,12 @@ fn collaborator_actions(
             Msg::CollaborationDecline(item.roster_index),
             item.grantable && item.requesting,
         ),
-        OverlayAction::new(
-            "ctrl-k",
-            if armed { "confirm kick" } else { "kick" },
+        OverlayAction::destructive(
+            ctx,
+            "kick",
             Msg::CollaborationKick(item.roster_index),
             item.kickable,
-        )
-        .confirm_if(
             armed,
-            "again to confirm",
-            ctx.state.theme.status.error,
-            true,
         ),
     ]
 }
@@ -375,11 +370,12 @@ fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
 }
 
 fn session_forget_action(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> OverlayAction {
-    OverlayAction::new("ctrl-k", "forget", Msg::SessionPickerKillSelected, true).confirm_if(
-        picker.pending_kill == Some(picker.selected),
-        "again to forget",
-        ctx.state.theme.status.error,
+    OverlayAction::destructive(
+        ctx,
+        "forget",
+        Msg::SessionPickerKillSelected,
         true,
+        picker.pending_kill == Some(picker.selected),
     )
 }
 
@@ -508,20 +504,13 @@ fn push_session_management_actions(
                 false,
             ),
         );
-        actions.push(
-            OverlayAction::new(
-                "ctrl-k",
-                "kill",
-                Msg::SessionPickerKillSelected,
-                crate::ops::session::session_row_can_kill(entry),
-            )
-            .confirm_if(
-                picker.pending_kill == Some(picker.selected),
-                "again to kill",
-                ctx.state.theme.status.error,
-                true,
-            ),
-        );
+        actions.push(OverlayAction::destructive(
+            ctx,
+            "kill",
+            Msg::SessionPickerKillSelected,
+            crate::ops::session::session_row_can_kill(entry),
+            picker.pending_kill == Some(picker.selected),
+        ));
     }
     if picker
         .tab

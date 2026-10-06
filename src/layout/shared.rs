@@ -2021,6 +2021,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout_with_panes(&[]),
+                    live: false,
                 })
                 .expect("dispatch commit");
 
@@ -2067,6 +2068,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout_with_panes(&[]),
+                    live: false,
                 })
                 .expect("remove pane");
             backend
@@ -2075,6 +2077,7 @@ mod reconciler_tests {
                     rev: 2,
                     author: 2,
                     layout: layout_with_panes(&[(1, 0)]),
+                    live: false,
                 })
                 .expect("restore pane");
 
@@ -2102,6 +2105,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout,
+                    live: false,
                 })
                 .expect("dispatch duplicate-id commit");
 
@@ -2129,6 +2133,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout_with_panes(&[(1, 0), (2, 5)]),
+                    live: false,
                 })
                 .expect("dispatch commit");
 
@@ -2169,6 +2174,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout_with_panes(&[(1, 0), (2, 5)]),
+                    live: false,
                 })
                 .expect("reconcile generation");
 
@@ -2217,6 +2223,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("seed shared layout");
 
@@ -2227,6 +2234,7 @@ mod reconciler_tests {
                     rev: 2,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("reconcile with survivor");
             assert_eq!(
@@ -2242,6 +2250,7 @@ mod reconciler_tests {
                     rev: 3,
                     author: 2,
                     layout: without_anchor,
+                    live: false,
                 })
                 .expect("reconcile without survivor");
             assert_eq!(
@@ -2268,6 +2277,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("seed scrollable");
             {
@@ -2297,6 +2307,7 @@ mod reconciler_tests {
                     rev: 2,
                     author: 2,
                     layout: without_focus,
+                    live: false,
                 })
                 .expect("remove focused pane");
 
@@ -2429,6 +2440,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("seed multi-ws");
             assert_eq!(backend.state().current().active_workspace, 0);
@@ -2467,6 +2479,7 @@ mod reconciler_tests {
                     rev: 2,
                     author: 2,
                     layout,
+                    live: false,
                 })
                 .expect("inactive focus fallback");
             assert_eq!(backend.state().current().active_workspace, 0);
@@ -2557,6 +2570,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout,
+                    live: false,
                 })
                 .expect("commit scrollable widths");
 
@@ -2599,6 +2613,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("seed shared layout");
 
@@ -2615,6 +2630,7 @@ mod reconciler_tests {
                     rev: 2,
                     author: 2,
                     layout,
+                    live: false,
                 })
                 .expect("reconcile shared layout");
 
@@ -2657,6 +2673,7 @@ mod reconciler_tests {
                     rev: 1,
                     author: 2,
                     layout: layout.clone(),
+                    live: false,
                 })
                 .expect("seed shared layout");
 
@@ -2673,6 +2690,7 @@ mod reconciler_tests {
                         rev,
                         author: 2,
                         layout: layout.clone(),
+                        live: false,
                     })
                     .expect("reconcile shared layout");
                 assert_eq!(
@@ -2705,6 +2723,7 @@ mod reconciler_tests {
                         rev,
                         author: 2,
                         layout: layout.clone(),
+                        live: false,
                     })
                     .expect("reconcile shared layout");
             }
@@ -2946,6 +2965,7 @@ mod reconciler_tests {
                     rev: 7,
                     author: 1,
                     layout: layout_with_panes(&[]),
+                    live: false,
                 })
                 .expect("dispatch echo");
 

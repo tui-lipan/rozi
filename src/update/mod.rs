@@ -475,14 +475,13 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::BeginResizeSplit(id, horizontal, x, y) => {
             panes::begin_resize_split(ctx, id, horizontal, x, y)
         }
-        Msg::ResizeSplit(id, horizontal, from_x, from_y, x, y) => {
-            panes::resize_split(ctx, id, horizontal, from_x, from_y, x, y)
+        // The drag's begin message fixed its target; a move carries only where the pointer is.
+        Msg::ResizeSplit(_, _, from_x, from_y, x, y)
+        | Msg::ResizeSplitJunction(_, _, from_x, from_y, x, y) => {
+            panes::resize_split(ctx, from_x, from_y, x, y)
         }
         Msg::BeginResizeSplitJunction(horizontal, vertical, x, y) => {
             panes::begin_resize_split_junction(ctx, horizontal, vertical, x, y)
-        }
-        Msg::ResizeSplitJunction(horizontal, vertical, from_x, from_y, x, y) => {
-            panes::resize_split_junction(ctx, horizontal, vertical, from_x, from_y, x, y)
         }
         Msg::EndResizeSplit => panes::end_resize_split(ctx),
         Msg::BeginScratchResize(from_y) => panes::begin_scratch_resize(ctx, from_y),
@@ -646,7 +645,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             rev,
             author,
             layout,
-        } => session::layout_committed(ctx, epoch, rev, author, layout),
+            live,
+        } => session::layout_committed(ctx, epoch, rev, author, layout, live),
         Msg::SessionLayoutRejected {
             epoch,
             current_rev,

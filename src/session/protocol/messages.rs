@@ -226,6 +226,10 @@ pub enum ClientMessage {
     CommitLayout {
         base_rev: u64,
         layout: SharedLayout,
+        /// Committed in the middle of a pointer gesture (a split drag, a mouse resize, or a floating
+        /// pane move). Relayed on [`ServerMessage::LayoutCommitted`] so followers apply it directly.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live: bool,
     },
     /// Controller-only: a tiled pane is lifted out of the tiling and is currently at `rect`.
     ///
@@ -592,6 +596,11 @@ pub enum ServerMessage {
         rev: u64,
         author: ClientId,
         layout: SharedLayout,
+        /// The revision is one step of a gesture still under the controller's pointer, so a
+        /// follower draws it as is rather than easing toward it - easing toward every step would
+        /// leave the follower's panes trailing the pointer for the whole gesture.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live: bool,
     },
     /// A commit was rejected (stale base rev or non-controller). Sent to the committer only, with
     /// the authoritative layout so the rejection self-heals.

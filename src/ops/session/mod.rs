@@ -18,9 +18,9 @@ pub(crate) use attach::{
 };
 pub(crate) use control_lease::{
     can_evict, decline_control, evict_client, finish_published_drag, flush_layout_commit,
-    grant_control, grant_control_to_requester, nudge_if_follower, open_collaborators,
-    prompt_follow_if_occupied, publish_drag, request_control, resolve_follow_prompt,
-    schedule_layout_commit, toggle_control_takeover, toggle_input_lock,
+    flush_live_layout_gesture, grant_control, grant_control_to_requester, nudge_if_follower,
+    open_collaborators, prompt_follow_if_occupied, publish_drag, request_control,
+    resolve_follow_prompt, schedule_layout_commit, toggle_control_takeover, toggle_input_lock,
 };
 pub(crate) use discovery::{
     HostProbeStatus, apply_discovered_sessions, attached_session_rows, discover_picker_sessions,

@@ -638,6 +638,8 @@ pub enum Msg {
         rev: u64,
         author: ClientId,
         layout: SharedLayout,
+        /// See [`crate::session::protocol::ServerMessage::LayoutCommitted`].
+        live: bool,
     },
     SessionLayoutRejected {
         epoch: u64,

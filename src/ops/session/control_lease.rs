@@ -417,6 +417,35 @@ pub(crate) fn finish_published_drag(ctx: &mut Context<AppRoot>) {
 
 pub(crate) const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 
+/// Whether the pointer is editing the shared layout in place: a split drag, a mouse resize, or a
+/// floating pane move. Each step is a layout revision that followers should draw directly.
+///
+/// A lifted tiled pane is not one of these. It is mirrored through [`publish_drag`], and the tiles
+/// it vacates and lands among reflow once each, which followers animate just as the controller does.
+/// Neither is anything in the scratchpad, which is client-local.
+fn layout_gesture_active(state: &crate::state::State) -> bool {
+    if state.scratch_visible {
+        return false;
+    }
+    state.split_drag.is_some()
+        || state.resizing_pane.is_some()
+        || state
+            .moving_pane
+            .is_some_and(|session| session.was_floating)
+}
+
+/// Publish the last step of a pointer gesture as a live revision before the gesture ends.
+///
+/// Call it while the session is still set. The debounced commit would otherwise carry that step
+/// after the gesture has ended, marked ordinary, and possibly together with whatever discrete layout
+/// change came next. Flushing here keeps every live revision inside its gesture, so liveness never
+/// outlives it.
+pub(crate) fn flush_live_layout_gesture(ctx: &mut Context<AppRoot>) {
+    if layout_gesture_active(&ctx.state) {
+        flush_layout_commit(ctx);
+    }
+}
+
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
     if ctx.state.scratch_visible {
         return;
@@ -468,6 +497,7 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
         bounds.h.round().max(1.0) as u16,
     );
     let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
+    let live = layout_gesture_active(&ctx.state);
     let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
         return;
     };
@@ -475,7 +505,7 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
         return;
     }
     let base_rev = shared.assumed_rev;
-    client.commit_layout(base_rev, layout.clone());
+    client.commit_layout(base_rev, layout.clone(), live);
     // Optimistically advance so a rapid burst of edits pipelines onto sequential base revisions;
     // the server's echo confirms `layout_rev`, and a reject resets `assumed_rev`.
     shared.assumed_rev = shared.assumed_rev.saturating_add(1);

@@ -46,6 +46,7 @@ impl SessionServer {
         client_id: ClientId,
         base_rev: u64,
         layout: SharedLayout,
+        live: bool,
     ) -> Vec<(Target, ServerMessage)> {
         // Non-controller commits are silently dropped (client-side gating already blocks them;
         // this is defense in depth). The follower resyncs its base rev from ControllerChanged.
@@ -73,6 +74,7 @@ impl SessionServer {
                 rev: self.layout_rev,
                 author: client_id,
                 layout,
+                live,
             },
         )]
     }

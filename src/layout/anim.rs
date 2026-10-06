@@ -1139,7 +1139,9 @@ pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
 /// Followers animate too. A layout revision is an authoritative *destination*, not a path, so
 /// the transition between the geometry a follower holds and the geometry that arrives is a
 /// local presentation choice - the same one the controller makes, from the same
-/// [`GeometryAnimation`] the reconciler arms in `apply_shared_layout`.
+/// [`GeometryAnimation`] the reconciler arms in `apply_shared_layout`. A revision committed
+/// mid-gesture (a split drag, a mouse resize, a floating move) arrives marked live and arms
+/// [`GeometryAnimation::None`] instead, matching the controller, which snaps those steps too.
 ///
 /// A pane under continuous manipulation is the exception, whoever is manipulating it. Its
 /// rectangle is being reported, not derived, so easing toward each reported position would

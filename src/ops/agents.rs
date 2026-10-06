@@ -20,6 +20,91 @@ pub(crate) fn open_agent_picker(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+/// Sessions with agents, plus the active page even if its last agent disappears.
+pub(crate) fn picker_tabs(state: &crate::state::State) -> Vec<crate::state::AgentPickerTab> {
+    use crate::state::AgentPickerTab;
+    let mut tabs = Vec::new();
+    for row in crate::view::agents::global_agent_rows(state) {
+        let tab = row.session_tab(state);
+        if !tabs.contains(&tab) {
+            tabs.push(tab);
+        }
+    }
+    if let Some(picker) = &state.agent_picker
+        && picker.tab != AgentPickerTab::All
+        && !tabs.contains(&picker.tab)
+    {
+        tabs.push(picker.tab.clone());
+    }
+    tabs.sort_by_key(|tab| {
+        (
+            matches!(
+                tab,
+                AgentPickerTab::Session {
+                    target: Some(_),
+                    ..
+                }
+            ),
+            tab.label(),
+        )
+    });
+    tabs.push(AgentPickerTab::All);
+    tabs
+}
+
+pub(crate) fn select_tab(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(tab) = picker_tabs(&ctx.state).get(index).cloned() else {
+        return Update::none();
+    };
+    let Some(picker) = ctx.state.agent_picker.as_mut() else {
+        return Update::none();
+    };
+    picker.tab = tab;
+    sync_picker_selection(&mut ctx.state);
+    crate::ops::focus::request_agent_picker_focus(ctx);
+    Update::full()
+}
+
+/// Keep a cursor attached to a matching row in the active session as snapshots arrive.
+pub(crate) fn sync_picker_selection(state: &mut crate::state::State) -> bool {
+    let Some(picker) = &state.agent_picker else {
+        return false;
+    };
+    let items = crate::view::agents::global_agent_rows(state)
+        .iter()
+        .filter(|row| row.in_tab(state, &picker.tab))
+        .map(|row| {
+            SearchItem::new(row.label(), row.location.clone())
+                .description(ItemDescription::new().right(row.description()))
+        })
+        .collect::<Vec<_>>();
+    let matches = tui_lipan::rank_search_palette_indices_with_mode(
+        &items,
+        picker.input.text(),
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    );
+    let selected = picker
+        .selected
+        .as_ref()
+        .filter(|selected| {
+            matches
+                .iter()
+                .any(|index| &items[*index].value == *selected)
+        })
+        .cloned()
+        .or_else(|| matches.first().map(|index| items[*index].value.clone()));
+    if selected == picker.selected {
+        return false;
+    }
+    state
+        .agent_picker
+        .as_mut()
+        .expect("picker checked above")
+        .selected = selected;
+    true
+}
+
 pub(crate) fn close_agent_picker(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.agent_picker.take().is_none() {
         return Update::none();
@@ -298,7 +383,9 @@ mod tests {
             backend.render();
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                frame.contains("Codex · workbox/backend"),
+                frame.lines().any(
+                    |line| line.contains("Codex") && line.contains("Blocked · workbox/backend")
+                ),
                 "the row names who and where:\n{frame}"
             );
             assert!(
@@ -333,8 +420,183 @@ mod tests {
                 .expect("open the agents view");
             backend.render();
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
-            assert!(frame.contains("Codex · backend"), "{frame}");
+            assert!(
+                frame
+                    .lines()
+                    .any(|line| line.contains("Codex") && line.contains("Blocked · backend")),
+                "{frame}"
+            );
             assert!(frame.contains("Blocked"), "{frame}");
+        });
+    }
+
+    fn tabbed_backend() -> TestBackend<AppRoot> {
+        let mut backend = backend_with_panes(&[]);
+        backend.state_mut().config.animations.picker =
+            crate::layout::anim::PickerAnimationStyle::Off;
+        let summary = |pane, label: &str, status: &str| crate::session::protocol::AgentSummary {
+            session: "dev".into(),
+            pane,
+            generation: 0,
+            row: None,
+            agent: "codex".into(),
+            label: label.into(),
+            state: status.into(),
+            changed_at: 0,
+        };
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![summary(1, "Local Codex", "idle")],
+            });
+        backend.state_mut().remote.agents.insert(
+            RemoteTarget::Alias("workbox".into()),
+            vec![
+                summary(2, "Remote Codex", "blocked"),
+                summary(3, "Remote Claude", "working"),
+            ],
+        );
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+            .unwrap();
+        backend.render();
+        backend
+    }
+
+    #[test]
+    fn keyboard_tabs_scope_by_session_keep_focus_and_omit_repeated_location() {
+        on_large_stack(|| {
+            use crate::state::AgentPickerTab;
+            let mut backend = tabbed_backend();
+            assert_eq!(
+                picker_tabs(backend.state())
+                    .iter()
+                    .map(AgentPickerTab::label)
+                    .collect::<Vec<_>>(),
+                ["dev", "workbox/dev", "All"]
+            );
+            assert!(matches!(
+                backend.state().agent_picker.as_ref().unwrap().selected,
+                Some(AgentLocation::OtherSession { pane: 2, .. })
+            ));
+            for (index, name) in [(0, "Local Codex"), (1, "Remote Codex")] {
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Tab,
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+                backend.render();
+                assert_eq!(
+                    backend.state().agent_picker.as_ref().unwrap().tab,
+                    picker_tabs(backend.state())[index]
+                );
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('x'),
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+                assert_eq!(
+                    backend.state().agent_picker.as_ref().unwrap().input.text(),
+                    "x"
+                );
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Backspace,
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+                backend.render();
+                let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                let row = frame.lines().find(|line| line.contains(name)).unwrap();
+                assert!(!row.contains("dev"), "session belongs in the tab: {row}");
+                if index == 0 {
+                    assert!(!frame.contains("Remote Codex"), "{frame}");
+                } else {
+                    assert!(!frame.contains("Local Codex"), "{frame}");
+                }
+            }
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Right,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            assert_eq!(
+                backend.state().agent_picker.as_ref().unwrap().tab,
+                AgentPickerTab::All
+            );
+            backend.render();
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::BackTab,
+                    mods: KeyMods {
+                        shift: true,
+                        ..KeyMods::NONE
+                    },
+                })
+                .unwrap();
+            assert_eq!(
+                backend.state().agent_picker.as_ref().unwrap().tab.label(),
+                "workbox/dev"
+            );
+        });
+    }
+
+    #[test]
+    fn switching_tabs_keeps_query_and_selects_only_a_matching_agent() {
+        on_large_stack(|| {
+            let mut backend = tabbed_backend();
+            backend
+                .dispatch(Msg::AgentPickerQueryChanged("Claude".into()))
+                .unwrap();
+            backend.dispatch(Msg::AgentPickerTab(1)).unwrap();
+            let picker = backend.state().agent_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "Claude");
+            assert!(matches!(
+                picker.selected,
+                Some(AgentLocation::OtherSession { pane: 3, .. })
+            ));
+            backend.dispatch(Msg::AgentPickerTab(0)).unwrap();
+            let picker = backend.state().agent_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "Claude");
+            assert_eq!(picker.selected, None);
+            backend.render();
+            assert_eq!(
+                backend.state().agent_picker.as_ref().unwrap().selected,
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn a_session_tab_keeps_its_identity_when_snapshots_change_and_can_be_empty() {
+        on_large_stack(|| {
+            let mut backend = tabbed_backend();
+            backend.dispatch(Msg::AgentPickerTab(1)).unwrap();
+            let active = backend.state().agent_picker.as_ref().unwrap().tab.clone();
+            let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
+            let mut newcomer = snapshot.agents[0].clone();
+            newcomer.session = "aaa".into();
+            newcomer.pane = 7;
+            snapshot.agents.push(newcomer);
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            backend.render();
+            assert_eq!(picker_tabs(backend.state())[2], active);
+            assert_eq!(backend.state().agent_picker.as_ref().unwrap().tab, active);
+            backend.state_mut().remote.agents.clear();
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            backend.render();
+            assert_eq!(backend.state().agent_picker.as_ref().unwrap().tab, active);
+            assert!(picker_tabs(backend.state()).contains(&active));
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(frame.contains("No agents in this session"), "{frame}");
+            assert!(!frame.contains("Local Codex"), "{frame}");
+            assert_eq!(
+                backend.state().agent_picker.as_ref().unwrap().selected,
+                None
+            );
         });
     }
 

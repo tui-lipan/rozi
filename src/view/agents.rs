@@ -35,6 +35,22 @@ pub(crate) struct GlobalAgentRow {
 }
 
 impl GlobalAgentRow {
+    /// The host and session identity a tab uses, including the attached session's target.
+    pub fn session_tab(&self, state: &State) -> crate::state::AgentPickerTab {
+        let target = match &self.location {
+            AgentLocation::Here { .. } => state.current().remote_target.clone(),
+            AgentLocation::OtherSession { target, .. } => target.clone(),
+        };
+        crate::state::AgentPickerTab::Session {
+            target,
+            session: self.session.clone(),
+        }
+    }
+
+    pub fn in_tab(&self, state: &State, tab: &crate::state::AgentPickerTab) -> bool {
+        *tab == crate::state::AgentPickerTab::All || self.session_tab(state) == *tab
+    }
+
     /// How much this row wants attention, lowest first — the Agents tab's own ranking, so blocked
     /// leads, idle trails, and a publisher's custom word sits with the states still in progress.
     pub fn rank(&self) -> u8 {

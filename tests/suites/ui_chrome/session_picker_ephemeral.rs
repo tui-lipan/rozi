@@ -119,7 +119,7 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
             "a filter empty-state keeps the same 1-cell left inset:\n{rendered}"
         );
         assert!(
-            rendered.contains("ephemeral shell Enter"),
+            rendered.contains("ephemeral shell on Local Enter"),
             "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"
         );
     });
@@ -385,5 +385,137 @@ fn a_scoped_launcher_names_its_host_and_says_where_its_shell_lands() {
             rendered.contains("shell on workbox"),
             "and its shell row says where the shell lands:\n{rendered}"
         );
+    });
+}
+
+#[test]
+fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
+    use rozi::state::SessionPickerTab;
+    on_a_big_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
+            state.show_session_picker = true;
+            state.session_picker = Some(SessionPickerState::new(vec![
+                session_row("dev"),
+                remote_row("dev", "workbox"),
+                remote_row("api", "buildbox"),
+            ]));
+        }
+        let local = screen(&mut backend);
+        assert!(local.contains("All") && local.contains("Local"), "{local}");
+        assert!(!local.contains("dev@workbox"), "{local}");
+        let tabs = local
+            .lines()
+            .find(|line| {
+                line.contains("Local") && line.contains("buildbox") && line.contains("workbox")
+            })
+            .unwrap();
+        assert!(
+            tabs.find("Local") < tabs.find("buildbox")
+                && tabs.find("buildbox") < tabs.find("workbox")
+                && tabs.find("workbox") < tabs.find("All"),
+            "{tabs}"
+        );
+        backend.dispatch(Msg::SessionPickerTab(3)).unwrap();
+        let all = screen(&mut backend);
+        assert!(
+            all.contains("dev@workbox") && all.contains("api@buildbox"),
+            "{all}"
+        );
+        backend.dispatch(Msg::SessionPickerTab(0)).unwrap();
+        screen(&mut backend);
+        for ch in "dev@workbox".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        let found = screen(&mut backend);
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.tab, SessionPickerTab::Host(None));
+        assert_eq!(picker.effective_tab(), SessionPickerTab::All);
+        assert_eq!(
+            picker.entries[picker.selected].host.as_deref(),
+            Some("workbox")
+        );
+        assert!(found.contains("dev@workbox"), "{found}");
+        assert!(found.contains("new on Local"), "{found}");
+        for _ in "dev@workbox".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Backspace,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        let cleared = screen(&mut backend);
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.effective_tab(), SessionPickerTab::Host(None));
+        assert_eq!(picker.selected, 0);
+        assert!(!cleared.contains("dev@workbox"), "{cleared}");
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Char('x'),
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        assert_eq!(
+            backend
+                .state()
+                .session_picker
+                .as_ref()
+                .unwrap()
+                .input
+                .text(),
+            "x"
+        );
+    });
+}
+
+#[test]
+fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
+    use rozi::session::remote::RemoteTarget;
+    use rozi::state::SessionPickerTab;
+    on_a_big_stack(|| {
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(VIEWPORT);
+        {
+            let state = backend.state_mut();
+            *state.current_mut() = rozi::state::Attachment::new();
+            state.launcher_scope = Some(workbox.clone());
+            state.show_session_picker = true;
+            state.session_picker = Some(
+                SessionPickerState::new(vec![session_row("dev"), remote_row("api", "workbox")])
+                    .on_tab(Some(workbox.clone())),
+            );
+        }
+        backend
+            .dispatch(Msg::SessionPickerQueryChanged("dev".into()))
+            .unwrap();
+        let global = screen(&mut backend);
+        assert!(global.contains("new on workbox"), "{global}");
+        assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
+        backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
+        assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
+        backend.dispatch(Msg::SessionPickerTab(1)).unwrap();
+        let scoped = screen(&mut backend);
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.tab, SessionPickerTab::Host(Some(workbox.clone())));
+        assert!(picker.input.text().is_empty());
+        assert!(!scoped.contains("api@workbox"), "{scoped}");
+        assert!(scoped.contains("api"), "{scoped}");
+        backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
+        backend.dispatch(Msg::SessionPickerCreateFromQuery).unwrap();
+        assert_eq!(
+            backend.state().rename_session.as_ref().unwrap().host_target,
+            Some(workbox.clone())
+        );
+        backend.dispatch(Msg::CloseRenameSession).unwrap();
     });
 }

@@ -1245,7 +1245,6 @@ fn pane_open_and_close_choices_confirm_and_persist_independently() {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().config.animations.enabled = true;
         let path = rozi::config::config_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
             "[animations]\npane_style = \"portal\"\ngeometry_ms = 220\n",

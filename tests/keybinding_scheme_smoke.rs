@@ -22,7 +22,6 @@ fn backend() -> TestBackend<AppRoot> {
 
 /// Replace the config document, reload it, and open Keybindings on it.
 fn load(backend: &mut TestBackend<AppRoot>, text: &str) {
-    std::fs::create_dir_all(rozi::config::config_path().parent().unwrap()).unwrap();
     std::fs::write(rozi::config::config_path(), text).unwrap();
     backend
         .dispatch(rozi::Msg::RunAction(Action::ReloadExtensions))

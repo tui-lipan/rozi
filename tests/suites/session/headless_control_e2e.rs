@@ -872,9 +872,10 @@ fn captured_text(response: &ControlResponse) -> String {
 
 /// The pattern the waits replace is send, sleep, capture - which reads the screen before a slow
 /// program has answered. A send that waits answers with the program's output instead, in one
-/// request, and only with output that came after its input.
+/// request, and only with output that came after its input. The wait semantics themselves are
+/// unit-tested in `capture_waits`; this proves they hold over the real endpoint and PTY.
 #[test]
-fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
+fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
     let server = spawn_listener(headless_settings());
     let session = server.session().to_string();
     let spawned = expect_ok(
@@ -893,27 +894,13 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
     let timeout_ms = u64::try_from(io_timeout().as_millis()).unwrap();
 
-    // The markers only exist once the shell has evaluated them: the echoed command line reads
-    // `$((40+2))`, never `42`.
-    expect_ok(
-        &session,
-        send_keys_waiting(pane, &["sleep 1; echo naive-$((40+2))", "Enter"], None),
-    );
-    let naive = capture_until(&session, pane, |text| text.contains("naive-$((40+2))"));
-    assert!(
-        !naive.contains("naive-42"),
-        "a capture right after sending cannot have the delayed output yet:\n{naive}"
-    );
-
-    // Finish the first command before submitting the next one. Shell line editors can consume
-    // input differently while a command is still running.
-    capture_until(&session, pane, |text| text.contains("naive-42"));
-
+    // The marker only exists once the shell has evaluated it: the echoed command line reads
+    // `$((40+2))`, never `42`, so only output produced after the delay can satisfy the wait.
     let waited = control(
         &session,
         send_keys_waiting(
             pane,
-            &["sleep 0.5; echo waited-$((40+2))", "Enter"],
+            &["sleep 0.15; echo waited-$((40+2))", "Enter"],
             pane_wait(Some("waited-42"), None, timeout_ms),
         ),
     );
@@ -927,7 +914,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
         send_keys_waiting(
             pane,
             &["true", "Enter"],
-            pane_wait(Some("waited-42"), None, 700),
+            pane_wait(Some("waited-42"), None, 150),
         ),
     );
     assert_eq!(stale.code, Some(ControlErrorCode::Timeout), "{stale:?}");
@@ -957,7 +944,7 @@ fn a_send_that_waits_answers_with_the_output_a_naive_capture_misses() {
             render: CaptureRender::Text,
             scale: None,
             image_pixels: false,
-            wait: pane_wait(None, Some(300), timeout_ms),
+            wait: pane_wait(None, Some(100), timeout_ms),
         },
     );
     assert!(settled.ok, "{settled:?}");

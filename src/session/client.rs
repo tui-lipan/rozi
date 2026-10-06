@@ -37,6 +37,10 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// a surviving remote link is heard well inside this window; a link the sleep killed still drops
 /// promptly instead of waiting out a full [`HEARTBEAT_TIMEOUT`] awake.
 const WAKE_GRACE: Duration = Duration::from_secs(8);
+/// A gap this long between two watchdog checks means the reader did not run: the machine slept or
+/// the process stalled. The reader checks about every [`HEARTBEAT_POLL`], so ordinary silence on a
+/// dead link never looks like one.
+const WAKE_GAP: Duration = Duration::from_secs(6);
 /// Read-poll interval so a silent socket or SSH pipe wakes the reader to check the watchdog.
 /// Also the attach-handshake read deadline.
 const HEARTBEAT_POLL: Duration = Duration::from_secs(2);
@@ -1179,55 +1183,63 @@ fn handle_transport_frame(
 
 /// Decides when inbound silence means the transport is dead.
 ///
-/// Monotonic silence past the timeout always expires the link, including when NTP steps the wall
-/// clock backwards. A wall-clock gap past the timeout without matching monotonic time means the
-/// machine slept: every link sees that gap at once on wake, including healthy local sockets whose
-/// server never noticed the suspend. Instead of dropping them all, the watchdog gives the link
-/// [`WAKE_GRACE`] of awake time to be heard from and only expires it if it stays silent.
+/// Awake silence past the timeout expires the link. A long gap between two checks means the reader
+/// did not run (suspend, or a process stall), and every link sees it at once on wake, including
+/// healthy local sockets whose server never noticed. Instead of dropping them all, the watchdog
+/// gives the link [`WAKE_GRACE`] of awake time to be heard from and only expires it if it stays
+/// silent. The gap is measured on both clocks because platforms disagree on suspend: Linux and
+/// macOS `Instant` stops while suspended and only the wall clock jumps, but Windows `Instant`
+/// (QueryPerformanceCounter) keeps counting. A wall clock stepped backwards is ignored.
 struct SilenceWatchdog {
     timeout: Duration,
+    wake_gap: Duration,
     wake_grace: Duration,
-    last_instant: Instant,
-    last_wall: SystemTime,
+    last_heard: Instant,
+    last_check_instant: Instant,
+    last_check_wall: SystemTime,
     wake_deadline: Option<Instant>,
 }
 
 impl SilenceWatchdog {
     fn new(
         timeout: Duration,
+        wake_gap: Duration,
         wake_grace: Duration,
         now_instant: Instant,
         now_wall: SystemTime,
     ) -> Self {
         Self {
             timeout,
+            wake_gap,
             wake_grace,
-            last_instant: now_instant,
-            last_wall: now_wall,
+            last_heard: now_instant,
+            last_check_instant: now_instant,
+            last_check_wall: now_wall,
             wake_deadline: None,
         }
     }
 
     fn heard(&mut self, now_instant: Instant, now_wall: SystemTime) {
-        self.last_instant = now_instant;
-        self.last_wall = now_wall;
+        self.last_heard = now_instant;
+        self.last_check_instant = now_instant;
+        self.last_check_wall = now_wall;
         self.wake_deadline = None;
     }
 
     fn expired(&mut self, now_instant: Instant, now_wall: SystemTime) -> bool {
-        if now_instant.saturating_duration_since(self.last_instant) >= self.timeout {
-            return true;
+        let instant_gap = now_instant.saturating_duration_since(self.last_check_instant);
+        let wall_gap = now_wall
+            .duration_since(self.last_check_wall)
+            .unwrap_or_default();
+        self.last_check_instant = now_instant;
+        self.last_check_wall = now_wall;
+        if instant_gap.max(wall_gap) >= self.wake_gap {
+            self.wake_deadline = Some(now_instant + self.wake_grace);
         }
-        let slept = now_wall
-            .duration_since(self.last_wall)
-            .is_ok_and(|elapsed| elapsed >= self.timeout);
-        if !slept {
-            return false;
+        if let Some(deadline) = self.wake_deadline {
+            return now_instant >= deadline;
         }
-        let deadline = *self
-            .wake_deadline
-            .get_or_insert_with(|| now_instant + self.wake_grace);
-        now_instant >= deadline
+        now_instant.saturating_duration_since(self.last_heard) >= self.timeout
     }
 }
 
@@ -1244,6 +1256,7 @@ fn forward_inbound<R: std::io::Read>(
     let mut decoder = protocol::FrameDecoder::default();
     let mut watchdog = SilenceWatchdog::new(
         heartbeat_timeout,
+        WAKE_GAP.min(heartbeat_timeout),
         WAKE_GRACE.min(heartbeat_timeout),
         Instant::now(),
         SystemTime::now(),
@@ -1419,63 +1432,97 @@ mod tests {
         assert!(inbound_rx.try_recv().is_err());
     }
 
-    #[test]
-    fn silence_watchdog_expires_after_monotonic_timeout() {
-        let timeout = Duration::from_secs(15);
-        let grace = Duration::from_secs(8);
-        let start = Instant::now();
-        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
-        let almost = timeout - Duration::from_secs(1);
-        assert!(!watchdog.expired(start + almost, wall + almost));
-        assert!(watchdog.expired(start + timeout, wall + timeout));
+    const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+    const TEST_GAP: Duration = Duration::from_secs(6);
+    const TEST_GRACE: Duration = Duration::from_secs(8);
+    const POLL: Duration = Duration::from_secs(2);
+    const SLEPT: Duration = Duration::from_secs(2 * 60 * 60);
+
+    fn test_watchdog(start: Instant, wall: SystemTime) -> SilenceWatchdog {
+        SilenceWatchdog::new(TEST_TIMEOUT, TEST_GAP, TEST_GRACE, start, wall)
+    }
+
+    /// Polls every [`POLL`] from `from` up to (not including) `until`, both clocks in step.
+    fn poll_awake(
+        watchdog: &mut SilenceWatchdog,
+        start: Instant,
+        wall: SystemTime,
+        from: Duration,
+        until: Duration,
+    ) -> bool {
+        let mut at = from;
+        while at < until {
+            if watchdog.expired(start + at, wall + at) {
+                return true;
+            }
+            at += POLL;
+        }
+        false
     }
 
     #[test]
-    fn silence_watchdog_gives_a_woken_link_grace_to_speak() {
-        let timeout = Duration::from_secs(15);
-        let grace = Duration::from_secs(8);
+    fn silence_watchdog_expires_after_awake_silence() {
         let start = Instant::now();
         let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let slept = Duration::from_secs(2 * 60 * 60);
-        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
-        // First poll after a two-hour suspend: the link is not dropped yet.
-        let woke = start + Duration::from_secs(2);
-        assert!(!watchdog.expired(woke, wall + slept));
-        // The server's next heartbeat arrives inside the grace window and the link survives.
-        let ping = woke + Duration::from_secs(4);
-        watchdog.heard(ping, wall + slept + Duration::from_secs(4));
-        let later = ping + Duration::from_secs(10);
-        assert!(!watchdog.expired(later, wall + slept + Duration::from_secs(14)));
+        let mut watchdog = test_watchdog(start, wall);
+        assert!(!poll_awake(&mut watchdog, start, wall, POLL, TEST_TIMEOUT));
+        assert!(watchdog.expired(start + TEST_TIMEOUT, wall + TEST_TIMEOUT));
+    }
+
+    /// Wakes the watchdog after a suspend and checks the woken link is given grace, survives a
+    /// heartbeat inside it, and expires if it stays silent through it.
+    fn assert_wake_grace(woke_instant: Duration, woke_wall: Duration) {
+        let start = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+
+        let mut silent = test_watchdog(start, wall);
+        assert!(!poll_awake(&mut silent, start, wall, POLL, POLL * 2));
+        let woke = start + woke_instant;
+        let woke_wall = wall + woke_wall;
+        assert!(
+            !silent.expired(woke, woke_wall),
+            "the first check after wake drops the link"
+        );
+        assert!(!poll_awake(&mut silent, woke, woke_wall, POLL, TEST_GRACE));
+        assert!(silent.expired(woke + TEST_GRACE, woke_wall + TEST_GRACE));
+
+        let mut alive = test_watchdog(start, wall);
+        assert!(!alive.expired(woke, woke_wall));
+        let ping = Duration::from_secs(4);
+        alive.heard(woke + ping, woke_wall + ping);
+        assert!(!poll_awake(
+            &mut alive,
+            woke,
+            woke_wall,
+            ping + POLL,
+            ping + TEST_TIMEOUT
+        ));
+        assert!(alive.expired(woke + ping + TEST_TIMEOUT, woke_wall + ping + TEST_TIMEOUT));
     }
 
     #[test]
-    fn silence_watchdog_drops_a_woken_link_that_stays_silent() {
-        let timeout = Duration::from_secs(15);
-        let grace = Duration::from_secs(8);
-        let start = Instant::now();
-        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let slept = Duration::from_secs(2 * 60 * 60);
-        let mut watchdog = SilenceWatchdog::new(timeout, grace, start, wall);
-        let woke = start + Duration::from_secs(2);
-        assert!(!watchdog.expired(woke, wall + slept));
-        let almost = woke + grace - Duration::from_secs(1);
-        assert!(!watchdog.expired(almost, wall + slept + grace));
-        // Well before a full monotonic timeout, a link the sleep killed is given up.
-        assert!(watchdog.expired(woke + grace, wall + slept + grace));
+    fn silence_watchdog_grants_wake_grace_when_only_the_wall_clock_counts_suspend() {
+        // Linux/macOS: `Instant` stops while suspended, the wall clock jumps.
+        assert_wake_grace(POLL * 3, SLEPT);
+    }
+
+    #[test]
+    fn silence_watchdog_grants_wake_grace_when_both_clocks_count_suspend() {
+        // Windows: QueryPerformanceCounter keeps counting through suspend.
+        assert_wake_grace(SLEPT, SLEPT);
     }
 
     #[test]
     fn silence_watchdog_ignores_a_backwards_wall_clock_step() {
-        let timeout = Duration::from_secs(15);
-        let grace = Duration::from_secs(8);
         let start = Instant::now();
         let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let mut watchdog =
-            SilenceWatchdog::new(timeout, grace, start, wall + Duration::from_secs(60));
-        let almost = start + timeout - Duration::from_secs(1);
-        assert!(!watchdog.expired(almost, wall));
-        assert!(watchdog.expired(start + timeout, wall));
+        let mut watchdog = test_watchdog(start, wall + Duration::from_secs(60));
+        let mut at = POLL;
+        while at < TEST_TIMEOUT {
+            assert!(!watchdog.expired(start + at, wall + at));
+            at += POLL;
+        }
+        assert!(watchdog.expired(start + TEST_TIMEOUT, wall + TEST_TIMEOUT));
     }
 
     struct SilentReader;

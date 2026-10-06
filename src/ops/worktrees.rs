@@ -954,7 +954,6 @@ pub(crate) fn apply_result(
         picker.pending_list = None;
         match result {
             WorktreeResult::Listed { worktrees, .. } => {
-                // A refresh may reorder or drop rows; stay on the same checkout when it remains.
                 let selected_path = picker
                     .entries
                     .get(picker.selected)
@@ -962,10 +961,14 @@ pub(crate) fn apply_result(
                 picker.selected = selected_path
                     .and_then(|path| worktrees.iter().position(|tree| tree.path == path))
                     .unwrap_or_else(|| {
-                        worktrees
-                            .iter()
-                            .position(|tree| tree.path == picker.cwd)
-                            .unwrap_or(0)
+                        if picker.entries.is_empty() {
+                            worktrees
+                                .iter()
+                                .position(|tree| tree.path == picker.cwd)
+                                .unwrap_or(0)
+                        } else {
+                            picker.selected.min(worktrees.len().saturating_sub(1))
+                        }
                     });
                 picker.entries = worktrees;
                 picker.error = None;
@@ -1078,6 +1081,71 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn refreshed_worktree_lists_keep_the_nearest_visible_selection() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            for (query, selected, removed, expected) in [
+                ("", 3, Some(3), Some("keep/c")),
+                ("", 4, Some(4), Some("keep/b")),
+                ("keep", 3, Some(3), Some("keep/c")),
+                ("keep", 4, Some(4), Some("keep/b")),
+                ("keep", 3, None, Some("keep/b")),
+                ("no matches", 3, Some(3), None),
+            ] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let mut picker = WorktreePickerState::new("/src/hidden".into(), None);
+                picker.entries = ["hidden", "keep/a", "hidden-other", "keep/b", "keep/c"]
+                    .into_iter()
+                    .map(|branch| crate::git::worktrees::WorktreeInfo {
+                        path: format!("/src/{branch}"),
+                        branch: Some(branch.into()),
+                        detached: false,
+                        bare: false,
+                        prunable: false,
+                        linked: true,
+                        lock: None,
+                    })
+                    .collect();
+                picker.selected = selected;
+                picker.input.set_text(query);
+                picker.pending_list = Some(41);
+                let mut refreshed = picker.entries.clone();
+                if let Some(index) = removed {
+                    refreshed.remove(index);
+                } else {
+                    refreshed.reverse();
+                }
+                let state = backend.state_mut();
+                state.config.animations.enabled = false;
+                state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                state.worktree_picker = Some(picker);
+                let epoch = state.runtime_epoch;
+                backend.render();
+                backend
+                    .dispatch(Msg::SessionWorktreeResult {
+                        epoch,
+                        request_id: 41,
+                        result: WorktreeResult::Listed {
+                            worktrees: refreshed,
+                            sessions: Default::default(),
+                        },
+                    })
+                    .unwrap();
+                backend.render();
+                let picker = backend.state().worktree_picker.as_ref().unwrap();
+                assert_eq!(
+                    picker
+                        .selected_entry()
+                        .and_then(|tree| tree.branch.as_deref()),
+                    expected,
+                    "{query}: {selected}"
+                );
+                assert!(picker.pending_list.is_none());
+            }
+        });
     }
 
     #[test]

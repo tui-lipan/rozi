@@ -70,7 +70,10 @@ Merged, closed, and draft states take precedence over CI. Passing or failing che
 pushed commit are not shown for a newer local branch commit. PR status does not describe uncommitted
 changes or imply a checkout is safe to remove. A branch without an associated PR has no work status.
 For same-named branches, rozi uses the newest matching PR; a PR from a fork is matched only when
-its head commit matches the local branch. Other hosting providers currently have no PR integration.
+its head commit matches the local branch. Merged and closed PRs also require a matching head commit,
+so reusing a branch for new commits clears its old terminal status. Open and draft PRs stay
+associated when the local branch is ahead, but CI waits for a matching commit.
+Other hosting providers currently have no PR integration.
 
 While the Worktrees sidebar is visible, work status refreshes about once a minute. `Ctrl+R` in the
 picker checks immediately.

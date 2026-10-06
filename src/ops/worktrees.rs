@@ -48,18 +48,6 @@ fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
     false
 }
 
-fn selected(picker: &WorktreePickerState) -> Option<&crate::git::worktrees::WorktreeInfo> {
-    let query = picker.input.text().trim().to_ascii_lowercase();
-    picker.entries.get(picker.selected).filter(|entry| {
-        query.is_empty()
-            || entry.path.to_ascii_lowercase().contains(&query)
-            || entry
-                .branch
-                .as_deref()
-                .is_some_and(|branch| branch.to_ascii_lowercase().contains(&query))
-    })
-}
-
 /// The repository Worktrees acts on: the focused pane's project root, on the session's host.
 ///
 /// A pane whose shell has moved to a nested SSH host is refused: the session server cannot run
@@ -216,7 +204,7 @@ pub(crate) fn copy_path(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .worktree_picker
         .as_ref()
-        .and_then(|picker| picker.entries.get(picker.selected))
+        .and_then(WorktreePickerState::selected_entry)
         .map(|tree| tree.path.clone())
     else {
         return Update::none();
@@ -392,7 +380,7 @@ pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .worktree_picker
         .as_ref()
-        .and_then(selected)
+        .and_then(WorktreePickerState::selected_entry)
         .cloned();
     tree.map_or(Update::none(), |tree| enter_tree(ctx, tree))
 }
@@ -410,8 +398,7 @@ pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
             picker.form.is_none()
                 && picker.target == state.current().remote_target
                 && picker
-                    .entries
-                    .get(picker.selected)
+                    .selected_entry()
                     .is_some_and(|tree| !tree.bare && !tree.prunable)
         })
 }
@@ -627,7 +614,7 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
 /// checkout re-arms as forced once Git has refused it.
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let Some((cwd, tree, armed)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
-        let tree = selected(picker)?.clone();
+        let tree = picker.selected_entry()?.clone();
         let armed = picker
             .pending_remove
             .as_ref()
@@ -667,7 +654,7 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .worktree_picker
         .as_ref()
-        .and_then(|picker| Some((picker.cwd.clone(), selected(picker)?.clone())))
+        .and_then(|picker| Some((picker.cwd.clone(), picker.selected_entry()?.clone())))
     else {
         return Update::none();
     };
@@ -1091,6 +1078,140 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn hybrid_path_matches_support_open_remove_and_unlock() {
+        on_large_stack(|| {
+            use crate::git::worktrees::{WorktreeInfo, WorktreeLock};
+            use crate::session::client::ClientOutbound;
+            use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
+            use crate::session::origin::{SessionOrigin, WorktreeOrigin};
+            use crate::session::protocol::{ClientMessage, WorktreeRequest};
+            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods};
+
+            crate::test_support::isolate_user_dirs();
+            for action in ["open", "remove", "unlock"] {
+                for query in ["repo feature", "114"] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    let (client, outbound) = SessionClient::test_channel();
+                    let state = backend.state_mut();
+                    state.config.animations.enabled = false;
+                    state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                    state.current_mut().session_client = Some(client);
+                    let path = "C:\\code\\repo-worktrees\\feature";
+                    let mut picker = WorktreePickerState::new("C:\\code\\repo".into(), None);
+                    picker.entries.push(WorktreeInfo {
+                        path: path.into(),
+                        branch: Some("feat/worktrees".into()),
+                        detached: false,
+                        bare: false,
+                        prunable: false,
+                        linked: true,
+                        lock: (action == "unlock").then(|| WorktreeLock {
+                            reason: "review".into(),
+                            stale: false,
+                        }),
+                    });
+                    picker.statuses.checkouts.insert(
+                        path.into(),
+                        crate::git::pull_requests::PullRequestStatus {
+                            number: 114,
+                            status: crate::git::pull_requests::WorkStatus::Open,
+                        },
+                    );
+                    picker.sessions = ["one", "two"]
+                        .into_iter()
+                        .map(|name| DiscoveredSession {
+                            name: name.into(),
+                            origin: SessionOrigin {
+                                worktree: Some(WorktreeOrigin { path: path.into() }),
+                                ..Default::default()
+                            },
+                            ephemeral: false,
+                            host: None,
+                            remote_target: None,
+                            status: DiscoveredSessionStatus::Restorable,
+                        })
+                        .collect();
+                    picker.input.set_text(query);
+                    state.worktree_picker = Some(picker);
+                    backend.render();
+                    assert!(
+                        backend
+                            .capture_frame()
+                            .plain_text()
+                            .contains("feat/worktrees")
+                    );
+                    assert!(backend.focus_key(&"rozi-worktree-picker".into()));
+                    let key = match action {
+                        "open" => KeyEvent {
+                            code: KeyCode::Enter,
+                            mods: KeyMods::NONE,
+                        },
+                        "remove" => KeyEvent {
+                            code: KeyCode::Char('k'),
+                            mods: KeyMods::CTRL,
+                        },
+                        _ => KeyEvent {
+                            code: KeyCode::Char('u'),
+                            mods: KeyMods::CTRL,
+                        },
+                    };
+                    backend.send_key(key).unwrap();
+                    if action == "open" {
+                        assert!(backend.state().worktree_picker.is_none(), "{query}");
+                        assert!(backend.state().show_session_picker);
+                        assert_eq!(
+                            backend
+                                .state()
+                                .session_picker
+                                .as_ref()
+                                .unwrap()
+                                .entries
+                                .len(),
+                            2
+                        );
+                    } else {
+                        if action == "remove" {
+                            assert_eq!(
+                                backend
+                                    .state()
+                                    .worktree_picker
+                                    .as_ref()
+                                    .unwrap()
+                                    .pending_remove
+                                    .as_ref()
+                                    .unwrap()
+                                    .path,
+                                path
+                            );
+                            backend.send_key(key).unwrap();
+                        }
+                        let requests: Vec<_> = outbound
+                            .try_iter()
+                            .filter_map(|message| match message {
+                                ClientOutbound::Control(ClientMessage::Worktree {
+                                    request,
+                                    ..
+                                }) => Some(request),
+                                _ => None,
+                            })
+                            .collect();
+                        assert!(
+                            requests.iter().any(|request| match request {
+                                WorktreeRequest::Remove { path: selected, .. } =>
+                                    action == "remove" && selected == path,
+                                WorktreeRequest::Unlock { path: selected, .. } =>
+                                    action == "unlock" && selected == path,
+                                _ => false,
+                            }),
+                            "{action}: {query}: {requests:?}"
+                        );
+                    }
+                }
+            }
+        });
     }
 
     #[test]

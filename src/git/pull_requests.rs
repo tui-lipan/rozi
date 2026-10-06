@@ -195,16 +195,7 @@ fn fetch(
             let nodes = repository[format!("b{index}")]["nodes"]
                 .as_array()
                 .ok_or("invalid GitHub status")?;
-            // Same-named branches in a fork identify this checkout only at a matching commit.
-            let Some(pr) = nodes.iter().find(|pr| {
-                pr["isCrossRepository"] == false
-                    || heads
-                        .get(branch)
-                        .is_some_and(|head| Some(*head) == pr["headRefOid"].as_str())
-            }) else {
-                continue;
-            };
-            let Some(status) = parse_status(pr, heads.get(branch).copied()) else {
+            let Some(status) = find_status(nodes, heads.get(branch).copied()) else {
                 continue;
             };
             for tree in trees
@@ -218,7 +209,24 @@ fn fetch(
     Ok(result)
 }
 
+fn find_status(nodes: &[serde_json::Value], local_head: Option<&str>) -> Option<PullRequestStatus> {
+    nodes.iter().find_map(|pr| {
+        // Fork branches and terminal PRs must identify the current work by commit.
+        if pr["isCrossRepository"] != false
+            && (local_head.is_none() || local_head != pr["headRefOid"].as_str())
+        {
+            return None;
+        }
+        parse_status(pr, local_head)
+    })
+}
+
 fn parse_status(pr: &serde_json::Value, local_head: Option<&str>) -> Option<PullRequestStatus> {
+    if matches!(pr["state"].as_str(), Some("MERGED" | "CLOSED"))
+        && (local_head.is_none() || local_head != pr["headRefOid"].as_str())
+    {
+        return None;
+    }
     let status = match pr["state"].as_str()? {
         "MERGED" => WorkStatus::Merged,
         "CLOSED" => WorkStatus::Closed,
@@ -248,7 +256,7 @@ mod tests {
     use super::*;
 
     fn pr(state: &str, draft: bool, ci: Option<&str>) -> serde_json::Value {
-        serde_json::json!({"number":114,"state":state,"isDraft":draft,"headRefOid":"abc",
+        serde_json::json!({"number":114,"state":state,"isDraft":draft,"headRefOid":"abc","isCrossRepository":false,
             "commits":{"nodes":[{"commit":{"statusCheckRollup":ci.map(|state| serde_json::json!({"state":state}))}}]}})
     }
 
@@ -285,5 +293,44 @@ mod tests {
     #[test]
     fn branch_names_are_graphql_strings() {
         assert!(query(&["fix/a\"b"]).contains("headRefName:\"fix/a\\\"b\""));
+    }
+
+    #[test]
+    fn reused_branches_drop_terminal_prs_but_keep_open_and_draft_associations() {
+        for state in ["MERGED", "CLOSED"] {
+            let value = pr(state, false, Some("SUCCESS"));
+            assert!(parse_status(&value, Some("new")).is_none());
+            assert!(parse_status(&value, None).is_none());
+            assert!(parse_status(&value, Some("abc")).is_some());
+        }
+        for (draft, expected) in [(false, WorkStatus::Open), (true, WorkStatus::Draft)] {
+            assert_eq!(
+                parse_status(&pr("OPEN", draft, Some("SUCCESS")), Some("new"))
+                    .unwrap()
+                    .status,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrelated_terminal_pr_does_not_hide_a_matching_candidate() {
+        for state in ["MERGED", "CLOSED"] {
+            let terminal = pr(state, false, None);
+            let mut open = pr("OPEN", false, Some("SUCCESS"));
+            open["number"] = 113.into();
+            open["headRefOid"] = "new".into();
+            let nodes = [terminal, open];
+            let status = find_status(&nodes, Some("new")).unwrap();
+            assert_eq!(status.number, 113);
+            assert_eq!(status.status, WorkStatus::Passed);
+        }
+        let mut fork = pr("OPEN", false, Some("SUCCESS"));
+        fork["isCrossRepository"] = true.into();
+        assert!(find_status(&[fork.clone()], Some("new")).is_none());
+        assert_eq!(
+            find_status(&[fork], Some("abc")).unwrap().status,
+            WorkStatus::Passed
+        );
     }
 }

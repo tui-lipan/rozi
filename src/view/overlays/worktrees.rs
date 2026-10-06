@@ -9,19 +9,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     if let Some(form) = picker.form.as_ref() {
         return worktree_form(ctx, form);
     }
-    let selected = picker.entries.get(picker.selected).filter(|tree| {
-        let row = WorktreeRow::new(tree, picker);
-        let item = SearchItem::new(row.branch.clone(), ())
-            .aliases([row.path.clone()])
-            .description(picker_description(row.description()));
-        !rank_search_palette_indices_with_mode(
-            &[item],
-            picker.input.text(),
-            SearchMatchMode::Hybrid,
-            |_, _, score| score as f64,
-        )
-        .is_empty()
-    });
+    let selected = picker.selected_entry();
     let writable = ctx
         .state
         .current()
@@ -96,16 +84,10 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .map(|row| MARKER_WIDTH + row.branch.chars().count() + row.description().chars().count())
         .max()
         .unwrap_or(0);
-    let entries = rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
+    let entries = (0..rows.len())
+        .map(|index| {
             // The label is what search ranks; paths still match through the aliases.
-            SearchEntry::Item(
-                SearchItem::new(row.branch.clone(), index)
-                    .aliases([row.path.clone()])
-                    .description(picker_description(row.description())),
-            )
+            SearchEntry::Item(picker.search_item(index).expect("listed worktree"))
         })
         .collect();
     let theme = &ctx.state.theme;
@@ -303,7 +285,6 @@ const MARKER_WIDTH: usize = 2;
 /// The path remains an alias, while the right edge carries work and checkout status.
 struct WorktreeRow {
     branch: String,
-    path: String,
     work_status: String,
     status: Option<crate::git::pull_requests::WorkStatus>,
     state: String,
@@ -342,7 +323,6 @@ impl WorktreeRow {
         };
         Self {
             branch,
-            path: tree.path.clone(),
             work_status,
             status: pr.map(|pr| pr.status),
             state,

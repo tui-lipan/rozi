@@ -721,6 +721,12 @@ impl crate::state::State {
 /// What the Worktrees tab shows: the checkouts of the focused pane's repository, on its host.
 #[derive(Clone, Debug, Default)]
 pub struct SidebarWorktrees {
+    /// Visual-sketch override for comparing PR/CI detail contrast before choosing a default.
+    #[cfg(feature = "ui-snapshot")]
+    pub detail_dim_preview: Option<f32>,
+    pub source_epoch: Option<u64>,
+    pub statuses: crate::git::pull_requests::WorktreeStatuses,
+    pub pending_status: Option<u64>,
     /// The repository listed, as the host and project root of the pane it follows. `None` when the
     /// focused pane is not in a Git repository the session host can reach.
     pub source: Option<(Option<crate::session::remote::RemoteTarget>, String)>,

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
@@ -327,6 +328,10 @@ pub fn run() -> Result<()> {
         // reload cannot move it. Detaching and reattaching picks up a new value.
         .frame_rate(plan.config.frame_rate)
         .mouse(true)
+        // Every border, icon, and badge is non-ASCII. A terminal that draws UTF-8 as separate bytes,
+        // such as a BSD console, turns the whole UI into noise in which nothing can be found -
+        // including the way out. Refused before the terminal is touched, see below.
+        .require_utf8(true)
         // Leader chords (`ctrl-a c`) and WM-modifier chords (`alt-c`) are executable command
         // shortcuts (see `commands/`), not a framework keymap file - resolve them ahead of
         // focused widgets/terminal passthrough so they win regardless of what has focus.
@@ -386,8 +391,18 @@ pub fn run() -> Result<()> {
     // The control socket has a guard the app owns; the askpass endpoint is reached from worker
     // threads with no such owner, so it is retired here.
     crate::session::remote::askpass::shutdown();
+    if outcome.is_err() && tui_lipan::style::host_renders_utf8() == Some(false) {
+        // Refused before the session started, so there is nothing to clean up and nothing more
+        // useful to say than why.
+        let _ = writeln!(std::io::stderr(), "rozi: {NO_UTF8_TERMINAL}");
+        std::process::exit(1);
+    }
     outcome
 }
+
+/// What a terminal without UTF-8 is told instead of getting a UI it cannot draw.
+const NO_UTF8_TERMINAL: &str = "this terminal does not display UTF-8 text, so rozi's interface \
+would come out garbled. Run rozi in a terminal emulator with UTF-8 support.";
 
 #[cfg(test)]
 mod tests {

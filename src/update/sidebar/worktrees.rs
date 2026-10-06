@@ -45,6 +45,13 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
         return false;
     }
     let mut changed = false;
+    if ctx.state.sidebar.worktrees.source_epoch != Some(ctx.state.runtime_epoch) {
+        let listing = &mut ctx.state.sidebar.worktrees;
+        listing.source_epoch = Some(ctx.state.runtime_epoch);
+        listing.pending = None;
+        listing.pending_status = None;
+        listing.requested_token = None;
+    }
     // A session that has just opened has no focused-pane repository for a moment. Keep showing
     // the last list through that rather than clearing it and filling it back in.
     let hold = ctx.state.sidebar.worktrees.source.is_some()
@@ -67,6 +74,12 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
                     .is_some_and(|(previous_target, _)| *previous_target == target)
                     && previous.entries.iter().any(|tree| tree.path == cwd);
                 SidebarWorktrees {
+                    source_epoch: Some(ctx.state.runtime_epoch),
+                    statuses: if same_repository {
+                        previous.statuses.clone()
+                    } else {
+                        ctx.state.worktree_statuses.get(target.as_ref(), &cwd)
+                    },
                     loaded: cached.is_some(),
                     entries: cached.map(<[_]>::to_vec).unwrap_or_default(),
                     sessions: if same_repository {
@@ -79,6 +92,7 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
                 }
             }
             Err(reason) => SidebarWorktrees {
+                source_epoch: Some(ctx.state.runtime_epoch),
                 unavailable: Some(reason.to_string()),
                 ..SidebarWorktrees::default()
             },
@@ -109,7 +123,18 @@ pub(crate) fn request_list(ctx: &mut Context<AppRoot>) {
     let listing = &mut ctx.state.sidebar.worktrees;
     listing.pending = Some(id);
     listing.requested_token = Some(ctx.state.sidebar.git_refresh_token);
-    client.worktree(id, WorktreeRequest::List { cwd });
+    client.worktree(id, WorktreeRequest::List { cwd: cwd.clone() });
+    if ctx.state.sidebar.worktrees.pending_status.is_none() {
+        let id = crate::ops::worktrees::request_id(ctx);
+        ctx.state.sidebar.worktrees.pending_status = Some(id);
+        client.worktree(
+            id,
+            WorktreeRequest::Status {
+                cwd,
+                refresh: false,
+            },
+        );
+    }
 }
 
 /// The host answered the tab's list request.
@@ -232,7 +257,9 @@ mod tests {
                 ClientOutbound::Control(ClientMessage::Worktree {
                     request_id,
                     request,
-                }) => Some((request_id, request)),
+                }) if !matches!(request, WorktreeRequest::Status { .. }) => {
+                    Some((request_id, request))
+                }
                 _ => None,
             })
             .collect()
@@ -277,6 +304,38 @@ mod tests {
             // Nothing moved the refresh signal, so no second list is asked for.
             nudge(&mut backend);
             assert!(sent_worktree_requests(&outbound).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_new_attachment_retries_status_and_drops_the_old_reply() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let old_epoch = backend.state().runtime_epoch;
+            let old_status = backend.state().sidebar.worktrees.pending_status.unwrap();
+            sent_worktree_requests(&outbound);
+            backend.state_mut().runtime_epoch = old_epoch.wrapping_add(1);
+            nudge(&mut backend);
+            let new_status = backend.state().sidebar.worktrees.pending_status.unwrap();
+            assert_ne!(old_status, new_status);
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch: old_epoch,
+                    request_id: old_status,
+                    result: WorktreeResult::Statuses {
+                        statuses: crate::git::pull_requests::WorktreeStatuses {
+                            unavailable: true,
+                            ..Default::default()
+                        },
+                    },
+                })
+                .unwrap();
+            assert!(!backend.state().sidebar.worktrees.statuses.unavailable);
+            assert_eq!(
+                backend.state().sidebar.worktrees.pending_status,
+                Some(new_status)
+            );
         });
     }
 

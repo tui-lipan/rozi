@@ -55,7 +55,7 @@ fn picker() -> TestBackend<AppRoot> {
 }
 
 #[test]
-fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
+fn picker_hides_remote_paths_and_keeps_the_association_for_opening() {
     on_large_stack(|| {
         let mut backend = picker();
         backend.render();
@@ -66,12 +66,12 @@ fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
         );
         assert!(frame.contains("feat/worktrees"), "{frame}");
         assert!(
-            frame.contains("C:\\code\\repo-worktrees\\feature"),
+            !frame.contains("C:\\code\\repo-worktrees\\feature"),
             "{frame}"
         );
         assert!(
-            frame.contains("review"),
-            "the associated session is named: {frame}"
+            !frame.contains("review"),
+            "session names stay out of the status column: {frame}"
         );
         backend.dispatch(Msg::WorktreeNew).unwrap();
         backend.render();
@@ -84,10 +84,9 @@ fn picker_keeps_remote_paths_opaque_and_shows_restorable_association() {
     });
 }
 
-/// A checkout nested a few directories deep, next to its session, still fits in one row; and the
-/// wider picker is clamped rather than overflowing a narrow terminal.
+/// Paths do not consume row width, and the picker is clamped on a narrow terminal.
 #[test]
-fn picker_widens_to_fit_long_checkout_rows() {
+fn picker_hides_long_paths_at_wide_and_narrow_viewports() {
     on_large_stack(|| {
         let mut backend = picker();
         let path = "/home/me/src/rozi/.claude/worktrees/session-fade-duration";
@@ -120,10 +119,10 @@ fn picker_widens_to_fit_long_checkout_rows() {
         backend.render();
         let frame = backend.capture_frame().plain_text();
         assert!(
-            frame.contains("rozi/.claude/worktrees/session-fade-duration"),
+            !frame.contains("rozi/.claude/worktrees/session-fade-duration"),
             "{frame}"
         );
-        assert!(frame.contains("rozi · primary"), "{frame}");
+        assert!(frame.contains("primary"), "{frame}");
 
         backend.set_viewport(Rect {
             x: 0,
@@ -141,10 +140,9 @@ fn picker_widens_to_fit_long_checkout_rows() {
     });
 }
 
-/// A narrow picker cuts a row's description from its start, so the path's tail and the state that
-/// decides what Enter does stay visible while the branch is kept whole.
+/// Compact PR status and checkout locks remain readable in a narrow picker.
 #[test]
-fn narrow_picker_keeps_the_state_and_path_tail() {
+fn narrow_picker_keeps_work_status_and_lock() {
     on_large_stack(|| {
         let mut backend = picker();
         {
@@ -155,6 +153,13 @@ fn narrow_picker_keeps_the_state_and_path_tail() {
             picker.entries[0].path =
                 "/home/me/src/rozi/.claude/worktrees/session-fade-duration".into();
             picker.entries[0].branch = Some("feat/narrow-layout".into());
+            picker.statuses.checkouts.insert(
+                picker.entries[0].path.clone(),
+                rozi::git::pull_requests::PullRequestStatus {
+                    number: 114,
+                    status: rozi::git::pull_requests::WorkStatus::Passed,
+                },
+            );
             picker.entries[0].lock = Some(rozi::git::worktrees::WorktreeLock {
                 reason: String::new(),
                 stale: false,
@@ -172,8 +177,8 @@ fn narrow_picker_keeps_the_state_and_path_tail() {
             .lines()
             .find(|line| line.contains("feat/narrow-layout"))
             .unwrap_or_else(|| panic!("the branch is kept whole: {frame}"));
-        assert!(row.contains("…"), "the path is cut: {frame}");
-        assert!(row.contains("duration · locked"), "{frame}");
+        assert!(!row.contains("duration"), "{frame}");
+        assert!(row.contains("#114 ✓ · locked"), "{frame}");
     });
 }
 
@@ -277,6 +282,151 @@ fn listed_worktrees_are_cached_and_keep_the_selection() {
     });
 }
 
+#[test]
+fn status_replies_are_scoped_cached_and_shared_with_the_sidebar() {
+    on_large_stack(|| {
+        use rozi::git::pull_requests::{PullRequestStatus, WorkStatus, WorktreeStatuses};
+        let mut backend = picker();
+        let epoch = backend.state().runtime_epoch;
+        let target = RemoteTarget::Alias("workbox".into());
+        let cwd = "C:\\code\\repo";
+        let statuses = WorktreeStatuses {
+            checkouts: [(
+                "C:\\code\\repo-worktrees\\feature".into(),
+                PullRequestStatus {
+                    number: 112,
+                    status: WorkStatus::Merged,
+                },
+            )]
+            .into(),
+            unavailable: false,
+        };
+        backend.state_mut().sidebar.worktrees.source = Some((Some(target.clone()), cwd.into()));
+        backend
+            .state_mut()
+            .worktree_picker
+            .as_mut()
+            .unwrap()
+            .pending_status = Some(20);
+        for (reply_epoch, id) in [(epoch, 19), (epoch.wrapping_add(1), 20)] {
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch: reply_epoch,
+                    request_id: id,
+                    result: WorktreeResult::Statuses {
+                        statuses: statuses.clone(),
+                    },
+                })
+                .unwrap();
+            assert!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .statuses
+                    .checkouts
+                    .is_empty()
+            );
+        }
+        backend
+            .dispatch(Msg::SessionWorktreeResult {
+                epoch,
+                request_id: 20,
+                result: WorktreeResult::Statuses {
+                    statuses: statuses.clone(),
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            backend.state().worktree_picker.as_ref().unwrap().statuses,
+            statuses
+        );
+        assert_eq!(backend.state().sidebar.worktrees.statuses, statuses);
+        assert_eq!(
+            backend.state().worktree_statuses.get(Some(&target), cwd),
+            statuses
+        );
+        assert!(
+            backend
+                .state()
+                .worktree_statuses
+                .get(None, cwd)
+                .checkouts
+                .is_empty()
+        );
+        backend.render();
+        assert!(backend.capture_frame().plain_text().contains("#112 merged"));
+    });
+}
+
+#[test]
+fn hidden_remote_paths_remain_searchable_and_copyable_by_key_and_click() {
+    on_large_stack(|| {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use tui_lipan::prelude::{App, KeyCode, KeyEvent};
+        use tui_lipan::{ClipboardError, ClipboardProvider};
+
+        struct Clipboard(Rc<RefCell<String>>);
+        impl ClipboardProvider for Clipboard {
+            fn read_clipboard_text(&mut self) -> Result<String, ClipboardError> {
+                Ok(self.0.borrow().clone())
+            }
+            fn write_clipboard_text(&mut self, text: &str) -> Result<(), ClipboardError> {
+                *self.0.borrow_mut() = text.into();
+                Ok(())
+            }
+        }
+
+        let copied = Rc::new(RefCell::new(String::new()));
+        let state = picker().state_mut().worktree_picker.take();
+        let mut backend = TestBackend::new_with_app(
+            App::new()
+                .clipboard_provider(Clipboard(copied.clone()))
+                .clipboard_config(tui_lipan::ClipboardConfig {
+                    enable_osc52: false,
+                    ..Default::default()
+                }),
+            AppRoot::default(),
+            (),
+        );
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        backend.state_mut().config.animations.picker =
+            rozi::layout::anim::PickerAnimationStyle::Off;
+        backend.state_mut().worktree_picker = state;
+        backend.render();
+        assert!(backend.focus_key(&"rozi-worktree-picker".into()));
+        for query in ["repo-worktrees", "repo feature"] {
+            backend
+                .dispatch(Msg::WorktreeQueryChanged(query.into()))
+                .unwrap();
+            backend.render();
+            let frame = backend.capture_frame().plain_text();
+            assert!(
+                frame.contains("feat/worktrees"),
+                "path aliases find the branch: {frame}"
+            );
+            assert!(!frame.contains("C:\\code"), "paths stay hidden: {frame}");
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    mods: KeyMods::CTRL,
+                })
+                .unwrap();
+            assert_eq!(&*copied.borrow(), "C:\\code\\repo-worktrees\\feature");
+        }
+        copied.borrow_mut().clear();
+        click_hint(&mut backend, "copy path");
+        assert_eq!(&*copied.borrow(), "C:\\code\\repo-worktrees\\feature");
+    });
+}
+
 /// Where the footer hint `label` starts, on the last row that carries it: hints sit below the
 /// rows, so a row that happens to share the word never wins.
 fn hint_at(backend: &mut TestBackend<AppRoot>, label: &str) -> (u16, u16) {
@@ -351,16 +501,32 @@ fn footer_hints_click_through_to_their_key_action() {
             form_open(&backend),
             "the picker's `new` hint opens the form"
         );
-        click_hint(&mut backend, "cancel");
-        assert!(!form_open(&backend), "the form's `cancel` hint closes it");
+        backend.render();
+        assert!(!backend.capture_frame().plain_text().contains("Esc"));
+        assert!(backend.focus_key(&"rozi-worktree-form-input".into()));
+        backend
+            .send_key(tui_lipan::prelude::KeyEvent {
+                code: tui_lipan::prelude::KeyCode::Esc,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        assert!(!form_open(&backend), "Esc cancels the form");
         assert!(
             backend.state().worktree_picker.is_some(),
             "cancelling the form returns to the picker"
         );
-        click_hint(&mut backend, "close");
+        backend.render();
+        assert!(!backend.capture_frame().plain_text().contains("Esc"));
+        assert!(backend.focus_key(&"rozi-worktree-picker".into()));
+        backend
+            .send_key(tui_lipan::prelude::KeyEvent {
+                code: tui_lipan::prelude::KeyCode::Esc,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
         assert!(
             backend.state().worktree_picker.is_none(),
-            "the picker's `close` hint closes it"
+            "Esc closes the picker"
         );
     });
 }

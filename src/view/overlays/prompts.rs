@@ -13,12 +13,7 @@ pub(super) const BACKDROP_RECESSION: f32 = 0.5;
 /// with or without naming the session) spells out what each one does instead of a bare `submit`.
 /// The `enter` pill clicks through to `submit_msg`, the message plain Enter sends; any other commit
 /// key stays a plain hint because the field alone knows what it sends.
-fn prompt_hints(
-    ctx: &Context<AppRoot>,
-    submit: &[(&str, &str)],
-    submit_msg: &Msg,
-    cancel: Option<&Msg>,
-) -> Element {
+fn prompt_hints(ctx: &Context<AppRoot>, submit: &[(&str, &str)], submit_msg: &Msg) -> Element {
     let theme = &ctx.state.theme;
     let mut row = hint_row();
     for (label, key) in submit {
@@ -27,9 +22,6 @@ fn prompt_hints(
         } else {
             hint_pill(theme, label, key)
         });
-    }
-    if let Some(close) = cancel {
-        row = row.child(hint_button(ctx, "cancel", "esc", close.clone()));
     }
     row.into()
 }
@@ -133,9 +125,6 @@ pub(super) struct PromptChrome<'a> {
     /// one-line prompt feedback stays as text; detailed failures opt in.
     caption_document: Option<PromptDocument>,
     submit_hints: &'a [(&'a str, &'a str)],
-    /// Spell out `cancel esc` even when a nested-dialog return is set. A prompt raised by a
-    /// background event is not part of that chain, so the escape hatch has to be stated.
-    always_cancel_hint: bool,
     /// Fade whatever is already on screen behind this prompt, so a dialog it lands on top of
     /// recedes instead of competing with it. For a prompt that arrives over another dialog rather
     /// than replacing it; the modal's own backdrop does the work, so it covers the dialog's border
@@ -160,7 +149,6 @@ impl<'a> PromptChrome<'a> {
             caption: None,
             caption_document: None,
             submit_hints,
-            always_cancel_hint: false,
             dim_behind: false,
             parent_reserve_percent: None,
         }
@@ -173,7 +161,7 @@ impl<'a> PromptChrome<'a> {
 }
 
 /// Shared chrome for the single-input prompt overlays so they all read like the command palette:
-/// palette placement/border, no inner input border, a leading gap, and a submit/cancel hint footer.
+/// palette placement/border, no inner input border, a leading gap, and a submit hint footer.
 /// Callers supply only what differs (see [`PromptChrome`], plus the bound state, focus key, and
 /// messages).
 pub(super) fn prompt_overlay(
@@ -194,7 +182,6 @@ pub(super) fn prompt_overlay(
         caption,
         caption_document,
         submit_hints,
-        always_cancel_hint,
         dim_behind,
         parent_reserve_percent,
     } = chrome;
@@ -284,12 +271,7 @@ pub(super) fn prompt_overlay(
                 .child(caption_content),
         );
     }
-    body = body.child(prompt_hints(
-        ctx,
-        submit_hints,
-        &submit_on_click,
-        (always_cancel_hint || ctx.state.overlay_return.is_none()).then_some(&close),
-    ));
+    body = body.child(prompt_hints(ctx, submit_hints, &submit_on_click));
 
     let mut modal = match parent_reserve_percent {
         Some(parent) => nested_action_palette_modal(ctx, title, parent),
@@ -547,7 +529,6 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
             detail: (!inline_title).then_some(question),
             highlight: fingerprint,
             mask: secret.then_some('•'),
-            always_cancel_hint: true,
             dim_behind: true,
             caption,
             parent_reserve_percent: askpass_parent_reserve(ctx),

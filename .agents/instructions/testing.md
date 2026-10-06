@@ -42,6 +42,10 @@ Benchmarks are local performance evidence, not timing assertions. `cargo check -
 compiles them. Run `cargo bench` on a stable, idle machine. Keep benchmark corpora generated and
 deterministic; do not add captured terminal output. See `docs/benchmarks.md`.
 
+A render with nothing to assert - a colour or layout judgement made by looking - is a sketch, not a
+test. Add it as a scenario in `tools/ui-sketches/main.rs` (`cargo run --features ui-snapshot
+--example ui_sketches -- <scenario>`) instead of an assertion-free `#[test]`.
+
 For headless component captures and snapshot debugging, load the `tui-lipan-visual` skill and read
 its "Rozi capture specifics" section. For live pane/UI review and recordings through rozi, use
 `.agents/skills/rozi-visual/SKILL.md`.

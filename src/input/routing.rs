@@ -117,30 +117,48 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     if key.is(KeyCode::Esc) && ctx.state.sidebar.explorer_entered_from_tree {
         return None;
     }
-    if key.mods.ctrl && key.mods.shift {
-        return match key.code {
-            KeyCode::Left => Some(sidebar::reorder_active_tab(ctx, false)),
-            KeyCode::Right => Some(sidebar::reorder_active_tab(ctx, true)),
-            KeyCode::Up => Some(sidebar::move_active_tab_to_panel(ctx, false)),
-            KeyCode::Down => Some(sidebar::move_active_tab_to_panel(ctx, true)),
+    // Every modified arrow has an `hjkl` twin, as in resize mode. A shifted letter arrives as its
+    // uppercase character with `shift` set, and Ctrl+Shift+letter arrives as either case depending
+    // on the keyboard protocol, so the modified branches match the lowercase spelling.
+    let direction = match key.code {
+        KeyCode::Left => Some(Direction::Left),
+        KeyCode::Down => Some(Direction::Down),
+        KeyCode::Up => Some(Direction::Up),
+        KeyCode::Right => Some(Direction::Right),
+        KeyCode::Char(c) => match c.to_ascii_lowercase() {
+            'h' => Some(Direction::Left),
+            'j' => Some(Direction::Down),
+            'k' => Some(Direction::Up),
+            'l' => Some(Direction::Right),
             _ => None,
+        },
+        _ => None,
+    };
+    if key.mods.ctrl && key.mods.shift {
+        return match direction? {
+            Direction::Left => Some(sidebar::reorder_active_tab(ctx, false)),
+            Direction::Right => Some(sidebar::reorder_active_tab(ctx, true)),
+            Direction::Up => Some(sidebar::move_active_tab_to_panel(ctx, false)),
+            Direction::Down => Some(sidebar::move_active_tab_to_panel(ctx, true)),
         };
     }
     if key.mods.ctrl {
-        return match key.code {
-            KeyCode::Up => Some(sidebar::focus_panel(ctx, false)),
-            KeyCode::Down => Some(sidebar::focus_panel(ctx, true)),
-            _ => None,
+        return match direction? {
+            Direction::Up => Some(sidebar::focus_panel(ctx, false)),
+            Direction::Down => Some(sidebar::focus_panel(ctx, true)),
+            Direction::Left | Direction::Right => None,
         };
     }
-    if key.mods.shift {
-        return match key.code {
-            KeyCode::Left => Some(sidebar::resize_width(ctx, false)),
-            KeyCode::Right => Some(sidebar::resize_width(ctx, true)),
-            KeyCode::Up => Some(sidebar::resize_panel_split(ctx, false)),
-            KeyCode::Down => Some(sidebar::resize_panel_split(ctx, true)),
-            KeyCode::BackTab | KeyCode::Tab => Some(sidebar::cycle_tab(ctx, false)),
-            _ => None,
+    // `G` is Shift+g, so it falls through to the unmodified keys below rather than being taken here.
+    if key.mods.shift && key.code != KeyCode::Char('G') {
+        if matches!(key.code, KeyCode::BackTab | KeyCode::Tab) {
+            return Some(sidebar::cycle_tab(ctx, false));
+        }
+        return match direction? {
+            Direction::Left => Some(sidebar::resize_width(ctx, false)),
+            Direction::Right => Some(sidebar::resize_width(ctx, true)),
+            Direction::Up => Some(sidebar::resize_panel_split(ctx, false)),
+            Direction::Down => Some(sidebar::resize_panel_split(ctx, true)),
         };
     }
     match key.code {

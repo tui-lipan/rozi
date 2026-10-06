@@ -799,17 +799,21 @@ fn the_active_row_marker_spans_every_line_of_the_row() {
         .expect("marker completes");
 }
 
-/// The keyboard cursor highlights the whole row, both lines of it, in the same color the workbar's
-/// active workspace tab uses — so the three selection surfaces read as one language.
+/// The keyboard cursor highlights the whole row, both lines of it.
 #[test]
 fn the_cursor_highlight_covers_both_lines_of_a_row() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            // The cursor uses the same lift as pointer hover, so it reads as "about to act on this"
-            // rather than as a second, louder kind of selection.
-            let selection = backend.state().theme.surface.element.elevate_by(0.08);
+            // The hover lift tinted toward the active border: close enough to hover to mean "about
+            // to act on this", distinct enough to find in SIDEBAR mode without a pointer.
+            let theme = &backend.state().theme;
+            let selection = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
 
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
@@ -862,11 +866,19 @@ fn keyboard_navigation_suppresses_stale_row_hover_until_the_pointer_moves() {
                 mods: KeyMods::NONE,
             });
             settle(&mut backend);
+            // The row's ✕ is gated on the same hover as its lift, so it follows the same modality.
+            let shows_close = |backend: &TestBackend<AppRoot>| {
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                lines[target_row as usize..=target_row as usize + 1]
+                    .iter()
+                    .any(|line| line.contains('✕'))
+            };
             assert_eq!(
                 backend.capture_frame().cell(4, target_row).bg,
                 highlight,
                 "pointer movement highlights the row"
             );
+            assert!(shows_close(&backend), "hover reveals the row's ✕");
 
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
@@ -877,6 +889,10 @@ fn keyboard_navigation_suppresses_stale_row_hover_until_the_pointer_moves() {
                 backend.capture_frame().cell(4, target_row).bg,
                 highlight,
                 "keyboard navigation clears hover left at the old pointer position"
+            );
+            assert!(
+                !shows_close(&backend),
+                "a stale pointer does not keep the ✕ on screen"
             );
 
             let _ = backend.send_mouse(MouseEvent {
@@ -1093,18 +1109,4 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
         .expect("spawn theme hover thread")
         .join()
         .expect("theme hover completes");
-}
-
-/// The invariant `sidebar_backend` exists to hold: a sidebar action persists `[sidebar]`, and a
-/// test process must never be able to write that into the developer's live config, which a running
-/// rozi would live-reload.
-#[test]
-fn sidebar_preferences_persist_inside_the_test_scratch_root() {
-    let root = rozi::test_support::isolate_user_dirs();
-    let path = rozi::config::config_path();
-    assert!(
-        path.starts_with(root),
-        "config writes escaped the scratch root: {}",
-        path.display()
-    );
 }

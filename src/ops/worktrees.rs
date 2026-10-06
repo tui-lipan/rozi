@@ -71,16 +71,23 @@ pub(crate) fn repository_scope(
 }
 
 /// Whether the focused pane's repository is not known *yet*, as opposed to known to be absent: no
-/// session is connected, or the pane has not reported where it is. A session that has just opened
-/// passes through this for a moment before its first pane reports.
+/// session is connected, an attach has not delivered its panes, or the pane has not reported where
+/// it is. A session that has just opened passes through this for a moment before its first pane
+/// reports.
+///
+/// No focused pane on an attached session is an answer, not a gap: closing the last pane leaves
+/// no repository to list, and holding the previous one would show checkouts nothing points at.
 pub(crate) fn repository_scope_pending(state: &crate::state::State) -> bool {
     if state.current().session_client.is_none() {
         return true;
     }
-    state
+    let Some(pane) = state
         .focused_pane()
         .and_then(|id| crate::pane::lifecycle::find_pane(state, id))
-        .is_none_or(|pane| pane.terminal.cwd.is_none() || pane.terminal.runtime_sequence == 0)
+    else {
+        return state.current().pending_session_attach.is_some();
+    };
+    pane.terminal.cwd.is_none() || pane.terminal.runtime_sequence == 0
 }
 
 /// [`repository_scope`] by borrow, for the checks that run after every message.

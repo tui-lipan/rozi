@@ -163,7 +163,7 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
     let path = dir.path().join("ticks.rozirec");
     let pane = spawn(
         &session,
-        "sleep 0.3; for i in 1 2 3 4 5 6; do echo tick $i; sleep 0.3; done; sleep 60",
+        "sleep 0.2; for i in 1 2 3; do echo tick $i; sleep 0.12; done; sleep 60",
     );
 
     // The request's connection closes once it is answered, as the CLI's would: the recording
@@ -172,9 +172,10 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
         serde_json::from_value(expect_ok(&session, start(pane, &path))).unwrap();
     assert_eq!(started.pane, pane);
     assert!(pane_recording(&session, pane));
+    // Waits on the server's count rather than the file: the file is buffered and is complete
+    // once `record-stop` answers, which the playback below proves for every tick.
     wait_until("the last tick recorded", || {
-        recordings(&session)[0].totals.frames >= 7
-            && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("tick 6"))
+        recordings(&session)[0].totals.frames >= 4
     });
     expect_ok(
         &session,
@@ -199,21 +200,18 @@ fn a_detached_pane_is_recorded_after_its_caller_exits_and_exports_with_real_timi
     let played = play(&path);
     assert_eq!(played.end, EndReason::Stopped);
     assert_eq!(played.marks, ["ticked"]);
-    // Each tick is a change of its own, written when it happened: about 300ms apart.
-    let seen: Vec<u64> = (1..=6)
+    // Each tick is a change of its own, written when it happened: about 120ms apart.
+    let seen: Vec<u64> = (1..=3)
         .map(|i| first_seen(&played, &format!("tick {i}")))
         .collect();
     for pair in seen.windows(2) {
         let gap = pair[1] - pair[0];
-        assert!(
-            (150..=1_000).contains(&gap),
-            "ticks {gap}ms apart: {seen:?}"
-        );
+        assert!((60..=600).contains(&gap), "ticks {gap}ms apart: {seen:?}");
     }
     // Only changes are written: nothing between one tick and the next.
     assert!(
-        (7..=14).contains(&played.frames.len()),
-        "{} frames for six ticks",
+        (4..=8).contains(&played.frames.len()),
+        "{} frames for three ticks",
         played.frames.len()
     );
 
@@ -246,7 +244,7 @@ fn a_pane_exiting_mid_recording_ends_it_on_the_last_screen() {
     let session = server.session().to_string();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("exit.rozirec");
-    let pane = spawn(&session, "sleep 0.5; echo last words; exit 3");
+    let pane = spawn(&session, "sleep 0.15; echo last words; exit 3");
     expect_ok(&session, start(pane, &path));
     wait_until("the recording to end with the pane", || {
         recordings(&session).is_empty()

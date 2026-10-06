@@ -371,6 +371,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleSessionAnimation
         | CyclePickerAnimation
         | CycleWhichKey
+        | CycleScrollLines
         | CycleCopyOnSelect
         | CycleMiddleClickPaste
         | CycleRightClickClipboard
@@ -725,6 +726,14 @@ fn persist_applied_settings_choice(
                 "which_key",
                 ctx.state.config.input.which_key.id(),
             ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleScrollLines => {
+            let lines = ctx.state.config.pane.scroll_lines.to_string();
+            if let Err(err) =
+                crate::config::persist_section_values("pane", &[("scroll_lines", &lines)])
+            {
                 preference_error(ctx, err);
             }
         }
@@ -1695,6 +1704,24 @@ mod tests {
                 backend.state().config.session.resurrect_foreground,
                 crate::config::ForegroundRestore::Auto
             );
+        });
+    }
+
+    #[test]
+    fn settings_scroll_speed_applies_and_saves_the_picked_step() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::CycleScrollLines,
+                ))
+                .unwrap();
+            backend.dispatch(Msg::SettingsChoicePick(4)).unwrap();
+            assert_eq!(backend.state().config.pane.scroll_lines, 10);
+
+            let saved = std::fs::read_to_string(crate::config::config_path()).unwrap();
+            assert!(saved.contains("scroll_lines = 10"), "{saved}");
         });
     }
 

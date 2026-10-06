@@ -62,6 +62,11 @@ pressed the prefix. Mouse-aware editors and other terminal apps keep working nor
 When you drag after pressing the prefix, the which-key strip hides during the drag. The `PREFIX`
 badge stays until you release the button, which also ends the prefix.
 
+Each wheel notch scrolls history three lines. Change it with **Scroll speed** in
+[Settings](customize.md#use-the-settings-picker) or `scroll_lines` in
+[`[pane]`](configuration.md#pane). A program that tracks the mouse, such as an editor, receives the
+wheel itself and scrolls by its own step.
+
 rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
 the program does not fall behind. Presses, releases, and wheel events are always sent.
 

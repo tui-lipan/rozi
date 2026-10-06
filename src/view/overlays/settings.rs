@@ -35,6 +35,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     enabled_status(pane.focus_on_hover),
                     ToggleFocusOnHover,
                 ),
+                (
+                    "Scroll speed",
+                    crate::state::scroll_lines_label(pane.scroll_lines),
+                    CycleScrollLines,
+                ),
             ],
         ),
         // Every motion control in one place, the master switch first: the rows below it grey out

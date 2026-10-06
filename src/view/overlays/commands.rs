@@ -214,6 +214,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ToggleNerdIcons => alias_list(&["nerd font", "patched font", "glyphs"]),
         CycleWhichKey => alias_list(&["prefix hints", "key hints", "chord panel"]),
         ToggleFocusOnHover => alias_list(&["mouse"]),
+        CycleScrollLines => alias_list(&["mouse", "wheel", "scrollback", "scroll lines"]),
         ToggleAnimations => alias_list(&["motion", "transitions", "effects"]),
         ToggleWorkspaceAnimation => alias_list(&["slide"]),
         CyclePickerAnimation => alias_list(&["palette", "modal", "fade", "portal", "scan"]),

@@ -106,6 +106,7 @@ pub enum SettingsAction {
     CycleRightClickClipboard,
     ToggleOsc52,
     ToggleFocusOnHover,
+    CycleScrollLines,
     ToggleBackgroundFollowsTerminal,
     ChooseTitlebar,
     CycleTitleStyle,
@@ -173,6 +174,7 @@ impl SettingsAction {
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
             Self::ToggleFocusOnHover,
+            Self::CycleScrollLines,
             // Animations
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
@@ -263,6 +265,7 @@ impl SettingsAction {
                 config.input.which_key,
                 WhichKey::label,
             )),
+            Self::CycleScrollLines => Some(scroll_lines_choice_ring(pane.scroll_lines)),
             Self::CycleCopyOnSelect => Some(choice_ring(
                 "Copy on selection",
                 CopyOnSelect::all(),
@@ -457,6 +460,9 @@ impl SettingsAction {
         match self {
             Self::CycleWhichKey => {
                 assign_choice(WhichKey::all(), index, &mut config.input.which_key)
+            }
+            Self::CycleScrollLines => {
+                assign_choice(&SCROLL_LINE_CHOICES, index, &mut config.pane.scroll_lines)
             }
             Self::CycleCopyOnSelect => assign_choice(
                 CopyOnSelect::all(),
@@ -665,6 +671,32 @@ fn assign_choice<T: Copy>(all: &[T], index: usize, slot: &mut T) -> bool {
     };
     *slot = value;
     true
+}
+
+/// Wheel steps the Settings picker offers. `pane.scroll_lines` accepts any value in range; one off
+/// this list highlights its nearest step.
+const SCROLL_LINE_CHOICES: [u16; 5] = [1, 2, 3, 5, 10];
+
+pub fn scroll_lines_label(lines: u16) -> String {
+    if lines == 1 {
+        "1 line".to_string()
+    } else {
+        format!("{lines} lines")
+    }
+}
+
+fn scroll_lines_choice_ring(current: u16) -> SettingsChoiceRing {
+    let index = SCROLL_LINE_CHOICES
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, lines)| lines.abs_diff(current))
+        .map(|(index, _)| index)
+        .unwrap_or_default();
+    SettingsChoiceRing {
+        title: "Scroll speed",
+        options: vec!["1 line", "2 lines", "3 lines", "5 lines", "10 lines"],
+        index,
+    }
 }
 
 fn titlebar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing {
@@ -918,6 +950,24 @@ impl PanePaddingEditorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_speed_ring_labels_its_steps_and_highlights_the_nearest_one() {
+        let ring = scroll_lines_choice_ring(3);
+        let labels: Vec<String> = SCROLL_LINE_CHOICES
+            .into_iter()
+            .map(scroll_lines_label)
+            .collect();
+        assert_eq!(ring.options, labels);
+        assert_eq!(ring.options[ring.index], "3 lines");
+        assert_eq!(ring.options[scroll_lines_choice_ring(4).index], "3 lines");
+        assert_eq!(ring.options[scroll_lines_choice_ring(40).index], "10 lines");
+
+        let mut config = Config::default();
+        assert!(SettingsAction::CycleScrollLines.apply_choice(&mut config, 4));
+        assert_eq!(config.pane.scroll_lines, 10);
+        assert!(SettingsAction::CycleScrollLines.shows_choice_ellipsis(&config));
+    }
 
     #[test]
     fn symmetric_padding_prefills_and_asymmetric_padding_requires_explicit_normalization() {

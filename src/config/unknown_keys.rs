@@ -109,6 +109,7 @@ const PANE_KEYS: &[&str] = &[
     "highlight_focused_titlebar",
     "focus_on_hover",
     "focus_on_hover_pause_modifier",
+    "scroll_lines",
     "show_workbar",
     "workbar_gap",
     "workbar_background",

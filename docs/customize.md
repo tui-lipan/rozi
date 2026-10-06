@@ -31,7 +31,7 @@ Settings is divided into categories:
 
 | Category | Contains |
 | --- | --- |
-| General | Theme, nerd icons, which-key, focus on hover, animations, clipboard, and pickers |
+| General | Theme, nerd icons, which-key, focus on hover, scroll speed, animations, clipboard, and pickers |
 | Panes | Background, borders, and titlebar |
 | Bars | Workbar and sidebar |
 | Alerts | Pane border and workspace tab effects, workspace markers, desktop notifications, and sounds |

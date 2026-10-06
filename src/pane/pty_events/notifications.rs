@@ -505,10 +505,12 @@ pub(crate) fn maybe_notify_pane_status(
 /// What to say when rows a publisher is not showing finish a run, or `None` when none of `finished`
 /// is such a row.
 ///
-/// Each row is named as the sidebar names it: by its own title, which says which conversation or
-/// task it is, or else by the agent and its place among the pane's rows. The pane's title cannot
-/// stand in for it: that belongs to whatever the pane shows, which is exactly not the row that
-/// finished.
+/// A row is named by its own title, which says which conversation or task it is. The sidebar shows
+/// that title as the row's detail for a detected agent; a notification has one line, and the title
+/// is what tells the rows apart. An untitled row falls back to what the sidebar's name column
+/// shows: `<agent> #<n>` behind a detected agent, the pane's own title otherwise. Never the row ID,
+/// an opaque handle, and never the pane's title for a titled row, since that belongs to whatever
+/// the pane shows, which is exactly not the row that finished.
 pub(crate) fn finished_rows_notice(
     pane: &crate::state::Pane,
     finished: &[String],
@@ -525,13 +527,17 @@ pub(crate) fn finished_rows_notice(
             if !title.is_empty() {
                 return title.to_string();
             }
-            runtimes
-                .iter()
-                .find(|runtime| runtime.reference.slot.as_deref() == Some(row.id.as_str()))
-                .map_or_else(
-                    || format!("Row {}", index + 1),
-                    |runtime| format!("{} #{}", runtime.identity.label, index + 1),
-                )
+            // Only a detected agent's identity is a name; without one, a published row's runtime
+            // identity is built from the row itself and would be its ID.
+            let agent = pane.terminal.detected_agent.is_some().then(|| {
+                runtimes
+                    .iter()
+                    .find(|runtime| runtime.reference.slot.as_deref() == Some(row.id.as_str()))
+            });
+            match agent.flatten() {
+                Some(runtime) => format!("{} #{}", runtime.identity.label, index + 1),
+                None => pane.display_title(pane.terminal.title()),
+            }
         })
         .collect();
     let id = pane.id;

@@ -1324,6 +1324,21 @@ mod finished_rows_notice {
     }
 
     #[test]
+    fn an_untitled_row_without_a_detected_agent_never_shows_its_opaque_id() {
+        // A generic publisher: no detected agent, and a row that has not titled itself yet.
+        let mut pane = publisher(vec![
+            row("shown", "on screen", true),
+            row("ses_9f2c", "", false),
+        ]);
+        pane.terminal.detected_agent = None;
+        pane.title = "build watcher".to_string();
+        let notice = super::super::finished_rows_notice(&pane, &finished(&["ses_9f2c"]))
+            .expect("a background row finished");
+        assert!(!notice.contains("ses_9f2c"), "{notice}");
+        assert_eq!(notice, "build watcher in pane 23 is done");
+    }
+
+    #[test]
     fn rows_on_screen_or_unknown_raise_nothing() {
         let pane = publisher(vec![
             row("shown", "on screen", true),

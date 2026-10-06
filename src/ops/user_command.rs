@@ -149,7 +149,11 @@ fn exec_argv(
     let args = args.to_vec();
     let overflow_link = link.clone();
     let overflow_label = label.clone();
-    let command_palette_handoff = ctx.state.command_palette_handoff;
+    let command_palette_handoff = ctx
+        .state
+        .command_palette_handoff
+        .as_ref()
+        .map(|handoff| handoff.epoch);
     if !crate::jobs::try_spawn(move || {
         let mut process = std::process::Command::new(program);
         process

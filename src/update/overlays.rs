@@ -48,11 +48,24 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     }
     let cycle_layout_in_palette = matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
     let from_palette = ctx.state.show_palette;
-    let handoff_palette = from_palette && command_palette_handoff_action(ctx, action);
-    if handoff_palette {
+    let handoff_label = from_palette
+        .then(|| command_palette_handoff_label(ctx, action))
+        .flatten();
+    if let Some(label) = handoff_label {
         ctx.state.command_palette_handoff_epoch =
             ctx.state.command_palette_handoff_epoch.wrapping_add(1);
-        ctx.state.command_palette_handoff = Some(ctx.state.command_palette_handoff_epoch);
+        let epoch = ctx.state.command_palette_handoff_epoch;
+        ctx.state.command_palette_handoff = Some(crate::state::CommandPaletteHandoff {
+            epoch,
+            label,
+            running: false,
+        });
+        if let Some(link) = ctx.state.command_link.clone() {
+            link.send_after(
+                super::COMMAND_PALETTE_HANDOFF_QUIET,
+                Msg::CommandPaletteHandoffRunning { epoch },
+            );
+        }
     } else if !cycle_layout_in_palette {
         ctx.state.show_palette = false;
         ctx.state.command_palette_sidebar_query = false;
@@ -96,24 +109,45 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     update
 }
 
-fn command_palette_handoff_action(ctx: &Context<AppRoot>, action: Action) -> bool {
+/// The label of the extension command `action` runs, when Commands should hand off to it: a
+/// detached extension command, which may open a picker of its own.
+fn command_palette_handoff_label(ctx: &Context<AppRoot>, action: Action) -> Option<String> {
     let Action::RunNamedCommand(index) = action else {
-        return false;
+        return None;
     };
-    let Some(command) = ctx.state.config.commands.get(index) else {
-        return false;
-    };
+    let command = ctx.state.config.commands.get(index)?;
     if !command.env.iter().any(|(key, _)| key == "ROZI_EXTENSION") {
-        return false;
+        return None;
     }
     matches!(
         command.action,
         UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. }
     )
+    .then(|| command.label())
+}
+
+fn is_current_handoff(ctx: &Context<AppRoot>, epoch: u64) -> bool {
+    ctx.state
+        .command_palette_handoff
+        .as_ref()
+        .is_some_and(|handoff| handoff.epoch == epoch)
+}
+
+/// Commands is still waiting on the command a moment after it started, so it says what it is
+/// waiting on. A command that opens its picker or exits at once never gets here, and goes straight
+/// from Commands to its picker or back to the panes.
+pub(super) fn command_palette_handoff_running(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
+    if !ctx.state.show_palette || !is_current_handoff(ctx, epoch) {
+        return Update::none();
+    }
+    if let Some(handoff) = ctx.state.command_palette_handoff.as_mut() {
+        handoff.running = true;
+    }
+    Update::full()
 }
 
 pub(super) fn command_palette_handoff_finished(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
-    if ctx.state.command_palette_handoff != Some(epoch) {
+    if !is_current_handoff(ctx, epoch) {
         return Update::none();
     }
     ctx.state.command_palette_handoff = None;
@@ -1084,6 +1118,122 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    fn frame(backend: &mut TestBackend<AppRoot>) -> String {
+        backend.render();
+        backend.capture_frame().to_fixed_grid_lines().join("\n")
+    }
+
+    fn sized(backend: &mut TestBackend<AppRoot>) {
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+    }
+
+    #[test]
+    fn a_long_handoff_says_what_commands_is_waiting_on() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            sized(&mut backend);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePalette))
+                .unwrap();
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(200));
+            {
+                let state = backend.state_mut();
+                state.command_palette_handoff = Some(crate::state::CommandPaletteHandoff {
+                    epoch: 3,
+                    label: "Install hooks".to_string(),
+                    running: false,
+                });
+            }
+            // A timer from an earlier selection changes nothing.
+            backend
+                .dispatch(Msg::CommandPaletteHandoffRunning { epoch: 2 })
+                .unwrap();
+            assert!(!frame(&mut backend).contains("Running"));
+            backend
+                .dispatch(Msg::CommandPaletteHandoffRunning { epoch: 3 })
+                .unwrap();
+            let shown = frame(&mut backend);
+            assert!(shown.contains("Running “Install hooks”…"), "{shown}");
+            assert!(shown.contains("the command keeps running"), "{shown}");
+            // Leaving does not wait for the command.
+            backend
+                .send_key(tui_lipan::prelude::KeyEvent {
+                    code: tui_lipan::prelude::KeyCode::Esc,
+                    mods: tui_lipan::prelude::KeyMods::NONE,
+                })
+                .unwrap();
+            assert!(!backend.state().show_palette);
+            assert!(backend.state().command_palette_handoff.is_none());
+            // The command finishing later finds nothing to close.
+            backend
+                .dispatch(Msg::CommandPaletteHandoffFinished { epoch: 3 })
+                .unwrap();
+            assert!(!backend.state().show_palette);
+        });
+    }
+
+    // Needs a command that is still running when the assertions run, and `sleep` is the portable
+    // way to have one on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn an_extension_command_started_from_commands_is_handed_off_under_its_label() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            sized(&mut backend);
+            {
+                let state = backend.state_mut();
+                state.config.commands = vec![crate::config::NamedCommand {
+                    id: "tools.slow".to_string(),
+                    label: Some("Slow probe".to_string()),
+                    action: crate::config::UserCommandAction::ExecDirect {
+                        argv: vec!["sleep".to_string(), "2".to_string()],
+                    },
+                    category: "Tools".to_string(),
+                    env: vec![("ROZI_EXTENSION".to_string(), "tools".to_string())],
+                    default_key: None,
+                }];
+                state.commands_dirty = true;
+            }
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePalette))
+                .unwrap();
+            backend.render();
+            for ch in "slow".chars() {
+                backend
+                    .send_key(tui_lipan::prelude::KeyEvent {
+                        code: tui_lipan::prelude::KeyCode::Char(ch),
+                        mods: tui_lipan::prelude::KeyMods::NONE,
+                    })
+                    .unwrap();
+            }
+            backend.advance(std::time::Duration::from_millis(200));
+            let listed = frame(&mut backend);
+            assert!(listed.contains("Slow probe"), "{listed}");
+            backend
+                .dispatch(Msg::RunAction(Action::RunNamedCommand(0)))
+                .unwrap();
+            assert!(
+                backend.state().show_palette,
+                "Commands waits on the command"
+            );
+            let handoff = backend
+                .state()
+                .command_palette_handoff
+                .as_ref()
+                .expect("handed off");
+            assert_eq!(handoff.label, "Slow probe");
+            assert!(!handoff.running, "quiet until the command has had a moment");
+        });
     }
 
     #[test]

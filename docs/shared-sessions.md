@@ -76,8 +76,8 @@ with a session. If the controller disconnects mid-drag, the pane returns to the 
 layout.
 
 Each follower animates layout changes with its own animation settings. Changes the controller
-makes with the mouse are the exception: a dragged pane, a moving or resizing floating pane, and a
-dragged split all track the controller's pointer directly.
+makes with the mouse are the exception: a dragged pane, a floating-pane move, a mouse pane resize
+(floating or tiled), and a dragged split all track the controller's pointer directly.
 
 ## Terminal size
 

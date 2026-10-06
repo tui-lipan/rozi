@@ -2186,6 +2186,36 @@ mod tests {
             });
         }
 
+        /// A layout action taken mid-gesture ends the gesture first: its last step goes out live
+        /// and the action's change is its own ordinary revision, animated on followers as it is
+        /// on the controller.
+        #[test]
+        fn a_layout_action_during_a_split_drag_is_an_ordinary_commit() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                flushed_liveness(&mut backend, &rx);
+                backend
+                    .dispatch(Msg::BeginResizeSplit(1, true, 50, 10))
+                    .expect("grab the split");
+                backend
+                    .dispatch(Msg::ResizeSplit(1, true, 50, 10, 60, 10))
+                    .expect("drag before the commit goes out");
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::FlipSplit))
+                    .expect("flip the split before releasing the mouse");
+
+                assert_eq!(
+                    flushed_liveness(&mut backend, &rx),
+                    vec![true, false],
+                    "the gesture's last step is live; the flip is its own ordinary revision"
+                );
+                assert!(
+                    backend.state().split_drag.is_none(),
+                    "the action ended the gesture"
+                );
+            });
+        }
+
         /// The release publishes the gesture's last step on its own, live. A discrete change
         /// right after it - inside the commit debounce - must not share that revision, or followers
         /// would snap the transition the controller animates.

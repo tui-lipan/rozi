@@ -208,7 +208,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `resize_debounce_ms` | integer | `16` | Minimum delay between batches of terminal resize reports. `0` forwards each report. |
 | `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. In a Scrollable layout, a clipped column scrolls into view on the next key or click, not on hover. |
 | `focus_on_hover_pause_modifier` | string | `"shift"` | Holding this modifier pauses hover focus; click focus still works. `"shift"`, `"ctrl"`, `"alt"`, or `"none"` for no pause. Other modifiers may be held too. |
-| `scroll_multiplier` | integer | `3` | Scrollback lines each mouse wheel event moves, `1` to `50`. Some mice and terminals send several events per notch. A program that tracks the mouse, such as an editor, receives the wheel and applies its own step. |
+| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends, `1` to `50`. It stacks with the terminal's own scroll multiplier: Ghostty at `3` and rozi at `3` scroll nine lines per notch. A program that tracks the mouse, such as an editor, receives the wheel and applies its own step. |
 | `hold_on_exit` | bool | `false` | Keeps shell panes open after they exit on their own. Command panes use their `keep_open` value. |
 | `highlight_focused_background` | bool | `false` | Uses the panel background for the focused pane. |
 | `highlight_focused_border` | bool | `true` | Uses the active border color for the focused pane. |

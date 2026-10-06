@@ -86,8 +86,9 @@
 # Hold this modifier while moving across panes to keep the current focus.
 # Use shift, ctrl, alt, or none to disable the pause.
 #focus_on_hover_pause_modifier = "shift"
-# Scrollback lines each mouse wheel event moves, from 1 to 50. Programs that track the
-# mouse, such as editors, apply their own scroll step instead.
+# Multiplies the wheel scrolling your terminal sends, from 1 to 50. It stacks with the
+# terminal's own multiplier (Ghostty at 3 and rozi at 3 scroll 9 lines per notch).
+# Programs that track the mouse, such as editors, apply their own scroll step instead.
 #scroll_multiplier = 3
 # Keep naturally exited panes in the layout, showing the exit code, so respawn-pane can
 # restart them in place. Panes launched with a command follow that command's keep_open.

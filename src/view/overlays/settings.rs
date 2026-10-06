@@ -907,19 +907,17 @@ pub(crate) fn settings_number_overlay(ctx: &Context<AppRoot>) -> Element {
             .height(Length::Auto)
             .gap(1)
             .child(
-                // The same marker the host editor wears, for the same reason: borderless fields
-                // side by side otherwise say nothing about which one Enter is aimed at.
-                Text::new(if focused && several { "›" } else { " " })
+                // The same marker the host editor wears, for the same reason: a borderless field
+                // otherwise says nothing about where Enter is aimed.
+                Text::new(if focused { "›" } else { " " })
                     .width(Length::Px(1))
                     .style(fg_only(&theme.accent)),
             )
-            .child(
-                Text::new(field.label.to_string()).style(if focused || !several {
-                    fg_only(&theme.primary).bold()
-                } else {
-                    fg_only(&theme.muted)
-                }),
-            )
+            .child(Text::new(field.label.to_string()).style(if focused {
+                fg_only(&theme.primary).bold()
+            } else {
+                fg_only(&theme.muted)
+            }))
             .child(input)
     };
     let fields = editor.fields.iter().enumerate().fold(

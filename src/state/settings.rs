@@ -966,7 +966,7 @@ impl SettingsNumberEditor {
             title: "Scroll multiplier",
             invalid_title: "Invalid scroll multiplier",
             fields: vec![SettingsNumberField::new(
-                "Lines per wheel event",
+                "Multiplier",
                 Some(multiplier),
                 crate::config::PANE_MIN_SCROLL_MULTIPLIER,
                 crate::config::PANE_MAX_SCROLL_MULTIPLIER,

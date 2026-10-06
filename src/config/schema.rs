@@ -586,7 +586,8 @@ pub struct PaneConfig {
     pub focus_on_hover: bool,
     /// Modifier that temporarily suspends hover focus while held.
     pub focus_on_hover_pause_modifier: HoverFocusPauseModifier,
-    /// Scrollback lines each mouse wheel event moves in a pane.
+    /// Scrollback lines a pane moves per wheel event the host terminal sends. Stacks with the
+    /// terminal's own wheel multiplier.
     pub scroll_multiplier: u16,
     /// Whether the workbar (workspace tabs, mode chips, etc.) is shown.
     pub show_workbar: bool,

@@ -683,6 +683,23 @@ fn title_parts(ctx: &Context<AppRoot>, pane: &Pane, focused_pane: Option<PaneId>
     }
 }
 
+/// Cap glyphs paint the titlebar surface, so terminal text attributes beneath a floating pane
+/// must not change their color or shape.
+fn title_cap_glyph_style(title_bg: Paint, cap_bg: Paint) -> Style {
+    Style {
+        bold: Some(false),
+        dim: Some(false),
+        italic: Some(false),
+        underline: Some(false),
+        reverse: Some(false),
+        strikethrough: Some(false),
+        ..Style::new()
+    }
+    .fg(title_bg)
+    .bg(cap_bg)
+    .contrast_policy(ContrastPolicy::Off)
+}
+
 /// The filled title strip shared by the integrated, inset, and divider layouts: `Padded` is a flush
 /// band with blank side padding, while the cap styles paint the titlebar color as end caps over
 /// `cap_bg` so the row reads as a pill.
@@ -708,10 +725,7 @@ fn filled_title_row(
             row.into()
         }
         Some((left, right)) => {
-            let cap_style = Style::new()
-                .fg(title_bg)
-                .bg(cap_bg)
-                .contrast_policy(ContrastPolicy::Off);
+            let cap_style = title_cap_glyph_style(title_bg, cap_bg);
             let cap = |glyph: &'static str| {
                 Text::new(glyph)
                     .style(cap_style)
@@ -877,10 +891,7 @@ pub(crate) fn seam_title_element(
                         .child(trailer)
                         .into(),
                 };
-            let cap_style = Style::new()
-                .fg(parts.title_bg)
-                .bg(parts.frame_bg)
-                .contrast_policy(ContrastPolicy::Off);
+            let cap_style = title_cap_glyph_style(parts.title_bg, parts.frame_bg);
             let cap = |glyph: &'static str| -> Element {
                 Text::new(glyph)
                     .style(cap_style)
@@ -975,12 +986,7 @@ fn integrated_half_titlebar_top_edge(title_bg: Paint, frame_bg: Paint) -> EdgeDe
         .glyph(DecorationGlyph::Custom(' '))
         .cap_start(DecorationGlyph::Custom('▐'))
         .cap_end(DecorationGlyph::Custom('▌'))
-        .style(
-            Style::new()
-                .fg(title_bg)
-                .bg(frame_bg)
-                .contrast_policy(ContrastPolicy::Off),
-        )
+        .style(title_cap_glyph_style(title_bg, frame_bg))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1161,24 +1167,14 @@ pub(crate) fn pane_element(
                     .height(Length::Px(1))
                     .child(
                         Text::new(left)
-                            .style(
-                                Style::new()
-                                    .fg(title_bar_bg)
-                                    .bg(left_cap_bg)
-                                    .contrast_policy(ContrastPolicy::Off),
-                            )
+                            .style(title_cap_glyph_style(title_bar_bg, left_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
                     .child(middle)
                     .child(
                         Text::new(right)
-                            .style(
-                                Style::new()
-                                    .fg(title_bar_bg)
-                                    .bg(right_cap_bg)
-                                    .contrast_policy(ContrastPolicy::Off),
-                            )
+                            .style(title_cap_glyph_style(title_bar_bg, right_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )

@@ -316,3 +316,104 @@ fn pane_titlebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
         .join()
         .expect("nerd-icons titlebar smoke completes");
 }
+
+#[test]
+fn floating_title_caps_clear_underlying_terminal_attributes() {
+    rozi::test_support::isolate_user_dirs();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            for mode in [PaneTitlebarMode::Bar, PaneTitlebarMode::Integrated] {
+                for caps in [CapStyle::Half, CapStyle::Round, CapStyle::Arrow] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 48,
+                        h: 12,
+                    });
+                    let state = backend.state_mut();
+                    state.config.animations.enabled = false;
+                    state.config.pane.show_workbar = false;
+                    state.config.pane.titlebar = mode;
+                    state.config.pane.title_style = caps;
+                    state.config.pane.padding = (0, 0, 0, 0);
+                    let mut tiled = Pane::new(
+                        10,
+                        5_000,
+                        FloatRect {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 48.0,
+                            h: 12.0,
+                        },
+                    );
+                    tiled.opening = false;
+                    tiled.terminal_active = true;
+                    let workspace = &mut state.current_mut().workspaces[0];
+                    workspace.panes = vec![tiled];
+                    workspace.tile_tree =
+                        build_dwindle_tree(&[10], workspace.start_axis, &workspace.split_ratios);
+                    backend.render();
+                    let output = (1..=10)
+                        .map(|row| format!("\x1b[{row};1H\x1b[1;2;3;4;7;9m{}", "x".repeat(40)))
+                        .collect::<String>();
+                    backend.state_mut().current_mut().workspaces[0].panes[0]
+                        .terminal
+                        .process_server_output(output.as_bytes());
+                    backend.render();
+                    let underneath = backend.capture_frame();
+                    let mut floating = Pane::new(
+                        11,
+                        5_000,
+                        FloatRect {
+                            x: 8.0,
+                            y: 4.0,
+                            w: 24.0,
+                            h: 5.0,
+                        },
+                    );
+                    floating.floating = true;
+                    floating.opening = false;
+                    floating.terminal_active = true;
+                    floating.set_custom_title("floating cap");
+                    backend.state_mut().current_mut().workspaces[0]
+                        .panes
+                        .push(floating);
+                    backend.state_mut().current_mut().focused_pane = Some(11);
+                    backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
+                    backend.render();
+                    let frame = backend.capture_frame();
+                    let (left, right) = caps.glyphs().expect("capped style");
+                    let mut found = 0;
+                    for y in 3..9 {
+                        for x in 7..33 {
+                            let cell = frame.cell(x, y);
+                            if cell.symbol == left || cell.symbol == right {
+                                assert!(
+                                    underneath.cell(x, y).modifiers.dim,
+                                    "cap must overlap dim terminal text"
+                                );
+                                assert_eq!(
+                                    cell.modifiers,
+                                    tui_lipan::capture::CellModifiers::default(),
+                                    "{mode:?}/{caps:?} cap inherited terminal attributes at {x},{y}"
+                                );
+                                let inner_x = if cell.symbol == left { x + 1 } else { x - 1 };
+                                assert_eq!(
+                                    cell.fg,
+                                    frame.cell(inner_x, y).bg,
+                                    "cap fill must match the titlebar background"
+                                );
+                                found += 1;
+                            }
+                        }
+                    }
+                    assert_eq!(found, 2, "{mode:?}/{caps:?} must render both caps");
+                }
+            }
+        })
+        .expect("spawn floating cap smoke")
+        .join()
+        .expect("floating cap smoke completes");
+}

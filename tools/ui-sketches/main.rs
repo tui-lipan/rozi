@@ -25,7 +25,12 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 3] = [
+const SCENARIOS: [(&str, &str, fn()); 4] = [
+    (
+        "floating-title-caps",
+        "floating titlebar caps over dim and decorated terminal text",
+        floating_title_caps,
+    ),
     (
         "workbar-alerts",
         "workspace-tab alert markers at both ends of the breathe, and hovered",
@@ -328,5 +333,59 @@ fn worktree_picker() {
         backend.set_viewport(viewport(width, height));
         backend.render();
         write_png(&mut backend, &format!("worktree-form-{width}x{height}"));
+    }
+}
+
+fn floating_title_caps() {
+    use rozi::layout::tiling::build_dwindle_tree;
+    use rozi::state::PaneTitlebarMode;
+    use tui_lipan::prelude::CapStyle;
+
+    for (width, height) in [(48, 12), (80, 24)] {
+        for mode in [PaneTitlebarMode::Bar, PaneTitlebarMode::Integrated] {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport(width, height));
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.config.pane.show_workbar = false;
+            state.config.pane.titlebar = mode;
+            state.config.pane.title_style = CapStyle::Half;
+            state.config.pane.padding = (0, 0, 0, 0);
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes = vec![live_pane(10)];
+            workspace.tile_tree =
+                build_dwindle_tree(&[10], workspace.start_axis, &workspace.split_ratios);
+            backend.render();
+            let output = (1..height - 2)
+                .map(|row| {
+                    format!(
+                        "\x1b[{row};1H\x1b[1;2;3;4;7;9m{}",
+                        "dimmed output ".repeat(5)
+                    )
+                })
+                .collect::<String>();
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .process_server_output(output.as_bytes());
+            let mut floating = live_pane(11);
+            floating.floating = true;
+            floating.floating_rect = FloatRect {
+                x: 8.0,
+                y: 4.0,
+                w: 28.0,
+                h: 6.0,
+            };
+            floating.set_custom_title("floating cap");
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(floating);
+            backend.state_mut().current_mut().focused_pane = Some(11);
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!("floating-title-caps-{mode:?}-{width}x{height}"),
+            );
+        }
     }
 }

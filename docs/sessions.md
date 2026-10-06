@@ -72,7 +72,9 @@ host of the session you are in, or the host the launcher is scoped to.
 host's sessions with bare names. Typing searches all known hosts and highlights **All**, like
 Settings searches all categories. Clear the query to return to the previous browsing tab and
 highlight. Choosing a tab clears the query and browses that host. Search uses known sessions;
-it does not connect to additional hosts.
+it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
+global rows append the exact target, such as **workbox (ssh://workbox)**. The exact target is
+searchable in Sessions and Agents.
 
 Creation stays on the browsing host while searching. On **All**, it uses the foreground session's
 host, or the launcher's host when no session is attached. The footer names the destination with

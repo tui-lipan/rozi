@@ -519,3 +519,90 @@ fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
         backend.dispatch(Msg::CloseRenameSession).unwrap();
     });
 }
+
+#[test]
+fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation() {
+    use rozi::session::remote::RemoteTarget;
+    use rozi::state::SessionPickerTab;
+    on_a_big_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 180,
+            h: 30,
+        });
+        let alias = RemoteTarget::Alias("workbox".into());
+        let url = RemoteTarget::Url {
+            user: None,
+            host: "workbox".into(),
+            port: None,
+        };
+        let alias_row = remote_row("dev", "workbox");
+        let mut url_row = alias_row.clone();
+        url_row.remote_target = Some(url.clone());
+        {
+            let state = backend.state_mut();
+            state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
+            state.show_session_picker = true;
+            let mut picker = SessionPickerState::new(vec![alias_row, url_row]);
+            picker.tab = SessionPickerTab::All;
+            state.session_picker = Some(picker);
+        }
+        let all = screen(&mut backend);
+        assert!(all.contains("dev@workbox (workbox)"), "{all}");
+        assert!(all.contains("dev@workbox (ssh://workbox)"), "{all}");
+        let tabs = all
+            .lines()
+            .find(|line| line.contains("Local") && line.contains("All"))
+            .unwrap();
+        assert!(
+            tabs.contains("workbox (workbox)") && tabs.contains("workbox (ssh://workbox)"),
+            "{tabs}"
+        );
+        for ch in "ssh://workbox".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        let found = screen(&mut backend);
+        assert!(found.contains("dev@workbox (ssh://workbox)"), "{found}");
+        assert!(!found.contains("dev@workbox (workbox)"), "{found}");
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(
+            picker.entries[picker.selected].remote_target,
+            Some(url.clone())
+        );
+        // Equal display names sort by their exact specs.
+        backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
+        screen(&mut backend);
+        assert_eq!(
+            backend.state().session_picker.as_ref().unwrap().tab,
+            SessionPickerTab::Host(Some(alias))
+        );
+        backend.dispatch(Msg::SessionPickerTab(1)).unwrap();
+        for ch in "dev@ssh://workbox".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        let found = screen(&mut backend);
+        assert!(found.contains("new on workbox (ssh://workbox)"), "{found}");
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(
+            picker.entries[picker.selected].remote_target,
+            Some(url.clone())
+        );
+        backend.dispatch(Msg::SessionPickerCreateFromQuery).unwrap();
+        assert_eq!(
+            backend.state().rename_session.as_ref().unwrap().host_target,
+            Some(url)
+        );
+    });
+}

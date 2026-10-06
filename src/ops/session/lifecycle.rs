@@ -139,7 +139,7 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
             hosts.push(target.clone());
         }
     }
-    hosts.sort_by_cached_key(crate::session::remote::RemoteTarget::display_label);
+    hosts.sort_by_cached_key(|target| (target.display_label(), target.to_spec()));
     std::iter::once(SessionPickerTab::Host(None))
         .chain(
             hosts

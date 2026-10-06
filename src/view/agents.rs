@@ -79,6 +79,16 @@ impl GlobalAgentRow {
         }
     }
 
+    pub fn search_aliases(&self, state: &State) -> Vec<String> {
+        let target = match &self.location {
+            AgentLocation::Here { .. } => state.current().remote_target.as_ref(),
+            AgentLocation::OtherSession { target, .. } => target.as_ref(),
+        };
+        target
+            .map(|target| vec![target.to_spec()])
+            .unwrap_or_default()
+    }
+
     pub fn description(&self) -> String {
         let mut parts = vec![crate::view::sidebar::agents::row_status_label(
             &self.status,
@@ -118,7 +128,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
     let here_target = state.current().remote_target.clone();
     let here_host = here_target
         .as_ref()
-        .map(crate::session::remote::RemoteTarget::display_label);
+        .map(|target| state.remote_target_label(target));
     let here_session = state.current().session_name.clone();
     let mut rows = Vec::new();
     if let Some(session) = here_session.as_deref() {
@@ -168,7 +178,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
         }
     }
     for (target, agents) in &state.remote.agents {
-        let host = target.display_label();
+        let host = state.remote_target_label(target);
         for agent in agents {
             // The session on screen is already listed from its live panes, which are fresher than a
             // snapshot taken between polls. Two answers for one agent, disagreeing by up to a poll

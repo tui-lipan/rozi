@@ -799,17 +799,21 @@ fn the_active_row_marker_spans_every_line_of_the_row() {
         .expect("marker completes");
 }
 
-/// The keyboard cursor highlights the whole row, both lines of it, in the same color the workbar's
-/// active workspace tab uses — so the three selection surfaces read as one language.
+/// The keyboard cursor highlights the whole row, both lines of it.
 #[test]
 fn the_cursor_highlight_covers_both_lines_of_a_row() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            // The cursor uses the same lift as pointer hover, so it reads as "about to act on this"
-            // rather than as a second, louder kind of selection.
-            let selection = backend.state().theme.surface.element.elevate_by(0.08);
+            // The hover lift tinted toward the active border: close enough to hover to mean "about
+            // to act on this", distinct enough to find in SIDEBAR mode without a pointer.
+            let theme = &backend.state().theme;
+            let selection = theme
+                .surface
+                .element
+                .elevate_by(0.08)
+                .blend_toward(theme.border_active, 0.25);
 
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))

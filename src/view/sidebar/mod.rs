@@ -472,17 +472,33 @@ pub(super) fn scrollbar_config() -> ScrollbarConfig {
     ScrollbarConfig::new().thumb('▐')
 }
 
-/// The lift a row gets under the keyboard cursor, matching what pointer hover looks like.
-///
-/// Deliberately quiet: a cursor and a hovered row mean the same thing — "this is the one you are
-/// about to act on" — and giving the cursor its own louder treatment made every row it touched
-/// shout. It also keeps each row's own colors readable, which a solid accent fill destroyed; agent
-/// status, git state, and error red all carry meaning here.
-///
-/// Pointer hover is a *transform* of the same size rather than this style, so hovering a row that
-/// is already active or already under the cursor still reads as a change.
+/// The lift a row gets under the pointer in the file tree, matching pointer hover in the composed
+/// row lists, which apply the same lift as a transform.
 pub(super) fn row_highlight(fill: Color) -> Style {
     Style::new().bg(fill.elevate_by(super::HOVER_LIFT))
+}
+
+/// How far the keyboard cursor's background leans toward the active border color.
+const CURSOR_TINT: f32 = 0.25;
+
+/// The background a row gets under the keyboard cursor while the sidebar owns the keyboard.
+///
+/// A hover-sized lift alone was too quiet to find: the active row already carries a smaller lift of
+/// its own, and the two differed by a few shades. Tinting toward the theme's active border instead
+/// reads as "selected" at a glance without becoming a solid accent fill, so each span keeps the
+/// color that carries its meaning — agent status, git state, and error red stay readable.
+///
+/// A fill with no RGB value (a theme following the terminal background) cannot be lifted or mixed,
+/// so the cursor falls back to a tint of the element surface rather than vanishing.
+pub(super) fn cursor_highlight(theme: &Theme, fill: Color) -> Style {
+    let base = if fill.to_rgb().is_some() {
+        fill
+    } else {
+        theme.surface.element
+    };
+    Style::new().bg(base
+        .elevate_by(super::HOVER_LIFT)
+        .blend_toward(theme.border_active, CURSOR_TINT))
 }
 
 pub(crate) fn fill_color(theme: &Theme, follow_canvas: bool) -> Color {
@@ -548,6 +564,24 @@ mod tests {
 
         // Out of range stays addressable rather than panicking or losing the number.
         assert_eq!(workspace_badge(&state, 99), "100");
+    }
+
+    #[test]
+    fn the_cursor_stands_apart_from_hover_and_the_active_row() {
+        let theme = Theme::default();
+        let fill = fill_color(&theme, false);
+        let cursor = cursor_highlight(&theme, fill).bg;
+        assert_ne!(cursor, row_highlight(fill).bg, "cursor differs from hover");
+        assert_ne!(
+            cursor,
+            Style::new().bg(fill.elevate_by(0.04)).bg,
+            "cursor differs from the active row"
+        );
+
+        // A fill that cannot be lifted still leaves the cursor visible.
+        let cursor = cursor_highlight(&theme, Color::Reset).bg;
+        assert_ne!(cursor, Style::new().bg(Color::Reset).bg);
+        assert_ne!(cursor, None);
     }
 
     #[test]

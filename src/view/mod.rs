@@ -25,12 +25,11 @@ pub use widget_keys::{
     agent_picker_key, askpass_input_key, collaboration_key, dialog_answer_key,
     extension_detail_key, extension_install_input_key, extensions_key, follow_prompt_key,
     help_filter_key, host_form_input_key, keybinding_capture_key, layout_picker_key, palette_key,
-    pane_body_key, pane_id_from_window_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pane_terminal_key, pick_key, pick_prompt_input_key, profile_picker_key,
-    recording_mark_input_key, remote_picker_key, rename_input_key, rename_session_input_key,
-    save_profile_key, search_input_key, session_picker_key, settings_choice_key,
-    settings_palette_key, sidebar_body_key, sidebar_region_key, theme_picker_key,
-    worktree_form_input_key, worktree_picker_key,
+    pane_body_key, pane_id_from_window_key, pane_terminal_key, pick_key, pick_prompt_input_key,
+    profile_picker_key, recording_mark_input_key, remote_picker_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    settings_choice_key, settings_number_field_key, settings_palette_key, sidebar_body_key,
+    sidebar_region_key, theme_picker_key, worktree_form_input_key, worktree_picker_key,
 };
 pub(crate) use workbar::{
     UiRecordingChip, ui_recording_chip, ui_recording_label, workspace_tab_shows_recording,
@@ -50,10 +49,10 @@ use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
     extension_install_progress_overlay, extension_install_prompt_overlay, extensions_overlay,
     follow_prompt_overlay, help_overlay, keybinding_editor_dialog_overlay, layout_picker_overlay,
-    palette_overlay, pane_padding_overlay, pick_overlay, pick_prompt_overlay,
-    profile_picker_overlay, reconnecting_overlay, recording_mark_overlay, remote_picker_overlay,
-    rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
-    session_picker_overlay, settings_choice_overlay, settings_overlay, theme_picker_overlay,
+    palette_overlay, pick_overlay, pick_prompt_overlay, profile_picker_overlay,
+    reconnecting_overlay, recording_mark_overlay, remote_picker_overlay, rename_overlay,
+    rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
+    settings_choice_overlay, settings_number_overlay, settings_overlay, theme_picker_overlay,
     worktree_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -447,8 +446,8 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_settings {
         root = root.child(settings_overlay(ctx));
     }
-    if ctx.state.show_settings && ctx.state.pane_padding_editor.is_some() {
-        root = root.child(pane_padding_overlay(ctx));
+    if ctx.state.show_settings && ctx.state.settings_number_editor.is_some() {
+        root = root.child(settings_number_overlay(ctx));
     }
     if ctx.state.show_settings && ctx.state.settings_choice.is_some() {
         root = root.child(settings_choice_overlay(ctx));

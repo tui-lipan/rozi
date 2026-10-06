@@ -15,11 +15,10 @@ pub(in crate::view::overlays) use crate::{AppRoot, Msg};
 pub(in crate::view::overlays) use super::widget_keys::{
     askpass_input_key, collaboration_key, extension_detail_key, extension_install_error_key,
     extension_install_input_key, extensions_key, help_filter_key, keybinding_capture_key,
-    layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pick_key, pick_prompt_input_key, profile_picker_key, recording_mark_input_key,
-    remote_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key, settings_choice_key, settings_palette_key,
-    theme_picker_key,
+    layout_picker_key, palette_key, pick_key, pick_prompt_input_key, profile_picker_key,
+    recording_mark_input_key, remote_picker_key, rename_input_key, rename_session_input_key,
+    save_profile_key, search_input_key, session_picker_key, settings_choice_key,
+    settings_number_field_key, settings_palette_key, theme_picker_key,
 };
 pub(in crate::view::overlays) use super::{
     ACTION_PALETTE_MAX_HEIGHT_PERCENT, action_palette_modal, action_palette_modal_with_width,
@@ -64,7 +63,7 @@ pub(crate) use sessions::{
     collaboration_overlay, follow_prompt_overlay, reconnecting_overlay, session_picker_overlay,
 };
 pub(crate) use settings::{
-    pane_padding_overlay, settings_choice_overlay, settings_overlay, settings_query_selection,
+    settings_choice_overlay, settings_number_overlay, settings_overlay, settings_query_selection,
     theme_picker_overlay,
 };
 pub(crate) use worktrees::worktree_overlay;

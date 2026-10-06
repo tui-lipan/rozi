@@ -586,6 +586,9 @@ pub struct PaneConfig {
     pub focus_on_hover: bool,
     /// Modifier that temporarily suspends hover focus while held.
     pub focus_on_hover_pause_modifier: HoverFocusPauseModifier,
+    /// Scrollback lines a pane moves per wheel event the host terminal sends. Stacks with the
+    /// terminal's own wheel multiplier.
+    pub scroll_multiplier: u16,
     /// Whether the workbar (workspace tabs, mode chips, etc.) is shown.
     pub show_workbar: bool,
     /// Whether there is a 1-line gap between the workbar and the panes area.
@@ -680,6 +683,7 @@ impl Default for PaneConfig {
             highlight_focused_titlebar: true,
             focus_on_hover: true,
             focus_on_hover_pause_modifier: HoverFocusPauseModifier::default(),
+            scroll_multiplier: PANE_DEFAULT_SCROLL_MULTIPLIER,
             show_workbar: true,
             workbar_gap: true,
             workbar_background: true,
@@ -1562,6 +1566,10 @@ impl UserCommandAction {
         }
     }
 }
+
+pub const PANE_DEFAULT_SCROLL_MULTIPLIER: u16 = 3;
+pub const PANE_MIN_SCROLL_MULTIPLIER: u16 = 1;
+pub const PANE_MAX_SCROLL_MULTIPLIER: u16 = 50;
 
 pub const SIDEBAR_MIN_WIDTH: u16 = 16;
 pub const SIDEBAR_MAX_WIDTH: u16 = 80;

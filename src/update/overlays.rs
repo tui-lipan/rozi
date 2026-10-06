@@ -12,23 +12,6 @@ use crate::ops::theme::{
 };
 use crate::{AppRoot, Msg};
 
-fn valid_padding_text(value: &str) -> bool {
-    value.is_empty()
-        || (value.len() == 1
-            && value.as_bytes()[0].is_ascii_digit()
-            && u16::from(value.as_bytes()[0] - b'0') <= crate::config::MAX_PANE_PADDING)
-}
-
-fn padding_value(value: &str) -> Option<u16> {
-    valid_padding_text(value)
-        .then(|| value.parse().ok())
-        .flatten()
-}
-
-fn padding_error(ctx: &mut Context<AppRoot>) {
-    crate::pane::pty_events::notify_error(ctx, "Invalid padding", "Enter one digit");
-}
-
 pub(super) fn command_link_ready(ctx: &mut Context<AppRoot>, link: CommandLink<Msg>) -> Update {
     ctx.state.command_link = Some(link.clone());
     // Started here rather than at the first remote operation: every ssh this client spawns has to
@@ -60,7 +43,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
             | Action::TogglePalette
             | Action::ToggleHelp
     ) {
-        ctx.state.pane_padding_editor = None;
+        ctx.state.settings_number_editor = None;
         discard_settings_choice(ctx);
     }
     let cycle_layout_in_palette = matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
@@ -240,7 +223,7 @@ pub(super) fn close_settings(ctx: &mut Context<AppRoot>) -> Update {
     discard_settings_choice(ctx);
     ctx.state.show_settings = false;
     ctx.state.settings_selected = None;
-    ctx.state.pane_padding_editor = None;
+    ctx.state.settings_number_editor = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
@@ -353,11 +336,10 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         Theme => {
             execute_action(ctx, Action::OpenThemePicker);
         }
-        EditPadding => {
-            ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
-                ctx.state.config.pane.padding,
-            ));
-            ctx.request_focus(crate::view::pane_padding_vertical_key());
+        EditPadding | EditScrollMultiplier => {
+            ctx.state.settings_number_editor =
+                crate::state::SettingsNumberEditor::for_action(action, &ctx.state.config);
+            ctx.request_focus(crate::view::settings_number_field_key(0));
         }
         ChooseTitlebar
         | ChooseWorkbar
@@ -588,7 +570,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             crate::ops::config::reload_sleep_policy(ctx);
         }
     }
-    if !matches!(action, Theme | EditPadding) {
+    if !matches!(action, Theme | EditPadding | EditScrollMultiplier) {
         ctx.state.show_settings = true;
         crate::state::assign_settings_selection(&mut ctx.state, Some(action));
         ctx.request_focus(crate::view::settings_palette_key());
@@ -877,98 +859,116 @@ fn persist_applied_settings_choice(
     }
 }
 
-pub(super) fn close_pane_padding_editor(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.state.pane_padding_editor.is_none() {
+pub(super) fn close_settings_number_editor(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.settings_number_editor.is_none() {
         return Update::none();
     }
-    ctx.state.pane_padding_editor = None;
+    ctx.state.settings_number_editor = None;
     if ctx.state.show_settings {
         ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
 }
 
-pub(super) fn pane_padding_vertical_changed(
+pub(super) fn settings_number_changed(
     ctx: &mut Context<AppRoot>,
+    field: usize,
     event: InputEvent,
 ) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+    let Some(editor) = ctx.state.settings_number_editor.as_mut() else {
         return Update::none();
     };
-    if valid_padding_text(&event.value) {
-        event.apply_to(&mut editor.vertical);
-    }
-    editor.focus = crate::state::PanePaddingField::Vertical;
-    ctx.request_focus(crate::view::pane_padding_vertical_key());
-    Update::full()
-}
-
-pub(super) fn pane_padding_horizontal_changed(
-    ctx: &mut Context<AppRoot>,
-    event: InputEvent,
-) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+    let Some(slot) = editor.fields.get_mut(field) else {
         return Update::none();
     };
-    if valid_padding_text(&event.value) {
-        event.apply_to(&mut editor.horizontal);
+    if slot.accepts(&event.value) {
+        event.apply_to(&mut slot.input);
     }
-    editor.focus = crate::state::PanePaddingField::Horizontal;
-    ctx.request_focus(crate::view::pane_padding_horizontal_key());
+    editor.focus = field;
+    ctx.request_focus(crate::view::settings_number_field_key(field));
     Update::full()
 }
 
 /// Record where focus landed, so the dialog can mark the active field. Reported by the field
 /// itself, which covers a click and `Tab` traversal alike.
-pub(super) fn pane_padding_focus(
-    ctx: &mut Context<AppRoot>,
-    field: crate::state::PanePaddingField,
-) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+pub(super) fn settings_number_focus(ctx: &mut Context<AppRoot>, field: usize) -> Update {
+    let Some(editor) = ctx.state.settings_number_editor.as_mut() else {
         return Update::none();
     };
-    editor.focus = field;
-    Update::full()
-}
-
-pub(super) fn advance_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
-        return Update::none();
-    };
-    if padding_value(editor.vertical.text()).is_some() {
-        editor.focus = crate::state::PanePaddingField::Horizontal;
-        ctx.request_focus(crate::view::pane_padding_horizontal_key());
-    } else {
-        editor.focus = crate::state::PanePaddingField::Vertical;
-        padding_error(ctx);
-        ctx.request_focus(crate::view::pane_padding_vertical_key());
+    if field < editor.fields.len() {
+        editor.focus = field;
     }
     Update::full()
 }
 
-pub(super) fn submit_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+/// Enter on a field: refuse an empty or out-of-range value, otherwise move to the next field, or
+/// apply every field from the last one.
+pub(super) fn settings_number_enter(ctx: &mut Context<AppRoot>, field: usize) -> Update {
+    let Some(editor) = ctx.state.settings_number_editor.as_mut() else {
         return Update::none();
     };
-    let Some(vertical) = padding_value(editor.vertical.text()) else {
-        padding_error(ctx);
-        ctx.request_focus(crate::view::pane_padding_vertical_key());
-        return Update::full();
+    let Some(slot) = editor.fields.get(field) else {
+        return Update::none();
     };
-    let Some(horizontal) = padding_value(editor.horizontal.text()) else {
-        padding_error(ctx);
-        ctx.request_focus(crate::view::pane_padding_horizontal_key());
+    if slot.value().is_none() {
+        let (title, hint) = (editor.invalid_title, slot.range_hint());
+        editor.focus = field;
+        crate::pane::pty_events::notify_error(ctx, title, hint);
+        ctx.request_focus(crate::view::settings_number_field_key(field));
         return Update::full();
-    };
-    ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
-    if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
-        crate::pane::pty_events::notify_error(ctx, "Padding not saved", error);
     }
-    ctx.state.pane_padding_editor = None;
+    if !editor.is_last(field) {
+        editor.focus = field + 1;
+        ctx.request_focus(crate::view::settings_number_field_key(field + 1));
+        return Update::full();
+    }
+    // Every field before this one passed its own Enter, but a click can land on the last field
+    // first, so check them all again.
+    if let Some(invalid) = editor.fields.iter().position(|slot| slot.value().is_none()) {
+        let (title, hint) = (editor.invalid_title, editor.fields[invalid].range_hint());
+        editor.focus = invalid;
+        crate::pane::pty_events::notify_error(ctx, title, hint);
+        ctx.request_focus(crate::view::settings_number_field_key(invalid));
+        return Update::full();
+    }
+    let action = editor.action;
+    let values: Vec<u16> = editor
+        .fields
+        .iter()
+        .filter_map(|slot| slot.value())
+        .collect();
+    apply_settings_number(ctx, action, &values);
+    ctx.state.settings_number_editor = None;
     if ctx.state.show_settings {
         ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
+}
+
+fn apply_settings_number(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+    values: &[u16],
+) {
+    use crate::state::SettingsAction::*;
+    match (action, values) {
+        (EditPadding, &[vertical, horizontal]) => {
+            ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
+            if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
+                crate::pane::pty_events::notify_error(ctx, "Padding not saved", error);
+            }
+        }
+        (EditScrollMultiplier, &[multiplier]) => {
+            ctx.state.config.pane.scroll_multiplier = multiplier;
+            if let Err(err) = crate::config::persist_section_values(
+                "pane",
+                &[("scroll_multiplier", &multiplier.to_string())],
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn close_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
@@ -1088,11 +1088,13 @@ mod tests {
 
     #[test]
     fn padding_input_accepts_empty_or_one_ascii_digit_in_range() {
-        assert!(valid_padding_text(""));
-        assert!(valid_padding_text("8"));
-        assert!(!valid_padding_text("9"));
-        assert!(!valid_padding_text("12"));
-        assert!(!valid_padding_text("８"));
+        let editor = crate::state::SettingsNumberEditor::padding((0, 0, 0, 0));
+        let field = &editor.fields[0];
+        assert!(field.accepts(""));
+        assert!(field.accepts("8"));
+        assert!(!field.accepts("9"));
+        assert!(!field.accepts("12"));
+        assert!(!field.accepts("８"));
     }
 
     /// The text `notify_*` tracked for the toast it raised, title and body joined by NUL.
@@ -1695,6 +1697,69 @@ mod tests {
                 backend.state().config.session.resurrect_foreground,
                 crate::config::ForegroundRestore::Auto
             );
+        });
+    }
+
+    #[test]
+    fn settings_scroll_multiplier_applies_and_saves_a_typed_value() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            backend.state_mut().show_settings = true;
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::EditScrollMultiplier,
+                ))
+                .unwrap();
+            backend.render();
+            let field = |backend: &TestBackend<AppRoot>| {
+                backend
+                    .state()
+                    .settings_number_editor
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .input
+                    .text()
+                    .to_string()
+            };
+            assert_eq!(
+                backend
+                    .state()
+                    .settings_number_editor
+                    .as_ref()
+                    .unwrap()
+                    .title,
+                "Scroll multiplier"
+            );
+            assert_eq!(field(&backend), "3");
+
+            backend.send_paste("51").unwrap();
+            assert_eq!(field(&backend), "3", "above the maximum is refused");
+
+            backend.send_paste("0").unwrap();
+            assert_eq!(field(&backend), "0", "typing replaces the selected value");
+            press(&mut backend, KeyCode::Enter);
+            assert!(
+                backend.state().settings_number_editor.is_some(),
+                "below the minimum keeps the editor open"
+            );
+            assert_eq!(backend.state().config.pane.scroll_multiplier, 3);
+
+            press(&mut backend, KeyCode::Backspace);
+            backend.send_paste("7").unwrap();
+            press(&mut backend, KeyCode::Enter);
+            assert!(backend.state().settings_number_editor.is_none());
+            assert_eq!(backend.state().config.pane.scroll_multiplier, 7);
+            assert!(backend.state().show_settings, "Settings stays open");
+
+            let saved = std::fs::read_to_string(crate::config::config_path()).unwrap();
+            assert!(saved.contains("scroll_multiplier = 7"), "{saved}");
         });
     }
 

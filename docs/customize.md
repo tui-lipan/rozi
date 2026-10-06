@@ -31,7 +31,7 @@ Settings is divided into categories:
 
 | Category | Contains |
 | --- | --- |
-| General | Theme, nerd icons, which-key, focus on hover, animations, clipboard, and pickers |
+| General | Theme, nerd icons, which-key, focus on hover, scroll multiplier, animations, clipboard, and pickers |
 | Panes | Background, borders, and titlebar |
 | Bars | Workbar and sidebar |
 | Alerts | Pane border and workspace tab effects, workspace markers, desktop notifications, and sounds |
@@ -50,8 +50,9 @@ To change a setting:
 4. Press `Enter` to apply and save the highlighted value, or `Esc` to cancel and undo any preview.
 
 `Shift+Enter` cycles through values without opening the list. `Esc` clears the search, and `Esc`
-with an empty search closes Settings. **Theme** and **Terminal padding**
-open their own editors. A setting that depends on a feature you turned off stays visible but dimmed,
+with an empty search closes Settings. **Theme** opens its own picker. **Terminal padding** and
+**Scroll multiplier** open a small number editor: type a value, press `Enter` to move to the next
+field or apply the last one, and `Esc` to cancel. A setting that depends on a feature you turned off stays visible but dimmed,
 and becomes editable when you turn that feature back on.
 
 <CaptureGallery mode="steps" title="Settings">

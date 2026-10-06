@@ -1132,7 +1132,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 18, "Pane close"),
+            (SettingsTab::General, 19, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),

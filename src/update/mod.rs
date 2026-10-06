@@ -19,6 +19,11 @@ use crate::{AppRoot, Msg};
 const INBOUND_DRAIN_MAX_ENTRIES: usize = 64;
 const INBOUND_DRAIN_MAX_BYTES: usize = 256 * 1024;
 const INBOUND_DRAIN_MAX_TIME: std::time::Duration = std::time::Duration::from_millis(1);
+/// How long Commands waits on a handed-off extension command before saying it is running. Short
+/// enough to read as an answer to the selection, long enough that a command opening its picker at
+/// once goes straight from Commands to the picker.
+pub(crate) const COMMAND_PALETTE_HANDOFF_QUIET: std::time::Duration =
+    std::time::Duration::from_millis(300);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PostUpdateKind {
@@ -116,6 +121,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::ClosePalette => overlays::close_palette(ctx),
         Msg::CommandPaletteHandoffFinished { epoch } => {
             overlays::command_palette_handoff_finished(ctx, epoch)
+        }
+        Msg::CommandPaletteHandoffRunning { epoch } => {
+            overlays::command_palette_handoff_running(ctx, epoch)
         }
         Msg::CommandPaletteQueryChanged(query) => {
             overlays::command_palette_query_changed(ctx, query)

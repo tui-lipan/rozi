@@ -542,7 +542,12 @@ mod tests {
     fn pick_stream_replaces_command_palette_handoff() {
         with_backend(|backend| {
             backend.state_mut().show_palette = true;
-            backend.state_mut().command_palette_handoff = Some(7);
+            backend.state_mut().command_palette_handoff =
+                Some(crate::state::CommandPaletteHandoff {
+                    epoch: 7,
+                    label: "Branches".to_string(),
+                    running: false,
+                });
 
             let (tx, _rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();

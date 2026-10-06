@@ -76,6 +76,16 @@ pub const RATIO_STEP: f32 = 0.04;
 /// Default weight for tile width against height when choosing a dwindle split direction.
 pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
+/// An extension command started from Commands that has not yet finished or opened a picker.
+pub struct CommandPaletteHandoff {
+    pub epoch: u64,
+    /// The command's label, for the palette to say what it is waiting on.
+    pub label: String,
+    /// Still running after [`crate::update::COMMAND_PALETTE_HANDOFF_QUIET`]: the palette says so
+    /// instead of sitting on a list that no longer responds to anything.
+    pub running: bool,
+}
+
 pub struct PublishStreamState {
     pub id: u64,
     pub sender: std::sync::mpsc::SyncSender<String>,
@@ -211,7 +221,7 @@ pub struct State {
     pub command_palette_sidebar_query: bool,
     /// A detached extension command selected from Commands may immediately open `rozi pick`.
     /// Keep Commands visible until that picker arrives, or until the command finishes without one.
-    pub command_palette_handoff: Option<u64>,
+    pub command_palette_handoff: Option<CommandPaletteHandoff>,
     pub command_palette_handoff_epoch: u64,
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,

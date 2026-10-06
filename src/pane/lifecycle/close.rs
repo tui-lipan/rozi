@@ -23,6 +23,9 @@ use crate::{AppRoot, Msg};
 /// retention (`Animated::auto_exit`) cannot do this, because it freezes the already reconciled
 /// subtree and only clips it.
 pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    // A user's close is a discrete layout change. A pane closed because its process exited is
+    // not one, and does not cancel what the pointer is doing.
+    crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     let scratch = crate::scratchpad::contains(&ctx.state, id);
     match close_pane_inner(ctx, id, true) {
         Some(generation) => Update::with_command(prune_closed_command(

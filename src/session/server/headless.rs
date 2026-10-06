@@ -655,6 +655,7 @@ impl SessionServer {
                 // own commit - which is right: none of them wrote it.
                 author: SERVER_LAYOUT_AUTHOR,
                 layout,
+                live: false,
             },
         ));
     }
@@ -2134,6 +2135,7 @@ mod tests {
                         rev,
                         author,
                         layout,
+                        live: _,
                     },
                 ),
             ] => {
@@ -3055,6 +3057,7 @@ mod tests {
                         rev,
                         author,
                         layout,
+                        live: _,
                     },
                 ),
             ] => {

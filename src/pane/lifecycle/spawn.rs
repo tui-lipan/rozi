@@ -354,6 +354,9 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
+    // Every shared spawn - an action, `new-pane`, the sidebar, a user command - is a discrete
+    // layout change.
+    crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     let rule_command = identity
         .launch
         .as_ref()

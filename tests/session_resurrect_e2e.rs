@@ -129,6 +129,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_control(&ClientMessage::CommitLayout {
         base_rev: 0,
         layout: layout.clone(),
+        live: false,
     });
     read_until(&mut client, |frame| {
         matches!(

@@ -631,8 +631,12 @@ impl SessionServer {
                 }
                 Vec::new()
             }
-            ClientMessage::CommitLayout { base_rev, layout } => {
-                let responses = self.handle_commit_layout(client_id, base_rev, layout);
+            ClientMessage::CommitLayout {
+                base_rev,
+                layout,
+                live,
+            } => {
+                let responses = self.handle_commit_layout(client_id, base_rev, layout, live);
                 if self.origin.is_empty()
                     && responses.iter().any(|(_, message)| {
                         matches!(message, ServerMessage::LayoutCommitted { .. })

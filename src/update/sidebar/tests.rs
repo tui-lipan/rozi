@@ -1096,6 +1096,81 @@ fn new_pane_row_spawns_on_the_named_workspace() {
     });
 }
 
+/// Grab a split as a held mouse button would, so a sidebar row can fire mid-gesture.
+fn hold_split_drag(backend: &mut TestBackend<AppRoot>) {
+    let pane = backend.state().focused_pane().unwrap_or(1);
+    backend
+        .dispatch(crate::Msg::BeginResizeSplit(pane, true, 40, 10))
+        .expect("grab a split");
+    assert!(backend.state().split_drag.is_some());
+}
+
+/// The sidebar spawns through neither the action dispatcher nor the control socket, so the shared
+/// spawn primitive itself ends a pointer gesture: the spawn must not share the gesture's live
+/// revision.
+#[test]
+fn a_sidebar_spawn_ends_a_split_drag_first() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        {
+            let state = backend.state_mut();
+            state.sidebar_visible = true;
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+        }
+        let index = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Panes)
+            .iter()
+            .position(|item| matches!(item.target, crate::state::RowTarget::NewPane { .. }))
+            .expect("a new-pane row");
+        hold_split_drag(&mut backend);
+        backend
+            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index })
+            .expect("activate new pane");
+        assert!(
+            backend.state().split_drag.is_none(),
+            "the spawn ended the gesture"
+        );
+    });
+}
+
+/// Likewise a user's close from the sidebar ends the gesture before the pane goes.
+#[test]
+fn a_sidebar_close_ends_a_split_drag_first() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        {
+            let state = backend.state_mut();
+            state.sidebar_visible = true;
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+        }
+        let index = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Panes)
+            .iter()
+            .position(|item| matches!(item.close, Some(crate::state::SidebarClose::Pane(_))))
+            .expect("a closable pane row");
+        backend
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index })
+            .expect("arm the close");
+        hold_split_drag(&mut backend);
+        backend
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index })
+            .expect("confirm the close");
+        assert!(
+            backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .any(|pane| pane.closing),
+            "the pane closes"
+        );
+        assert!(
+            backend.state().split_drag.is_none(),
+            "the close ended the gesture"
+        );
+    });
+}
+
 /// An arming lapses on its own after [`crate::ops::confirm::CONFIRM_WINDOW`]. The expiry is
 /// matched by token rather than by wall time here: an expiry belonging to an arming that has
 /// already been replaced must leave the replacement alone, which is the case a bare timer would

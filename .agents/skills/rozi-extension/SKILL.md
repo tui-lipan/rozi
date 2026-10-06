@@ -230,7 +230,8 @@ replace the complete row set:
 
 Read `{"selected":"main"}`, `{"action":"new","input":"feat/x","selected":"main"}`, or
 `{"cancelled":true}` from stdout. An action stays open unless it declares `"close":true`; send a new
-`{"rows":[…]}` line after mutation to refresh in place.
+`{"rows":[…]}` line after mutation to refresh in place. Bind a delete, remove, or kill action to
+`ctrl-k` with `"confirm":true`, matching the built-in pickers.
 
 For related lists, declare `"tabs":[{"id":"branches","label":"Branches"},{"id":"tags"}]` and send
 each tab's rows as `{"tab":"tags","rows":[…]}`. Opening `rows` fill the tab named by `"tab"`, or the

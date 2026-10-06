@@ -287,7 +287,7 @@ def picker_request(mode: str, rows: list[dict[str, object]]) -> dict[str, object
             },
             {
                 "id": "delete",
-                "key": "ctrl-d",
+                "key": "ctrl-k",
                 "label": "delete",
                 "confirm": True,
             },
@@ -304,7 +304,7 @@ def picker_request(mode: str, rows: list[dict[str, object]]) -> dict[str, object
             },
             {
                 "id": "remove",
-                "key": "ctrl-d",
+                "key": "ctrl-k",
                 "label": "remove",
                 "confirm": True,
             },

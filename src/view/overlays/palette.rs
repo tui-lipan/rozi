@@ -72,6 +72,9 @@ pub(crate) struct ConfirmCue {
     pub strike: bool,
 }
 
+/// The key every picker uses for its destructive row action. See [`OverlayAction::destructive`].
+const DESTRUCTIVE_KEY: &str = "ctrl-k";
+
 #[derive(Clone)]
 pub(crate) struct OverlayAction {
     pub key: KeyBinding,
@@ -111,6 +114,34 @@ impl OverlayAction {
             hint: true,
             confirm: None,
         })
+    }
+
+    /// A kill, remove, delete, or forget action on the selected row. Every picker binds these to
+    /// [`DESTRUCTIVE_KEY`]: the first press arms the action and shows `again to <label>`, the second
+    /// runs it.
+    pub(crate) fn destructive(
+        ctx: &Context<AppRoot>,
+        label: impl Into<String>,
+        msg: Msg,
+        enabled: bool,
+        armed: bool,
+    ) -> Self {
+        let label = label.into();
+        let cue = format!("again to {label}");
+        Self::new(DESTRUCTIVE_KEY, label, msg, enabled).confirm_if(
+            armed,
+            cue,
+            ctx.state.theme.status.error,
+            true,
+        )
+    }
+
+    /// Replace the armed cue when the default `again to <label>` hides a consequence.
+    pub(crate) fn with_confirm_cue(mut self, cue: impl Into<String>) -> Self {
+        if let Some(confirm) = self.confirm.as_mut() {
+            confirm.cue = cue.into();
+        }
+        self
     }
 
     /// Show the action in the footer but let SearchPalette activate the visible row.

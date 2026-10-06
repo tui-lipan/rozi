@@ -35,7 +35,7 @@ with it.
 | `Enter` | Open the checkout's session, or create one |
 | `Ctrl+N` | Create a checkout from a branch and base revision, then open it in a new session |
 | `Ctrl+R` | Refresh the list |
-| `Ctrl+K` | Remove a linked checkout; press it again to confirm |
+| `Ctrl+K` twice | Remove a linked checkout |
 | `Ctrl+U` | Unlock a locked checkout |
 | `Esc` | Close the picker |
 

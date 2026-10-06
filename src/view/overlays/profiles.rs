@@ -87,20 +87,13 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::ProfilePickerNew,
             true,
         ));
-        actions.push(
-            OverlayAction::new(
-                "ctrl-d",
-                "delete",
-                Msg::ProfilePickerDelete,
-                selected.is_some(),
-            )
-            .confirm_if(
-                picker.pending_delete == Some(picker.selected),
-                "again to confirm",
-                theme.status.error,
-                true,
-            ),
-        );
+        actions.push(OverlayAction::destructive(
+            ctx,
+            "delete",
+            Msg::ProfilePickerDelete,
+            selected.is_some(),
+            picker.pending_delete == Some(picker.selected),
+        ));
     }
     let armed_row = picker
         .pending_delete

@@ -749,7 +749,7 @@ cancellation, or a closing action — is never dropped and always arrives last.
 | `label` | string | required | Footer label. |
 | `prompt` | string or object | none | Opens a text prompt over the picker and returns `input`. A string is the title. |
 | `close` | bool | `false` | Closes the picker after the action. |
-| `confirm` | bool | `false` | Requires a second press on the same row. |
+| `confirm` | bool | `false` | Requires a second press on the same row. Built-in pickers bind destructive actions to `ctrl-k` with `confirm`; use the same key for delete, remove, or kill actions. |
 
 rozi omits an action with an empty `id` or an invalid key chord.
 

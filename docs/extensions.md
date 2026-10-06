@@ -365,6 +365,10 @@ see [Show a command only when it applies](#show-a-command-only-when-it-applies).
 - `{extension_dir}` is replaced inside `exec` arguments. `$VAR`, `${VAR}`, and `%VAR%` are not
   expanded.
 - An `exec` or `shell` command gets no input, and its output is discarded.
+- Started from the command palette, an `exec` or `shell` command keeps the palette open until it
+  exits or opens a [picker](control.md#pickers), so a picker replaces the palette without the panes
+  flashing in between. If the command is still running after a moment, the palette shows that it
+  is running. `Esc` closes the palette; the command keeps running.
 - If a command exits with a non-zero status, `rozi` shows an error notification. A command that has
   already reported its failure with `rozi notify` should exit `0` to avoid a second, vaguer
   message.

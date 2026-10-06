@@ -40,6 +40,10 @@ pub enum Msg {
     CommandPaletteHandoffFinished {
         epoch: u64,
     },
+    /// The handed-off command is still running a moment after it started.
+    CommandPaletteHandoffRunning {
+        epoch: u64,
+    },
     CommandPaletteQueryChanged(String),
     CloseHelp,
     HelpQueryChanged(InputEvent),

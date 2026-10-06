@@ -28,7 +28,7 @@ use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 const SCENARIOS: [(&str, &str, fn()); 8] = [
     (
         "profile-picker",
-        "attached, running, inactive, and default profiles",
+        "attached, background, running, inactive, and default profiles",
         profile_picker,
     ),
     (
@@ -129,6 +129,7 @@ fn profile_picker() {
         [
             "dev",
             "review",
+            "background",
             "scratch",
             "very-long-profile-name-for-another-project",
         ]
@@ -147,6 +148,11 @@ fn profile_picker() {
             has_layout: true,
         },
     );
+    let mut background = rozi::state::Attachment::new();
+    background.session_name = Some("background".into());
+    background.session_attached = true;
+    background.connection = rozi::state::ConnectionState::Connected;
+    state.background.insert(1, background);
     state.profile_picker = Some(picker);
     state.show_profile_picker = true;
     if std::env::var_os("TUI_LIPAN_SNAPSHOT_DIAGNOSTIC").is_some() {

@@ -43,8 +43,9 @@ origin.
 Press `Ctrl+A`, then `o` to open **Profiles**.
 
 The left marker shows the same-name session's status: `●` for the attached session,
-`○` for another running session, and `·` when it is not running. The right side labels
-attached and running sessions and marks the default profile.
+`◐` for a connected attachment retained in the background, `○` for a running session
+without our attachment, and `·` when it is not running. The right side labels attached,
+background, and running sessions and marks the default profile.
 
 | Key | Action |
 | --- | --- |

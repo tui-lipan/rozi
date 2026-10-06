@@ -5,6 +5,12 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
     let theme = &ctx.state.theme;
+    let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
+    let statuses: Vec<_> = picker
+        .entries
+        .iter()
+        .map(|entry| profile_session_status(ctx, picker, &entry.name))
+        .collect();
     let selected = selected_profile(picker);
     let can_replace = crate::ops::profile::can_replace_session(&ctx.state);
     let mut actions = Vec::new();
@@ -111,6 +117,23 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         64,
     )
     .entries(profile_picker_entries(ctx, picker))
+    .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
+        use crate::view::session_status::{
+            picker_filled_gutter, picker_marker_gutter, picker_ring_gutter,
+        };
+        Some(match statuses.get(item.value)? {
+            ProfileSessionStatus::Attached => picker_filled_gutter(status_styles.current),
+            ProfileSessionStatus::Background => {
+                return crate::view::session_status::session_status_gutter(
+                    crate::view::session_status::SessionConnectionStatus::Background,
+                    status_styles,
+                    true,
+                );
+            }
+            ProfileSessionStatus::Running => picker_ring_gutter(status_styles.background),
+            ProfileSessionStatus::Inactive => picker_marker_gutter("·", status_styles.label),
+        })
+    }))
     .actions(actions)
     .armed_row(armed_row)
     .placeholder("Search profiles…")
@@ -153,19 +176,9 @@ fn profile_picker_entries(
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             let mut item = SearchEntry::item(entry.name.clone(), index);
-            let status = if ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
-            {
-                Some("• attached")
-            } else if matches!(
-                picker.running.get(&entry.name),
-                Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
-            ) {
-                Some("• running")
-            } else {
-                None
-            };
+            let status = profile_session_status(ctx, picker, &entry.name).label();
             let description = match (default_name == Some(entry.name.as_str()), status) {
-                (true, Some(status)) => format!("default  {status}"),
+                (true, Some(status)) => format!("default · {status}"),
                 (true, None) => "default".to_string(),
                 (false, Some(status)) => status.to_string(),
                 (false, None) => String::new(),
@@ -174,6 +187,49 @@ fn profile_picker_entries(
             item
         })
         .collect()
+}
+
+#[derive(Clone, Copy)]
+enum ProfileSessionStatus {
+    Attached,
+    Background,
+    Running,
+    Inactive,
+}
+
+impl ProfileSessionStatus {
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Attached => Some("attached"),
+            Self::Background => Some("background"),
+            Self::Running => Some("running"),
+            Self::Inactive => None,
+        }
+    }
+}
+
+fn profile_session_status(
+    ctx: &Context<AppRoot>,
+    picker: &ProfilePickerState,
+    name: &str,
+) -> ProfileSessionStatus {
+    if ctx.state.current().session_name.as_deref() == Some(name) {
+        ProfileSessionStatus::Attached
+    } else if ctx
+        .state
+        .parked_attachment_id(name, None)
+        .and_then(|id| ctx.state.background.get(&id))
+        .is_some_and(|attachment| attachment.connection == crate::state::ConnectionState::Connected)
+    {
+        ProfileSessionStatus::Background
+    } else if matches!(
+        picker.running.get(name),
+        Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
+    ) {
+        ProfileSessionStatus::Running
+    } else {
+        ProfileSessionStatus::Inactive
+    }
 }
 
 fn profile_picker_empty_text(picker: &ProfilePickerState) -> String {

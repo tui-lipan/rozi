@@ -3,8 +3,10 @@
 //! A manifest can only say whether a command starts hidden; whether it is worth offering often
 //! depends on things only the extension can see, such as whether something it installs is already
 //! installed. `command-visibility` lets the extension say so. The choice belongs to the extension
-//! generation that made it, so a reload that changes the extension falls back to its manifest
-//! instead of carrying an old process's opinion forward.
+//! generation that made it, which lives exactly as long as the extension's processes: a reload that
+//! restarts them falls back to the manifest instead of carrying an old process's opinion forward,
+//! and one that leaves them running keeps the choice, since the service that made it is still
+//! running and will not decide again.
 //!
 //! Only the palette honors it. A key binding and `run-action` still reach a hidden command, like
 //! [`crate::commands::palette_visible`]: the palette lists what is worth offering, while a bound key
@@ -32,6 +34,16 @@ pub(crate) fn palette_lists(state: &State, command: &NamedCommand) -> bool {
         }
         _ => !command.hidden,
     }
+}
+
+/// Drop the choices of retired generations, which can never apply again.
+pub(crate) fn forget_retired(state: &mut State) {
+    let generations = &state.extension_generations;
+    state.command_visibility.retain(|_, choice| {
+        generations
+            .values()
+            .any(|generation| generation == &choice.generation)
+    });
 }
 
 /// Record an extension's choice to show or hide one of its own commands.
@@ -69,13 +81,7 @@ pub(crate) fn set(
             extension.id
         ));
     }
-    // Choices from retired generations can never apply again.
-    let generations = &state.extension_generations;
-    state.command_visibility.retain(|_, choice| {
-        generations
-            .values()
-            .any(|generation| generation == &choice.generation)
-    });
+    forget_retired(state);
     state.command_visibility.insert(
         public,
         Choice {
@@ -215,13 +221,17 @@ mod tests {
     }
 
     #[test]
-    fn a_reloaded_extension_starts_again_from_its_manifest() {
+    fn a_new_generation_starts_again_from_the_manifest_and_forgets_the_old_choice() {
+        // The real reload path, which decides when a generation changes, is covered by
+        // `extensions_smoke::command_visibility_follows_the_extension_generation_across_real_reloads`.
         let mut state = state();
         assert!(set(&mut state, Some(&tools("gen-1")), "install", true).ok);
         state
             .extension_generations
             .insert("tools".to_string(), "gen-2".to_string());
         assert!(!listed(&state, "tools.install"));
+        forget_retired(&mut state);
+        assert!(state.command_visibility.is_empty());
     }
 
     #[test]

@@ -552,7 +552,8 @@ refused at the handshake instead.
 - `notify.level` is `"info"` or `"error"`.
 - `command-visibility` needs the `extension` provenance the CLI attaches inside an extension
   process. `command` is the manifest `id` or the public `<extension>.<id>` of one of that
-  extension's own commands. The choice lasts until the extension is reloaded. A binary advertises
+  extension's own commands. The choice lasts as long as the extension generation that made it, so
+  a reload that restarts the extension's processes falls back to the manifest. A binary advertises
   it with the `command-visibility` capability.
 
 ### Popup

@@ -394,8 +394,11 @@ hidden = true
 - An extension shows or hides only its own commands, by manifest `id` or public
   `<extension-id>.<command-id>`, and only from its own commands and services. Any other caller is
   refused.
-- The choice lasts until the extension is reloaded or updated. Then the command starts from its
-  manifest's `hidden` again, and the extension's service decides again when it restarts.
+- The choice lasts as long as the extension's processes. A reload or update that restarts them,
+  because a command, service, or setting changed or the extension was disabled and enabled again,
+  starts the command from its manifest's `hidden` again, and the restarted service decides again. A
+  reload that leaves them running, such as one that changes only a label or the version, keeps the
+  choice: the service that made it is still running.
 - An older `rozi` rejects an unknown manifest field such as `hidden`. Set `min_rozi` to a release
   with the `command-visibility` capability (see
   [Check the installed API](control.md#check-the-installed-api)).

@@ -751,10 +751,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             verb @ ("show-command" | "hide-command") => {
-                let command = match (iter.next(), iter.next()) {
-                    (Some(command), None) if !command.starts_with('-') => command,
+                // The one argument is taken as given, whatever it starts with: a manifest command
+                // ID may begin with `-`, and these commands have no flags it could be mistaken for.
+                // A leading `--` is accepted too, for scripts that always write one.
+                let mut rest: Vec<String> = iter.by_ref().collect();
+                if rest.first().is_some_and(|arg| arg == "--") {
+                    rest.remove(0);
+                }
+                let mut rest = rest.into_iter();
+                let command = match (rest.next(), rest.next()) {
+                    (Some(command), None) => command,
                     (None, _) => return Err(format!("{verb} requires a command id")),
-                    (Some(arg), None) => return Err(format!("unexpected {verb} flag `{arg}`")),
                     (Some(_), Some(arg)) => {
                         return Err(format!("unexpected argument `{arg}` after {verb}"));
                     }
@@ -3137,10 +3144,22 @@ mod tests {
         );
         assert!(visibility(&["show-command"]).is_err(), "an id is required");
         assert!(
+            visibility(&["show-command", "--"]).is_err(),
+            "an id is required"
+        );
+        assert!(
             visibility(&["hide-command", "a", "b"]).is_err(),
             "only one id"
         );
-        assert!(visibility(&["hide-command", "--all"]).is_err(), "no flags");
+        // `-install` is a valid manifest command ID, so it is never read as a flag.
+        assert_eq!(
+            visibility(&["show-command", "-install"]),
+            Ok(("-install".to_string(), true))
+        );
+        assert_eq!(
+            visibility(&["hide-command", "--", "-install"]),
+            Ok(("-install".to_string(), false))
+        );
     }
 
     #[test]

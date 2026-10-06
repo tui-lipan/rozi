@@ -1664,7 +1664,7 @@
           "type": "object"
         },
         {
-          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts until the extension is reloaded, when the manifest's `hidden` applies again. A hidden\ncommand still runs from its key binding and `run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
+          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts as long as the extension generation that made it: a reload that restarts the\nextension's processes brings back the manifest's `hidden`, one that leaves them running\nkeeps it. A hidden\ncommand still runs from its key binding and `run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
           "properties": {
             "cmd": {
               "const": "command-visibility",
@@ -3025,7 +3025,7 @@
           "type": "object"
         },
         {
-          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts until the extension is reloaded, when the manifest's `hidden` applies again. A hidden\ncommand still runs from its key binding and `run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
+          "description": "Show or hide one of the calling extension's own commands in the command palette.\n\nOnly an extension process may send it, for a command its own manifest declares. The choice\nlasts as long as the extension generation that made it: a reload that restarts the\nextension's processes brings back the manifest's `hidden`, one that leaves them running\nkeeps it. A hidden\ncommand still runs from its key binding and `run-action`: the palette lists what is worth\noffering now, and the extension knows that better than the manifest can.",
           "properties": {
             "cmd": {
               "const": "command-visibility",

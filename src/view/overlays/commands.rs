@@ -1,5 +1,14 @@
 use super::*;
 
+/// Whether `registry_id` names a `[[commands]]` entry its extension has hidden from the palette.
+fn hidden_named_command(ctx: &Context<AppRoot>, registry_id: &str) -> bool {
+    registry_id.strip_prefix("command.").is_some_and(|id| {
+        ctx.state.config.commands.iter().any(|command| {
+            command.id == id && !crate::ops::command_visibility::palette_lists(&ctx.state, command)
+        })
+    })
+}
+
 pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     // Commands (labels, categories, live keybinding hints, and the handler to run) come
     // straight from the registry `commands/` builds. Only palette-eligible ids appear here
@@ -14,6 +23,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
         if !crate::commands::is_palette_eligible(entry.id.as_str())
             || Action::from_id(entry.id.as_str())
                 .is_some_and(|action| !crate::commands::palette_visible(action, &ctx.state))
+            || hidden_named_command(ctx, entry.id.as_str())
         {
             continue;
         }

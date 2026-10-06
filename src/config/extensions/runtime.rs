@@ -189,6 +189,7 @@ mod tests {
             },
             category: "Tools".to_string(),
             env: env.clone(),
+            hidden: false,
         };
         config.commands.push(command.clone());
         config.active_extensions.insert(id.clone());

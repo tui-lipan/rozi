@@ -347,6 +347,9 @@ pub struct State {
     pub publish_streams: std::collections::HashMap<PaneId, PublishStreamState>,
     /// Long-lived event subscriptions owned by extension generations.
     pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
+    /// Palette visibility extensions chose for their own commands, keyed by public command ID.
+    /// See [`crate::ops::command_visibility`].
+    pub command_visibility: HashMap<String, crate::ops::command_visibility::Choice>,
     pub services: ServicesState,
     /// The client's connection to the current session (client handle, identity, shared-layout
     /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]
@@ -649,6 +652,7 @@ impl State {
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
             extension_subscriptions: HashMap::new(),
+            command_visibility: HashMap::new(),
             services: ServicesState::default(),
             attachment,
             background: HashMap::new(),

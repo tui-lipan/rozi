@@ -750,6 +750,26 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output: None,
                 }));
             }
+            verb @ ("show-command" | "hide-command") => {
+                let command = match (iter.next(), iter.next()) {
+                    (Some(command), None) if !command.starts_with('-') => command,
+                    (None, _) => return Err(format!("{verb} requires a command id")),
+                    (Some(arg), None) => return Err(format!("unexpected {verb} flag `{arg}`")),
+                    (Some(_), Some(arg)) => {
+                        return Err(format!("unexpected argument `{arg}` after {verb}"));
+                    }
+                };
+                let command = control::ControlCommand::CommandVisibility {
+                    command,
+                    visible: verb == "show-command",
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format: None,
+                    output: None,
+                }));
+            }
             "status" => {
                 // A script driving a session it is not running inside has no `ROZI_PANE` and no
                 // focused pane to fall back to, so `--target` is the only way it can name a pane.
@@ -3093,6 +3113,36 @@ mod tests {
 
     /// `notify` is how a script reports an off-screen result, so its parsing has to survive
     /// messages that look like flags and reject a level it cannot honour.
+    #[test]
+    fn show_and_hide_command_name_one_command() {
+        let visibility = |args: &[&str]| match parse_cli_args(
+            args.iter().map(|arg| arg.to_string()).collect(),
+        ) {
+            Ok(ParsedCli::Control(control)) => match control.request.command {
+                control::ControlCommand::CommandVisibility { command, visible } => {
+                    Ok((command, visible))
+                }
+                other => panic!("wrong command: {other:?}"),
+            },
+            Ok(other) => panic!("wrong parse: {other:?}"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(
+            visibility(&["show-command", "install-hooks"]),
+            Ok(("install-hooks".to_string(), true))
+        );
+        assert_eq!(
+            visibility(&["hide-command", "tools.install"]),
+            Ok(("tools.install".to_string(), false))
+        );
+        assert!(visibility(&["show-command"]).is_err(), "an id is required");
+        assert!(
+            visibility(&["hide-command", "a", "b"]).is_err(),
+            "only one id"
+        );
+        assert!(visibility(&["hide-command", "--all"]).is_err(), "no flags");
+    }
+
     #[test]
     fn notify_parses_message_title_and_level() {
         let parsed = parse_cli_args(vec![

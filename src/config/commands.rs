@@ -74,6 +74,7 @@ pub(crate) fn build_named_commands(
             action,
             category: "Custom".to_string(),
             env: Vec::new(),
+            hidden: false,
         });
     }
 

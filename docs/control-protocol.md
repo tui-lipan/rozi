@@ -542,6 +542,7 @@ refused at the handshake instead.
 {"cmd":"set-status","target":3,"status":null}
 {"cmd":"notify","message":"deploy finished"}
 {"cmd":"notify","message":"tests failed","title":"Build","level":"error"}
+{"cmd":"command-visibility","command":"install-hooks","visible":false}
 ```
 
 - Workspace indices are `1..=9`.
@@ -549,6 +550,10 @@ refused at the handshake instead.
   sanitized for display, trimmed, and limited to 64 and 256 characters. An empty or null status
   clears the report.
 - `notify.level` is `"info"` or `"error"`.
+- `command-visibility` needs the `extension` provenance the CLI attaches inside an extension
+  process. `command` is the manifest `id` or the public `<extension>.<id>` of one of that
+  extension's own commands. The choice lasts until the extension is reloaded. A binary advertises
+  it with the `command-visibility` capability.
 
 ### Popup
 

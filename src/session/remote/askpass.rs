@@ -486,6 +486,11 @@ impl Helper {
     fn request(&self) -> io::Result<AskpassReply> {
         let mut conn = self.endpoint.connect()?;
         conn.set_write_timeout(Some(Duration::from_secs(5)))?;
+        // No read timeout: the answer arrives when the user finishes typing, and the broker's own
+        // `ANSWER_TIMEOUT` is what bounds the wait. Set before the request goes out, not after: a
+        // broker can answer and close at once, and macOS refuses a socket option on a socket whose
+        // peer has closed (`EINVAL`), which would fail the helper with the answer already waiting.
+        conn.set_read_timeout(None)?;
         write_frame(
             &mut conn,
             &AskpassRequest {
@@ -496,9 +501,6 @@ impl Helper {
                 prompt: self.prompt.clone(),
             },
         )?;
-        // No read timeout: the answer arrives when the user finishes typing, and the broker's own
-        // `ANSWER_TIMEOUT` is what bounds the wait.
-        conn.set_read_timeout(None)?;
         read_frame_with_limit(&mut conn, MAX_FRAME)
     }
 }

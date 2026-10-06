@@ -364,11 +364,12 @@ pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Updat
     Update::full()
 }
 
-/// Tell the other clients where a dragged pane is now - a lifted tile or a moving floating pane.
+/// Tell the other clients where a lifted tiled pane is now.
 ///
 /// Undebounced, unlike [`schedule_layout_commit`]: the intermediate positions *are* the message
 /// here, and one pointer event carries one id and four floats. Sent only for a shared workspace
-/// drag - the scratchpad is client-local.
+/// drag - the scratchpad is client-local, and a floating pane's rectangle already replicates
+/// through the layout document.
 pub(crate) fn publish_drag(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, rect: FloatRect) {
     if ctx.state.scratch_visible || !ctx.state.current().session_attached {
         return;
@@ -416,12 +417,30 @@ pub(crate) fn finish_published_drag(ctx: &mut Context<AppRoot>) {
 
 pub(crate) const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 
+/// Whether the pointer is editing the shared layout in place: a split drag, a mouse resize, or a
+/// floating pane move. Each step is a layout revision that followers should draw directly.
+///
+/// A lifted tiled pane is not one of these. It is mirrored through [`publish_drag`], and the tiles
+/// it vacates and lands among reflow once each, which followers animate just as the controller does.
+fn layout_gesture_active(state: &crate::state::State) -> bool {
+    state.split_drag.is_some()
+        || state.resizing_pane.is_some()
+        || state
+            .moving_pane
+            .is_some_and(|session| session.was_floating)
+}
+
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
     if ctx.state.scratch_visible {
         return;
     }
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
+    }
+    if layout_gesture_active(&ctx.state)
+        && let Some(shared) = ctx.state.current_mut().shared.as_mut()
+    {
+        shared.layout_gesture_pending = true;
     }
     let epoch = ctx.state.runtime_epoch;
     let Some(shared) = ctx.state.current().shared.as_ref() else {
@@ -467,14 +486,16 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
         bounds.h.round().max(1.0) as u16,
     );
     let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
+    let gesture_active = layout_gesture_active(&ctx.state);
     let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
         return;
     };
+    let live = std::mem::take(&mut shared.layout_gesture_pending) || gesture_active;
     if shared.last_committed_layout.as_ref() == Some(&layout) {
         return;
     }
     let base_rev = shared.assumed_rev;
-    client.commit_layout(base_rev, layout.clone());
+    client.commit_layout(base_rev, layout.clone(), live);
     // Optimistically advance so a rapid burst of edits pipelines onto sequential base revisions;
     // the server's echo confirms `layout_rev`, and a reject resets `assumed_rev`.
     shared.assumed_rev = shared.assumed_rev.saturating_add(1);

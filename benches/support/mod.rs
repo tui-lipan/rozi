@@ -200,6 +200,7 @@ pub fn layout_committed_message() -> ServerMessage {
         rev: 4_097,
         author: 7,
         layout: large_layout(),
+        live: false,
     }
 }
 

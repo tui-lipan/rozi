@@ -34,6 +34,7 @@ pub(crate) fn layout_committed(
     rev: u64,
     author: ClientId,
     layout: SharedLayout,
+    live: bool,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch)
@@ -62,7 +63,13 @@ pub(crate) fn layout_committed(
         }
         Update::none()
     } else {
-        crate::layout::shared::apply_shared_layout(ctx, &layout, rev)
+        let update = crate::layout::shared::apply_shared_layout(ctx, &layout, rev);
+        // A step of the controller's gesture is drawn where it lands, as the controller draws it.
+        // Only the default transition yields: a revision that closes panes keeps its exit motion.
+        if live && ctx.state.animation == crate::layout::anim::GeometryAnimation::TileFloat {
+            ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
+        }
+        update
     };
     emit_layout_changed(
         ctx,

@@ -646,7 +646,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             rev,
             author,
             layout,
-        } => session::layout_committed(ctx, epoch, rev, author, layout),
+            live,
+        } => session::layout_committed(ctx, epoch, rev, author, layout, live),
         Msg::SessionLayoutRejected {
             epoch,
             current_rev,

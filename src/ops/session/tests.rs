@@ -941,7 +941,8 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                 state.overlay_return = Some(crate::state::OverlayOrigin::SessionPicker {
                     query: String::new(),
                     selected_session: None,
-                    tab: None,
+                    tab: crate::state::SessionPickerTab::Host(None),
+                    browse_selected: None,
                 });
                 state.rename_session =
                     Some(SessionRenameState::new("dev", NamingMode::CreateSession));
@@ -1875,7 +1876,7 @@ fn disconnecting_the_launcher_picker_host_moves_to_local_before_starting_a_shell
 
             assert!(backend.state().launcher_scope.is_none());
             let picker = backend.state().session_picker.as_ref().unwrap();
-            assert!(picker.tab.is_none());
+            assert_eq!(picker.tab, crate::state::SessionPickerTab::Host(None));
             assert_eq!(picker.entries[picker.selected].name, "local-dev");
 
             backend

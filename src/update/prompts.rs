@@ -205,7 +205,26 @@ pub(super) fn sessions_discovered(
 
 pub(super) fn session_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
+        let was_empty = picker.input.text().trim().is_empty();
+        let is_empty = query.trim().is_empty();
+        if was_empty && !is_empty {
+            picker.browse_selected = picker
+                .entries
+                .get(picker.selected)
+                .map(|entry| (entry.name.clone(), entry.remote_target.clone()));
+        }
         picker.input.set_text(query);
+        if is_empty {
+            if let Some((name, target)) = picker.browse_selected.take()
+                && let Some(index) = picker
+                    .entries
+                    .iter()
+                    .position(|entry| entry.name == name && entry.remote_target == target)
+            {
+                picker.selected = index;
+            }
+            picker.keep_selection_in_tab();
+        }
     }
     crate::ops::session::clear_pending_session_arms(ctx);
     Update::full()

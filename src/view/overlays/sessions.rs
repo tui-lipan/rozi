@@ -390,7 +390,7 @@ fn push_session_activation(
     if picker_list_is_empty(picker) {
         actions.push(OverlayAction::new(
             "enter",
-            "ephemeral shell",
+            session_creation_label(ctx, picker, "ephemeral shell"),
             Msg::SessionPickerEphemeral,
             true,
         ));
@@ -433,24 +433,40 @@ fn push_session_activation(
     }
 }
 
+fn session_creation_label(
+    ctx: &Context<AppRoot>,
+    picker: &SessionPickerState,
+    action: &str,
+) -> String {
+    if picker.effective_tab() != crate::state::SessionPickerTab::All {
+        return action.to_string();
+    }
+    let host = crate::ops::session::session_picker_creation_target(&ctx.state)
+        .map_or_else(|| "Local".to_string(), |target| target.display_label());
+    format!("{action} on {host}")
+}
+
 fn push_session_creation_actions(
     ctx: &Context<AppRoot>,
     picker: &SessionPickerState,
     actions: &mut Vec<OverlayAction>,
 ) {
-    // Both keys act on the active tab's host.
+    // Creation retains the browsing host during global search.
     actions.push(OverlayAction::new(
         "ctrl-n",
-        "new",
+        session_creation_label(ctx, picker, "new"),
         Msg::SessionPickerCreateFromQuery,
         true,
     ));
     let show_ephemeral = !picker_list_is_empty(picker)
-        && crate::ops::session::held_ephemeral_session_in(&ctx.state, picker.tab.as_ref())
-            .is_none();
+        && crate::ops::session::held_ephemeral_session_in(
+            &ctx.state,
+            crate::ops::session::session_picker_creation_target(&ctx.state).as_ref(),
+        )
+        .is_none();
     actions.push(OverlayAction::new(
         "ctrl-t",
-        "ephemeral shell",
+        session_creation_label(ctx, picker, "ephemeral shell"),
         Msg::SessionPickerEphemeral,
         show_ephemeral,
     ));
@@ -513,8 +529,8 @@ fn push_session_management_actions(
         ));
     }
     if picker
-        .tab
-        .as_ref()
+        .effective_tab()
+        .remote_target()
         .is_some_and(|target| crate::ops::session::host_can_disconnect(&ctx.state, target))
     {
         actions.push(OverlayAction::new(
@@ -551,9 +567,15 @@ fn matches_session_query(
     query_lower.is_empty()
         || entry.name.to_ascii_lowercase().contains(query_lower)
         || entry
-            .host
-            .as_deref()
-            .is_some_and(|host| host.to_ascii_lowercase().contains(query_lower))
+            .remote_target
+            .as_ref()
+            .map(|target| target.display_label())
+            .or_else(|| entry.host.clone())
+            .is_some_and(|host| {
+                format!("{}@{host}", entry.name)
+                    .to_ascii_lowercase()
+                    .contains(query_lower)
+            })
 }
 
 /// Whether the active tab is showing no session at all — nothing discovered, or nothing left by the
@@ -600,7 +622,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         .entries
         .iter()
         .take(picker.selected)
-        .filter(|entry| picker.in_tab(entry))
+        .filter(|entry| picker.in_tab(entry) && matches_session_query(entry, &query))
         .count();
     for (index, entry) in picker
         .entries
@@ -611,13 +633,21 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
         // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
-        let label = if entry.ephemeral {
+        let name = if entry.ephemeral {
             "ephemeral"
         } else {
             entry.name.as_str()
         };
-        // The tab already names the host, so the row shows the bare session name. The raw name
-        // and `name@host` stay matchable as hidden aliases, so a query for the host keeps its rows.
+        let label = if picker.effective_tab() == crate::state::SessionPickerTab::All {
+            entry.remote_target.as_ref().map_or_else(
+                || name.to_string(),
+                |target| format!("{name}@{}", target.display_label()),
+            )
+        } else {
+            name.to_string()
+        };
+        // Host pages use bare names; All identifies remote destinations in the visible label.
+        // The raw name and `name@host` remain searchable on every page.
         let mut aliases = Vec::new();
         if entry.ephemeral {
             aliases.push(entry.name.clone());
@@ -700,20 +730,19 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
     }
-    // One strip per host only once there is a second place to be; a client that has never touched
-    // a remote host sees the plain list it always did.
+    // All remains available beside Local; a nonempty query temporarily highlights All.
     if tabs.len() > 1 {
-        let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
+        let active = tabs
+            .iter()
+            .position(|tab| *tab == picker.effective_tab())
+            .unwrap_or(0);
         let labels = tabs
             .iter()
-            .map(|tab| match tab {
-                Some(target) => target.display_label(),
-                None => "Local".to_string(),
-            })
+            .map(crate::state::SessionPickerTab::label)
             .collect();
         overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab));
     }
-    if let Some(target) = picker.tab.as_ref() {
+    if let Some(target) = picker.effective_tab().remote_target() {
         overlay = overlay.header_right(remote_tab_status(ctx, target));
     }
     overlay.render(ctx)

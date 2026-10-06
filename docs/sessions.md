@@ -63,14 +63,21 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">
 </CaptureGallery>
 
-Once a remote host is involved, Sessions shows tabs below the search field, one per machine:
-**Local** first, then each host, by name. A host gets a tab while a session there is on screen or
-in the background, while the launcher is scoped to it, or while Sessions lists sessions on it.
-Sessions opens on the tab of the
-session you are in, or in the launcher on the tab of the host it is scoped to.
+Sessions shows **Local**, a tab for each remote host, then **All** below the search field. Remote
+hosts are sorted by name. A host gets a tab while a session there is on screen or in the background,
+while the launcher is scoped to it, or while Sessions lists sessions on it. Sessions opens on the
+host of the session you are in, or the host the launcher is scoped to.
 
-The tab decides where every key acts. Each tab lists only its own host's sessions, and `Ctrl+N`,
-`Ctrl+T`, and `Enter` on an empty tab create sessions on that host.
+**All** lists sessions across hosts and labels remote rows `name@host`. A host tab lists only that
+host's sessions with bare names. Typing searches all known hosts and highlights **All**, like
+Settings searches all categories. Clear the query to return to the previous browsing tab and
+highlight. Choosing a tab clears the query and browses that host. Search uses known sessions;
+it does not connect to additional hosts.
+
+Creation stays on the browsing host while searching. On **All**, it uses the foreground session's
+host, or the launcher's host when no session is attached. The footer names the destination with
+**new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
+that destination. Row actions always apply to the selected session, including remote search results.
 
 Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
 highlighted session you were browsing. If that session is gone, Sessions highlights the first row
@@ -80,14 +87,14 @@ Sessions and the launcher to **Local**.
 | Key | Action |
 | --- | --- |
 | `Enter` | Connect, switch to a background session, or restore a snapshot |
-| Type a name, then `Ctrl+N` | Create and switch to a named session on this tab's host |
+| Type a name, then `Ctrl+N` | Create and switch to a named session at the footer's destination |
 | `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a `last seen` entry |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |
 | `Ctrl+X` | Disconnect this tab's remote host |
 | `Ctrl+R` | Open [Remote hosts](remote.md#manage-remote-hosts) |
-| `Ctrl+T` | Open or switch to this client's temporary shell on this tab's host |
-| `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous host's tab |
+| `Ctrl+T` | Open or switch to this client's temporary shell at the footer's destination |
+| `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous tab and clear the query |
 | `Esc` | Return to the [sessionless launcher](#the-sessionless-launcher) |
 
 A row can show that a session is attached in the background, shared with other clients,
@@ -124,7 +131,7 @@ Each picker names the scope it acts in, and its keys act only in that scope.
 
 | Surface | Scope | `Ctrl+N` | `Ctrl+T` |
 | --- | --- | --- | --- |
-| **Sessions** | The active tab's host | New named session on that host | Temporary shell on that host |
+| **Sessions** | The browsing host; on All, the foreground or launcher host | New named session on that host | Temporary shell on that host |
 | **Remote hosts** | Host management | Add a host | — |
 | **Sessions · host** | That one host | New named session on the host | Temporary session on the host |
 
@@ -157,13 +164,25 @@ then working, then done, then idle.
 
 ```text
 Agents
- !  Codex · workbox/backend                              Blocked
- ⠋  Claude #2: fix login · dev          Working · 4m · api (fix-login)
- ✓  Claude · api                                     Done · api (main)
+ api   dev   workbox/backend   All
+ !  Codex                                    Blocked · workbox/backend
+ ⠋  Claude #2: fix login      Working · 4m00s · dev · api (fix-login)
+ ✓  Claude                                  Done · api · api (main)
 ```
 
-Each row names the agent and where it runs: the session name alone for the session on screen, and
-`host/session` for anywhere else. Both parts are searchable, so typing a host name narrows the list
+The picker opens on **All**, showing agents across sessions. Session tabs come first and **All**
+comes last below the search field. Tabs select individual sessions; remote tabs include the
+hostname, such as **workbox/backend**. Switch tabs with `Tab` / `Shift+Tab`, `Left` / `Right`,
+or a click. Search stays in place and filters the selected session. A session tab omits the
+session and hostname from its rows. If its last agent disappears, the tab stays open with an
+empty list. With no sessions to list, the tab strip is hidden.
+
+Agent names and activity appear on the left; status, age, session, and project are grouped on the
+right. Status text uses the same color as its marker. The picker grows to fit its widest row,
+within 72–160 columns and the available terminal width. Filtering keeps its width steady.
+
+On **All**, each row names the agent and where it runs: the session name for local agents, and
+`host/session` for remote agents. Both parts are searchable, so typing a host name narrows the list
 to that machine. For the session on screen, a row also shows the project and branch the agent
 works in, and a program running several agents adds each one's title after its name.
 

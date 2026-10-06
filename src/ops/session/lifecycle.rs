@@ -11,7 +11,7 @@ use crate::ops::session::attach::{
 use crate::ops::session::control_lease::require_attached;
 use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
 use crate::session::discovery::DiscoveredSession;
-use crate::state::{NamingMode, SessionPickerState, SessionRenameState, State};
+use crate::state::{NamingMode, SessionPickerState, SessionPickerTab, SessionRenameState, State};
 
 /// Whether this picker row is the session currently in the foreground. Enter/switch/connect
 /// hide themselves here; activating it must stay silent rather than toasting "already attached".
@@ -107,15 +107,13 @@ pub(crate) fn default_session_picker_tab(
     }
 }
 
-/// The Sessions picker's tabs: **Local**, then every host in play — the open tab, the session on
-/// screen, the launcher's scope, parked sessions, and hosts with listed rows — by name, so the strip
+/// The Sessions picker's tabs: **Local**, remote hosts by name, then **All**. Hosts come from the
+/// open tab, foreground session, launcher scope, parked sessions, and listed rows, so the strip
 /// keeps its order while the user moves through it.
-pub(crate) fn session_picker_tabs(
-    state: &State,
-) -> Vec<Option<crate::session::remote::RemoteTarget>> {
+pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
     let picker = state.session_picker.as_ref();
     let candidates = picker
-        .and_then(|picker| picker.tab.as_ref())
+        .and_then(|picker| picker.tab.remote_target())
         .into_iter()
         .chain(
             (!state.is_launcher())
@@ -142,8 +140,13 @@ pub(crate) fn session_picker_tabs(
         }
     }
     hosts.sort_by_cached_key(crate::session::remote::RemoteTarget::display_label);
-    std::iter::once(None)
-        .chain(hosts.into_iter().map(Some))
+    std::iter::once(SessionPickerTab::Host(None))
+        .chain(
+            hosts
+                .into_iter()
+                .map(|host| SessionPickerTab::Host(Some(host))),
+        )
+        .chain(std::iter::once(SessionPickerTab::All))
         .collect()
 }
 
@@ -158,9 +161,13 @@ pub(crate) fn select_session_picker_tab(ctx: &mut Context<AppRoot>, index: usize
         return Update::none();
     };
     picker.tab = tab.clone();
+    picker.input.set_text(String::new());
+    picker.browse_selected = None;
     picker.keep_selection_in_tab();
-    if ctx.state.is_launcher() {
-        ctx.state.launcher_scope = tab;
+    if ctx.state.is_launcher()
+        && let SessionPickerTab::Host(target) = tab
+    {
+        ctx.state.launcher_scope = target;
     }
     request_session_picker_focus(ctx);
     Update::full()
@@ -223,16 +230,24 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // snapping back to the top; it also keeps our `selected` in step with the persistent
     // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
     // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
-    let (query, selected, tab) = ctx
+    let (query, selected, tab, browse_selected) = ctx
         .state
         .session_picker
         .as_ref()
-        .map(|p| (p.input.text().to_string(), p.selected, p.tab.clone()))
+        .map(|p| {
+            (
+                p.input.text().to_string(),
+                p.selected,
+                p.tab.clone(),
+                p.browse_selected.clone(),
+            )
+        })
         .unwrap_or_default();
     let rows = immediate_picker_rows(ctx);
     let mut picker = SessionPickerState::new(rows);
     picker.input.set_text(query);
     picker.tab = tab;
+    picker.browse_selected = browse_selected;
     picker.selected = selected.min(picker.entries.len().saturating_sub(1));
     picker.keep_selection_in_tab();
     ctx.state.session_picker = Some(picker);
@@ -296,6 +311,16 @@ pub(crate) fn activate_discovered_session(
     attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, autostart)
 }
 
+/// All keeps creation on the foreground/launcher host; a host page chooses its own destination.
+pub(crate) fn session_picker_creation_target(
+    state: &State,
+) -> Option<crate::session::remote::RemoteTarget> {
+    match state.session_picker.as_ref().map(|picker| &picker.tab) {
+        Some(SessionPickerTab::Host(target)) => target.clone(),
+        _ => default_session_picker_tab(state),
+    }
+}
+
 /// Go to this client's scratch session on the Sessions picker's active tab: its `Ctrl+T`, and its
 /// `Enter` when there is nothing on the list to activate.
 ///
@@ -303,15 +328,11 @@ pub(crate) fn activate_discovered_session(
 /// already is — because from the keyboard they are the same request. Already being on it is a
 /// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
 ///
-/// The tab decides the host, never the session behind the overlay: the tab strip is on screen and
-/// says where the shell lands before it lands.
+/// A browsing host fixes the creation destination even during global search. All uses the
+/// foreground or launcher host; the footer names that destination.
 pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
-    let scope = ctx
-        .state
-        .session_picker
-        .as_ref()
-        .and_then(|picker| picker.tab.clone());
+    let scope = session_picker_creation_target(&ctx.state);
     // Checked before the launcher case: the session on screen being this host's scratch session
     // settles this whether or not its client is live, and re-attaching what is already attached is
     // never right.
@@ -428,7 +449,7 @@ pub(crate) fn open_create_session(ctx: &mut Context<AppRoot>) -> Update {
     let seed = picker
         .map(|picker| picker.input.text().trim().to_string())
         .unwrap_or_default();
-    let tab = picker.and_then(|picker| picker.tab.clone());
+    let tab = picker.and_then(|_| session_picker_creation_target(&ctx.state));
     clear_pending_session_arms(ctx);
     let mut prompt = SessionRenameState::new_create_named(seed);
     // A remote tab creates the session on that tab's host.
@@ -873,7 +894,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .session_picker
         .as_ref()
-        .and_then(|picker| picker.tab.clone())
+        .and_then(|picker| picker.effective_tab().remote_target().cloned())
     else {
         return Update::none();
     };

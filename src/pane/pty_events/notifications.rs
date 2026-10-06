@@ -502,6 +502,58 @@ pub(crate) fn maybe_notify_pane_status(
     crate::platform::notifications::notify("rozi", &body);
 }
 
+/// What to say when rows a publisher is not showing finish a run, or `None` when none of `finished`
+/// is such a row.
+///
+/// Each row is named as the sidebar names it: by its own title, which says which conversation or
+/// task it is, or else by the agent and its place among the pane's rows. The pane's title cannot
+/// stand in for it: that belongs to whatever the pane shows, which is exactly not the row that
+/// finished.
+pub(crate) fn finished_rows_notice(
+    pane: &crate::state::Pane,
+    finished: &[String],
+) -> Option<String> {
+    let runtimes = pane.agent_runtimes();
+    let names: Vec<String> = pane
+        .terminal
+        .published_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !row.active && finished.contains(&row.id))
+        .map(|(index, row)| {
+            let title = row.title.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+            runtimes
+                .iter()
+                .find(|runtime| runtime.reference.slot.as_deref() == Some(row.id.as_str()))
+                .map_or_else(
+                    || format!("Row {}", index + 1),
+                    |runtime| format!("{} #{}", runtime.identity.label, index + 1),
+                )
+        })
+        .collect();
+    let id = pane.id;
+    match names.as_slice() {
+        [] => None,
+        [name] => Some(format!("{name} in pane {id} is done")),
+        names => Some(format!("{} in pane {id} are done", names.join(", "))),
+    }
+}
+
+/// Raise [`finished_rows_notice`]'s text, under the same settings as a pane finishing. The rows
+/// were not on screen, so attending the pane does not silence it.
+pub(crate) fn maybe_notify_rows_done(
+    config: &crate::config::Config,
+    is_controller: bool,
+    notice: &str,
+) {
+    if should_notify_pane_status(config, is_controller, false, false, true) {
+        crate::platform::notifications::notify("rozi", notice);
+    }
+}
+
 pub(crate) fn should_notify_pane_status(
     config: &crate::config::Config,
     is_controller: bool,

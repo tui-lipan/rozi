@@ -470,6 +470,12 @@ Desktop notifications go through the platform's notification service and are bes
 attached to. Because nothing on screen shows those panes, their alerts skip the checks for who
 controls the pane and whether you are looking at it.
 
+`pane_done` also covers [published Activity rows](control.md#published-activity) a pane is not
+showing, such as a background conversation behind a Claude Code client. Looking at the pane does
+not count as having seen such a row, and the notification names the row that finished, for example
+`fix login redirect in pane 23 is done`, rather than the pane, whose title is the conversation on
+screen.
+
 ## `[sounds]`
 
 | Key | Type | Default | Constraints and behavior |

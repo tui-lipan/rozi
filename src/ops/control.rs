@@ -607,16 +607,6 @@ fn layout_write_gate(ctx: &Context<AppRoot>) -> std::result::Result<(), ControlR
     Ok(())
 }
 
-/// End any pointer gesture before a control write changes the shared layout, as
-/// [`crate::actions`] does for a layout action: the gesture's last step goes out as its own live
-/// revision, and the write's change becomes an ordinary one that followers animate.
-fn finish_gesture_before_layout_write(ctx: &mut Context<AppRoot>) {
-    // A gesture in the client-local scratchpad has nothing to do with the shared layout.
-    if !ctx.state.scratch_visible {
-        crate::ops::resize_move::finish_pointer_layout_interaction(ctx);
-    }
-}
-
 /// The checks every layout write makes before looking at its target: authority, then revision.
 ///
 /// A pointer gesture ends between the two. Ending a lifted tiled pane's drag drops it, which is a
@@ -627,7 +617,7 @@ fn layout_write_preflight(
     if_revision: Option<u64>,
 ) -> std::result::Result<(), ControlResponse> {
     layout_write_gate(ctx)?;
-    finish_gesture_before_layout_write(ctx);
+    crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     let (revision, _) = flushed_revision(ctx);
     crate::control::check_if_revision(if_revision, revision)
 }
@@ -1998,7 +1988,6 @@ fn spawn_new_pane(
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
 ) -> (PaneId, Update) {
-    finish_gesture_before_layout_write(ctx);
     let mut identity = PaneIdentity {
         launch,
         cwd,

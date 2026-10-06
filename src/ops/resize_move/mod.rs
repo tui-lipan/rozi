@@ -13,12 +13,12 @@ pub(crate) fn keyboard_step_cells(available: f32) -> f32 {
 }
 
 pub(crate) use float::{
-    begin_move, begin_resize, end_move, finish_pointer_layout_interaction, move_pane, resize_pane,
+    begin_move, begin_resize, end_move, finish_pointer_layout_interaction,
+    finish_shared_pointer_gesture, move_pane, resize_pane,
 };
 pub(crate) use keyboard::resize_focused_in_direction;
 pub(crate) use split_drag::{
-    begin_resize_split_drag, begin_resize_split_junction_drag, resize_split_by_drag,
-    resize_split_junction_by_drag,
+    begin_resize_split_drag, begin_resize_split_junction_drag, continue_split_drag,
 };
 pub(crate) use tiling::{
     adjust_focused_split_ratio, clear_other_fullscreen, float_pane, move_focused_in_direction,

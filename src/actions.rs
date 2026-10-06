@@ -245,11 +245,9 @@ fn execute_action_inner(
     if !crate::commands::command_available(action, &ctx.state) {
         return Update::full();
     }
-    // A shared-layout action ends any pointer gesture first, publishing its last live step on its
-    // own. Otherwise the action's change would join that live revision, and followers would snap a
-    // transition the controller animates.
-    if is_layout_mutating(&ctx.state, action) && !ctx.state.scratch_visible {
-        crate::ops::resize_move::finish_pointer_layout_interaction(ctx);
+    // A shared-layout action ends any pointer gesture first; see `finish_shared_pointer_gesture`.
+    if is_layout_mutating(&ctx.state, action) {
+        crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     }
     match action {
         // In the launcher (or any no-client resting state) there is no session to spawn into, and

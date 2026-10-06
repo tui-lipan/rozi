@@ -115,16 +115,16 @@ pub(super) fn begin_resize_split(
     crate::ops::resize_move::begin_resize_split_drag(ctx, id, horizontal_split, x, y)
 }
 
+/// One move of a split or junction drag. The drag's begin message fixed which boundaries it moves;
+/// the move only says where the pointer is now.
 pub(super) fn resize_split(
     ctx: &mut Context<AppRoot>,
-    id: PaneId,
-    horizontal_split: bool,
     from_x: u16,
     from_y: u16,
     x: u16,
     y: u16,
 ) -> Update {
-    crate::ops::resize_move::resize_split_by_drag(ctx, id, horizontal_split, from_x, from_y, x, y)
+    crate::ops::resize_move::continue_split_drag(ctx, from_x, from_y, x, y)
 }
 
 pub(super) fn begin_resize_split_junction(
@@ -138,27 +138,6 @@ pub(super) fn begin_resize_split_junction(
         ctx,
         horizontal_panes,
         vertical_panes,
-        x,
-        y,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn resize_split_junction(
-    ctx: &mut Context<AppRoot>,
-    horizontal_panes: Vec<PaneId>,
-    vertical_panes: Vec<PaneId>,
-    from_x: u16,
-    from_y: u16,
-    x: u16,
-    y: u16,
-) -> Update {
-    crate::ops::resize_move::resize_split_junction_by_drag(
-        ctx,
-        horizontal_panes,
-        vertical_panes,
-        from_x,
-        from_y,
         x,
         y,
     )

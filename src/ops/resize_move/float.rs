@@ -273,6 +273,19 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
     Update::full()
 }
 
+/// End any pointer gesture on the shared workspace before a discrete change to the shared layout.
+///
+/// Every such change - a layout action, a control write, a spawn, a user close - calls this first,
+/// so the gesture's last step goes out as its own live revision and the change becomes an ordinary
+/// one that followers animate. Without it the two would share one live commit, and followers
+/// would snap a transition the controller animates. A gesture in the client-local scratchpad has
+/// nothing to do with the shared layout and is left alone.
+pub(crate) fn finish_shared_pointer_gesture(ctx: &mut Context<AppRoot>) {
+    if !ctx.state.scratch_visible {
+        finish_pointer_layout_interaction(ctx);
+    }
+}
+
 /// Finish any pointer-driven layout edit before an action changes pane/layout mode. Mouse drag-end
 /// events arriving afterward become harmless because their session has already been cleared.
 pub(crate) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {

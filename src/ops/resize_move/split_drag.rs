@@ -73,29 +73,23 @@ fn begin_split_drag(ctx: &mut Context<AppRoot>, kind: SplitDragKind, x: u16, y: 
 /// position a mouse region occupied when the pointer went down, and a resize strip moves as soon as
 /// the split it describes moves, so a mid-gesture event routinely arrives from a *neighbouring*
 /// strip's region carrying that strip's pane id. The drag origin is fixed for the whole gesture, so
-/// matching on it keeps every event applied to the boundary the pointer actually grabbed. Only a
-/// gesture with no session yet (the drag-start event) adopts `requested`.
+/// matching on it keeps every event applied to the boundary the pointer actually grabbed.
+///
+/// A move with no matching session is ignored rather than adopted. Every gesture opens with its own
+/// begin message (tui-lipan delivers `on_drag_start` ahead of the first `on_drag`), so the only moves
+/// left without a session belong to a gesture something else ended while the button was still held:
+/// a layout action, a control write, a lost lease. Re-grabbing there would take the already-changed
+/// layout as the new start and apply the whole delta from the original origin a second time.
+/// Followers never have a session for the shared workspace, so their moves end here too.
 fn resolve_split_drag(
     ctx: &mut Context<AppRoot>,
-    requested: SplitDragKind,
     from_x: u16,
     from_y: u16,
 ) -> Option<SplitDragKind> {
-    // Followers are nudged once at drag start; do not re-nudge (via `begin_split_drag`) on every
-    // subsequent drag event, which would stack a toast per pointer move. A follower never has a
-    // session, so the resize bails regardless.
-    if !ctx.state.scratch_visible && !ctx.state.is_controller() {
-        return None;
-    }
     let target = ctx.state.layout_target();
-    let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
+    let session = ctx.state.split_drag.as_ref().filter(|session| {
         session.workspace == target && session.start_x == from_x && session.start_y == from_y
-    });
-    if !matches {
-        begin_split_drag(ctx, requested, from_x, from_y);
-    }
-
-    let session = ctx.state.split_drag.as_ref()?;
+    })?;
     let kind = session.kind.clone();
     let start_tile_tree = session.start_tile_tree.clone();
     let start_split_ratios = session.start_split_ratios.clone();
@@ -105,24 +99,17 @@ fn resolve_split_drag(
     Some(kind)
 }
 
-/// Adjust the split on a tiled boundary by a mouse drag. `pane_id` is the pane on the
-/// left/top side of the dragged gap, so its trailing edge identifies the exact divider even when
-/// the pane has a deeper split on the same axis. `horizontal_split` is true for a vertical gap (a
-/// left|right split). Used by the draggable gap strips in the view. Dwindle and master only.
-pub(crate) fn resize_split_by_drag(
+/// Continue the split drag that began at (`from_x`, `from_y`): a single boundary or a junction,
+/// whichever its begin message grabbed. Used by the draggable gap strips in the view. Dwindle and
+/// master only.
+pub(crate) fn continue_split_drag(
     ctx: &mut Context<AppRoot>,
-    pane_id: PaneId,
-    horizontal_split: bool,
     from_x: u16,
     from_y: u16,
     x: u16,
     y: u16,
 ) -> Update {
-    let requested = SplitDragKind::Single {
-        pane_id,
-        horizontal_split,
-    };
-    let Some(kind) = resolve_split_drag(ctx, requested, from_x, from_y) else {
+    let Some(kind) = resolve_split_drag(ctx, from_x, from_y) else {
         return Update::none();
     };
     apply_split_drag(ctx, kind, from_x, from_y, x, y)
@@ -227,25 +214,6 @@ fn apply_resize_split_pixels(
         return true;
     }
     false
-}
-
-pub(crate) fn resize_split_junction_by_drag(
-    ctx: &mut Context<AppRoot>,
-    horizontal_panes: Vec<PaneId>,
-    vertical_panes: Vec<PaneId>,
-    from_x: u16,
-    from_y: u16,
-    x: u16,
-    y: u16,
-) -> Update {
-    let requested = SplitDragKind::Junction {
-        horizontal_panes,
-        vertical_panes,
-    };
-    let Some(kind) = resolve_split_drag(ctx, requested, from_x, from_y) else {
-        return Update::none();
-    };
-    apply_split_drag(ctx, kind, from_x, from_y, x, y)
 }
 
 fn distinct_split_representatives(
@@ -823,6 +791,59 @@ mod tests {
                         "{axis:?}: extents {extents:?} should follow the pointer one cell per cell"
                     );
                 }
+            });
+        }
+
+        /// A layout action can end a split drag while the button is still held. The moves that
+        /// follow belong to that ended gesture and must leave the divider alone: re-grabbing would
+        /// take the moved layout as a new start and apply the whole delta a second time. The next
+        /// press is a fresh gesture and drags normally.
+        #[test]
+        fn moves_after_an_action_ends_a_split_drag_leave_the_divider_alone() {
+            in_test_stack(|| {
+                let axis = SplitAxis::Horizontal;
+                let mut backend = two_pane_backend(axis);
+                let start = first_pane_extent(&mut backend, axis);
+                let grab_x = start.round() as u16;
+                backend
+                    .send_mouse(mouse(grab_x, 10, MouseKind::Down(MouseButton::Left)))
+                    .expect("press");
+                backend
+                    .send_mouse(mouse(grab_x + 10, 10, MouseKind::Drag(MouseButton::Left)))
+                    .expect("drag");
+                let dragged = first_pane_extent(&mut backend, axis);
+                assert_eq!(dragged, start + 10.0, "the drag moves the divider");
+
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::EnterResizeMode))
+                    .expect("a layout action ends the gesture");
+                assert!(backend.state().split_drag.is_none());
+                backend.state_mut().mode = crate::state::Mode::Normal;
+
+                backend
+                    .send_mouse(mouse(grab_x + 14, 10, MouseKind::Drag(MouseButton::Left)))
+                    .expect("keep dragging the ended gesture");
+                assert_eq!(
+                    first_pane_extent(&mut backend, axis),
+                    dragged,
+                    "an ended gesture moves nothing"
+                );
+                backend
+                    .send_mouse(mouse(grab_x + 14, 10, MouseKind::Up(MouseButton::Left)))
+                    .expect("release");
+
+                let regrab_x = dragged.round() as u16;
+                backend
+                    .send_mouse(mouse(regrab_x, 10, MouseKind::Down(MouseButton::Left)))
+                    .expect("press again");
+                backend
+                    .send_mouse(mouse(regrab_x + 5, 10, MouseKind::Drag(MouseButton::Left)))
+                    .expect("drag again");
+                assert_eq!(
+                    first_pane_extent(&mut backend, axis),
+                    dragged + 5.0,
+                    "a fresh gesture drags from where the divider is"
+                );
             });
         }
 

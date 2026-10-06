@@ -1,6 +1,45 @@
 use super::*;
 
+/// Whether `registry_id` names a `[[commands]]` entry its extension has hidden from the palette.
+fn hidden_named_command(ctx: &Context<AppRoot>, registry_id: &str) -> bool {
+    registry_id.strip_prefix("command.").is_some_and(|id| {
+        ctx.state.config.commands.iter().any(|command| {
+            command.id == id && !crate::ops::command_visibility::palette_lists(&ctx.state, command)
+        })
+    })
+}
+
+/// Commands while the extension command it handed off to is still running: the list no longer
+/// responds to anything, so it says what it is waiting on and that leaving does not stop it.
+fn handoff_running(ctx: &Context<AppRoot>, label: &str) -> Element {
+    let theme = &ctx.state.theme;
+    let body = VStack::new()
+        .height(Length::Auto)
+        .padding((1, 2, 1, 2))
+        .child(
+            Spinner::new()
+                .spinner_style(SpinnerStyle::Dots)
+                .label(format!("Running “{label}”…"))
+                .style(Style::new().fg(theme.status.info))
+                .label_style(fg_only(&theme.primary)),
+        )
+        .child(
+            Text::new("Esc closes this; the command keeps running.")
+                .style(fg_only(&theme.muted))
+                .height(Length::Px(1)),
+        );
+    action_palette(ctx, "Commands", palette_key(), Msg::ClosePalette, body, 60)
+}
+
 pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
+    if let Some(handoff) = ctx
+        .state
+        .command_palette_handoff
+        .as_ref()
+        .filter(|handoff| handoff.running)
+    {
+        return handoff_running(ctx, &handoff.label);
+    }
     // Commands (labels, categories, live keybinding hints, and the handler to run) come
     // straight from the registry `commands/` builds. Only palette-eligible ids appear here
     // (see `commands::is_palette_eligible`); the help overlay remains the full reference,
@@ -14,6 +53,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
         if !crate::commands::is_palette_eligible(entry.id.as_str())
             || Action::from_id(entry.id.as_str())
                 .is_some_and(|action| !crate::commands::palette_visible(action, &ctx.state))
+            || hidden_named_command(ctx, entry.id.as_str())
         {
             continue;
         }

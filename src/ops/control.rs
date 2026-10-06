@@ -55,6 +55,7 @@ pub(crate) fn handle_control_request(
     } else {
         None
     };
+    let extension = envelope.request.extension.clone();
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
         ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
@@ -208,6 +209,14 @@ pub(crate) fn handle_control_request(
             title,
             level,
         } => notify_command(ctx, message, title, level),
+        ControlCommand::CommandVisibility { command, visible } => {
+            crate::ops::command_visibility::set(
+                &mut ctx.state,
+                extension.as_ref(),
+                &command,
+                visible,
+            )
+        }
         ControlCommand::SwitchWorkspace { index } => switch_workspace_command(ctx, index),
         ControlCommand::MoveToWorkspace { index } => move_to_workspace_command(ctx, index),
         ControlCommand::Popup {
@@ -2388,6 +2397,7 @@ mod tests {
             action: crate::config::UserCommandAction::Send("git branch\n".to_string()),
             category: "Custom".to_string(),
             env: Vec::new(),
+            hidden: false,
         });
         let state = State::new(config, Theme::default());
         assert_eq!(

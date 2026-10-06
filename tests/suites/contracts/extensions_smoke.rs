@@ -249,3 +249,119 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
             .any(|warning| warning.contains("currently unavailable"))
     );
 }
+
+/// A command's palette visibility belongs to the extension generation that chose it: a reload that
+/// leaves the extension's processes running keeps the choice, because the service that made it is
+/// still running and still right, and one that restarts them falls back to the manifest.
+#[test]
+fn command_visibility_follows_the_extension_generation_across_real_reloads() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(command_visibility_follows_the_extension_generation_inner)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn command_visibility_follows_the_extension_generation_inner() {
+    rozi::test_support::isolate_user_dirs();
+    let _config = rozi::test_support::lock_config_file();
+    let env = rozi::platform::paths::PlatformEnv::from_process();
+    let extension_dir = rozi::platform::paths::extensions_dir(&env).join("visibility");
+    std::fs::create_dir_all(&extension_dir).unwrap();
+    std::fs::write(rozi::config::config_path(), "").unwrap();
+    let manifest = |label: &str, send: &str| {
+        format!(
+            "[extension]\nid = \"visibility\"\ntitle = \"Visibility\"\nversion = \"1.0.0\"\napi = 1\n\
+             [[commands]]\nid = \"install\"\nlabel = \"{label}\"\nsend = \"{send}\"\nhidden = true\n"
+        )
+    };
+    let write = |label: &str, send: &str| {
+        std::fs::write(extension_dir.join("extension.toml"), manifest(label, send)).unwrap();
+    };
+
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 30,
+    });
+    let reload = |backend: &mut TestBackend<AppRoot>| {
+        backend
+            .dispatch(Msg::RunAction(Action::ReloadExtensions))
+            .unwrap();
+        backend.state().extension_generations["visibility"].clone()
+    };
+    let show = |backend: &mut TestBackend<AppRoot>, generation: &str| {
+        let (reply, answer) = std::sync::mpsc::channel();
+        backend
+            .dispatch(Msg::ControlRequest(rozi::control::ControlEnvelope {
+                request: rozi::control::ControlRequest {
+                    command: rozi::control::ControlCommand::CommandVisibility {
+                        command: "install".to_string(),
+                        visible: true,
+                    },
+                    source_pane: None,
+                    source_session: None,
+                    extension: Some(rozi::config::ExtensionProvenance {
+                        id: "visibility".to_string(),
+                        generation: generation.to_string(),
+                    }),
+                },
+                reply,
+            }))
+            .unwrap();
+        answer.recv_timeout(Duration::from_secs(5)).unwrap()
+    };
+    let palette = |backend: &mut TestBackend<AppRoot>| {
+        backend
+            .dispatch(Msg::RunAction(Action::TogglePalette))
+            .unwrap();
+        backend.render();
+        for ch in "visibility probe".chars() {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        backend.advance(Duration::from_millis(200));
+        let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Esc,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        frame
+    };
+
+    write("Install visibility probe", "x");
+    let first = reload(&mut backend);
+    assert!(!palette(&mut backend).contains("Install visibility probe"));
+    assert!(show(&mut backend, &first).ok);
+    assert!(palette(&mut backend).contains("Install visibility probe"));
+
+    // Nothing about the extension changed: same generation, same running service, same choice.
+    assert_eq!(reload(&mut backend), first);
+    assert!(palette(&mut backend).contains("Install visibility probe"));
+
+    // A label is not process-facing: the service keeps running, and so does its choice.
+    write("Install visibility probe, renamed", "x");
+    assert_eq!(reload(&mut backend), first);
+    assert!(palette(&mut backend).contains("Install visibility probe, renamed"));
+
+    // A changed action restarts the extension: a new generation, back to the manifest, and the old
+    // generation can no longer speak for it.
+    write("Install visibility probe", "y");
+    let second = reload(&mut backend);
+    assert_ne!(second, first);
+    assert!(!palette(&mut backend).contains("Install visibility probe"));
+    assert!(!show(&mut backend, &first).ok);
+    assert!(!palette(&mut backend).contains("Install visibility probe"));
+
+    std::fs::remove_dir_all(&extension_dir).unwrap();
+}

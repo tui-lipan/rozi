@@ -62,6 +62,9 @@ label = "Branches…"
 exec = ["python", "{extension_dir}/bin/git_tools.py", "branches"]
 # Optional: suggested chord, written as the steps inside the reserved <prefix> x space.
 key = "b"
+# Optional: start out of the command palette; the extension lists it with `rozi show-command`
+# when it applies, and takes it out with `rozi hide-command`.
+hidden = false
 
 # Optional: settings this extension understands, at their defaults. Users override them in
 # [extensions.git-tools]; the merged result arrives as JSON in ROZI_EXTENSION_CONFIG.

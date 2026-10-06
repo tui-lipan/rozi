@@ -168,6 +168,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
         &ctx.state.extension_generations,
     );
     ctx.state.extension_generations = extension_generations;
+    crate::ops::command_visibility::forget_retired(&mut ctx.state);
     ctx.state.config = new_config;
     let update_check_interval = (!had_update_check)
         .then(|| ctx.state.update_check_interval())

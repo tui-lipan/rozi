@@ -186,6 +186,7 @@ attached.
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
 | `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
 | `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
+| `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
@@ -219,7 +220,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 15,
+  "schema": 16,
   "session_protocol": 26,
   "capabilities": [
     "agent-waits",
@@ -229,6 +230,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-spans",
     "capture-ui",
     "capture-wait",
+    "command-visibility",
     "layout-control",
     "pane-control",
     "pane-reveal",
@@ -790,6 +792,10 @@ Use `notify` for failures, and for successful results that would otherwise go un
 ```sh
 rozi notify "tests failed" --title Build --level error
 ```
+
+`show-command` and `hide-command` work only from an extension's own command or service, for a
+command its manifest declares. See
+[Show a command only when it applies](extensions.md#show-a-command-only-when-it-applies).
 
 ## Subscriptions
 

@@ -750,6 +750,33 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output: None,
                 }));
             }
+            verb @ ("show-command" | "hide-command") => {
+                // The one argument is taken as given, whatever it starts with: a manifest command
+                // ID may begin with `-`, and these commands have no flags it could be mistaken for.
+                // A leading `--` is a separator only when an ID follows it; otherwise it is the ID.
+                let mut rest: Vec<String> = iter.by_ref().collect();
+                if rest.len() > 1 && rest.first().is_some_and(|arg| arg == "--") {
+                    rest.remove(0);
+                }
+                let mut rest = rest.into_iter();
+                let command = match (rest.next(), rest.next()) {
+                    (Some(command), None) => command,
+                    (None, _) => return Err(format!("{verb} requires a command id")),
+                    (Some(_), Some(arg)) => {
+                        return Err(format!("unexpected argument `{arg}` after {verb}"));
+                    }
+                };
+                let command = control::ControlCommand::CommandVisibility {
+                    command,
+                    visible: verb == "show-command",
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format: None,
+                    output: None,
+                }));
+            }
             "status" => {
                 // A script driving a session it is not running inside has no `ROZI_PANE` and no
                 // focused pane to fall back to, so `--target` is the only way it can name a pane.
@@ -3093,6 +3120,52 @@ mod tests {
 
     /// `notify` is how a script reports an off-screen result, so its parsing has to survive
     /// messages that look like flags and reject a level it cannot honour.
+    #[test]
+    fn show_and_hide_command_name_one_command() {
+        let visibility = |args: &[&str]| match parse_cli_args(
+            args.iter().map(|arg| arg.to_string()).collect(),
+        ) {
+            Ok(ParsedCli::Control(control)) => match control.request.command {
+                control::ControlCommand::CommandVisibility { command, visible } => {
+                    Ok((command, visible))
+                }
+                other => panic!("wrong command: {other:?}"),
+            },
+            Ok(other) => panic!("wrong parse: {other:?}"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(
+            visibility(&["show-command", "install-hooks"]),
+            Ok(("install-hooks".to_string(), true))
+        );
+        assert_eq!(
+            visibility(&["hide-command", "tools.install"]),
+            Ok(("tools.install".to_string(), false))
+        );
+        assert!(visibility(&["show-command"]).is_err(), "an id is required");
+        for verb in ["show-command", "hide-command"] {
+            for args in [vec![verb, "--"], vec![verb, "--", "--"]] {
+                assert_eq!(
+                    visibility(&args),
+                    Ok(("--".to_string(), verb == "show-command"))
+                );
+            }
+        }
+        assert!(
+            visibility(&["hide-command", "a", "b"]).is_err(),
+            "only one id"
+        );
+        // `-install` is a valid manifest command ID, so it is never read as a flag.
+        assert_eq!(
+            visibility(&["show-command", "-install"]),
+            Ok(("-install".to_string(), true))
+        );
+        assert_eq!(
+            visibility(&["hide-command", "--", "-install"]),
+            Ok(("-install".to_string(), false))
+        );
+    }
+
     #[test]
     fn notify_parses_message_title_and_level() {
         let parsed = parse_cli_args(vec![

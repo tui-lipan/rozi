@@ -206,5 +206,5 @@ pub(super) fn dialog_overlay(
         modal =
             modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
     }
-    modal.into()
+    modal.key(format!("rozi-confirm-{title}"))
 }

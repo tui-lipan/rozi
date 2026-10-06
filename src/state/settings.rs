@@ -98,6 +98,7 @@ pub enum SettingsAction {
     ToggleAnimations,
     ToggleWorkspaceAnimation,
     CycleSessionAnimation,
+    CyclePickerAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCopyOnSelect,
@@ -176,6 +177,7 @@ impl SettingsAction {
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
             Self::CycleSessionAnimation,
+            Self::CyclePickerAnimation,
             Self::CyclePaneOpenAnimation,
             Self::CyclePaneCloseAnimation,
             // Clipboard
@@ -353,6 +355,12 @@ impl SettingsAction {
                 pane.fullscreen_border_style,
                 PaneBorderStyle::label,
             )),
+            Self::CyclePickerAnimation => Some(choice_ring(
+                "Picker animation",
+                crate::layout::anim::PickerAnimationStyle::all(),
+                config.animations.picker,
+                crate::layout::anim::PickerAnimationStyle::label,
+            )),
             Self::CycleSessionAnimation => Some(choice_ring(
                 "Session switching animation",
                 crate::layout::anim::SessionAnimationStyle::all(),
@@ -420,6 +428,28 @@ impl SettingsAction {
     pub fn shows_choice_ellipsis(self, config: &Config) -> bool {
         self.choice_ring(config)
             .is_some_and(|ring| ring.options.len() > 2)
+    }
+
+    /// Preview only static appearance choices; behavior and event-driven effects need confirmation.
+    pub fn previews_choice(self) -> bool {
+        matches!(
+            self,
+            Self::CyclePickerBorderStyle
+                | Self::CyclePickerTabStyle
+                | Self::CyclePickerSelectionStyle
+                | Self::ChooseTitlebar
+                | Self::ChooseWorkbar
+                | Self::CycleTitleStyle
+                | Self::CycleWorkbarStyle
+                | Self::CycleWorkbarBadgeStyle
+                | Self::CycleWorkbarTabStyle
+                | Self::CycleBorderMode
+                | Self::CycleBorderStyle
+                | Self::CycleFloatBorderStyle
+                | Self::CycleScratchBorderStyle
+                | Self::CycleFullscreenBorderStyle
+                | Self::CycleSidebarTabStyle
+        )
     }
 
     /// Write `index` into live config without persisting.
@@ -494,6 +524,11 @@ impl SettingsAction {
                 PaneBorderStyle::all(),
                 index,
                 &mut config.pane.fullscreen_border_style,
+            ),
+            Self::CyclePickerAnimation => assign_choice(
+                crate::layout::anim::PickerAnimationStyle::all(),
+                index,
+                &mut config.animations.picker,
             ),
             Self::CycleSessionAnimation => assign_choice(
                 crate::layout::anim::SessionAnimationStyle::all(),
@@ -574,6 +609,7 @@ impl SettingsAction {
             | Self::CyclePaneCloseAnimation
             | Self::ToggleWorkspaceAnimation
             | Self::CycleSessionAnimation
+            | Self::CyclePickerAnimation
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")
@@ -796,7 +832,7 @@ impl SettingsChoiceSnapshot {
     }
 }
 
-/// Pending multi-value choice. Highlight previews; Enter persists; Esc restores [`SettingsChoiceSnapshot`].
+/// Pending multi-value choice. Appearance highlights preview; Enter applies and persists.
 pub struct SettingsChoiceEditor {
     pub action: SettingsAction,
     pub title: &'static str,
@@ -822,6 +858,9 @@ impl SettingsChoiceEditor {
 /// Drop a live-preview picker and restore the value from before it opened.
 pub fn abandon_settings_choice(state: &mut super::State) -> Option<std::time::Duration> {
     let editor = state.settings_choice.take()?;
+    if !editor.action.previews_choice() {
+        return None;
+    }
     if editor.snapshot.unchanged(editor.index, &state.config) {
         return None;
     }
@@ -907,6 +946,31 @@ mod tests {
         assert!(!SettingsAction::ToggleAnimations.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::CycleWorkbarAlertPaint.shows_choice_ellipsis(&config));
         assert!(!SettingsAction::Theme.shows_choice_ellipsis(&config));
+    }
+
+    /// Every motion row below the master switch greys out with it, and only with it.
+    #[test]
+    fn animation_rows_need_animations() {
+        let rows = [
+            SettingsAction::ToggleWorkspaceAnimation,
+            SettingsAction::CycleSessionAnimation,
+            SettingsAction::CyclePickerAnimation,
+            SettingsAction::CyclePaneOpenAnimation,
+            SettingsAction::CyclePaneCloseAnimation,
+        ];
+        let mut config = Config::default();
+        config.animations.enabled = true;
+        for action in rows {
+            assert_eq!(action.disabled_reason(&config), None, "{action:?}");
+        }
+        config.animations.enabled = false;
+        for action in rows {
+            assert_eq!(
+                action.disabled_reason(&config),
+                Some("Needs animations"),
+                "{action:?}"
+            );
+        }
     }
 
     #[test]

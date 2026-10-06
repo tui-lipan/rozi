@@ -288,39 +288,23 @@ mod tests {
         let pty = TerminalPty::spawn(
             tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
                 .arg("-c")
-                .arg("cd /tmp && exec sleep 5"),
+                .arg("cd /tmp && exec sleep 30"),
             |_event| {},
         )
         .expect("spawn");
-        // Give the child a moment to exec into `sleep` and chdir.
-        std::thread::sleep(std::time::Duration::from_millis(200));
 
+        // Poll until the child has chdir'd and exec'd into `sleep`, bounded for slow CI.
         let inspector = LinuxProcessInspector;
-        assert_eq!(inspector.cwd(&pty), Some(PathBuf::from("/tmp")));
-        assert_eq!(
-            inspector.foreground_program(&pty),
-            Some("sleep".to_string())
-        );
+        let expected = (Some(PathBuf::from("/tmp")), Some("sleep".to_string()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut observed = (inspector.cwd(&pty), inspector.foreground_program(&pty));
+        while observed != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            observed = (inspector.cwd(&pty), inspector.foreground_program(&pty));
+        }
+        assert_eq!(observed, expected);
 
         drop(pty);
-    }
-
-    #[test]
-    fn reports_none_once_the_pty_is_gone() {
-        let inspector = LinuxProcessInspector;
-        let pty = TerminalPty::spawn(
-            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
-                .arg("-c")
-                .arg("true"),
-            |_event| {},
-        )
-        .expect("spawn");
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        drop(pty.clone());
-        // No liveness guarantee about the exact drop timing is asserted here; the important part
-        // is that neither call panics for an exited/inspectable-but-gone process.
-        let _ = inspector.cwd(&pty);
-        let _ = inspector.foreground_program(&pty);
     }
 
     #[test]

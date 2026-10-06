@@ -54,7 +54,8 @@ pub fn session_path(config: &crate::config::Config) -> Option<PathBuf> {
 }
 
 /// Write the live layout to the session file when `[session] autosave` is enabled. Called
-/// synchronously just before quit, so failures are reported to stderr (toasts won't render).
+/// synchronously just before quit, so failures are reported once the terminal is restored (toasts
+/// won't render, and stderr still belongs to the TUI).
 pub fn persist_session_if_enabled(state: &State) {
     if !state.config.session.autosave {
         return;
@@ -82,7 +83,7 @@ fn persist_session_to_disk(state: &State) {
         save_session_snapshot(&path, &profile)
     };
     if let Err(err) = result {
-        eprintln!("rozi: session autosave failed: {err}");
+        crate::app::exit_report::defer(format!("session autosave failed: {err}"));
     }
 }
 

@@ -4,6 +4,33 @@ use crate::AppRoot;
 use crate::layout::anim;
 use crate::state::{ChromeSlot, Pane};
 
+/// Modal lifecycle is owned by the renderer: no view/layout work on animation ticks.
+/// Keyed portals retain closing content, disable its input, and reverse safely on reopening.
+pub(crate) fn picker_animation(
+    animations: anim::WindowAnimationConfig,
+) -> Option<VisibilityAnimation> {
+    let style = animations.picker;
+    if !animations.enabled || style == anim::PickerAnimationStyle::Off {
+        return None;
+    }
+    let animation = VisibilityAnimation::new()
+        .enter(style.enter_transition())
+        .exit(style.exit_transition());
+    Some(match style {
+        anim::PickerAnimationStyle::Portal | anim::PickerAnimationStyle::Scan => {
+            animation.effect(move |context| {
+                super::pane_reveal::picker_reveal_effect(
+                    style,
+                    context.progress,
+                    matches!(context.phase, VisibilityAnimationPhase::Entering),
+                )
+            })
+        }
+        anim::PickerAnimationStyle::Fade => animation,
+        anim::PickerAnimationStyle::Off => unreachable!(),
+    })
+}
+
 pub(crate) fn transition_config_for(
     ctx: &Context<AppRoot>,
     pane: &Pane,
@@ -712,6 +739,139 @@ mod tests {
     use tui_lipan::prelude::{Color, Rect};
 
     use crate::AppRoot;
+
+    struct PickerPaintProbe {
+        style: anim::PickerAnimationStyle,
+        views: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl tui_lipan::prelude::Component for PickerPaintProbe {
+        type State = bool;
+        type Properties = ();
+        type Message = bool;
+        fn create_state(&self, _: &()) -> bool {
+            false
+        }
+        fn update(
+            &mut self,
+            visible: bool,
+            ctx: &mut tui_lipan::Context<Self>,
+        ) -> tui_lipan::Update {
+            ctx.state = visible;
+            tui_lipan::Update::full()
+        }
+        fn view(&self, ctx: &tui_lipan::Context<Self>) -> tui_lipan::prelude::Element {
+            use tui_lipan::prelude::*;
+            self.views.set(self.views.get() + 1);
+            let mut root = ZStack::new().child(Button::new("underneath").key("underneath"));
+            if ctx.state {
+                root = root.child(
+                    Modal::new()
+                        .title("Picker")
+                        .width(Length::Px(30))
+                        .height(Length::Px(7))
+                        .animation(super::picker_animation(anim::WindowAnimationConfig {
+                            picker: self.style,
+                            ..Default::default()
+                        }))
+                        .child(Button::new("picker content").key("picker-input"))
+                        .key("picker-modal"),
+                );
+            }
+            root.into()
+        }
+    }
+
+    #[test]
+    fn picker_lifecycle_paints_without_rebuilding_and_reopens_without_remounting() {
+        use anim::PickerAnimationStyle;
+        for style in [
+            PickerAnimationStyle::Fade,
+            PickerAnimationStyle::Portal,
+            PickerAnimationStyle::Scan,
+        ] {
+            let views = std::rc::Rc::new(std::cell::Cell::new(0));
+            let mut backend = tui_lipan::TestBackend::new(PickerPaintProbe {
+                style,
+                views: views.clone(),
+            });
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 60,
+                h: 20,
+            });
+            backend.render();
+            backend.dispatch(true).unwrap();
+            backend.pump().unwrap();
+            let input_id = backend.focused().unwrap();
+            let entering = backend.capture_frame().to_ansi_text();
+            let before = views.get();
+            backend.advance_frame(Duration::from_millis(50));
+            assert_eq!(
+                views.get(),
+                before,
+                "{style:?}: entering ticks must be paint-only"
+            );
+            assert_ne!(backend.capture_frame().to_ansi_text(), entering);
+            backend.advance(style.enter_transition().duration);
+            assert!(
+                backend
+                    .capture_frame()
+                    .plain_text()
+                    .contains("picker content")
+            );
+            let settled_views = views.get();
+            for _ in 0..20 {
+                backend.advance_frame(Duration::from_millis(50));
+            }
+            assert_eq!(
+                views.get(),
+                settled_views,
+                "{style:?}: settled picker must not tick the view"
+            );
+            backend.dispatch(false).unwrap();
+            assert_ne!(
+                backend.focused(),
+                Some(input_id),
+                "closing input must lose focus immediately"
+            );
+            let before = views.get();
+            backend.advance_frame(Duration::from_millis(30));
+            assert_eq!(
+                views.get(),
+                before,
+                "{style:?}: closing ticks must be paint-only"
+            );
+            backend.dispatch(true).unwrap();
+            assert_eq!(
+                backend.focused(),
+                Some(input_id),
+                "reopening should retain input identity"
+            );
+            backend.advance(style.enter_transition().duration);
+            backend.dispatch(false).unwrap();
+            backend.advance(style.exit_transition().duration + Duration::from_millis(50));
+            assert!(
+                !backend
+                    .capture_frame()
+                    .plain_text()
+                    .contains("picker content")
+            );
+        }
+        let disabled = anim::WindowAnimationConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(super::picker_animation(disabled).is_none());
+        assert!(
+            super::picker_animation(anim::WindowAnimationConfig {
+                picker: PickerAnimationStyle::Off,
+                ..Default::default()
+            })
+            .is_none()
+        );
+    }
 
     fn in_stack(body: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()

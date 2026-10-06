@@ -12,6 +12,7 @@ fn settings_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
+    backend.state_mut().config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
     backend.state_mut().show_settings = true;
     backend.state_mut().settings_navigation.tab = SettingsTab::All;
     backend
@@ -21,6 +22,7 @@ fn settings_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
 /// the drawn grid rather than against whatever happens to be scrolled into view.
 fn rendered_rows(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
+    backend.advance(std::time::Duration::from_millis(500));
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 
@@ -243,6 +245,7 @@ fn settings_all_keeps_every_control_available() {
             "Play animations",
             "Workspace switching",
             "Session switching",
+            "Pickers",
             "Pane open",
             "Pane close",
             "Nerd icons",
@@ -690,8 +693,46 @@ fn picker_border_style_changes_settings_frame_glyphs() {
     });
 }
 
+/// Each motion row is reachable by the phrase a user would type and reads its current value. How a
+/// choice is confirmed, cancelled, and saved is the same machinery for every row and is covered once
+/// by `behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config`; the master
+/// switch's gating is unit-tested beside `SettingsAction::disabled_reason`.
 #[test]
-fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
+fn animation_rows_are_found_by_search_and_read_their_value() {
+    on_large_stack(|| {
+        use rozi::layout::anim::{PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle};
+        let cases = [
+            ("workspace switching", "Workspace switching", "Enabled"),
+            ("session switching", "Session switching", "Fade"),
+            ("picker animation", "Pickers", "Scan"),
+            ("pane open", "Pane open", "Slide"),
+            ("pane close", "Pane close", "Particles"),
+        ];
+        for (query, label, value) in cases {
+            let mut backend = settings_backend(90, 30);
+            {
+                let animations = &mut backend.state_mut().config.animations;
+                animations.enabled = true;
+                animations.workspace = true;
+                animations.session = SessionAnimationStyle::Fade;
+                animations.picker = PickerAnimationStyle::Scan;
+                animations.pane_open_style = PaneAnimationStyle::Slide;
+                animations.pane_close_style = PaneAnimationStyle::Particles;
+            }
+            type_query(&mut backend, query);
+            let frame = rendered_rows(&mut backend);
+            assert!(
+                setting_row(&frame, label).contains(value),
+                "{query:?} should find {label:?} reading {value:?}:\n{frame}"
+            );
+        }
+    });
+}
+
+/// The one on/off motion row: it is not a choice ring, so the shared choice coverage does not reach
+/// it.
+#[test]
+fn the_workspace_animation_toggle_saves_and_keeps_its_row_selected() {
     on_large_stack(|| {
         use rozi::state::SettingsAction::ToggleWorkspaceAnimation;
         // Reads the saved config back, so hold the file this binary's tests share.
@@ -700,9 +741,6 @@ fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
         backend.state_mut().config.animations.enabled = true;
         backend.state_mut().config.animations.workspace = true;
         type_query(&mut backend, "workspace switching");
-        assert!(
-            setting_row(&rendered_rows(&mut backend), "Workspace switching").contains("Enabled")
-        );
         backend
             .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
             .unwrap();
@@ -712,15 +750,6 @@ fn workspace_animation_setting_is_searchable_persisted_and_gated_by_master() {
         assert_eq!(
             backend.state().settings_selected,
             Some(ToggleWorkspaceAnimation)
-        );
-        backend.state_mut().config.animations.enabled = false;
-        backend
-            .dispatch(rozi::Msg::SettingsActivate(ToggleWorkspaceAnimation))
-            .unwrap();
-        assert!(!backend.state().config.animations.workspace);
-        assert_eq!(
-            ToggleWorkspaceAnimation.disabled_reason(&backend.state().config),
-            Some("Needs animations")
         );
     });
 }
@@ -916,43 +945,6 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
 }
 
 #[test]
-fn session_animation_setting_is_chosen_persisted_and_gated_by_master() {
-    on_large_stack(|| {
-        use rozi::layout::anim::SessionAnimationStyle;
-        // Reads the saved config back, so hold the file this binary's tests share.
-        let _config = rozi::test_support::lock_config_file();
-        use rozi::state::SettingsAction::CycleSessionAnimation;
-        let mut backend = settings_backend(90, 30);
-        backend.state_mut().config.animations.enabled = true;
-        type_query(&mut backend, "session switching");
-        assert!(setting_row(&rendered_rows(&mut backend), "Session switching").contains("Portal"));
-
-        backend
-            .dispatch(rozi::Msg::SettingsActivate(CycleSessionAnimation))
-            .unwrap();
-        let frame = rendered_rows(&mut backend);
-        for label in ["Off", "Fade", "Portal"] {
-            assert!(frame.contains(label), "{label} missing:\n{frame}");
-        }
-        backend.dispatch(rozi::Msg::SettingsChoicePick(1)).unwrap();
-        assert_eq!(
-            backend.state().config.animations.session,
-            SessionAnimationStyle::Fade
-        );
-        assert_eq!(
-            rozi::config::load_config().config.animations.session,
-            SessionAnimationStyle::Fade
-        );
-
-        backend.state_mut().config.animations.enabled = false;
-        assert_eq!(
-            CycleSessionAnimation.disabled_reason(&backend.state().config),
-            Some("Needs animations")
-        );
-    });
-}
-
-#[test]
 fn settings_choice_lists_every_option() {
     on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
@@ -972,7 +964,7 @@ fn settings_choice_lists_every_option() {
 }
 
 #[test]
-fn clipboard_settings_render_and_restore_cancelled_preview() {
+fn clipboard_settings_do_not_apply_unconfirmed_choices() {
     on_large_stack(|| {
         let mut backend = settings_backend(90, 45);
         backend.state_mut().config.clipboard.copy_on_select = CopyOnSelect::Disabled;
@@ -997,7 +989,7 @@ fn clipboard_settings_render_and_restore_cancelled_preview() {
             .unwrap();
         assert_eq!(
             backend.state().config.clipboard.copy_on_select,
-            CopyOnSelect::Both
+            CopyOnSelect::Disabled
         );
         backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
         assert_eq!(
@@ -1140,7 +1132,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 17, "Pane close"),
+            (SettingsTab::General, 18, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 12, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
@@ -1235,14 +1227,13 @@ fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
 }
 
 #[test]
-fn pane_open_and_close_choices_preview_and_persist_independently() {
+fn pane_open_and_close_save_independently_and_drop_the_legacy_key() {
     on_large_stack(|| {
         use rozi::layout::anim::PaneAnimationStyle;
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 35);
         backend.state_mut().config.animations.enabled = true;
         let path = rozi::config::config_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
             "[animations]\npane_style = \"portal\"\ngeometry_ms = 220\n",
@@ -1270,27 +1261,6 @@ fn pane_open_and_close_choices_preview_and_persist_independently() {
         let particles = PaneAnimationStyle::all()
             .iter()
             .position(|s| *s == PaneAnimationStyle::Particles)
-            .unwrap();
-        backend
-            .dispatch(rozi::Msg::SettingsChoiceSelect(particles))
-            .unwrap();
-        assert_eq!(
-            backend.state().config.animations.pane_close_style,
-            PaneAnimationStyle::Particles
-        );
-        assert_eq!(
-            backend.state().config.animations.pane_open_style,
-            PaneAnimationStyle::Slide
-        );
-        backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
-        assert_eq!(
-            backend.state().config.animations.pane_close_style,
-            PaneAnimationStyle::Scale
-        );
-        backend
-            .dispatch(rozi::Msg::SettingsActivate(
-                SettingsAction::CyclePaneCloseAnimation,
-            ))
             .unwrap();
         backend
             .dispatch(rozi::Msg::SettingsChoicePick(particles))
@@ -1322,15 +1292,79 @@ fn pane_open_and_close_choices_preview_and_persist_independently() {
         let saved = reloaded.config.animations;
         assert_eq!(saved.pane_open_style, PaneAnimationStyle::Slide);
         assert_eq!(saved.pane_close_style, PaneAnimationStyle::Particles);
-        backend.state_mut().config.animations.enabled = false;
-        for action in [
-            SettingsAction::CyclePaneOpenAnimation,
-            SettingsAction::CyclePaneCloseAnimation,
-        ] {
-            assert_eq!(
-                action.disabled_reason(&backend.state().config),
-                Some("Needs animations")
+    });
+}
+
+#[test]
+fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() {
+    on_large_stack(|| {
+        let _guard = rozi::test_support::lock_config_file();
+        let mut backend = settings_backend(100, 40);
+        let mut checked = 0;
+        for &action in SettingsAction::all() {
+            if action.previews_choice() {
+                continue;
+            }
+            let Some(ring) = action.choice_ring(&backend.state().config) else {
+                continue;
+            };
+            let original = ring.index;
+            let selected = (original + 1) % ring.options.len();
+            backend.state_mut().settings_choice = Some(
+                rozi::state::SettingsChoiceEditor::from_ring(action, ring, &backend.state().config),
             );
+            backend
+                .dispatch(rozi::Msg::SettingsChoiceSelect(selected))
+                .unwrap();
+            assert_eq!(
+                action.choice_ring(&backend.state().config).unwrap().index,
+                original,
+                "{action:?} must not preview"
+            );
+            assert_eq!(
+                backend.state().settings_choice.as_ref().unwrap().index,
+                selected
+            );
+            // An external config change while browsing must survive cancellation.
+            assert!(action.apply_choice(&mut backend.state_mut().config, selected));
+            backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
+            assert_eq!(
+                action.choice_ring(&backend.state().config).unwrap().index,
+                selected,
+                "{action:?} cancellation must not restore an unapplied preview"
+            );
+
+            let ring = action.choice_ring(&backend.state().config).unwrap();
+            backend.state_mut().settings_choice = Some(
+                rozi::state::SettingsChoiceEditor::from_ring(action, ring, &backend.state().config),
+            );
+            let warnings_before = rozi::config::load_config().warnings;
+            backend
+                .dispatch(rozi::Msg::SettingsChoicePick(original))
+                .unwrap();
+            assert_eq!(
+                rozi::config::load_config().warnings,
+                warnings_before,
+                "{action:?} confirmation must save a value the loader accepts"
+            );
+            assert_eq!(
+                action.choice_ring(&backend.state().config).unwrap().index,
+                original,
+                "{action:?} confirmation must apply"
+            );
+            assert_eq!(
+                action
+                    .choice_ring(&rozi::config::load_config().config)
+                    .unwrap()
+                    .index,
+                original,
+                "{action:?} confirmation must persist"
+            );
+            checked += 1;
         }
+        assert!(
+            checked >= 10,
+            "cover animations, alerts, input, clipboard, and sessions"
+        );
     });
 }

@@ -57,7 +57,6 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
     );
     std::fs::write(extension_dir.join("extension.toml"), &manifest).unwrap();
     let config_path = rozi::config::config_path();
-    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
     std::fs::write(&config_path, "[keys]\n\"smoke.probe\" = \"i\"\n").unwrap();
 
     let loaded = rozi::config::load_config();
@@ -99,6 +98,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
             })
             .unwrap();
     }
+    backend.advance(std::time::Duration::from_millis(200));
     let palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(palette.contains("Run extension probe"), "{palette}");
     backend
@@ -179,6 +179,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
             })
             .unwrap();
     }
+    backend.advance(std::time::Duration::from_millis(200));
     let changed_palette = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(
         changed_palette.contains("Changed extension probe"),
@@ -206,6 +207,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
         .dispatch(Msg::RunAction(Action::TogglePalette))
         .unwrap();
     backend.render();
+    backend.advance(std::time::Duration::from_millis(200));
     let reloaded = backend.capture_frame().to_fixed_grid_lines().join("\n");
     assert!(!reloaded.contains("Run extension probe"), "{reloaded}");
 

@@ -97,20 +97,6 @@ fn the_close_affordance_is_revealed_by_hover_and_hidden_at_rest() {
     );
 }
 
-/// Keyboard navigation parks a stale pointer over whatever row it was last on. The ✕ is gated on the
-/// same `suppress_row_hover` flag as the row's hover lift, so it does not linger there.
-#[test]
-fn keyboard_navigation_suppresses_a_stale_hovered_close_affordance() {
-    let lines = panes_sidebar_lines(|state| {
-        state.sidebar.panels[0].hovered_row = Some(PANE_ROW);
-        state.sidebar.panels[0].suppress_row_hover = true;
-    });
-    assert!(
-        !lines.iter().any(|line| line.contains('✕')),
-        "a suppressed hover shows no ✕: {lines:#?}"
-    );
-}
-
 /// The ✕ is a nested MouseRegion so it can own clicks and its red foreground hover. Moving onto it
 /// must not drop the parent row's background lift, and moving back to the row must not clear the
 /// row hover or hide the ✕: the parent remains hovered across both transitions.

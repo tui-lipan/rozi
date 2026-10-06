@@ -1867,9 +1867,13 @@ fn lost_remote_session_requires_explicit_recreation() {
                 .expect("ordinary retry is refused for a lost session");
             assert!(backend.state().current().pending_session_attach.is_none());
 
+            backend.render();
             backend
-                .update_level(Msg::RecreateLostRemoteSession)
-                .expect("explicit recreation starts an attach");
+                .send_key(tui_lipan::prelude::KeyEvent {
+                    code: tui_lipan::prelude::KeyCode::Enter,
+                    mods: tui_lipan::prelude::KeyMods::NONE,
+                })
+                .expect("Enter on the modal starts explicit recreation");
             assert!(
                 backend
                     .state()

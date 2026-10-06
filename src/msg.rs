@@ -10,6 +10,8 @@ use crate::{control, session};
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
+    /// Capture the UI after the invoking picker has finished closing.
+    UiScreenshotFrameReady,
     /// A public release newer than this build was found, by the check a client runs shortly after
     /// it starts or by one of the periodic re-checks that follow.
     ///
@@ -249,6 +251,12 @@ pub enum Msg {
     },
     SidebarSessionActivate(crate::session::discovery::DiscoveredSession),
     ThemeError(String),
+    /// A failure on a worker thread, shown as an error toast. Worker threads must not write to
+    /// stderr: it is the terminal the TUI is drawing on.
+    BackgroundError {
+        title: &'static str,
+        message: String,
+    },
     CloseSearch,
     SearchQueryChanged(String),
     SearchScanChunk {

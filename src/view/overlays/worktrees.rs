@@ -282,7 +282,7 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
     action_palette_modal(ctx, "New worktree")
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)
-        .into()
+        .key("rozi-worktree-form-modal")
 }
 
 /// Cells before the branch: the current-checkout marker.

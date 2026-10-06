@@ -7,8 +7,8 @@ it. For every key and its limits, see the [Configuration reference](configuratio
 ## Two ways to customize
 
 You can change almost everything from inside rozi. The **Settings**, **Keybindings**, and theme
-pickers preview a change as you browse, write your choice to `config.toml` when you confirm it, and
-apply it at once. Nothing restarts, and your panes keep running.
+pickers write your choice to `config.toml` when you confirm it and apply it at once. Themes and
+static appearance choices also preview as you browse. Nothing restarts, and your panes keep running.
 
 You can also edit `config.toml` directly. On Linux and macOS it lives at
 `~/.config/rozi/config.toml`; see [File location](configuration.md#file-location) for Windows and
@@ -44,9 +44,10 @@ To change a setting:
    `Right`; each category remembers its last row. Select a setting with `Up` and `Down`.
 2. Press `Enter`. A setting with two values toggles. A setting with more values shows `…` after its
    label and opens a list of them.
-3. Move through the list. Each value you highlight is applied live, so you see the result behind the
-   picker before you commit.
-4. Press `Enter` to save the highlighted value, or `Esc` to restore the previous one.
+3. Move through the list. Static appearance choices, such as borders and tab styles, preview live
+   behind the picker. Animation, alert, clipboard, input, and session behavior choices apply only
+   when confirmed.
+4. Press `Enter` to apply and save the highlighted value, or `Esc` to cancel and undo any preview.
 
 `Shift+Enter` cycles through values without opening the list. `Esc` clears the search, and `Esc`
 with an empty search closes Settings. **Theme** and **Terminal padding**

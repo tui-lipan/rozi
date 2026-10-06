@@ -163,6 +163,12 @@ harness = false
 name = "alloc_probe"
 harness = false
 
+# Visual reference sketches: PNG renders for review, not tests. See the file's header.
+[[example]]
+name = "ui_sketches"
+path = "tools/ui-sketches/main.rs"
+required-features = ["ui-snapshot"]
+
 [[bench]]
 name = "terminal_memory"
 harness = false

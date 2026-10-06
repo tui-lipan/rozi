@@ -252,7 +252,8 @@ fn report_config_issues(
     rejected: bool,
     success_message: Option<&str>,
 ) -> Update {
-    crate::config::log_config_warnings(warnings);
+    // Toasts only: this runs while the TUI owns the terminal, where stderr is the same tty and a
+    // write lands at the focused pane's cursor until something repaints those cells.
     if rejected {
         let body = if warnings.is_empty() {
             "Config parse failed".to_string()

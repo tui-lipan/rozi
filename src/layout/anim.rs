@@ -320,6 +320,73 @@ pub(crate) fn snapshot_for_close(
     }
 }
 
+/// Presentation of searchable pickers and their nested cards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PickerAnimationStyle {
+    Off,
+    #[default]
+    Fade,
+    Portal,
+    Scan,
+}
+
+impl PickerAnimationStyle {
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Fade, Self::Portal, Self::Scan]
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fade => "fade",
+            Self::Portal => "portal",
+            Self::Scan => "scan",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Fade => "Fade",
+            Self::Portal => "Portal",
+            Self::Scan => "Scan",
+        }
+    }
+
+    /// Gentle entry easing keeps the frontier visible without delaying picker interaction.
+    pub(crate) fn enter_transition(self) -> TransitionConfig {
+        let (millis, easing) = match self {
+            Self::Off => (0, Easing::Linear),
+            Self::Fade => (150, Easing::EaseOutQuad),
+            Self::Portal => (240, Easing::EaseInOutCubic),
+            Self::Scan => (240, Easing::EaseInOutSine),
+        };
+        TransitionConfig {
+            duration: Duration::from_millis(millis),
+            easing,
+        }
+    }
+
+    pub(crate) fn exit_transition(self) -> TransitionConfig {
+        let (millis, easing) = match self {
+            Self::Off => (0, Easing::Linear),
+            Self::Fade | Self::Portal => (100, Easing::EaseInQuad),
+            Self::Scan => (220, Easing::EaseInOutSine),
+        };
+        TransitionConfig {
+            duration: Duration::from_millis(millis),
+            easing,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|style| style.id().eq_ignore_ascii_case(value.trim()))
+    }
+}
+
 /// How a newly shown session takes over the screen from the previous one.
 ///
 /// Never a geometry animation: pane 2 in one session has no spatial relationship to pane 2 in
@@ -695,6 +762,7 @@ pub struct WindowAnimationConfig {
     pub workspace: bool,
     pub workspace_duration: Duration,
     pub session: SessionAnimationStyle,
+    pub picker: PickerAnimationStyle,
     pub focus_chrome: bool,
     pub pane_open_style: PaneAnimationStyle,
     pub pane_close_style: PaneAnimationStyle,
@@ -719,6 +787,7 @@ impl Default for WindowAnimationConfig {
             workspace: true,
             workspace_duration: Duration::from_millis(GEOMETRY_MS),
             session: SessionAnimationStyle::default(),
+            picker: PickerAnimationStyle::default(),
             focus_chrome: true,
             pane_open_style: PaneAnimationStyle::Scale,
             pane_close_style: PaneAnimationStyle::Scale,

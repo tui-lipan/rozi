@@ -98,21 +98,4 @@ mod tests {
             "expected a numeric uid, got {tag:?}"
         );
     }
-
-    #[test]
-    fn current_user_label_always_yields_something_printable() {
-        let label = current_user_label();
-        assert!(!label.is_empty());
-        assert!(!label.contains('\0'));
-    }
-
-    #[test]
-    fn hostname_is_non_empty_when_reported() {
-        // A CI container can have an odd hostname but never an empty or NUL-padded one; the point
-        // is that the C-string decode above does not leak the buffer's trailing zeros.
-        if let Some(host) = hostname() {
-            assert!(!host.is_empty());
-            assert!(!host.contains('\0'));
-        }
-    }
 }

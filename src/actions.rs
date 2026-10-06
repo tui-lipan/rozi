@@ -224,7 +224,7 @@ fn execute_action_inner(
         if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
             ctx.set_command_chord_reveal_delay(delay);
         }
-        ctx.state.pane_padding_editor = None;
+        ctx.state.settings_number_editor = None;
     }
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
@@ -415,7 +415,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::TogglePalette => {
-            ctx.state.pane_padding_editor = None;
+            ctx.state.settings_number_editor = None;
             ctx.state.show_palette = !ctx.state.show_palette;
             ctx.state.command_palette_sidebar_query = false;
             if ctx.state.show_palette {
@@ -425,7 +425,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::ToggleHelp => {
-            ctx.state.pane_padding_editor = None;
+            ctx.state.settings_number_editor = None;
             if ctx.state.keybindings.take().is_some() {
                 request_current_pane_focus(ctx);
             } else {
@@ -584,7 +584,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
         ctx.set_command_chord_reveal_delay(delay);
     }
-    ctx.state.pane_padding_editor = None;
+    ctx.state.settings_number_editor = None;
     ctx.state.search = None;
     ctx.state.rename = None;
     ctx.state.rename_session = None;
@@ -1259,7 +1259,7 @@ mod tests {
     fn control_run_action_clears_stale_padding_editor() {
         use crate::Msg;
         use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
-        use crate::state::PanePaddingEditorState;
+        use crate::state::SettingsNumberEditor;
         use tui_lipan::TestBackend;
 
         std::thread::Builder::new()
@@ -1267,8 +1267,8 @@ mod tests {
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
                 backend.state_mut().show_settings = true;
-                backend.state_mut().pane_padding_editor =
-                    Some(PanePaddingEditorState::new((1, 1, 1, 1)));
+                backend.state_mut().settings_number_editor =
+                    Some(SettingsNumberEditor::padding((1, 1, 1, 1)));
                 let (reply, replies) = std::sync::mpsc::channel();
 
                 // Control requests call `execute_action` directly, bypassing `Msg::RunAction`.
@@ -1288,7 +1288,7 @@ mod tests {
 
                 assert!(replies.recv().expect("control response").ok);
                 assert!(backend.state().show_palette);
-                assert!(backend.state().pane_padding_editor.is_none());
+                assert!(backend.state().settings_number_editor.is_none());
             })
             .expect("spawn direct action test thread")
             .join()

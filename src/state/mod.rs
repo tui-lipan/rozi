@@ -223,7 +223,7 @@ pub struct State {
     pub settings_choice: Option<SettingsChoiceEditor>,
     pub do_not_disturb: bool,
     pub(crate) sound_cues: HashMap<crate::platform::sound::Cue, std::time::Instant>,
-    pub pane_padding_editor: Option<PanePaddingEditorState>,
+    pub settings_number_editor: Option<SettingsNumberEditor>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
     /// The theme picker's highlighted row, index into `theme_choices()`. Drives the palette's
@@ -584,7 +584,7 @@ impl State {
             settings_choice: None,
             do_not_disturb: false,
             sound_cues: HashMap::new(),
-            pane_padding_editor: None,
+            settings_number_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,
             theme_picker_selected: None,

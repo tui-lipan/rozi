@@ -473,7 +473,7 @@ pub(super) struct PaneFileConfig {
     highlight_focused_titlebar: Option<bool>,
     focus_on_hover: Option<bool>,
     focus_on_hover_pause_modifier: Option<String>,
-    scroll_lines: Option<u16>,
+    scroll_multiplier: Option<u16>,
     show_workbar: Option<bool>,
     workbar_gap: Option<bool>,
     workbar_background: Option<bool>,
@@ -1020,14 +1020,14 @@ fn load_config_from_text_with_extensions(
             )),
         }
     }
-    if let Some(lines) = parsed.pane.scroll_lines {
-        let clamped = lines.clamp(PANE_MIN_SCROLL_LINES, PANE_MAX_SCROLL_LINES);
-        if clamped != lines {
+    if let Some(multiplier) = parsed.pane.scroll_multiplier {
+        let clamped = multiplier.clamp(PANE_MIN_SCROLL_MULTIPLIER, PANE_MAX_SCROLL_MULTIPLIER);
+        if clamped != multiplier {
             warnings.push(format!(
-                "pane.scroll_lines {lines} out of range; clamped to {clamped}"
+                "pane.scroll_multiplier {multiplier} out of range; clamped to {clamped}"
             ));
         }
-        config.pane.scroll_lines = clamped;
+        config.pane.scroll_multiplier = clamped;
     }
     if let Some(show_workbar) = parsed.pane.show_workbar {
         config.pane.show_workbar = show_workbar;
@@ -1967,7 +1967,7 @@ mod file_tests {
             highlight_focused_titlebar = false
             focus_on_hover = false
             focus_on_hover_pause_modifier = "ctrl"
-            scroll_lines = 5
+            scroll_multiplier = 5
             show_workbar = false
             workbar_gap = false
             workbar_background = false
@@ -1994,7 +1994,7 @@ mod file_tests {
             parsed.pane.focus_on_hover_pause_modifier.as_deref(),
             Some("ctrl")
         );
-        assert_eq!(parsed.pane.scroll_lines, Some(5));
+        assert_eq!(parsed.pane.scroll_multiplier, Some(5));
         assert_eq!(parsed.pane.show_workbar, Some(false));
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_background, Some(false));
@@ -2043,24 +2043,28 @@ mod file_tests {
     }
 
     #[test]
-    fn pane_scroll_lines_defaults_to_three_and_clamps_out_of_range_values() {
-        assert_eq!(Config::default().pane.scroll_lines, 3);
+    fn pane_scroll_multiplier_defaults_to_three_and_clamps_out_of_range_values() {
+        assert_eq!(Config::default().pane.scroll_multiplier, 3);
 
-        let loaded = load_config_from_text("[pane]\nscroll_lines = 7", Path::new("config.toml"));
-        assert_eq!(loaded.config.pane.scroll_lines, 7);
+        let loaded =
+            load_config_from_text("[pane]\nscroll_multiplier = 7", Path::new("config.toml"));
+        assert_eq!(loaded.config.pane.scroll_multiplier, 7);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 
-        for (lines, expected) in [(0, PANE_MIN_SCROLL_LINES), (500, PANE_MAX_SCROLL_LINES)] {
+        for (multiplier, expected) in [
+            (0, PANE_MIN_SCROLL_MULTIPLIER),
+            (500, PANE_MAX_SCROLL_MULTIPLIER),
+        ] {
             let loaded = load_config_from_text(
-                &format!("[pane]\nscroll_lines = {lines}"),
+                &format!("[pane]\nscroll_multiplier = {multiplier}"),
                 Path::new("config.toml"),
             );
-            assert_eq!(loaded.config.pane.scroll_lines, expected);
+            assert_eq!(loaded.config.pane.scroll_multiplier, expected);
             assert!(
                 loaded
                     .warnings
                     .iter()
-                    .any(|warning| warning.contains("scroll_lines")),
+                    .any(|warning| warning.contains("scroll_multiplier")),
                 "{:?}",
                 loaded.warnings
             );

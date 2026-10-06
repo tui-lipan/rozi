@@ -106,7 +106,7 @@ pub enum SettingsAction {
     CycleRightClickClipboard,
     ToggleOsc52,
     ToggleFocusOnHover,
-    CycleScrollLines,
+    EditScrollMultiplier,
     ToggleBackgroundFollowsTerminal,
     ChooseTitlebar,
     CycleTitleStyle,
@@ -174,7 +174,7 @@ impl SettingsAction {
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
             Self::ToggleFocusOnHover,
-            Self::CycleScrollLines,
+            Self::EditScrollMultiplier,
             // Animations
             Self::ToggleAnimations,
             Self::ToggleWorkspaceAnimation,
@@ -265,7 +265,6 @@ impl SettingsAction {
                 config.input.which_key,
                 WhichKey::label,
             )),
-            Self::CycleScrollLines => Some(scroll_lines_choice_ring(pane.scroll_lines)),
             Self::CycleCopyOnSelect => Some(choice_ring(
                 "Copy on selection",
                 CopyOnSelect::all(),
@@ -460,9 +459,6 @@ impl SettingsAction {
         match self {
             Self::CycleWhichKey => {
                 assign_choice(WhichKey::all(), index, &mut config.input.which_key)
-            }
-            Self::CycleScrollLines => {
-                assign_choice(&SCROLL_LINE_CHOICES, index, &mut config.pane.scroll_lines)
             }
             Self::CycleCopyOnSelect => assign_choice(
                 CopyOnSelect::all(),
@@ -673,32 +669,6 @@ fn assign_choice<T: Copy>(all: &[T], index: usize, slot: &mut T) -> bool {
     true
 }
 
-/// Wheel steps the Settings picker offers. `pane.scroll_lines` accepts any value in range; one off
-/// this list highlights its nearest step.
-const SCROLL_LINE_CHOICES: [u16; 5] = [1, 2, 3, 5, 10];
-
-pub fn scroll_lines_label(lines: u16) -> String {
-    if lines == 1 {
-        "1 line".to_string()
-    } else {
-        format!("{lines} lines")
-    }
-}
-
-fn scroll_lines_choice_ring(current: u16) -> SettingsChoiceRing {
-    let index = SCROLL_LINE_CHOICES
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, lines)| lines.abs_diff(current))
-        .map(|(index, _)| index)
-        .unwrap_or_default();
-    SettingsChoiceRing {
-        title: "Scroll speed",
-        options: vec!["1 line", "2 lines", "3 lines", "5 lines", "10 lines"],
-        index,
-    }
-}
-
 fn titlebar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing {
     let index = if pane.show_titles {
         PaneTitlebarMode::all()
@@ -901,50 +871,118 @@ pub fn abandon_settings_choice(state: &mut super::State) -> Option<std::time::Du
         .then(|| state.config.input.which_key.reveal_delay())
 }
 
-/// Which of the terminal-padding editor's two fields the cursor is on.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PanePaddingField {
-    #[default]
-    Vertical,
-    Horizontal,
+/// One bounded whole-number field of a [`SettingsNumberEditor`].
+pub struct SettingsNumberField {
+    pub label: &'static str,
+    pub input: TextInput,
+    pub min: u16,
+    pub max: u16,
 }
 
-/// Temporary values for the Settings terminal-padding editor. Focus, rather than a second stage
-/// flag, determines whether Enter advances or applies.
-pub struct PanePaddingEditorState {
-    pub vertical: TextInput,
-    pub horizontal: TextInput,
-    pub normalizes_asymmetric: bool,
-    /// Mirrors where the runtime put focus, so the dialog can mark the active field the way the
-    /// host editor does. Tracked rather than derived: the two fields sit side by side, and nothing
-    /// else on this state says which one the next keystroke reaches.
-    pub focus: PanePaddingField,
-}
-
-impl PanePaddingEditorState {
-    pub fn new(padding: (u16, u16, u16, u16)) -> Self {
-        let symmetric = padding.0 == padding.2 && padding.1 == padding.3;
-        let mut vertical = TextInput::new(if symmetric {
-            padding.0.to_string()
-        } else {
-            String::new()
-        });
-        let mut horizontal = TextInput::new(if symmetric {
-            padding.1.to_string()
-        } else {
-            String::new()
-        });
-        if symmetric {
-            vertical.set_anchor(Some(0));
-            horizontal.set_anchor(Some(0));
+impl SettingsNumberField {
+    fn new(label: &'static str, value: Option<u16>, min: u16, max: u16) -> Self {
+        let mut input = TextInput::new(value.map(|value| value.to_string()).unwrap_or_default());
+        if value.is_some() {
+            // Selected, so the first keystroke replaces the current value.
+            input.set_anchor(Some(0));
         }
         Self {
-            vertical,
-            horizontal,
-            normalizes_asymmetric: !symmetric,
-            focus: PanePaddingField::Vertical,
+            label,
+            input,
+            min,
+            max,
         }
     }
+
+    /// Whether `text` may stand in the field while typing: digits only, never above `max`. A value
+    /// below `min` is allowed mid-edit and refused when applied.
+    pub fn accepts(&self, text: &str) -> bool {
+        text.is_empty()
+            || (text.bytes().all(|byte| byte.is_ascii_digit())
+                && text.parse::<u16>().is_ok_and(|value| value <= self.max))
+    }
+
+    pub fn value(&self) -> Option<u16> {
+        self.input
+            .text()
+            .parse()
+            .ok()
+            .filter(|value| (self.min..=self.max).contains(value))
+    }
+
+    pub fn range_hint(&self) -> String {
+        format!("Enter {} to {}", self.min, self.max)
+    }
+}
+
+/// Temporary values for a Settings row edited as typed numbers rather than a list of choices.
+/// Enter advances through the fields and applies from the last one; focus, rather than a stage
+/// flag, says which.
+pub struct SettingsNumberEditor {
+    pub action: SettingsAction,
+    pub title: &'static str,
+    /// Title of the toast shown when a field is empty or out of range.
+    pub invalid_title: &'static str,
+    pub fields: Vec<SettingsNumberField>,
+    /// Mirrors where the runtime put focus, so the dialog can mark the active field. Tracked rather
+    /// than derived: fields sit side by side, and nothing else here says which one the next
+    /// keystroke reaches.
+    pub focus: usize,
+    /// A status row under the fields, such as the form that applying writes.
+    pub note: Option<(&'static str, &'static str)>,
+}
+
+impl SettingsNumberEditor {
+    pub fn for_action(action: SettingsAction, config: &Config) -> Option<Self> {
+        match action {
+            SettingsAction::EditPadding => Some(Self::padding(config.pane.padding)),
+            SettingsAction::EditScrollMultiplier => {
+                Some(Self::scroll_multiplier(config.pane.scroll_multiplier))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn padding(padding: (u16, u16, u16, u16)) -> Self {
+        let symmetric = padding.0 == padding.2 && padding.1 == padding.3;
+        let max = crate::config::MAX_PANE_PADDING;
+        Self {
+            action: SettingsAction::EditPadding,
+            title: "Terminal padding",
+            invalid_title: "Invalid padding",
+            fields: vec![
+                SettingsNumberField::new("Vertical", symmetric.then_some(padding.0), 0, max),
+                SettingsNumberField::new("Horizontal", symmetric.then_some(padding.1), 0, max),
+            ],
+            focus: 0,
+            // Applying always writes the two-axis form.
+            note: (!symmetric).then_some(("Apply", "Symmetric")),
+        }
+    }
+
+    pub fn scroll_multiplier(multiplier: u16) -> Self {
+        Self {
+            action: SettingsAction::EditScrollMultiplier,
+            title: "Scroll multiplier",
+            invalid_title: "Invalid scroll multiplier",
+            fields: vec![SettingsNumberField::new(
+                "Lines per wheel event",
+                Some(multiplier),
+                crate::config::PANE_MIN_SCROLL_MULTIPLIER,
+                crate::config::PANE_MAX_SCROLL_MULTIPLIER,
+            )],
+            focus: 0,
+            note: None,
+        }
+    }
+
+    pub fn is_last(&self, field: usize) -> bool {
+        field + 1 >= self.fields.len()
+    }
+}
+
+pub fn scroll_multiplier_label(multiplier: u16) -> String {
+    format!("{multiplier}×")
 }
 
 #[cfg(test)]
@@ -952,34 +990,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scroll_speed_ring_labels_its_steps_and_highlights_the_nearest_one() {
-        let ring = scroll_lines_choice_ring(3);
-        let labels: Vec<String> = SCROLL_LINE_CHOICES
-            .into_iter()
-            .map(scroll_lines_label)
-            .collect();
-        assert_eq!(ring.options, labels);
-        assert_eq!(ring.options[ring.index], "3 lines");
-        assert_eq!(ring.options[scroll_lines_choice_ring(4).index], "3 lines");
-        assert_eq!(ring.options[scroll_lines_choice_ring(40).index], "10 lines");
+    fn symmetric_padding_prefills_and_asymmetric_padding_requires_explicit_normalization() {
+        let symmetric = SettingsNumberEditor::padding((2, 1, 2, 1));
+        assert_eq!(symmetric.fields[0].input.text(), "2");
+        assert_eq!(symmetric.fields[1].input.text(), "1");
+        assert!(symmetric.note.is_none());
 
-        let mut config = Config::default();
-        assert!(SettingsAction::CycleScrollLines.apply_choice(&mut config, 4));
-        assert_eq!(config.pane.scroll_lines, 10);
-        assert!(SettingsAction::CycleScrollLines.shows_choice_ellipsis(&config));
+        let asymmetric = SettingsNumberEditor::padding((1, 2, 3, 4));
+        assert!(asymmetric.fields[0].input.text().is_empty());
+        assert!(asymmetric.fields[1].input.text().is_empty());
+        assert_eq!(asymmetric.note, Some(("Apply", "Symmetric")));
     }
 
     #[test]
-    fn symmetric_padding_prefills_and_asymmetric_padding_requires_explicit_normalization() {
-        let symmetric = PanePaddingEditorState::new((2, 1, 2, 1));
-        assert_eq!(symmetric.vertical.text(), "2");
-        assert_eq!(symmetric.horizontal.text(), "1");
-        assert!(!symmetric.normalizes_asymmetric);
+    fn scroll_multiplier_field_types_within_range_and_applies_only_valid_values() {
+        let mut editor = SettingsNumberEditor::scroll_multiplier(3);
+        assert_eq!(editor.fields.len(), 1);
+        assert!(editor.is_last(0));
+        let field = &mut editor.fields[0];
+        assert_eq!(field.input.text(), "3");
+        assert_eq!(field.value(), Some(3));
 
-        let asymmetric = PanePaddingEditorState::new((1, 2, 3, 4));
-        assert!(asymmetric.vertical.text().is_empty());
-        assert!(asymmetric.horizontal.text().is_empty());
-        assert!(asymmetric.normalizes_asymmetric);
+        assert!(field.accepts("") && field.accepts("0") && field.accepts("50"));
+        assert!(!field.accepts("51") && !field.accepts("4a") && !field.accepts("-1"));
+
+        field.input = TextInput::new("0".to_string());
+        assert_eq!(field.value(), None, "below the minimum is refused on apply");
+        field.input = TextInput::new(String::new());
+        assert_eq!(field.value(), None);
+        assert_eq!(field.range_hint(), "Enter 1 to 50");
+
+        assert_eq!(scroll_multiplier_label(3), "3×");
+        assert!(!SettingsAction::EditScrollMultiplier.shows_choice_ellipsis(&Config::default()));
     }
 
     #[test]

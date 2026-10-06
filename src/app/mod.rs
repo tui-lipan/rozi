@@ -858,14 +858,14 @@ mod tests {
 
                 assert_eq!(
                     backend.focused_key().map(|key| key.as_ref()),
-                    Some(crate::view::pane_padding_vertical_key())
+                    Some(crate::view::settings_number_field_key(0))
                 );
                 let editor = backend
                     .state()
-                    .pane_padding_editor
+                    .settings_number_editor
                     .as_ref()
                     .expect("editor state");
-                assert_eq!(editor.vertical.selection(), Some((0, 1)));
+                assert_eq!(editor.fields[0].input.selection(), Some((0, 1)));
 
                 backend
                     .send_key(KeyEvent {
@@ -875,15 +875,16 @@ mod tests {
                     .expect("advance to horizontal");
                 assert_eq!(
                     backend.focused_key().map(|key| key.as_ref()),
-                    Some(crate::view::pane_padding_horizontal_key())
+                    Some(crate::view::settings_number_field_key(1))
                 );
                 assert_eq!(
                     backend
                         .state()
-                        .pane_padding_editor
+                        .settings_number_editor
                         .as_ref()
                         .unwrap()
-                        .horizontal
+                        .fields[1]
+                        .input
                         .selection(),
                     Some((0, 1))
                 );
@@ -893,10 +894,11 @@ mod tests {
                 assert_eq!(
                     backend
                         .state()
-                        .pane_padding_editor
+                        .settings_number_editor
                         .as_ref()
                         .unwrap()
-                        .horizontal
+                        .fields[1]
+                        .input
                         .text(),
                     "0"
                 );
@@ -939,7 +941,7 @@ mod tests {
                     })
                     .expect("cancel editor");
                 assert_eq!(backend.state().config.pane.padding, (0, 0, 0, 0));
-                assert!(backend.state().pane_padding_editor.is_none());
+                assert!(backend.state().settings_number_editor.is_none());
 
                 backend.set_viewport(Rect {
                     x: 0,
@@ -974,9 +976,12 @@ mod tests {
                         crate::state::SettingsAction::EditPadding,
                     ))
                     .expect("open asymmetric editor");
-                let editor = backend.state().pane_padding_editor.as_ref().unwrap();
-                assert!(editor.vertical.text().is_empty() && editor.horizontal.text().is_empty());
-                assert!(editor.normalizes_asymmetric);
+                let editor = backend.state().settings_number_editor.as_ref().unwrap();
+                assert!(
+                    editor.fields[0].input.text().is_empty()
+                        && editor.fields[1].input.text().is_empty()
+                );
+                assert_eq!(editor.note, Some(("Apply", "Symmetric")));
             })
             .expect("spawn test thread")
             .join()

@@ -147,11 +147,15 @@ pub fn extension_install_error_key() -> &'static str {
     "rozi-extension-install-error"
 }
 
-pub fn pane_padding_vertical_key() -> &'static str {
-    "rozi-pane-padding-vertical"
-}
-pub fn pane_padding_horizontal_key() -> &'static str {
-    "rozi-pane-padding-horizontal"
+/// Key of the Settings number editor's field at `index`. The editor has at most four fields.
+pub fn settings_number_field_key(index: usize) -> &'static str {
+    const KEYS: [&str; 4] = [
+        "rozi-settings-number-0",
+        "rozi-settings-number-1",
+        "rozi-settings-number-2",
+        "rozi-settings-number-3",
+    ];
+    KEYS[index.min(KEYS.len() - 1)]
 }
 
 pub fn help_filter_key() -> &'static str {

@@ -205,16 +205,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)
         }
         Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
-        Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),
-        Msg::PanePaddingVerticalChanged(event) => {
-            overlays::pane_padding_vertical_changed(ctx, event)
+        Msg::CloseSettingsNumberEditor => overlays::close_settings_number_editor(ctx),
+        Msg::SettingsNumberChanged(field, event) => {
+            overlays::settings_number_changed(ctx, field, event)
         }
-        Msg::PanePaddingHorizontalChanged(event) => {
-            overlays::pane_padding_horizontal_changed(ctx, event)
-        }
-        Msg::PanePaddingFocus(field) => overlays::pane_padding_focus(ctx, field),
-        Msg::AdvancePanePadding => overlays::advance_pane_padding(ctx),
-        Msg::SubmitPanePadding => overlays::submit_pane_padding(ctx),
+        Msg::SettingsNumberFocus(field) => overlays::settings_number_focus(ctx, field),
+        Msg::SettingsNumberEnter(field) => overlays::settings_number_enter(ctx, field),
         Msg::CloseThemePicker => overlays::close_theme_picker(ctx),
         Msg::PreviewTheme(index) => overlays::preview_theme(ctx, index),
         Msg::SelectTheme(index) => overlays::select_theme(ctx, index),

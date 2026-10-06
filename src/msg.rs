@@ -116,13 +116,13 @@ pub enum Msg {
         check: crate::state::ExtensionUpdateCheck,
     },
     CloseExtensionDetail,
-    ClosePanePaddingEditor,
-    PanePaddingVerticalChanged(InputEvent),
-    PanePaddingHorizontalChanged(InputEvent),
-    /// Focus landed on one of the padding editor's two fields, so the dialog can mark it.
-    PanePaddingFocus(crate::state::PanePaddingField),
-    AdvancePanePadding,
-    SubmitPanePadding,
+    CloseSettingsNumberEditor,
+    /// An edit to the Settings number editor's field at this index.
+    SettingsNumberChanged(usize, InputEvent),
+    /// Focus landed on the number editor's field at this index, so the dialog can mark it.
+    SettingsNumberFocus(usize),
+    /// Enter on the field at this index: advance to the next field, or apply from the last.
+    SettingsNumberEnter(usize),
     CloseThemePicker,
     /// Index into [`config::theme_choices`]: preview the highlighted theme.
     PreviewTheme(usize),

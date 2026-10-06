@@ -41,7 +41,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(delay) = crate::state::abandon_settings_choice(&mut ctx.state) {
         ctx.set_command_chord_reveal_delay(delay);
     }
-    ctx.state.pane_padding_editor = None;
+    ctx.state.settings_number_editor = None;
     ctx.state.extensions = Some(ExtensionsState {
         tab: ExtensionsTab::Installed,
         entries: scan.entries,

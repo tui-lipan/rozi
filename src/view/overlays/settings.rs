@@ -36,9 +36,9 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     ToggleFocusOnHover,
                 ),
                 (
-                    "Scroll speed",
-                    crate::state::scroll_lines_label(pane.scroll_lines),
-                    CycleScrollLines,
+                    "Scroll multiplier",
+                    crate::state::scroll_multiplier_label(pane.scroll_multiplier),
+                    EditScrollMultiplier,
                 ),
             ],
         ),
@@ -748,7 +748,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .child(Spacer::new().height(Length::Px(1)))
         .child(list);
     let panel = super::palette::tabbed_picker_panel(ctx, "Settings", Length::Auto, body.into());
-    let nested = ctx.state.pane_padding_editor.is_some() || ctx.state.settings_choice.is_some();
+    let nested = ctx.state.settings_number_editor.is_some() || ctx.state.settings_choice.is_some();
     let panel: Element = Animated::new(panel)
         .opacity(crate::scratchpad::backdrop_dim(if nested {
             1.0
@@ -860,86 +860,75 @@ fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
     }
 }
 
-pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
-    let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+pub(crate) fn settings_number_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(editor) = ctx.state.settings_number_editor.as_ref() else {
         return Text::new("").into();
     };
     let theme = &ctx.state.theme;
-    // A labeled, fixed-width numeric field: "Label [ 0 ]". Kept narrow so both axes sit on one row.
-    let field = |field: crate::state::PanePaddingField,
-                 label: &str,
-                 state: &TextInput,
-                 key,
-                 changed: fn(InputEvent) -> Msg,
-                 submit: Msg| {
-        {
-            let focused = editor.focus == field;
-            let input = Input::bound(state)
-                .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-                .focus_style(
-                    Style::new()
-                        .fg(theme.border_active)
-                        .bg(theme.surface.element),
-                )
-                .selection_style(theme.text_selection)
-                .width(Length::Px(6))
-                .border(false)
-                .padding((0, 1))
-                .on_change(ctx.link().callback(changed))
-                .on_focus(ctx.link().callback(move |_| Msg::PanePaddingFocus(field)))
-                .on_key(ctx.link().key_handler(move |event| {
-                    if event.is(KeyCode::Esc) {
-                        Some(Msg::ClosePanePaddingEditor)
-                    } else if event.code == KeyCode::Enter
-                        && !event.mods.ctrl
-                        && !event.mods.alt
-                        && !event.mods.super_key
-                    {
-                        Some(submit.clone())
-                    } else {
-                        None
-                    }
-                }))
-                .key(key);
-            HStack::new()
-                .width(Length::Auto)
-                .height(Length::Auto)
-                .gap(1)
-                .child(
-                    // The same marker the host editor wears, for the same reason: two borderless
-                    // fields side by side otherwise say nothing about which one Enter is aimed at.
-                    Text::new(if focused { "›" } else { " " })
-                        .width(Length::Px(1))
-                        .style(fg_only(&theme.accent)),
-                )
-                .child(Text::new(label.to_string()).style(if focused {
+    let several = editor.fields.len() > 1;
+    // A labeled, fixed-width numeric field: "Label [ 0 ]". Kept narrow so a pair sits on one row.
+    let field = |index: usize, field: &crate::state::SettingsNumberField| {
+        let focused = editor.focus == index;
+        let input = Input::bound(&field.input)
+            .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+            .focus_style(
+                Style::new()
+                    .fg(theme.border_active)
+                    .bg(theme.surface.element),
+            )
+            .selection_style(theme.text_selection)
+            .width(Length::Px(6))
+            .border(false)
+            .padding((0, 1))
+            .on_change(
+                ctx.link()
+                    .callback(move |event| Msg::SettingsNumberChanged(index, event)),
+            )
+            .on_focus(
+                ctx.link()
+                    .callback(move |_| Msg::SettingsNumberFocus(index)),
+            )
+            .on_key(ctx.link().key_handler(move |event| {
+                if event.is(KeyCode::Esc) {
+                    Some(Msg::CloseSettingsNumberEditor)
+                } else if event.code == KeyCode::Enter
+                    && !event.mods.ctrl
+                    && !event.mods.alt
+                    && !event.mods.super_key
+                {
+                    Some(Msg::SettingsNumberEnter(index))
+                } else {
+                    None
+                }
+            }))
+            .key(settings_number_field_key(index));
+        HStack::new()
+            .width(Length::Auto)
+            .height(Length::Auto)
+            .gap(1)
+            .child(
+                // The same marker the host editor wears, for the same reason: borderless fields
+                // side by side otherwise say nothing about which one Enter is aimed at.
+                Text::new(if focused && several { "›" } else { " " })
+                    .width(Length::Px(1))
+                    .style(fg_only(&theme.accent)),
+            )
+            .child(
+                Text::new(field.label.to_string()).style(if focused || !several {
                     fg_only(&theme.primary).bold()
                 } else {
                     fg_only(&theme.muted)
-                }))
-                .child(input)
-        }
+                }),
+            )
+            .child(input)
     };
-    let fields = HStack::new()
-        .height(Length::Auto)
-        .padding((0, 1))
-        .justify(Justify::SpaceBetween)
-        .child(field(
-            crate::state::PanePaddingField::Vertical,
-            "Vertical",
-            &editor.vertical,
-            pane_padding_vertical_key(),
-            Msg::PanePaddingVerticalChanged,
-            Msg::AdvancePanePadding,
-        ))
-        .child(field(
-            crate::state::PanePaddingField::Horizontal,
-            "Horizontal",
-            &editor.horizontal,
-            pane_padding_horizontal_key(),
-            Msg::PanePaddingHorizontalChanged,
-            Msg::SubmitPanePadding,
-        ));
+    let fields = editor.fields.iter().enumerate().fold(
+        HStack::new()
+            .height(Length::Auto)
+            .padding((0, 1))
+            .justify(Justify::SpaceBetween),
+        |row, (index, slot)| row.child(field(index, slot)),
+    );
     // gap(0): the fields sit under the modal's own top padding, and `hint_row` carries its own
     // leading blank line, so an extra VStack gap would double the spacing.
     let mut body = VStack::new()
@@ -947,29 +936,25 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
         .padding((1, 0, 0, 0))
         .gap(0)
         .child(fields);
-    if editor.normalizes_asymmetric {
-        // Compact structured status: applying this editor always writes its two-axis form.
+    if let Some((label, value)) = editor.note {
         body = body.child(
             HStack::new()
                 .height(Length::Auto)
                 .padding((0, 1))
                 .justify(Justify::SpaceBetween)
-                .child(Text::new("Apply").style(fg_only(&theme.muted)))
-                .child(Text::new("Symmetric").style(fg_only(&theme.primary))),
+                .child(Text::new(label).style(fg_only(&theme.muted)))
+                .child(Text::new(value).style(fg_only(&theme.primary))),
         );
     }
     let body = body.child(
         hint_row()
-            // Enter advances from the first field and applies from the second, so the click follows
+            // Enter advances from an earlier field and applies from the last, so the click follows
             // whichever field has focus, as the key does.
             .child(hint_button(
                 ctx,
-                "next / apply",
+                if several { "next / apply" } else { "apply" },
                 "enter",
-                match editor.focus {
-                    crate::state::PanePaddingField::Vertical => Msg::AdvancePanePadding,
-                    crate::state::PanePaddingField::Horizontal => Msg::SubmitPanePadding,
-                },
+                Msg::SettingsNumberEnter(editor.focus),
             ))
             // Both keys land back in Settings whenever it is the dialog behind this one.
             .child(hint_button(
@@ -980,14 +965,14 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
                     "cancel"
                 },
                 "esc",
-                Msg::ClosePanePaddingEditor,
+                Msg::CloseSettingsNumberEditor,
             )),
     );
-    nested_action_palette_modal(ctx, "Terminal padding", SETTINGS_MAX_HEIGHT_PERCENT)
+    nested_action_palette_modal(ctx, editor.title, SETTINGS_MAX_HEIGHT_PERCENT)
         .width(Length::Auto)
-        .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
+        .on_close(ctx.link().callback(|_| Msg::CloseSettingsNumberEditor))
         .child(body)
-        .key("rozi-padding-modal")
+        .key("rozi-settings-number-modal")
 }
 
 pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {

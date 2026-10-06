@@ -1,6 +1,6 @@
 [package]
 name = "rozi"
-version = "0.0.28"
+version = "0.0.29"
 edition = "2024"
 # Set by tui-lipan, which requires Rust 1.96.
 rust-version = "1.96"

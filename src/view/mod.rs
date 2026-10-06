@@ -748,6 +748,21 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
 
     let palette = SearchPalette::<T>::new()
+        .item_key(|item| {
+            if item.aliases.is_empty() {
+                item.label.clone()
+            } else {
+                std::sync::Arc::from(format!(
+                    "{}\0{}",
+                    item.label,
+                    item.aliases
+                        .iter()
+                        .map(|alias| alias.as_ref())
+                        .collect::<Vec<_>>()
+                        .join("\0")
+                ))
+            }
+        })
         .height(height)
         // Every rozi palette is a type-to-filter picker: the query input owns focus and the
         // input's key interceptor drives list navigation, so a focusable list only adds a second

@@ -570,9 +570,15 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
 
             let duplicate = extensions.join("y-direct-duplicate");
             copy_fixture("valid/direct-command", &duplicate);
+            let neighbor = extensions.join("x-direct-neighbor");
+            copy_fixture("valid/direct-command", &neighbor);
+            let manifest = neighbor.join("extension.toml");
+            let contents = std::fs::read_to_string(&manifest).unwrap().replace("fixture-direct", "fixture-direct-neighbor");
+            std::fs::write(manifest, contents).unwrap();
             backend
                 .dispatch(rozi::Msg::ExtensionsReload)
                 .expect("rescan duplicate fixture");
+            backend.state_mut().extensions.as_mut().unwrap().query.set_text("fixture-direct");
             // By directory name rather than by whole-path string equality. Two spellings of one
             // directory compare unequal - Windows hands `std::env::temp_dir` the 8.3 form
             // (`RUNNER~1`), and a path that has been through the filesystem may come back in the
@@ -611,6 +617,8 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .expect("remove duplicate fixture");
             assert!(!duplicate.exists());
             assert!(extensions.join("z-direct").exists());
+            let state = backend.state().extensions.as_ref().unwrap();
+            assert_eq!(std::path::Path::new(&state.entries[state.selected].path).file_name(), Some(std::ffi::OsStr::new("z-direct")), "removal keeps the adjacent disabled installation selected");
             let config = std::fs::read_to_string(rozi::config::config_path()).unwrap();
             assert!(
                 config.contains("disabled = [\"fixture-direct\"]"),

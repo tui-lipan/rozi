@@ -802,6 +802,12 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(state) = ctx.state.extensions.as_mut() {
         state.pending_remove = None;
     }
+    let previous_position = ctx.state.extensions.as_ref().and_then(|state| {
+        installed_groups(state)
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .position(|index| index == state.selected)
+    });
     let stopped = match stop_before_removal(ctx, &entry) {
         Ok(update) => update,
         Err(error) => {
@@ -834,7 +840,20 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     cleanup_disabled_after_removal(ctx, &entry);
 
     // The row leaves the list under the armed confirmation the user just pressed twice.
-    crate::ops::config::reload_extensions_quiet(ctx)
+    let update = crate::ops::config::reload_extensions_quiet(ctx);
+    if let Some(state) = ctx.state.extensions.as_mut()
+        && let Some(position) = previous_position
+    {
+        let visible: Vec<_> = installed_groups(state)
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .collect();
+        state.selected = visible
+            .get(position.min(visible.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0);
+    }
+    update
 }
 
 pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
@@ -893,6 +912,12 @@ pub(crate) fn config_reloaded(ctx: &mut Context<AppRoot>) {
 }
 
 fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
+    let previous_position = ctx.state.extensions.as_ref().and_then(|state| {
+        installed_groups(state)
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .position(|index| index == state.selected)
+    });
     let detail_path = ctx
         .state
         .extensions
@@ -911,6 +936,10 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
     state.update_checks.retain(|id, _| {
         state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
     });
+    let visible: Vec<_> = installed_groups(state)
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .collect();
     state.selected = selected
         .as_deref()
         .and_then(|selected| {
@@ -919,8 +948,16 @@ fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
                 .iter()
                 .position(|entry| identity(entry) == selected)
         })
-        .unwrap_or(0)
-        .min(state.entries.len().saturating_sub(1));
+        .filter(|index| visible.contains(index))
+        .or_else(|| {
+            previous_position.and_then(|position| {
+                visible
+                    .get(position.min(visible.len().saturating_sub(1)))
+                    .copied()
+            })
+        })
+        .or_else(|| visible.first().copied())
+        .unwrap_or(0);
     state.pending_remove = None;
     state.detail = detail_path.and_then(|detail_path| {
         let entry = state

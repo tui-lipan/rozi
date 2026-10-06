@@ -268,25 +268,3 @@ fn a_pane_outside_any_repository_says_so() {
         );
     });
 }
-
-#[cfg(feature = "ui-snapshot")]
-#[test]
-fn worktrees_tab_visual_reference() {
-    on_large_stack(|| {
-        let mut backend = seeded(100, 26);
-        {
-            let state = backend.state_mut();
-            // The pointer on `feat/login` (header, master, then it) shows what Enter would do.
-            state.sidebar.panels[0].hovered_row = Some(2);
-            state.sidebar.pending_row_close = Some(rozi::state::SidebarClose::Worktree {
-                path: "/home/me/src/rozi/.claude/worktrees/extensions-spinner".into(),
-                force: false,
-            });
-        }
-        backend.render();
-        let png = backend.capture_ui_snapshot().to_png_default().unwrap();
-        let dir = std::path::Path::new("target/ui-sketches");
-        std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(dir.join("sidebar-worktrees.png"), png).unwrap();
-    });
-}

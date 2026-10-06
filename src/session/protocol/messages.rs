@@ -333,6 +333,11 @@ pub enum ClientMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeRequest {
+    /// Read-only provider status, on a separate worker from checkout operations.
+    Status {
+        cwd: String,
+        refresh: bool,
+    },
     List {
         cwd: String,
     },
@@ -378,6 +383,9 @@ pub struct WorktreeSession {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeResult {
+    Statuses {
+        statuses: crate::git::pull_requests::WorktreeStatuses,
+    },
     Listed {
         worktrees: Vec<crate::git::worktrees::WorktreeInfo>,
         /// Sessions on the host that record each listed checkout (by its listed path) as their

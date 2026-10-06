@@ -48,18 +48,6 @@ fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
     false
 }
 
-fn selected(picker: &WorktreePickerState) -> Option<&crate::git::worktrees::WorktreeInfo> {
-    let query = picker.input.text().trim().to_ascii_lowercase();
-    picker.entries.get(picker.selected).filter(|entry| {
-        query.is_empty()
-            || entry.path.to_ascii_lowercase().contains(&query)
-            || entry
-                .branch
-                .as_deref()
-                .is_some_and(|branch| branch.to_ascii_lowercase().contains(&query))
-    })
-}
-
 /// The repository Worktrees acts on: the focused pane's project root, on the session's host.
 ///
 /// A pane whose shell has moved to a nested SSH host is refused: the session server cannot run
@@ -125,6 +113,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     };
     operation_in_flight(ctx);
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
+    picker.statuses = ctx.state.worktree_statuses.get(target.as_ref(), &cwd);
     // Open with the last list for this repository and refresh it in place: Git answers quickly,
     // but an empty "loading" frame that then grows into the real list reads as a delay.
     if let Some(cached) = ctx.state.worktree_lists.get(target.as_ref(), &cwd) {
@@ -142,6 +131,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.mode = crate::state::Mode::Normal;
     crate::ops::focus::request_worktree_picker_focus(ctx);
     client.worktree(id, WorktreeRequest::List { cwd });
+    request_status(ctx, false);
     Update::full()
 }
 
@@ -189,6 +179,40 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
         picker.error = None;
     }
     client.worktree(id, WorktreeRequest::List { cwd });
+    request_status(ctx, true);
+    Update::full()
+}
+
+fn request_status(ctx: &mut Context<AppRoot>, refresh: bool) {
+    let Some(picker) = ctx.state.worktree_picker.as_ref() else {
+        return;
+    };
+    if picker.standalone_form || (picker.pending_status.is_some() && !refresh) {
+        return;
+    }
+    let cwd = picker.cwd.clone();
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return;
+    };
+    let id = request_id(ctx);
+    ctx.state.worktree_picker.as_mut().unwrap().pending_status = Some(id);
+    client.worktree(id, WorktreeRequest::Status { cwd, refresh });
+}
+
+pub(crate) fn copy_path(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(path) = ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .and_then(WorktreePickerState::selected_entry)
+        .map(|tree| tree.path.clone())
+    else {
+        return Update::none();
+    };
+    match ctx.clipboard().copy(&path) {
+        Ok(()) => crate::pane::pty_events::notify_info(ctx, "Copied worktree path"),
+        Err(error) => crate::pane::pty_events::notify_error(ctx, "Copy failed", error.to_string()),
+    };
     Update::full()
 }
 
@@ -356,9 +380,50 @@ pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .worktree_picker
         .as_ref()
-        .and_then(selected)
+        .and_then(WorktreePickerState::selected_entry)
         .cloned();
     tree.map_or(Update::none(), |tree| enter_tree(ctx, tree))
+}
+
+pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
+    state.is_controller()
+        && !state.scratch_visible
+        && state.current().session_client.is_some()
+        && state
+            .current()
+            .shared
+            .as_ref()
+            .is_none_or(|shared| !shared.read_only)
+        && state.worktree_picker.as_ref().is_some_and(|picker| {
+            picker.form.is_none()
+                && picker.target == state.current().remote_target
+                && picker
+                    .selected_entry()
+                    .is_some_and(|tree| !tree.bare && !tree.prunable)
+        })
+}
+
+/// Open an ordinary interactive pane in this session; host paths pass unchanged to its server.
+pub(crate) fn open_pane(ctx: &mut Context<AppRoot>) -> Update {
+    if !can_open_pane(&ctx.state) || operation_in_flight(ctx) {
+        return Update::none();
+    }
+    let picker = ctx.state.worktree_picker.as_ref().unwrap();
+    let path = picker.entries[picker.selected].path.clone();
+    let workspace = ctx.state.current().active_workspace;
+    let source = ctx.state.current().workspaces[workspace].focused_pane;
+    ctx.state.worktree_picker = None;
+    ctx.state.current_mut().engaged = true;
+    crate::pane::lifecycle::spawn_interactive_pane(
+        ctx,
+        workspace,
+        source,
+        crate::state::PaneIdentity {
+            cwd: Some(path),
+            ..Default::default()
+        },
+    )
+    .1
 }
 
 pub(crate) fn activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
@@ -549,7 +614,7 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
 /// checkout re-arms as forced once Git has refused it.
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let Some((cwd, tree, armed)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
-        let tree = selected(picker)?.clone();
+        let tree = picker.selected_entry()?.clone();
         let armed = picker
             .pending_remove
             .as_ref()
@@ -589,7 +654,7 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .worktree_picker
         .as_ref()
-        .and_then(|picker| Some((picker.cwd.clone(), selected(picker)?.clone())))
+        .and_then(|picker| Some((picker.cwd.clone(), picker.selected_entry()?.clone())))
     else {
         return Update::none();
     };
@@ -824,6 +889,61 @@ pub(crate) fn apply_result(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
+    let sidebar_status = ctx.state.sidebar.worktrees.pending_status == Some(request_id);
+    let picker_status = ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_status == Some(request_id));
+    if sidebar_status || picker_status {
+        let (target, cwd) = if sidebar_status {
+            ctx.state.sidebar.worktrees.pending_status = None;
+            let Some(source) = ctx.state.sidebar.worktrees.source.clone() else {
+                return Update::none();
+            };
+            source
+        } else {
+            let picker = ctx.state.worktree_picker.as_mut().unwrap();
+            picker.pending_status = None;
+            (picker.target.clone(), picker.cwd.clone())
+        };
+        let statuses = match result {
+            WorktreeResult::Statuses { statuses } => statuses,
+            WorktreeResult::Failed { .. } => crate::git::pull_requests::WorktreeStatuses {
+                unavailable: true,
+                ..Default::default()
+            },
+            _ => return Update::none(),
+        };
+        let same_repository = |entries: &[crate::git::worktrees::WorktreeInfo]| {
+            entries.iter().any(|tree| tree.path == cwd)
+        };
+        let mut changed = false;
+        if let Some(picker) = ctx.state.worktree_picker.as_mut()
+            && picker.target == target
+            && (picker.cwd == cwd || same_repository(&picker.entries))
+            && picker.pending_status.is_none_or(|id| id <= request_id)
+            && picker.statuses != statuses
+        {
+            changed = true;
+            picker.statuses = statuses.clone();
+        }
+        let sidebar = &mut ctx.state.sidebar.worktrees;
+        if sidebar.source.as_ref().is_some_and(|(host, root)| {
+            *host == target && (*root == cwd || same_repository(&sidebar.entries))
+        }) && sidebar.pending_status.is_none_or(|id| id <= request_id)
+            && sidebar.statuses != statuses
+        {
+            changed = true;
+            sidebar.statuses = statuses.clone();
+        }
+        ctx.state.worktree_statuses.put(target, cwd, statuses);
+        return if changed {
+            Update::full()
+        } else {
+            Update::none()
+        };
+    }
     if ctx.state.sidebar.worktrees.pending == Some(request_id) {
         return crate::update::sidebar::worktrees::listed(ctx, result);
     }
@@ -958,6 +1078,309 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn hybrid_path_matches_support_open_remove_and_unlock() {
+        on_large_stack(|| {
+            use crate::git::worktrees::{WorktreeInfo, WorktreeLock};
+            use crate::session::client::ClientOutbound;
+            use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
+            use crate::session::origin::{SessionOrigin, WorktreeOrigin};
+            use crate::session::protocol::{ClientMessage, WorktreeRequest};
+            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods};
+
+            crate::test_support::isolate_user_dirs();
+            for action in ["open", "remove", "unlock"] {
+                for query in ["repo feature", "114"] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    let (client, outbound) = SessionClient::test_channel();
+                    let state = backend.state_mut();
+                    state.config.animations.enabled = false;
+                    state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                    state.current_mut().session_client = Some(client);
+                    let path = "C:\\code\\repo-worktrees\\feature";
+                    let mut picker = WorktreePickerState::new("C:\\code\\repo".into(), None);
+                    picker.entries.push(WorktreeInfo {
+                        path: path.into(),
+                        branch: Some("feat/worktrees".into()),
+                        detached: false,
+                        bare: false,
+                        prunable: false,
+                        linked: true,
+                        lock: (action == "unlock").then(|| WorktreeLock {
+                            reason: "review".into(),
+                            stale: false,
+                        }),
+                    });
+                    picker.statuses.checkouts.insert(
+                        path.into(),
+                        crate::git::pull_requests::PullRequestStatus {
+                            number: 114,
+                            status: crate::git::pull_requests::WorkStatus::Open,
+                        },
+                    );
+                    picker.sessions = ["one", "two"]
+                        .into_iter()
+                        .map(|name| DiscoveredSession {
+                            name: name.into(),
+                            origin: SessionOrigin {
+                                worktree: Some(WorktreeOrigin { path: path.into() }),
+                                ..Default::default()
+                            },
+                            ephemeral: false,
+                            host: None,
+                            remote_target: None,
+                            status: DiscoveredSessionStatus::Restorable,
+                        })
+                        .collect();
+                    picker.input.set_text(query);
+                    state.worktree_picker = Some(picker);
+                    backend.render();
+                    assert!(
+                        backend
+                            .capture_frame()
+                            .plain_text()
+                            .contains("feat/worktrees")
+                    );
+                    assert!(backend.focus_key(&"rozi-worktree-picker".into()));
+                    let key = match action {
+                        "open" => KeyEvent {
+                            code: KeyCode::Enter,
+                            mods: KeyMods::NONE,
+                        },
+                        "remove" => KeyEvent {
+                            code: KeyCode::Char('k'),
+                            mods: KeyMods::CTRL,
+                        },
+                        _ => KeyEvent {
+                            code: KeyCode::Char('u'),
+                            mods: KeyMods::CTRL,
+                        },
+                    };
+                    backend.send_key(key).unwrap();
+                    if action == "open" {
+                        assert!(backend.state().worktree_picker.is_none(), "{query}");
+                        assert!(backend.state().show_session_picker);
+                        assert_eq!(
+                            backend
+                                .state()
+                                .session_picker
+                                .as_ref()
+                                .unwrap()
+                                .entries
+                                .len(),
+                            2
+                        );
+                    } else {
+                        if action == "remove" {
+                            assert_eq!(
+                                backend
+                                    .state()
+                                    .worktree_picker
+                                    .as_ref()
+                                    .unwrap()
+                                    .pending_remove
+                                    .as_ref()
+                                    .unwrap()
+                                    .path,
+                                path
+                            );
+                            backend.send_key(key).unwrap();
+                        }
+                        let requests: Vec<_> = outbound
+                            .try_iter()
+                            .filter_map(|message| match message {
+                                ClientOutbound::Control(ClientMessage::Worktree {
+                                    request,
+                                    ..
+                                }) => Some(request),
+                                _ => None,
+                            })
+                            .collect();
+                        assert!(
+                            requests.iter().any(|request| match request {
+                                WorktreeRequest::Remove { path: selected, .. } =>
+                                    action == "remove" && selected == path,
+                                WorktreeRequest::Unlock { path: selected, .. } =>
+                                    action == "unlock" && selected == path,
+                                _ => false,
+                            }),
+                            "{action}: {query}: {requests:?}"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn pane_action_keeps_the_session_and_passes_host_paths_to_its_server() {
+        on_large_stack(|| {
+            use crate::session::client::ClientOutbound;
+            use crate::session::protocol::ClientMessage;
+            use crate::session::remote::RemoteTarget;
+            use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods};
+
+            crate::test_support::isolate_user_dirs();
+            for (remote, click) in [(false, false), (true, false), (true, true)] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let (client, outbound) = SessionClient::test_channel();
+                let target = remote.then(|| RemoteTarget::Alias("workbox".into()));
+                let path = if remote {
+                    "C:\\code\\worktrees\\feature with spaces"
+                } else {
+                    "/src/repo-worktrees/feature with spaces"
+                };
+                let state = backend.state_mut();
+                state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                state.config.animations.enabled = false;
+                let current = state.current_mut();
+                current.session_client = Some(client);
+                current.session_attached = true;
+                current.session_name = Some("dev".into());
+                current.remote_target = target.clone();
+                current.remote_host = remote.then(|| "workbox".into());
+                current.active_workspace = 1;
+                let mut picker = WorktreePickerState::new("/src/repo".into(), target);
+                picker.entries.push(crate::git::worktrees::WorktreeInfo {
+                    path: path.into(),
+                    branch: Some("feat/worktree-pane".into()),
+                    detached: false,
+                    bare: false,
+                    prunable: false,
+                    linked: true,
+                    lock: None,
+                });
+                state.worktree_picker = Some(picker);
+                let epoch = state.runtime_epoch;
+                backend.render();
+                let frame = backend.capture_frame().plain_text();
+                assert!(frame.contains("pane Ctrl+Enter"), "{frame}");
+                // Optional visual artifact from the same attached-session fixture that
+                // verifies the action, rather than a disconnected picker sketch.
+                #[cfg(feature = "ui-snapshot")]
+                if !remote && let Ok(path) = std::env::var("ROZI_TEST_WORKTREE_PANE_CAPTURE") {
+                    let png = backend.capture_ui_snapshot().to_png_default().unwrap();
+                    std::fs::write(path, png).unwrap();
+                }
+                assert!(backend.focus_key(&"rozi-worktree-picker".into()));
+                if click {
+                    let lines = backend.capture_frame().to_fixed_grid_lines();
+                    let (y, x) = lines
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find_map(|(y, line)| {
+                            let byte = line.find("pane Ctrl+Enter")?;
+                            Some((y as u16, line[..byte].chars().count() as u16))
+                        })
+                        .unwrap();
+                    for kind in [
+                        MouseKind::Down(MouseButton::Left),
+                        MouseKind::Up(MouseButton::Left),
+                    ] {
+                        backend
+                            .send_mouse(MouseEvent {
+                                x,
+                                y,
+                                kind,
+                                mods: KeyMods::NONE,
+                            })
+                            .unwrap();
+                    }
+                } else {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Enter,
+                            mods: KeyMods::CTRL,
+                        })
+                        .unwrap();
+                }
+                let state = backend.state();
+                assert!(state.worktree_picker.is_none());
+                assert_eq!(state.runtime_epoch, epoch);
+                assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+                assert_eq!(state.current().active_workspace, 1);
+                let workspace = &state.current().workspaces[1];
+                let pane = workspace.panes.last().unwrap();
+                assert_eq!(pane.identity.cwd.as_deref(), Some(path));
+                assert_eq!(workspace.focused_pane, Some(pane.id));
+                assert!(state.current().engaged);
+                let spawns: Vec<_> = outbound
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::Control(ClientMessage::SpawnPane {
+                            cwd,
+                            local,
+                            launch,
+                            ..
+                        }) => Some((cwd, local, launch)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(spawns.len(), 1);
+                assert_eq!(spawns[0].0.as_deref(), Some(path));
+                assert!(!spawns[0].1);
+                assert!(spawns[0].2.is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn worktree_panes_require_layout_control_on_the_same_host() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            for denied in [
+                "read-only",
+                "follower",
+                "other-host",
+                "bare",
+                "prunable",
+                "scratch",
+            ] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let (client, outbound) = SessionClient::test_channel();
+                let state = backend.state_mut();
+                state.current_mut().session_client = Some(client);
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(if denied == "follower" { 2 } else { 1 });
+                shared.read_only = denied == "read-only";
+                state.current_mut().shared = Some(shared);
+                state.scratch_visible = denied == "scratch";
+                let target = (denied == "other-host")
+                    .then(|| crate::session::remote::RemoteTarget::Alias("elsewhere".into()));
+                let mut picker = WorktreePickerState::new("/src/repo".into(), target);
+                picker.entries.push(crate::git::worktrees::WorktreeInfo {
+                    path: "/src/worktree".into(),
+                    branch: Some("feat/pane".into()),
+                    detached: false,
+                    bare: denied == "bare",
+                    prunable: denied == "prunable",
+                    linked: true,
+                    lock: None,
+                });
+                state.worktree_picker = Some(picker);
+                let before = state.current().workspaces[0].panes.len();
+                backend.dispatch(Msg::WorktreeOpenPane).unwrap();
+                assert_eq!(
+                    backend.state().current().workspaces[0].panes.len(),
+                    before,
+                    "{denied}"
+                );
+                assert!(backend.state().worktree_picker.is_some(), "{denied}");
+                assert!(
+                    !outbound.try_iter().any(|message| matches!(
+                        message,
+                        crate::session::client::ClientOutbound::Control(
+                            crate::session::protocol::ClientMessage::SpawnPane { .. }
+                        )
+                    )),
+                    "{denied}"
+                );
+            }
+        });
     }
 
     /// Start a create on the foreground attachment's connection.

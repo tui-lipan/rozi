@@ -9,15 +9,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     if let Some(form) = picker.form.as_ref() {
         return worktree_form(ctx, form);
     }
-    let query = picker.input.text().trim().to_ascii_lowercase();
-    let selected = picker.entries.get(picker.selected).filter(|tree| {
-        query.is_empty()
-            || tree.path.to_ascii_lowercase().contains(&query)
-            || tree
-                .branch
-                .as_deref()
-                .is_some_and(|branch| branch.to_ascii_lowercase().contains(&query))
-    });
+    let selected = picker.selected_entry();
     let writable = ctx
         .state
         .current()
@@ -52,6 +44,18 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             selected.is_some() && !busy,
         )
         .hint_only(),
+        OverlayAction::new(
+            "ctrl-enter",
+            "pane",
+            Msg::WorktreeOpenPane,
+            selected.is_some() && !busy && crate::ops::worktrees::can_open_pane(&ctx.state),
+        ),
+        OverlayAction::new(
+            "ctrl-c",
+            "copy path",
+            Msg::WorktreeCopyPath,
+            selected.is_some(),
+        ),
         OverlayAction::new("ctrl-n", "new", Msg::WorktreeNew, writable && !busy),
         OverlayAction::new("ctrl-r", "refresh", Msg::WorktreeRefresh, !busy),
         OverlayAction::destructive(
@@ -68,68 +72,58 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::WorktreeUnlockSelected,
             writable && !busy && selected.is_some_and(|tree| tree.lock.is_some()),
         ),
-        OverlayAction::new("esc", "close", Msg::CloseWorktrees, true),
+        OverlayAction::new("esc", "close", Msg::CloseWorktrees, true).hide_hint(),
     ];
-    let primary = picker
-        .entries
-        .iter()
-        .find(|tree| !tree.linked)
-        .map(|tree| tree.path.as_str());
     let rows: Vec<WorktreeRow> = picker
         .entries
         .iter()
-        .map(|tree| WorktreeRow::new(tree, picker, primary))
+        .map(|tree| WorktreeRow::new(tree, picker))
         .collect();
     let widest_row = rows
         .iter()
         .map(|row| MARKER_WIDTH + row.branch.chars().count() + row.description().chars().count())
         .max()
         .unwrap_or(0);
-    let entries = rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
+    let entries = (0..rows.len())
+        .map(|index| {
             // The label is what search ranks; paths still match through the aliases.
-            SearchEntry::Item(
-                SearchItem::new(row.branch.clone(), index)
-                    .aliases([row.path.clone(), row.full_path.clone()])
-                    .description(picker_description(row.description())),
-            )
+            SearchEntry::Item(picker.search_item(index).expect("listed worktree"))
         })
         .collect();
     let theme = &ctx.state.theme;
-    let styles = RowStyles {
-        branch: fg_only(&theme.primary).bold(),
-        path: fg_only(&theme.muted),
-        marker: fg_only(&theme.accent),
-        session: fg_only(&theme.accent),
-        state: fg_only(&theme.muted),
-    };
+    let branch_style = fg_only(&theme.primary).bold();
+    let marker_style = fg_only(&theme.accent);
+    let muted = fg_only(&theme.muted);
+    let status_styles = rows
+        .iter()
+        .map(|row| {
+            row.status.map_or(muted, |status| {
+                crate::view::worktree_status_style(theme, status)
+            })
+        })
+        .collect::<Vec<_>>();
     let rows = Arc::new(rows);
     let render_item: OverlayItemRenderer<usize> =
         Arc::new(move |item: &SearchItem<usize>, _highlight| {
             let row = rows.get(item.value)?;
-            let mut description = vec![Span::new(format!("  {}", row.path)).style(styles.path)];
-            if !row.state.is_empty() {
-                description.push(Span::new(" · ").style(styles.path));
-                description.push(Span::new(row.state.clone()).style(if row.has_sessions {
-                    styles.session
-                } else {
-                    styles.state
-                }));
+            let mut description = Vec::new();
+            if !row.work_status.is_empty() {
+                description
+                    .push(Span::new(row.work_status.clone()).style(status_styles[item.value]));
             }
-            // A narrow modal cuts the description from its start, keeping the path's tail and the
-            // session or `locked` state, which tell rows apart and decide what Enter does. The
-            // description still gives way before the branch, so a branch wide enough to fill the
-            // row hides the state too.
+            if !row.state.is_empty() {
+                if !description.is_empty() {
+                    description.push(Span::new(" · ").style(muted));
+                }
+                description.push(Span::new(row.state.clone()).style(muted));
+            }
             Some(
                 ListItem::from_spans([
-                    Span::new(if row.current { "● " } else { "  " }).style(styles.marker),
-                    Span::new(row.branch.clone()).style(styles.branch),
+                    Span::new(if row.current { "● " } else { "  " }).style(marker_style),
+                    Span::new(row.branch.clone()).style(branch_style),
                 ])
                 .description_spans(description)
-                .primary_description_truncation(ListTruncation::Start)
-                .primary_truncate_description_first(true),
+                .primary_truncate_description_first(false),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {
@@ -278,7 +272,7 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
     if form.unignored.is_some() && form.pending_exclude.is_none() {
         hints = hints.child(hint_button(ctx, "exclude", "ctrl+e", Msg::WorktreeExclude));
     }
-    body = body.child(hints.child(hint_button(ctx, "cancel", "esc", Msg::WorktreeFormClose)));
+    body = body.child(hints);
     action_palette_modal(ctx, "New worktree")
         .on_close(ctx.link().callback(|_| Msg::WorktreeFormClose))
         .child(body)
@@ -288,25 +282,12 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
 /// Cells before the branch: the current-checkout marker.
 const MARKER_WIDTH: usize = 2;
 
-#[derive(Clone, Copy)]
-struct RowStyles {
-    branch: Style,
-    path: Style,
-    marker: Style,
-    session: Style,
-    state: Style,
-}
-
-/// One checkout as the picker draws it.
+/// The path remains an alias, while the right edge carries work and checkout status.
 struct WorktreeRow {
     branch: String,
-    /// Shortened for display; see [`short_checkout_path`].
-    path: String,
-    full_path: String,
-    /// Associated sessions, or the checkout's notable state.
+    work_status: String,
+    status: Option<crate::git::pull_requests::WorkStatus>,
     state: String,
-    has_sessions: bool,
-    /// The checkout the focused pane is in.
     current: bool,
 }
 
@@ -314,56 +295,51 @@ impl WorktreeRow {
     fn new(
         tree: &crate::git::worktrees::WorktreeInfo,
         picker: &crate::state::WorktreePickerState,
-        primary: Option<&str>,
     ) -> Self {
         let branch = match (&tree.branch, tree.bare) {
             (_, true) => "(bare)".to_string(),
             (Some(branch), false) => branch.clone(),
             (None, false) => "(detached)".to_string(),
         };
-        let sessions: Vec<&str> = picker
-            .sessions
-            .iter()
-            .filter(|row| {
-                row.remote_target == picker.target
-                    && row
-                        .origin
-                        .worktree
-                        .as_ref()
-                        .is_some_and(|origin| origin.path == tree.path)
-            })
-            .map(|row| row.name.as_str())
-            .collect();
-        let state = match sessions.as_slice() {
-            [] if !tree.linked => "primary".to_string(),
-            [] if tree.lock.as_ref().is_some_and(|lock| lock.stale) => "stale lock".to_string(),
-            [] if tree.lock.is_some() => "locked".to_string(),
-            [] if tree.prunable => "prunable".to_string(),
-            [] => String::new(),
-            [only] => (*only).to_string(),
-            [first, rest @ ..] => format!("{first} +{}", rest.len()),
+        let state = if !tree.linked {
+            "primary"
+        } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
+            "stale lock"
+        } else if tree.lock.is_some() {
+            "locked"
+        } else if tree.prunable {
+            "prunable"
+        } else {
+            ""
+        }
+        .to_string();
+        let pr = picker.statuses.checkouts.get(&tree.path);
+        let work_status = match pr {
+            Some(pr) => format!("#{} {}", pr.number, pr.status.picker_label()),
+            None if tree.linked && tree.branch.is_some() && picker.statuses.unavailable => {
+                "PR unavailable".into()
+            }
+            None => String::new(),
         };
         Self {
             branch,
-            path: short_checkout_path(&tree.path, primary),
-            full_path: tree.path.clone(),
+            work_status,
+            status: pr.map(|pr| pr.status),
             state,
-            has_sessions: !sessions.is_empty(),
             current: tree.path == picker.cwd,
         }
     }
 
-    /// The path, then the state when there is one, as the row's description shows them.
     fn description(&self) -> String {
-        if self.state.is_empty() {
-            self.path.clone()
-        } else {
-            format!("{} · {}", self.path, self.state)
-        }
+        [self.work_status.as_str(), self.state.as_str()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 
-/// Wide enough for the widest row, so a nested checkout path and its session both fit, within a
+/// Wide enough for the widest branch and status, within a
 /// range that keeps a short list compact and a long one from spanning an ultrawide screen. The
 /// modal is clamped to the viewport either way.
 fn picker_width(widest_row: usize) -> u16 {
@@ -372,59 +348,14 @@ fn picker_width(widest_row: usize) -> u16 {
     (widest_row + CHROME).clamp(72, 160) as u16
 }
 
-/// A checkout's path relative to the directory holding the primary checkout, so rows differ in the
-/// part that stays visible: `rozi`, `rozi-worktrees/feat`. A checkout elsewhere keeps its full
-/// path. These are session-host paths, compared as text split on either separator.
-pub(crate) fn short_checkout_path(path: &str, primary: Option<&str>) -> String {
-    let components = |path: &str| -> Vec<String> {
-        path.split(['/', '\\'])
-            .filter(|part| !part.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
-    let Some(primary) = primary.map(components).filter(|parts| parts.len() > 1) else {
-        return path.to_string();
-    };
-    let parent = &primary[..primary.len() - 1];
-    let parts = components(path);
-    if parts.len() <= parent.len() || !parts.starts_with(parent) {
-        return path.to_string();
-    }
-    let separator = if path.contains('\\') && !path.contains('/') {
-        "\\"
-    } else {
-        "/"
-    };
-    parts[parent.len()..].join(separator)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{picker_width, short_checkout_path};
+    use super::picker_width;
 
     #[test]
     fn the_picker_grows_with_its_widest_row_within_bounds() {
         assert_eq!(picker_width(20), 72);
         assert_eq!(picker_width(90), 98);
         assert_eq!(picker_width(400), 160);
-    }
-
-    #[test]
-    fn checkout_paths_are_shown_from_the_repository_parent() {
-        let primary = Some("/home/me/src/rozi");
-        assert_eq!(short_checkout_path("/home/me/src/rozi", primary), "rozi");
-        assert_eq!(
-            short_checkout_path("/home/me/src/rozi-worktrees/feat", primary),
-            "rozi-worktrees/feat"
-        );
-        assert_eq!(
-            short_checkout_path("/elsewhere/feat", primary),
-            "/elsewhere/feat"
-        );
-        assert_eq!(
-            short_checkout_path("C:\\code\\repo-worktrees\\x", Some("C:/code/repo")),
-            "repo-worktrees\\x"
-        );
-        assert_eq!(short_checkout_path("/wt/x", None), "/wt/x");
     }
 }

@@ -16,7 +16,7 @@ impl WorktreeJob {
     pub fn size(&self) -> usize {
         use protocol::WorktreeRequest as Request;
         match &self.request {
-            Request::List { cwd } => cwd.len(),
+            Request::List { cwd } | Request::Status { cwd, .. } => cwd.len(),
             Request::Preview { cwd, branch } => cwd.len() + branch.len(),
             Request::Create {
                 cwd,
@@ -48,8 +48,10 @@ pub(super) struct WorktreeDone {
 
 pub(super) struct WorktreeWorker {
     jobs: Option<mpsc::SyncSender<WorktreeJob>>,
+    status_jobs: Option<mpsc::SyncSender<WorktreeJob>>,
     done: mpsc::Receiver<WorktreeDone>,
     handle: Option<std::thread::JoinHandle<()>>,
+    status_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl WorktreeWorker {
@@ -57,6 +59,29 @@ impl WorktreeWorker {
     pub fn new(directory: Option<std::path::PathBuf>) -> Self {
         let (jobs, incoming) = mpsc::sync_channel::<WorktreeJob>(QUEUE_CAPACITY);
         let (completed, done) = mpsc::sync_channel::<WorktreeDone>(QUEUE_CAPACITY);
+        let status_completed = completed.clone();
+        let (status_jobs, status_incoming) = mpsc::sync_channel::<WorktreeJob>(QUEUE_CAPACITY);
+        let status_handle = std::thread::Builder::new()
+            .name("rozi-worktree-status".into())
+            .spawn(move || {
+                let mut cache = crate::git::pull_requests::StatusCache::default();
+                for job in status_incoming {
+                    let protocol::WorktreeRequest::Status { cwd, refresh } = job.request else {
+                        continue;
+                    };
+                    let reply = WorktreeDone {
+                        client_id: job.client_id,
+                        request_id: job.request_id,
+                        result: protocol::WorktreeResult::Statuses {
+                            statuses: cache.get(std::path::Path::new(&cwd), refresh),
+                        },
+                    };
+                    if status_completed.send(reply).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok();
         let handle = std::thread::Builder::new()
             .name("rozi-worktrees".into())
             .spawn(move || {
@@ -69,8 +94,10 @@ impl WorktreeWorker {
             .ok();
         Self {
             jobs: handle.is_some().then_some(jobs),
+            status_jobs: status_handle.is_some().then_some(status_jobs),
             done,
             handle,
+            status_handle,
         }
     }
 
@@ -78,7 +105,12 @@ impl WorktreeWorker {
         &self,
         job: WorktreeJob,
     ) -> std::result::Result<(), mpsc::TrySendError<WorktreeJob>> {
-        let Some(jobs) = &self.jobs else {
+        let queue = if matches!(job.request, protocol::WorktreeRequest::Status { .. }) {
+            &self.status_jobs
+        } else {
+            &self.jobs
+        };
+        let Some(jobs) = queue else {
             return Err(mpsc::TrySendError::Disconnected(job));
         };
         jobs.try_send(job)
@@ -90,6 +122,15 @@ impl WorktreeWorker {
 
     pub fn finish(mut self) {
         self.jobs = None;
+        self.status_jobs = None;
+        if self
+            .status_handle
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
+            && let Some(handle) = self.status_handle.take()
+        {
+            let _ = handle.join();
+        }
         if self
             .handle
             .as_ref()

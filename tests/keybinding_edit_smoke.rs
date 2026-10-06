@@ -291,7 +291,7 @@ fn body() {
     let review = frame(&mut backend);
     assert!(review.contains("Ctrl+F11"), "{review}");
     assert!(review.contains("save Enter"), "{review}");
-    assert!(review.contains("record again Esc"), "{review}");
+    assert!(!review.contains("record again Esc"), "{review}");
     // With a candidate on screen, a stray key does not replace it.
     send(&mut backend, KeyCode::Char('x'));
     let still = frame(&mut backend);

@@ -15,6 +15,10 @@ use crate::git::worktrees::{self, WorktreeInfo};
 /// `force` never overrides that.
 pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> WorktreeResult {
     let result = match request {
+        WorktreeRequest::Status { cwd, refresh } => Ok(WorktreeResult::Statuses {
+            statuses: crate::git::pull_requests::StatusCache::default()
+                .get(Path::new(&cwd), refresh),
+        }),
         WorktreeRequest::List { cwd } => {
             worktrees::list(Path::new(&cwd)).map(|worktrees| WorktreeResult::Listed {
                 sessions: sessions_by_checkout(&worktrees),

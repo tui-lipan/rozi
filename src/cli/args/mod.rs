@@ -753,9 +753,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             verb @ ("show-command" | "hide-command") => {
                 // The one argument is taken as given, whatever it starts with: a manifest command
                 // ID may begin with `-`, and these commands have no flags it could be mistaken for.
-                // A leading `--` is accepted too, for scripts that always write one.
+                // A leading `--` is a separator only when an ID follows it; otherwise it is the ID.
                 let mut rest: Vec<String> = iter.by_ref().collect();
-                if rest.first().is_some_and(|arg| arg == "--") {
+                if rest.len() > 1 && rest.first().is_some_and(|arg| arg == "--") {
                     rest.remove(0);
                 }
                 let mut rest = rest.into_iter();
@@ -3143,10 +3143,14 @@ mod tests {
             Ok(("tools.install".to_string(), false))
         );
         assert!(visibility(&["show-command"]).is_err(), "an id is required");
-        assert!(
-            visibility(&["show-command", "--"]).is_err(),
-            "an id is required"
-        );
+        for verb in ["show-command", "hide-command"] {
+            for args in [vec![verb, "--"], vec![verb, "--", "--"]] {
+                assert_eq!(
+                    visibility(&args),
+                    Ok(("--".to_string(), verb == "show-command"))
+                );
+            }
+        }
         assert!(
             visibility(&["hide-command", "a", "b"]).is_err(),
             "only one id"

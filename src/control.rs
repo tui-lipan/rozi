@@ -629,10 +629,11 @@ pub enum ControlCommand {
     /// Show or hide one of the calling extension's own commands in the command palette.
     ///
     /// Only an extension process may send it, for a command its own manifest declares. The choice
-    /// lasts as long as the extension generation that made it: a reload that restarts the
-    /// extension's processes brings back the manifest's `hidden`, one that leaves them running
-    /// keeps it. A hidden
-    /// command still runs from its key binding and `run-action`: the palette lists what is worth
+    /// lasts as long as the extension's runtime generation, even after the calling command exits.
+    /// A process-facing change rotates the generation and restarts its services, resetting the
+    /// choice to the manifest's `hidden`. A presentation-only or no-op reload keeps both the
+    /// generation and the choice. A hidden command still runs from its key binding and
+    /// `run-action`: the palette lists what is worth
     /// offering now, and the extension knows that better than the manifest can.
     CommandVisibility {
         /// The command's ID: its manifest `id`, or the public `<extension>.<id>`.

@@ -3,10 +3,9 @@
 //! A manifest can only say whether a command starts hidden; whether it is worth offering often
 //! depends on things only the extension can see, such as whether something it installs is already
 //! installed. `command-visibility` lets the extension say so. The choice belongs to the extension
-//! generation that made it, which lives exactly as long as the extension's processes: a reload that
-//! restarts them falls back to the manifest instead of carrying an old process's opinion forward,
-//! and one that leaves them running keeps the choice, since the service that made it is still
-//! running and will not decide again.
+//! runtime generation that made it, even after the calling command exits. A process-facing change
+//! rotates the generation and restarts its services, falling back to the manifest's `hidden`.
+//! A presentation-only or no-op reload keeps both the generation and the choice.
 //!
 //! Only the palette honors it. A key binding and `run-action` still reach a hidden command, like
 //! [`crate::commands::palette_visible`]: the palette lists what is worth offering, while a bound key

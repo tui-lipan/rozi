@@ -372,11 +372,11 @@ impl SessionPickerTab {
             Self::All => None,
         }
     }
-    pub fn label(&self) -> String {
+    pub fn label(&self, state: &super::State) -> String {
         match self {
             Self::All => "All".into(),
             Self::Host(None) => "Local".into(),
-            Self::Host(Some(target)) => target.display_label(),
+            Self::Host(Some(target)) => state.remote_target_label(target),
         }
     }
 }
@@ -458,7 +458,7 @@ pub enum AgentPickerTab {
 }
 
 impl AgentPickerTab {
-    pub fn label(&self) -> String {
+    pub fn label(&self, state: &super::State) -> String {
         match self {
             Self::All => "All".into(),
             Self::Session { target, session } => {
@@ -469,7 +469,7 @@ impl AgentPickerTab {
                 };
                 target.as_ref().map_or_else(
                     || name.to_string(),
-                    |target| format!("{}/{name}", target.display_label()),
+                    |target| format!("{}/{name}", state.remote_target_label(target)),
                 )
             }
         }

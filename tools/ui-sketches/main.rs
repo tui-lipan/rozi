@@ -734,4 +734,22 @@ fn session_picker() {
             );
         }
     }
+    let picker = backend.state_mut().session_picker.as_mut().unwrap();
+    let mut url = picker.entries[1].clone();
+    url.remote_target = Some(RemoteTarget::Url {
+        user: None,
+        host: "workbox".into(),
+        port: None,
+    });
+    picker.entries.retain(|entry| entry.name == "dev");
+    picker.entries.push(url);
+    picker.selected = 0;
+    picker.tab = SessionPickerTab::All;
+    picker.input.set_text(String::new());
+    backend.state_mut().show_session_picker = false;
+    backend.render();
+    backend.state_mut().show_session_picker = true;
+    backend.set_viewport(viewport(120, 30));
+    backend.render();
+    write_png(&mut backend, "session-picker-colliding-targets");
 }

@@ -24,8 +24,11 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let entries = rows
         .iter()
         .map(|row| {
-            SearchEntry::item(row.label(), row.location.clone())
-                .description(picker_description(row.description()))
+            SearchEntry::Item(
+                SearchItem::new(row.label(), row.location.clone())
+                    .aliases(row.search_aliases(&ctx.state)),
+            )
+            .description(picker_description(row.description()))
         })
         .collect::<Vec<_>>();
     let selected = picker
@@ -166,9 +169,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     );
     if tabs.len() > 1 {
         overlay = overlay.tabs(OverlayTabs::new(
-            tabs.iter()
-                .map(crate::state::AgentPickerTab::label)
-                .collect(),
+            tabs.iter().map(|tab| tab.label(&ctx.state)).collect(),
             active,
             Msg::AgentPickerTab,
         ));

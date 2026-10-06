@@ -44,3 +44,83 @@ impl RemoteRuntimeState {
         self.probe_epoch
     }
 }
+
+impl super::State {
+    /// Compact host labels remain readable; colliding exact targets expose their reversible specs.
+    pub fn remote_target_label(&self, target: &crate::session::remote::RemoteTarget) -> String {
+        let label = target.display_label();
+        let picker_targets = self.session_picker.iter().flat_map(|picker| {
+            picker
+                .entries
+                .iter()
+                .filter_map(|entry| entry.remote_target.as_ref())
+                .chain(picker.tab.remote_target())
+        });
+        let agent_tab_target = self
+            .agent_picker
+            .as_ref()
+            .and_then(|picker| match &picker.tab {
+                super::AgentPickerTab::Session { target, .. } => target.as_ref(),
+                super::AgentPickerTab::All => None,
+            });
+        let collision = self
+            .remote
+            .hosts
+            .iter()
+            .map(|entry| &entry.target)
+            .chain(self.remote.agents.keys())
+            .chain(
+                self.remote
+                    .live_sessions
+                    .iter()
+                    .filter_map(|entry| entry.remote_target.as_ref()),
+            )
+            .chain(picker_targets)
+            .chain(self.current().remote_target.as_ref())
+            .chain(self.active_launcher_scope())
+            .chain(
+                self.background
+                    .values()
+                    .filter_map(|attachment| attachment.remote_target.as_ref()),
+            )
+            .chain(agent_tab_target)
+            .any(|other| other != target && other.display_label() == label);
+        if collision {
+            format!("{label} ({})", target.to_spec())
+        } else {
+            label
+        }
+    }
+
+    /// Filtering and row actions use the same visible labels and exact target specs.
+    pub(crate) fn matches_session_query(
+        &self,
+        entry: &crate::session::discovery::DiscoveredSession,
+        query_lower: &str,
+    ) -> bool {
+        query_lower.is_empty()
+            || entry.name.to_ascii_lowercase().contains(query_lower)
+            || entry.remote_target.as_ref().is_some_and(|target| {
+                self.remote_target_label(target)
+                    .to_ascii_lowercase()
+                    .contains(query_lower)
+                    || target.to_spec().to_ascii_lowercase().contains(query_lower)
+                    || format!("{}@{}", entry.name, self.remote_target_label(target))
+                        .to_ascii_lowercase()
+                        .contains(query_lower)
+                    || format!("{}@{}", entry.name, target.to_spec())
+                        .to_ascii_lowercase()
+                        .contains(query_lower)
+            })
+            || entry
+                .remote_target
+                .as_ref()
+                .map(|target| target.display_label())
+                .or_else(|| entry.host.clone())
+                .is_some_and(|host| {
+                    format!("{}@{host}", entry.name)
+                        .to_ascii_lowercase()
+                        .contains(query_lower)
+                })
+    }
+}

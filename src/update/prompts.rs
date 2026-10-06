@@ -226,6 +226,19 @@ pub(super) fn session_picker_query_changed(ctx: &mut Context<AppRoot>, query: St
             picker.keep_selection_in_tab();
         }
     }
+    // Keep row actions on the visible result even when filtering replaces the first row
+    // without moving the palette's numeric cursor.
+    if let Some(picker) = ctx.state.session_picker.as_ref() {
+        let query = picker.input.text().trim().to_ascii_lowercase();
+        let matches = |entry: &crate::session::discovery::DiscoveredSession| {
+            picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
+        };
+        if !picker.entries.get(picker.selected).is_some_and(matches)
+            && let Some(index) = picker.entries.iter().position(matches)
+        {
+            ctx.state.session_picker.as_mut().unwrap().selected = index;
+        }
+    }
     crate::ops::session::clear_pending_session_arms(ctx);
     Update::full()
 }

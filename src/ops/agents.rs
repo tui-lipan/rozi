@@ -45,7 +45,7 @@ pub(crate) fn picker_tabs(state: &crate::state::State) -> Vec<crate::state::Agen
                     ..
                 }
             ),
-            tab.label(),
+            tab.label(state),
         )
     });
     tabs.push(AgentPickerTab::All);
@@ -75,6 +75,7 @@ pub(crate) fn sync_picker_selection(state: &mut crate::state::State) -> bool {
         .filter(|row| row.in_tab(state, &picker.tab))
         .map(|row| {
             SearchItem::new(row.label(), row.location.clone())
+                .aliases(row.search_aliases(state))
                 .description(ItemDescription::new().right(row.description()))
         })
         .collect::<Vec<_>>();
@@ -471,7 +472,7 @@ mod tests {
             assert_eq!(
                 picker_tabs(backend.state())
                     .iter()
-                    .map(AgentPickerTab::label)
+                    .map(|tab| tab.label(backend.state()))
                     .collect::<Vec<_>>(),
                 ["dev", "workbox/dev", "All"]
             );
@@ -538,8 +539,89 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(
-                backend.state().agent_picker.as_ref().unwrap().tab.label(),
+                backend
+                    .state()
+                    .agent_picker
+                    .as_ref()
+                    .unwrap()
+                    .tab
+                    .label(backend.state()),
                 "workbox/dev"
+            );
+        });
+    }
+
+    #[test]
+    fn colliding_remote_targets_have_distinct_agent_tabs_rows_and_search() {
+        on_large_stack(|| {
+            let mut backend = tabbed_backend();
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 180,
+                h: 30,
+            });
+            let alias = RemoteTarget::Alias("workbox".into());
+            let url = RemoteTarget::Url {
+                user: None,
+                host: "workbox".into(),
+                port: None,
+            };
+            let mut agent = backend.state().remote.agents[&alias][0].clone();
+            agent.label = "URL Codex".into();
+            backend
+                .state_mut()
+                .remote
+                .agents
+                .insert(url.clone(), vec![agent]);
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            let tabs = picker_tabs(backend.state());
+            let labels: Vec<_> = tabs.iter().map(|tab| tab.label(backend.state())).collect();
+            assert!(
+                labels.contains(&"workbox (workbox)/dev".into()),
+                "{labels:?}"
+            );
+            assert!(
+                labels.contains(&"workbox (ssh://workbox)/dev".into()),
+                "{labels:?}"
+            );
+            backend.render();
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(
+                frame
+                    .lines()
+                    .any(|line| line.contains("Remote Codex")
+                        && line.contains("workbox (workbox)/dev")),
+                "{frame}"
+            );
+            assert!(
+                frame.lines().any(|line| line.contains("URL Codex")
+                    && line.contains("workbox (ssh://workbox)/dev")),
+                "{frame}"
+            );
+            for ch in "ssh://workbox".chars() {
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char(ch),
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+            }
+            backend.render();
+            let picker = backend.state().agent_picker.as_ref().unwrap();
+            assert!(
+                matches!(&picker.selected, Some(AgentLocation::OtherSession { target: Some(target), .. }) if target == &url)
+            );
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(
+                frame.contains("URL Codex") && !frame.contains("Remote Codex"),
+                "{frame}"
+            );
+            let index = tabs.iter().position(|tab| matches!(tab, crate::state::AgentPickerTab::Session { target: Some(target), .. } if target == &url)).unwrap();
+            backend.dispatch(Msg::AgentPickerTab(index)).unwrap();
+            backend.render();
+            assert!(
+                matches!(&backend.state().agent_picker.as_ref().unwrap().selected, Some(AgentLocation::OtherSession { target: Some(target), .. }) if target == &url)
             );
         });
     }

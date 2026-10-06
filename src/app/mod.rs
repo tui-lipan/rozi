@@ -495,7 +495,8 @@ mod tests {
                 assert!(lines.iter().any(|line| line.contains("launch as Ctrl+O")));
                 assert!(lines.iter().any(|line| line.contains("default Ctrl+F")));
                 assert!(lines.iter().any(|line| line.contains("replace Ctrl+R")));
-                assert!(lines.iter().any(|line| line.contains("• running")));
+                assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
+                assert!(lines.iter().any(|line| line.contains("default · running")));
                 assert!(lines.iter().any(|line| line.contains("new Ctrl+N")));
             })
             .expect("spawn test thread")

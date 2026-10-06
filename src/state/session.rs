@@ -235,10 +235,6 @@ pub struct SharedSessionState {
     orphan_output: OrphanOutputStore,
     /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
     pub layout_commit_scheduled: bool,
-    /// Whether a pointer gesture was editing the layout at any point since the last flush, which
-    /// makes the next commit live. Kept past the gesture's end so the commit carrying its final
-    /// step is live too.
-    pub layout_gesture_pending: bool,
 }
 
 impl SharedSessionState {
@@ -256,7 +252,6 @@ impl SharedSessionState {
             last_committed_layout: None,
             orphan_output: OrphanOutputStore::default(),
             layout_commit_scheduled: false,
-            layout_gesture_pending: false,
         }
     }
 

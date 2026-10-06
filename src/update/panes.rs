@@ -93,6 +93,7 @@ pub(super) fn resize_pane(
 }
 
 pub(super) fn end_resize(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    crate::ops::session::flush_live_layout_gesture(ctx);
     if ctx
         .state
         .resizing_pane
@@ -164,6 +165,7 @@ pub(super) fn resize_split_junction(
 }
 
 pub(super) fn end_resize_split(ctx: &mut Context<AppRoot>) -> Update {
+    crate::ops::session::flush_live_layout_gesture(ctx);
     ctx.state.split_drag = None;
     Update::full()
 }

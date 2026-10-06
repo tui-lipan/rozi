@@ -422,12 +422,28 @@ pub(crate) const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 ///
 /// A lifted tiled pane is not one of these. It is mirrored through [`publish_drag`], and the tiles
 /// it vacates and lands among reflow once each, which followers animate just as the controller does.
+/// Neither is anything in the scratchpad, which is client-local.
 fn layout_gesture_active(state: &crate::state::State) -> bool {
+    if state.scratch_visible {
+        return false;
+    }
     state.split_drag.is_some()
         || state.resizing_pane.is_some()
         || state
             .moving_pane
             .is_some_and(|session| session.was_floating)
+}
+
+/// Publish the last step of a pointer gesture as a live revision before the gesture ends.
+///
+/// Call it while the session is still set. The debounced commit would otherwise carry that step
+/// after the gesture has ended, marked ordinary, and possibly together with whatever discrete layout
+/// change came next. Flushing here keeps every live revision inside its gesture, so liveness never
+/// outlives it.
+pub(crate) fn flush_live_layout_gesture(ctx: &mut Context<AppRoot>) {
+    if layout_gesture_active(&ctx.state) {
+        flush_layout_commit(ctx);
+    }
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
@@ -436,11 +452,6 @@ pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
     }
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
-    }
-    if layout_gesture_active(&ctx.state)
-        && let Some(shared) = ctx.state.current_mut().shared.as_mut()
-    {
-        shared.layout_gesture_pending = true;
     }
     let epoch = ctx.state.runtime_epoch;
     let Some(shared) = ctx.state.current().shared.as_ref() else {
@@ -486,11 +497,10 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
         bounds.h.round().max(1.0) as u16,
     );
     let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
-    let gesture_active = layout_gesture_active(&ctx.state);
+    let live = layout_gesture_active(&ctx.state);
     let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
         return;
     };
-    let live = std::mem::take(&mut shared.layout_gesture_pending) || gesture_active;
     if shared.last_committed_layout.as_ref() == Some(&layout) {
         return;
     }

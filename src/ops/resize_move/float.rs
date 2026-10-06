@@ -248,6 +248,7 @@ pub(crate) fn move_pane(
 }
 
 pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -> Update {
+    crate::ops::session::flush_live_layout_gesture(ctx);
     let session = ctx.state.moving_pane.filter(|session| session.id == id);
     if session.is_some() {
         ctx.state.moving_pane = None;
@@ -275,6 +276,8 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
 /// Finish any pointer-driven layout edit before an action changes pane/layout mode. Mouse drag-end
 /// events arriving afterward become harmless because their session has already been cleared.
 pub(crate) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {
+    // Before the action that follows can change the layout, so the two never share a commit.
+    crate::ops::session::flush_live_layout_gesture(ctx);
     if let Some(session) = ctx.state.moving_pane {
         // In place: the drop settles the Scrollable viewport from the strip as it is drawn mid-drag.
         focus_pane_in_place(&mut ctx.state, session.id);
@@ -2058,8 +2061,8 @@ mod tests {
         }
 
         /// Every step of a split drag is a live commit, so followers draw it rather than ease
-        /// toward it. The commit carrying the last step is live even when it goes out after the
-        /// release; the first layout change after that is an ordinary commit again.
+        /// toward it. A step still pending at release goes out live; the first layout change after
+        /// that is an ordinary commit again.
         #[test]
         fn a_split_drag_commits_live_steps_and_then_ordinary_ones() {
             in_test_stack(|| {
@@ -2078,11 +2081,11 @@ mod tests {
                     .expect("drag the split further");
                 backend
                     .dispatch(Msg::EndResizeSplit)
-                    .expect("release before the commit goes out");
+                    .expect("release before the debounced commit goes out");
                 assert_eq!(
                     flushed_liveness(&mut backend, &rx),
                     vec![true],
-                    "the last step is still part of the gesture"
+                    "the release publishes the last step while it is still part of the gesture"
                 );
 
                 backend.state_mut().active_workspace_mut().panes[1].floating = true;
@@ -2148,6 +2151,70 @@ mod tests {
                     !live.is_empty() && live.iter().all(|live| !*live),
                     "{live:?}"
                 );
+            });
+        }
+
+        /// A lease lost mid-gesture abandons the gesture's liveness with it. When this client
+        /// controls again, its republish is an ordinary revision that followers animate.
+        #[test]
+        fn a_republish_after_regaining_control_is_not_live() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                flushed_liveness(&mut backend, &rx);
+                backend
+                    .dispatch(Msg::BeginResizeSplit(1, true, 50, 10))
+                    .expect("grab the split");
+                backend
+                    .dispatch(Msg::ResizeSplit(1, true, 50, 10, 60, 10))
+                    .expect("drag before the commit goes out");
+
+                let epoch = backend.state().runtime_epoch;
+                for controller in [2, 1] {
+                    backend
+                        .dispatch(Msg::SessionControllerChanged {
+                            epoch,
+                            controller: Some(controller),
+                            reason: crate::session::protocol::ControllerChangeReason::Granted,
+                        })
+                        .expect("hand the lease over and back");
+                }
+                let live = flushed_liveness(&mut backend, &rx);
+                assert!(
+                    !live.is_empty() && live.iter().all(|live| !*live),
+                    "{live:?}"
+                );
+            });
+        }
+
+        /// The release publishes the gesture's last step on its own, live. A discrete change
+        /// right after it - inside the commit debounce - must not share that revision, or followers
+        /// would snap the transition the controller animates.
+        #[test]
+        fn toggling_tiling_right_after_a_floating_drag_is_an_ordinary_commit() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(true);
+                backend.state_mut().active_workspace_mut().panes[0].floating = true;
+                backend.render();
+                flushed_liveness(&mut backend, &rx);
+
+                let start = placement_of(backend.state(), 1);
+                backend
+                    .dispatch(Msg::BeginMove(1, start, 0, 0, 10, 5, true))
+                    .expect("begin move");
+                backend
+                    .dispatch(Msg::MovePane(1, 4, 0, true))
+                    .expect("move before the commit goes out");
+                backend.dispatch(Msg::EndMove(1, 50, 10)).expect("drop");
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::ToggleFloat))
+                    .expect("tile the pane before the debounce fires");
+
+                assert_eq!(
+                    flushed_liveness(&mut backend, &rx),
+                    vec![true, false],
+                    "the drop's step is live; the tiling change is its own ordinary revision"
+                );
+                assert!(!backend.state().active_workspace_ref().panes[0].floating);
             });
         }
 

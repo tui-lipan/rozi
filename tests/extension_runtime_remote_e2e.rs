@@ -396,6 +396,7 @@ fn remote_runtime_case() {
             "missing" => missing_case(),
             "sessions" => sessions_case(),
             "client" => client_case(),
+            "detach" => detach_case(),
             other => panic!("unknown case {other}"),
         })
         .unwrap()
@@ -750,6 +751,22 @@ fn sessions_case() {
     );
 }
 
+/// Detaching the host's last session ends its runtime and everything it ran, while the client
+/// keeps running.
+fn detach_case() {
+    let mut app = client(&standard_service());
+    let backend = &mut app.0;
+    show_session(backend, Some(pc()));
+    let (pid, _) = worker(backend, &[]);
+    let runtime = *runtimes().last().unwrap();
+    backend.state_mut().current_mut().session_attached = false;
+    backend.dispatch(Msg::SidebarTreeFocused).unwrap();
+    wait_dead(backend, pid);
+    wait_dead(backend, runtime);
+    assert!(backend.state().extension_runtime.hosts.is_empty());
+    assert!(backend.state().extension_workers.is_empty());
+}
+
 /// One of two clients: runs until told to stop, recording what its worker and runtime are.
 fn client_case() {
     let name = std::env::var("CLIENT_NAME").unwrap();
@@ -793,6 +810,11 @@ fn a_program_missing_on_the_host_is_reported() {
 #[test]
 fn sessions_on_one_host_share_its_runtime() {
     World::new().run("sessions", &[]);
+}
+
+#[test]
+fn detaching_a_hosts_last_session_ends_its_runtime_and_workers() {
+    World::new().run("detach", &[]);
 }
 
 /// Two clients on the same host each get their own runtime and their own workers, and one

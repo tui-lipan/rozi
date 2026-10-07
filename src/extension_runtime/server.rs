@@ -615,11 +615,26 @@ impl Drop for RemoveOnDrop {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::extension_runtime::bundle::BundleFile;
     use crate::extension_runtime::protocol::{write_hello, write_message, write_stage};
+
+    /// A short directory for the bridge endpoint: a Unix socket path has to fit in `sun_path`, so
+    /// not under a deep temp directory. Windows names a pipe after it and has no such limit.
+    fn short_dir() -> tempfile::TempDir {
+        let builder = {
+            let mut builder = tempfile::Builder::new();
+            builder.prefix("rozi-rt");
+            builder
+        };
+        if cfg!(unix) {
+            builder.tempdir_in("/tmp").unwrap()
+        } else {
+            builder.tempdir().unwrap()
+        }
+    }
 
     struct Client {
         to_runtime: std::io::PipeWriter,
@@ -632,11 +647,7 @@ mod tests {
     impl Client {
         fn start() -> Self {
             let store = tempfile::tempdir().unwrap();
-            // A socket path has to fit in `sun_path`, so not under a deep temp directory.
-            let run = tempfile::Builder::new()
-                .prefix("rozi-rt")
-                .tempdir_in("/tmp")
-                .unwrap();
+            let run = short_dir();
             let runtime_dir = run.path().to_path_buf();
             let (from_client, to_runtime) = std::io::pipe().unwrap();
             let (from_runtime, to_client) = std::io::pipe().unwrap();
@@ -743,6 +754,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_process_runs_from_its_verified_bundle_with_the_hosts_own_endpoints() {
         let mut client = Client::start();
@@ -855,10 +867,12 @@ mod tests {
         client.close();
     }
 
+    #[cfg(unix)]
     fn alive(pid: u32) -> bool {
         crate::platform::command::process_is_alive(pid)
     }
 
+    #[cfg(unix)]
     fn wait_dead(pid: u32) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while alive(pid) {
@@ -870,6 +884,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_killed_process_takes_its_children_with_it() {
         let mut client = Client::start();
@@ -914,6 +929,7 @@ mod tests {
 
     /// The runtime belongs to its client's channel. When the channel closes - detach, exit, or a
     /// dropped network - nothing it started survives it.
+    #[cfg(unix)]
     #[test]
     fn closing_the_channel_kills_every_process_and_removes_the_bridge() {
         let mut client = Client::start();

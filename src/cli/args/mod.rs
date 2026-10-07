@@ -96,6 +96,13 @@ pub(crate) enum ControlEndpoint {
     /// A named session server on another host, reached over the SSH transport `--remote` attach
     /// already uses (`--remote <HOST> --session <NAME>`).
     Remote { target: String, session: String },
+    /// The session server the calling pane runs in, found by the pane's `ROZI_SESSION_INSTANCE`.
+    ///
+    /// Only `agents report` and `agents release` land here, and only when no UI endpoint was named.
+    /// A remote pane has no `ROZI_SOCKET` because the UI is on another machine, and a restored or
+    /// headless pane has none because there is no UI at all, but the server that owns the pane's
+    /// agent state is always on this host. See [`own_session_endpoint`].
+    OwnSession(crate::session::protocol::SessionInstanceId),
 }
 
 impl ControlEndpoint {
@@ -105,7 +112,10 @@ impl ControlEndpoint {
     /// much when it is a hop away, so the checks that gate them cannot be a test for `Session`
     /// alone.
     pub(crate) fn is_session(&self) -> bool {
-        matches!(self, Self::Session(_) | Self::Remote { .. })
+        matches!(
+            self,
+            Self::Session(_) | Self::Remote { .. } | Self::OwnSession(_)
+        )
     }
 }
 
@@ -509,6 +519,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 let (command, output_format) = agents::parse_agents_args(args)?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
+                let request = control_request(command);
+                let command = &request.command;
                 if matches!(
                     command,
                     control::ControlCommand::AgentWait { .. }
@@ -534,7 +546,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
                 return Ok(ParsedCli::Control(ControlCli {
                     endpoint,
-                    request: control_request(command),
+                    request,
                     output_format,
                     output: None,
                 }));
@@ -1571,6 +1583,38 @@ pub(super) fn reject_trailing_control_args(
     }
 }
 
+/// Send an agent report from a pane with no UI to name to the session server the pane runs in.
+///
+/// Applies only to `agents report`/`release` with no `--target`, `--socket`, or `--session`, from a
+/// shared pane (`ROZI_PANE` and a non-empty `ROZI_SESSION_INSTANCE`) whose environment names no UI
+/// (`ui_socket_in_env` false). The pane's own id becomes the explicit target: it is meaningful here
+/// because the instance, which the server checks, proves which namespace it belongs to.
+///
+/// Anything else keeps its endpoint, including discovery of the only live UI when nothing names
+/// one. A pane that does have `ROZI_SOCKET` keeps reporting through its UI.
+pub(super) fn own_session_endpoint(
+    endpoint: ControlEndpoint,
+    request: &mut control::ControlRequest,
+    ui_socket_in_env: bool,
+) -> ControlEndpoint {
+    if endpoint != ControlEndpoint::Ui(None) || ui_socket_in_env {
+        return endpoint;
+    }
+    let (Some(instance), Some(pane)) = (request.source_session.clone(), request.source_pane) else {
+        return endpoint;
+    };
+    match &mut request.command {
+        control::ControlCommand::AgentReport { target, .. }
+        | control::ControlCommand::AgentRelease { target, .. }
+            if target.is_none() =>
+        {
+            *target = Some(pane);
+        }
+        _ => return endpoint,
+    }
+    ControlEndpoint::OwnSession(instance)
+}
+
 pub(super) fn control_request(command: control::ControlCommand) -> control::ControlRequest {
     control::ControlRequest {
         command,
@@ -1697,6 +1741,102 @@ mod tests {
             control.request.command,
             control::ControlCommand::AgentRelease { target: None, .. }
         ));
+    }
+
+    /// A remote or restored pane has no `ROZI_SOCKET`, but its own server owns its agent state, so
+    /// its reports go there - by instance, with the pane's own id as the explicit target. Anything
+    /// that names an endpoint, or is not a report from a shared pane, stays where it was.
+    #[test]
+    fn a_report_from_a_pane_with_no_ui_goes_to_its_own_session_server() {
+        let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");
+        let request = |command: control::ControlCommand, pane: Option<u32>, shared: bool| {
+            control::ControlRequest {
+                command,
+                source_pane: pane,
+                source_session: shared.then(|| instance.clone()),
+                extension: None,
+            }
+        };
+        let report = |target| control::ControlCommand::AgentReport {
+            target,
+            agent: "claude".into(),
+            integration: "hook-a".into(),
+            state: crate::session::protocol::AgentState::Working,
+            reason: None,
+            native_session: None,
+            seq: 1,
+        };
+        let release = control::ControlCommand::AgentRelease {
+            target: None,
+            integration: "hook-a".into(),
+            seq: 2,
+        };
+
+        for command in [report(None), release.clone()] {
+            let mut routed = request(command, Some(7), true);
+            assert_eq!(
+                own_session_endpoint(ControlEndpoint::Ui(None), &mut routed, false),
+                ControlEndpoint::OwnSession(instance.clone())
+            );
+            assert!(matches!(
+                routed.command,
+                control::ControlCommand::AgentReport {
+                    target: Some(7),
+                    ..
+                } | control::ControlCommand::AgentRelease {
+                    target: Some(7),
+                    ..
+                }
+            ));
+        }
+
+        let unchanged = |endpoint: ControlEndpoint,
+                         mut routed: control::ControlRequest,
+                         ui_socket_in_env: bool| {
+            let before = routed.clone();
+            assert_eq!(
+                own_session_endpoint(endpoint.clone(), &mut routed, ui_socket_in_env),
+                endpoint
+            );
+            assert_eq!(routed, before);
+        };
+        // A pane that has a UI keeps reporting through it.
+        unchanged(
+            ControlEndpoint::Ui(None),
+            request(report(None), Some(7), true),
+            true,
+        );
+        unchanged(
+            ControlEndpoint::Ui(Some(PathBuf::from("/tmp/rozi.sock"))),
+            request(report(None), Some(7), true),
+            false,
+        );
+        unchanged(
+            ControlEndpoint::Session("dev".into()),
+            request(report(Some(3)), Some(7), true),
+            false,
+        );
+        // An explicit target is the caller's; a popup or scratch pane names no session.
+        unchanged(
+            ControlEndpoint::Ui(None),
+            request(report(Some(3)), Some(7), true),
+            false,
+        );
+        unchanged(
+            ControlEndpoint::Ui(None),
+            request(report(None), Some(7), false),
+            false,
+        );
+        unchanged(
+            ControlEndpoint::Ui(None),
+            request(report(None), None, true),
+            false,
+        );
+        unchanged(
+            ControlEndpoint::Ui(None),
+            request(control::ControlCommand::ListPanes, Some(7), true),
+            false,
+        );
     }
 
     #[test]

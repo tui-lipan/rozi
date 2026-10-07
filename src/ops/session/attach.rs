@@ -595,12 +595,11 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     if ephemeral && remote_target.is_none() {
         return swap_to_fresh_ephemeral(ctx);
     }
-    let restart_name = if ephemeral {
-        crate::state::remote_ephemeral_session_name()
-    } else {
-        name.clone()
-    };
-    attach_session_by_name(ctx, restart_name, remote_host, remote_target, true)
+    if ephemeral {
+        let restart_name = crate::state::remote_ephemeral_session_name();
+        return attach_ephemeral_by_name(ctx, restart_name, remote_host, remote_target);
+    }
+    attach_session_by_name(ctx, name, remote_host, remote_target, true)
 }
 
 /// Land after the active session is taken away rather than left — killed, disconnected, or
@@ -725,6 +724,7 @@ fn begin_named_attach(
     remote_host: Option<String>,
     remote_target: Option<crate::session::remote::RemoteTarget>,
     autostart: bool,
+    seed: Option<(crate::state::Attachment, crate::state::AttachIntent)>,
 ) -> Update {
     // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
     // stay scoped to their own identity. Reusing an offline attachment here would seed its panes
@@ -749,6 +749,16 @@ fn begin_named_attach(
             release_current_session(ctx);
             left
         };
+    // An empty server is seeded from the panes the client holds, so a session this attach creates
+    // gets its panes here. Without a seed the server is joined as it is.
+    let intent = match seed {
+        Some((attachment, intent)) => {
+            ctx.state.attachment = attachment;
+            finish_session_install(ctx);
+            intent
+        }
+        None => crate::state::AttachIntent::Plain,
+    };
     ctx.state.runtime_epoch = epoch;
     dismiss_session_pickers(ctx);
     ctx.state.commands_dirty = true;
@@ -762,7 +772,7 @@ fn begin_named_attach(
         read_only: false,
         reconnect: false,
         remote_host,
-        intent: crate::state::AttachIntent::Plain,
+        intent,
         left,
         parked_epoch,
     });
@@ -796,6 +806,29 @@ pub(crate) fn attach_session_by_name(
     remote_host: Option<String>,
     discovered_target: Option<crate::session::remote::RemoteTarget>,
     autostart: bool,
+) -> Update {
+    attach_or_create_by_name(ctx, name, remote_host, discovered_target, autostart, false)
+}
+
+/// Attach this client's ephemeral session `name`, starting it when it is not running. A session
+/// started here opens from `[profile] default`, the same seed a fresh named session gets; one this
+/// client already holds is switched to as it is.
+pub(crate) fn attach_ephemeral_by_name(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    remote_host: Option<String>,
+    discovered_target: Option<crate::session::remote::RemoteTarget>,
+) -> Update {
+    attach_or_create_by_name(ctx, name, remote_host, discovered_target, true, true)
+}
+
+fn attach_or_create_by_name(
+    ctx: &mut Context<AppRoot>,
+    name: String,
+    remote_host: Option<String>,
+    discovered_target: Option<crate::session::remote::RemoteTarget>,
+    autostart: bool,
+    seed_default: bool,
 ) -> Update {
     if !crate::session::discovery::valid_attach_target(&name) {
         crate::pane::pty_events::notify_error(
@@ -832,7 +865,8 @@ pub(crate) fn attach_session_by_name(
     {
         return switch_to_parked(ctx, parked);
     }
-    begin_named_attach(ctx, name, remote_host, remote_target, autostart)
+    let seed = seed_default.then(|| crate::profiles::default_session_seed(&ctx.state.config));
+    begin_named_attach(ctx, name, remote_host, remote_target, autostart, seed)
 }
 
 /// The launcher's one offer: start this client's ephemeral session now, in the launcher's own

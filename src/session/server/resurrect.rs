@@ -732,7 +732,13 @@ impl SessionServer {
                     cols: saved.cols,
                     rows: saved.rows,
                     keep_open: saved.keep_open,
-                    env: Vec::new(),
+                    // A restored pane is a pane like any other: a program in it still needs
+                    // `ROZI` and `ROZI_PANE` to know where it runs. There is no UI yet to name.
+                    env: crate::pane::spawn_policy::spawn_environment(
+                        crate::pane::spawn_policy::SpawnOrigin::Headless,
+                        saved.pane_id,
+                        &[],
+                    ),
                     palette: saved.palette,
                     shell: self.settings.shell.clone(),
                     command_shell: self.settings.command_shell.clone(),

@@ -1149,6 +1149,7 @@ impl SessionServer {
                 has_layout: self.layout.is_some(),
                 effective_protocol: effective,
                 origin: self.origin.clone(),
+                instance: Some(self.instance_id.clone()),
             },
         )]
     }

@@ -302,6 +302,23 @@ impl SessionServer {
                 },
             )];
         }
+        // A request that names the server it comes from must have reached that one. A pane finds
+        // its own server by instance and then asks by name, and a name can change hands in between;
+        // answering for a different instance would apply the pane's report to a stranger's pane.
+        if let Some(source) = &request.source_session
+            && source != &self.instance_id
+        {
+            return vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: "instance-mismatch".to_string(),
+                    message: format!(
+                        "the request comes from a pane of another server than {:?}",
+                        self.session_name
+                    ),
+                },
+            )];
+        }
         let reply = ReplyTo::Headless {
             capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
             effective_protocol: effective,
@@ -2464,6 +2481,95 @@ mod tests {
         assert!(matches!(
             messages.as_slice(),
             [(Target::Sender, ServerMessage::Error { code, .. })] if code == "session-mismatch"
+        ));
+    }
+
+    /// A pane with no UI finds its server by instance, then asks by name. A request naming another
+    /// instance reached a server that took the name in between, and must not touch its panes.
+    #[test]
+    fn a_report_from_another_servers_pane_is_refused_and_one_from_its_own_applies() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let report = |source: protocol::SessionInstanceId| ControlRequest {
+            source_session: Some(source),
+            ..request(ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "hook-a".into(),
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: None,
+                seq: 1,
+            })
+        };
+        let ask = |server: &mut SessionServer, request| {
+            server.handle_session_control(
+                1,
+                "dev".to_string(),
+                PROTOCOL_VERSION,
+                protocol::MIN_SUPPORTED_PROTOCOL,
+                None,
+                request,
+            )
+        };
+
+        let refused = ask(
+            &mut server,
+            report(protocol::SessionInstanceId::for_test("someone-else")),
+        );
+        assert!(matches!(
+            refused.as_slice(),
+            [(Target::Sender, ServerMessage::Error { code, .. })] if code == "instance-mismatch"
+        ));
+        assert!(server.panes[&7].runtime.integration.is_none());
+
+        let own = server.instance_id().clone();
+        let applied = ask(&mut server, report(own));
+        assert!(matches!(
+            applied.first(),
+            Some((Target::Sender, ServerMessage::SessionControlResult { response, .. }))
+                if response.ok
+        ));
+        assert_eq!(
+            server.panes[&7].runtime.integration.as_ref().unwrap().state,
+            protocol::AgentState::Working
+        );
+
+        // Nobody was attached when it arrived. The server keeps the report on the pane, so a
+        // window that attaches afterwards is told it rather than having missed a broadcast.
+        let (late, _stream) = super::super::tests::add_client(&mut server);
+        let attached = server.handle_message(
+            late,
+            ClientMessage::Attach {
+                capabilities: None,
+                session: "dev".into(),
+                protocol_version: PROTOCOL_VERSION,
+                min_protocol_version: PROTOCOL_VERSION,
+                label: "late".into(),
+                read_only: false,
+                shares_filesystem: true,
+                expected_server_nonce: None,
+            },
+        );
+        let reported = attached.iter().find_map(|(_, message)| match message {
+            ServerMessage::Attached { panes, .. } => panes
+                .iter()
+                .find(|meta| meta.pane_id == 7)
+                .and_then(|meta| meta.runtime.integration.as_ref())
+                .map(|report| report.state),
+            _ => None,
+        });
+        assert_eq!(reported, Some(protocol::AgentState::Working));
+    }
+
+    #[test]
+    fn a_session_query_names_the_server_instance_a_pane_was_told() {
+        let mut server = SessionServer::new_named("dev");
+        let answer = server.handle_query("dev".into(), PROTOCOL_VERSION, PROTOCOL_VERSION, None);
+        assert!(matches!(
+            answer.as_slice(),
+            [(Target::Sender, ServerMessage::SessionInfo { instance: Some(instance), .. })]
+                if instance == server.instance_id()
         ));
     }
 

@@ -13,6 +13,7 @@ use rozi::control::{
     CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneWait,
 };
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::discovery::InstanceLookup;
 use rozi::session::headless::run_session_control;
 use rozi::session::protocol::ServerMessage;
 use rozi::session::server::ServerSettings;
@@ -944,4 +945,195 @@ fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
         "{exited:?}"
     );
     assert!(started.elapsed() < io_timeout());
+}
+
+/// Open a pane in `session` and read back the pane id and server instance it was told, exactly as
+/// a hook running inside it would see them.
+///
+/// Unix-only: the pane prints its environment with a POSIX shell line, which the cmd or PowerShell
+/// launch shell on Windows does not run. Which instance a pane is told is covered on every platform
+/// by the server's unit tests.
+#[cfg(unix)]
+fn pane_identity(session: &str) -> (u32, rozi::session::protocol::SessionInstanceId) {
+    let pane = expect_ok(
+        session,
+        ControlCommand::NewPane {
+            command: Some(
+                "printf 'env:%s:%s:%s:\\n' \"$ROZI\" \"$ROZI_PANE\" \"$ROZI_SESSION_INSTANCE\""
+                    .to_string(),
+            ),
+            argv: None,
+            cwd: None,
+            title: None,
+            keep_open: true,
+            focus: false,
+            workspace: None,
+            size: None,
+        },
+    )["id"]
+        .as_u64()
+        .expect("spawn reported a pane id") as u32;
+    let text = capture_until(session, pane, |text| {
+        text.lines().any(|line| line.starts_with("env:1:"))
+    });
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("env:1:"))
+        .expect("the pane printed its environment");
+    let fields: Vec<&str> = line.split(':').collect();
+    assert_eq!(fields[2], pane.to_string(), "{line}");
+    let instance = rozi::session::protocol::SessionInstanceId::from_env_value(fields[3])
+        .expect("a shared pane is told its server instance");
+    (pane, instance)
+}
+
+/// A pane with no UI to name - remote, restored, or spawned headlessly - reports its agent to the
+/// server it runs in. It knows that server only by the `ROZI_SESSION_INSTANCE` it was given, so
+/// this proves the whole chain: the pane is told its instance and id, discovery finds the server
+/// that answers to that instance, and the server judges the report only for its own pane.
+#[cfg(unix)]
+#[test]
+fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let (pane, instance) = pane_identity(&session);
+
+    assert_eq!(
+        rozi::session::discovery::session_with_instance(&instance).expect("discovery ran"),
+        InstanceLookup::Found(session.clone())
+    );
+
+    let report = |source| ControlRequest {
+        source_session: Some(source),
+        ..request(ControlCommand::AgentReport {
+            target: Some(pane),
+            agent: "claude".into(),
+            integration: "hook-e2e".into(),
+            state: rozi::session::protocol::AgentState::Blocked,
+            reason: Some("Permission required".into()),
+            native_session: Some("native-e2e".into()),
+            seq: 1,
+        })
+    };
+    let stranger = rozi::session::protocol::SessionInstanceId::from_env_value("not-this-server")
+        .expect("non-empty instance");
+    let refused = run_session_control(&session, report(stranger))
+        .expect_err("a report from another server's pane is refused");
+    assert!(
+        refused.to_string().starts_with("instance-mismatch"),
+        "{refused}"
+    );
+
+    // The pane runs `printf`, not Claude, so its own server judges the report against that pane
+    // and declines it: an integration may only speak for an agent detection has seen there. That
+    // answer can only come from the right server looking at the right pane.
+    let judged = run_session_control(&session, report(instance)).expect("server answered");
+    assert!(!judged.ok);
+    let reason = judged.error.unwrap_or_default();
+    assert!(
+        reason.contains(&format!("not the currently detected agent in pane {pane}")),
+        "{reason}"
+    );
+}
+
+/// The instance a server names in its discovery reply: what a pane of it is told.
+fn server_instance(
+    server: &crate::common::ListenerGuard,
+) -> rozi::session::protocol::SessionInstanceId {
+    let mut stream =
+        rozi::platform::ipc::IpcConnection::connect(server.endpoint()).expect("connect");
+    stream
+        .set_read_timeout(Some(io_timeout()))
+        .expect("read timeout");
+    rozi::session::protocol::write_frame(
+        &mut stream,
+        &rozi::session::protocol::ClientMessage::Query {
+            capabilities: None,
+            session: server.session().to_string(),
+            protocol_version: rozi::session::protocol::PROTOCOL_VERSION,
+            min_protocol_version: rozi::session::protocol::MIN_SUPPORTED_PROTOCOL,
+        },
+    )
+    .expect("send query");
+    match rozi::session::protocol::read_frame::<_, ServerMessage>(&mut stream).expect("answer") {
+        ServerMessage::SessionInfo {
+            instance: Some(instance),
+            ..
+        } => instance,
+        other => panic!("expected a session info naming its instance, got {other:?}"),
+    }
+}
+
+/// Several sessions run at once. Each instance must lead to its own server, never to whichever
+/// answered first - a pane id alone is the same in every one of them.
+#[test]
+fn each_instance_finds_its_own_server_among_several() {
+    let servers: Vec<_> = (0..3)
+        .map(|_| spawn_listener(headless_settings()))
+        .collect();
+    for server in &servers {
+        assert_eq!(
+            rozi::session::discovery::session_with_instance(&server_instance(server))
+                .expect("discovery ran"),
+            InstanceLookup::Found(server.session().to_string())
+        );
+    }
+}
+
+/// A server from before instances were reported answers discovery without one. It may be the
+/// pane's own server, so it is named rather than silently skipped - and never picked.
+#[test]
+fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
+    let session = crate::common::unique_session_name();
+    let (listener, endpoint) =
+        rozi::session::server::bind_session_socket(&session).expect("bind stand-in server");
+    listener.set_nonblocking(true).expect("non-blocking accept");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let answering = {
+        let session = session.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let Ok(mut stream) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                if rozi::session::protocol::read_frame::<_, rozi::session::protocol::ClientMessage>(
+                    &mut stream,
+                )
+                .is_ok()
+                {
+                    let _ = rozi::session::protocol::write_frame(
+                        &mut stream,
+                        &ServerMessage::SessionInfo {
+                            capabilities: None,
+                            agents: Vec::new(),
+                            session: session.clone(),
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                            effective_protocol: rozi::session::protocol::PROTOCOL_VERSION,
+                            origin: Default::default(),
+                            instance: None,
+                        },
+                    );
+                }
+            }
+        })
+    };
+
+    let wanted =
+        rozi::session::protocol::SessionInstanceId::from_env_value("pane-of-an-old-server")
+            .expect("non-empty instance");
+    let lookup = rozi::session::discovery::session_with_instance(&wanted).expect("discovery ran");
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    answering.join().expect("stand-in server thread");
+    endpoint.remove_stale();
+
+    let InstanceLookup::NotFound { unidentified } = lookup else {
+        panic!("an unidentified server must never be chosen: {lookup:?}");
+    };
+    assert!(unidentified.contains(&session), "{unidentified:?}");
 }

@@ -1,6 +1,6 @@
 {
   "name": "rozi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Report Codex activity and thread identity to Rozi.",
   "author": { "name": "Rozi contributors" },
   "homepage": "https://rozi.tui-lipan.dev/agents",

@@ -6,6 +6,9 @@
 //! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix starts a
 //!   new process session and closes all three stdio streams; Windows additionally passes
 //!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
+//! - [`DetachedServer`] - the spawned server's handle. Dropping it never kills the server, but on
+//!   Unix it hands the still-running child to a single shared reaper thread, so the server's exit
+//!   is reaped rather than left behind as a zombie for the client's whole lifetime.
 //! - [`on_hangup`] - the *client* half of console-control handling. Unix installs a `SIGHUP`/
 //!   `SIGTERM` handler; Windows installs a `SetConsoleCtrlHandler` for Ctrl+C/close/logoff/shutdown.
 //!   Both map to the same thing: run a clean detach instead of dying where we stand.
@@ -63,6 +66,15 @@ pub fn spawn_detached_server(
     name: &str,
     fresh: bool,
     startup_nonce: Option<&str>,
+) -> io::Result<DetachedServer> {
+    spawn_server_child(exe, name, fresh, startup_nonce).map(|child| DetachedServer(Some(child)))
+}
+
+fn spawn_server_child(
+    exe: &Path,
+    name: &str,
+    fresh: bool,
+    startup_nonce: Option<&str>,
 ) -> io::Result<std::process::Child> {
     #[cfg(windows)]
     {
@@ -91,6 +103,121 @@ pub fn spawn_detached_server(
         let mut command = base_server_command(exe, name, fresh, startup_nonce);
         configure_detached_server(&mut command);
         command.spawn()
+    }
+}
+
+/// A session server this process spawned. It derefs to the [`std::process::Child`] for polling,
+/// signalling, and waiting during startup.
+///
+/// The server is meant to outlive the handle, so dropping it never kills anything. A Unix child
+/// that has not been reaped by then would turn into a zombie when it exits and stay one until this
+/// process does, so the drop passes it to the shared reaper. Windows has no zombies; the
+/// drop just closes the process handle.
+#[derive(Debug)]
+pub struct DetachedServer(Option<std::process::Child>);
+
+impl std::ops::Deref for DetachedServer {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("child is present until drop")
+    }
+}
+
+impl std::ops::DerefMut for DetachedServer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("child is present until drop")
+    }
+}
+
+impl Drop for DetachedServer {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(mut child) = self.0.take()
+            && reaper::still_running(&mut child)
+        {
+            reaper::adopt(child);
+        }
+    }
+}
+
+/// One thread reaps every server this process has let go of.
+///
+/// A named session is durable, so a client can hold several servers for as long as it runs. A
+/// blocked waiter per server would keep one thread per server alive for all of that time. Instead,
+/// a single thread polls the adopted children without blocking and exits once none are left; the
+/// next adoption starts it again. Each child is waited on by its own pid, so the poll never takes
+/// an exit status that belongs to another part of rozi.
+#[cfg(unix)]
+mod reaper {
+    use std::process::Child;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// How long an exited server can stay a zombie before it is reaped.
+    #[cfg(not(test))]
+    const POLL_INTERVAL: Duration = Duration::from_secs(5);
+    #[cfg(test)]
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+    pub(super) const THREAD_NAME: &str = "rozi-reaper";
+
+    struct Adopted {
+        children: Vec<Child>,
+        polling: bool,
+    }
+
+    static ADOPTED: Mutex<Adopted> = Mutex::new(Adopted {
+        children: Vec::new(),
+        polling: false,
+    });
+
+    fn adopted() -> std::sync::MutexGuard<'static, Adopted> {
+        ADOPTED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether `child` has yet to exit, reaping it if it has.
+    ///
+    /// A non-blocking wait can still be interrupted by a signal, and treating that as an exit
+    /// would drop the only handle to a live server, which then becomes a zombie when it exits.
+    /// Any other error is permanent (the child is already reaped), so the child is let go.
+    pub(super) fn still_running(child: &mut Child) -> bool {
+        loop {
+            match child.try_wait() {
+                Ok(None) => return true,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Ok(Some(_)) | Err(_) => return false,
+            }
+        }
+    }
+
+    pub(super) fn adopt(child: Child) {
+        let mut adopted = adopted();
+        adopted.children.push(child);
+        if adopted.polling {
+            return;
+        }
+        // A refused thread leaves the children queued for the next adoption to retry; the servers
+        // themselves are unaffected either way.
+        adopted.polling = std::thread::Builder::new()
+            .name(THREAD_NAME.to_string())
+            .stack_size(64 * 1024)
+            .spawn(poll)
+            .is_ok();
+    }
+
+    fn poll() {
+        loop {
+            std::thread::sleep(POLL_INTERVAL);
+            let mut adopted = adopted();
+            adopted.children.retain_mut(still_running);
+            if adopted.children.is_empty() {
+                adopted.polling = false;
+                return;
+            }
+        }
     }
 }
 
@@ -559,6 +686,81 @@ mod tests {
             !status.success(),
             "expected a signalled exit, got {status:?}"
         );
+    }
+
+    fn sleeping_server(seconds: &str) -> DetachedServer {
+        let child = std::process::Command::new("/bin/sleep")
+            .arg(seconds)
+            .spawn()
+            .expect("spawn sleeping child");
+        DetachedServer(Some(child))
+    }
+
+    /// Whether `pid` still exists. A zombie still answers `kill(pid, 0)`; only a reaped pid does
+    /// not.
+    fn exists(pid: libc::pid_t) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    fn wait_until_reaped(pids: &[libc::pid_t]) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while pids.iter().any(|&pid| exists(pid)) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "server exit was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn reaper_threads() -> usize {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|task| {
+                std::fs::read_to_string(task.path().join("comm"))
+                    .is_ok_and(|comm| comm.trim_end() == reaper::THREAD_NAME)
+            })
+            .count()
+    }
+
+    /// Named sessions are durable, so a client can let go of many servers that keep running. One
+    /// thread reaps them all, both the ones that exit soon and the ones still running.
+    #[test]
+    fn dropped_server_handles_share_one_reaper() {
+        let lasting: Vec<DetachedServer> = (0..4).map(|_| sleeping_server("30")).collect();
+        let lasting: Vec<libc::pid_t> = lasting
+            .into_iter()
+            .map(|server| server.id() as libc::pid_t)
+            .collect();
+        let brief: Vec<libc::pid_t> = (0..4)
+            .map(|_| sleeping_server("0.1").id() as libc::pid_t)
+            .collect();
+
+        // A thread takes its name a moment after it starts, so wait for it to show.
+        #[cfg(target_os = "linux")]
+        {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while reaper_threads() == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(
+                reaper_threads(),
+                1,
+                "every adoption should share one reaper"
+            );
+        }
+        wait_until_reaped(&brief);
+        assert!(
+            lasting.iter().all(|&pid| exists(pid)),
+            "a reaper killed a live server"
+        );
+
+        for &pid in &lasting {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        wait_until_reaped(&lasting);
     }
 
     #[test]

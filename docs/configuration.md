@@ -640,8 +640,9 @@ dropped, like a blank line. Headers cannot be selected, so `on_click` applies to
 
 A command tab runs in the focused pane's working directory and lists again when that directory
 changes. The command runs on this machine, so in a session attached with `--remote` it runs in
-Rozi's own directory rather than in the remote pane's. Its `on_click` `send` action may use `{line}` for the row's text. `run`, `popup`, and
-`exec` receive the row in `ROZI_ROW` instead of having it inserted into the command.
+`rozi`'s own directory rather than in the remote pane's. Its `on_click` `send` action may use
+`{line}` for the row's text. `run`, `popup`, and `exec` receive the row in `ROZI_ROW` instead of
+having it inserted into the command.
 
 ### Opening a diff viewer or editor from a row
 

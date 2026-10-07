@@ -85,6 +85,14 @@
             "type": "string",
             "minLength": 1,
             "description": "Suggested chord, as the key steps inside the reserved extension space: \"b\" means <prefix> x b."
+          },
+          "placement": {
+            "enum": [
+              "client",
+              "active-session"
+            ],
+            "default": "client",
+            "description": "Where the command's process runs: on the client, or on the host of the session on screen. `send` commands take no placement."
           }
         },
         "oneOf": [
@@ -145,6 +153,16 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "placement": {
+            "enum": [
+              "client",
+              "active-session",
+              "each-host",
+              "each-session"
+            ],
+            "default": "client",
+            "description": "Where, and how many, instances run: one on the client; one on the active session's host; one on every host with an attached session; or one per attached session, on its host."
           }
         },
         "oneOf": [
@@ -530,6 +548,14 @@
             "type": "string",
             "minLength": 1,
             "description": "Command tabs only. Output lines starting with it render as section headers."
+          },
+          "placement": {
+            "enum": [
+              "client",
+              "active-session"
+            ],
+            "default": "client",
+            "description": "Command tabs only. Where the listing command and an on_click exec run."
           }
         },
         "oneOf": [

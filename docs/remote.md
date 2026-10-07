@@ -336,6 +336,12 @@ markers need `git` on the remote host's `PATH`. File search covers only director
 expanded in the tree.
 
 Hooks run locally and receive `ROZI_REMOTE_HOST`. The control socket also stays local.
+
+Extension commands, services, and sidebar tabs run on your client by default, and a command that
+runs there starts in `rozi`'s own directory rather than the remote pane's. An extension can
+[place](extensions.md#run-on-the-session-host) a contribution on the session's host instead: rozi
+then runs it on the remote machine, over a separate SSH connection, from a copy of the extension's
+files, and relays its requests back to your client. `rozi extensions status` shows what runs where.
 `rozi sessions list --remote`, `rozi sessions kill --remote`, and `rozi worktrees --remote` each run
 as a separate SSH command. Quote `~` in their paths so your local shell does not expand it.
 
@@ -477,3 +483,6 @@ See also [Troubleshooting](troubleshooting.md).
   `[clipboard] enable_osc52 = false` if remote programs should not have that access.
 - A writable remote client has the same authority over a session as a local one; see
   [Shared sessions](shared-sessions.md#security-and-caveats).
+- An extension process placed on a remote host acts on your client only through rozi, which checks
+  each request against the host and session it was placed for and never lets it start a process on
+  your client; see [Run on the session host](extensions.md#run-on-the-session-host).

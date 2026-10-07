@@ -360,9 +360,10 @@ Set `hidden = true` to leave a command out of the command palette until the exte
 see [Show a command only when it applies](#show-a-command-only-when-it-applies).
 
 - Commands run in the focused pane's working directory when that pane is on the machine running
-  the command. A command runs on the client, so in a session attached with `--remote` it starts in
-  Rozi's own directory: the pane's path belongs to the remote host, even when the same path exists
-  locally.
+  the command. By default a command runs on the client, so in a session attached with `--remote`
+  it starts in `rozi`'s own directory: the pane's path belongs to the remote host, even when the
+  same path exists locally. To run it on the session's host instead, in that pane's directory
+  there, see [Run on the session host](#run-on-the-session-host).
 - An executable path starting with `./` or `../` resolves from the extension directory when the
   manifest loads.
 - `{extension_dir}` is replaced inside `exec` arguments. `$VAR`, `${VAR}`, and `%VAR%` are not
@@ -435,10 +436,13 @@ declares exactly one of `exec` or `shell`.
 | `cwd` | path string | extension directory; a relative path resolves from there |
 | `restart` | `on-failure`, `always`, or `never` | `on-failure` |
 | `env` | string map | empty |
+| `placement` | `client`, `active-session`, `each-host`, or `each-session` | `client` |
 
-Services run in the client, not the session server. A service starts while a UI with the extension
-is attached, receives that UI's [control environment](#runtime-environment), and stops when the
-client detaches or the extension is disabled or removed. A reload that changes a process-facing
+By default, services run in the client, not the session server; `placement` runs them on the hosts
+of attached sessions instead (see [Run on the session host](#run-on-the-session-host)). A service
+starts while a UI with the extension is attached, receives that UI's
+[control environment](#runtime-environment), and stops when the client detaches or the extension is
+disabled or removed. A reload that changes a process-facing
 field or setting restarts the service; a reload that changes only `title`, `description`, or
 `version` leaves it running. Services do not run in a detached session.
 
@@ -450,6 +454,140 @@ A service's stdin stays open while its client runs and reaches end of file once 
 even if it was killed or crashed. Watch stdin and exit at end of file, so the service does not
 outlive a client that could not stop it. In that case, Linux also kills the service process, but
 not processes it started, and Windows kills the service with everything it started.
+
+### Run on the session host
+
+By default, an extension's commands, services, and command tabs run on the client, the machine
+showing `rozi`. A contribution that works with a session's files, tools, or agents can run on that
+session's host instead, with `placement`. When you attach to a remote machine with
+[`--remote`](remote.md), a placed contribution runs there, in the remote session's directories and
+with its programs, and talks to your client through `rozi` as if it ran locally.
+
+```toml
+[[services]]
+name = "watch"
+exec = ["python3", "./bin/watch.py"]
+placement = "each-host"
+
+[[commands]]
+id = "open"
+label = "Open in project"
+exec = ["./bin/open"]
+placement = "active-session"
+```
+
+| `placement` | Where it runs | Allowed on |
+| --- | --- | --- |
+| `client` | On the client. The default. | commands, services, command tabs |
+| `active-session` | On the host of the session on screen. A service follows that session: switching sessions restarts it beside the new one. | commands, services, command tabs |
+| `each-host` | One instance on every host with an attached session, including the client itself when a local session is attached. Several sessions on one host share it. | services |
+| `each-session` | One instance per attached session, on that session's host. | services |
+
+A placed contribution runs from a copy of the extension's files, not from an installation on the
+host:
+
+- When the extension loads, `rozi` takes a snapshot of its directory and identifies it by a content
+  digest. A host receives exactly that snapshot, checks it against the digest, and stores it
+  read-only. Nothing needs to be installed on the host except `rozi` itself.
+- The snapshot leaves out `.git`, `.hg`, `.svn`, `__pycache__`, and `.pyc` files, and is limited to
+  32 MiB and 4096 files. A symbolic link is copied as the file it points to. A link to a directory
+  or to anything outside the extension, or a directory past the limits, makes an extension with
+  placed contributions invalid.
+- Editing a [linked](#install-an-extension) extension's files and reloading takes a new snapshot,
+  and placed processes restart from it under a new [generation](#runtime-environment).
+- The host checks the snapshot again before every launch. If a file has changed or regained write
+  permission, the host discards it and the client sends a fresh copy before anything runs.
+
+Placed contributions name their files relative to the extension, because the client's paths mean
+nothing on another machine:
+
+- A direct `exec` program is either a name looked up on the host's `PATH` or a `./` path inside the
+  extension. An absolute path, `~`, or a path that leaves the extension is invalid.
+- `{extension_dir}` and `ROZI_EXTENSION_DIR` name the snapshot's directory on the host.
+- A placed service's `cwd` must be a directory inside the extension; it defaults to the extension's
+  root. A placed command or command tab runs in the focused pane's directory on the session's host.
+  When that directory does not exist there, it runs in the runtime's own directory instead: the
+  user's home directory on a remote host.
+- `send` commands, and launcher tabs, already act in a pane and take no `placement`.
+
+`platforms` applies to the machine that runs each contribution. An extension limited to Linux can
+still load on a macOS client and run its placed contributions on a Linux host; its client
+contributions are left out.
+
+#### Availability
+
+A placed contribution never falls back to running on the client. When a host cannot run it, `rozi`
+shows a notification with the reason, once per reason, and the contribution stays unavailable:
+
+| Reason | Meaning |
+| --- | --- |
+| `unsupported-platform` | `platforms` excludes the host's operating system. |
+| `runtime-unsupported` | The host's `rozi` is too old to run extension processes. Update `rozi` on the host. |
+| `missing-executable` | The program is not on the host's `PATH`. Install it, then run `reload-extensions`. |
+| `bundle-failed` | The extension's files could not be stored or verified on the host. |
+| `runtime-unreachable` | The SSH connection to the host failed or dropped. `rozi` reconnects with backoff. |
+| `no-session` | An `active-session` contribution ran with no session attached. |
+| `spawn-failed` | The process could not be started for another reason. |
+
+`rozi extensions status` lists every host `rozi` runs placed processes on and every placed process:
+where it runs, its generation, the digest of the files it runs from, its process ID, and why
+anything is unavailable. `--json` prints the same report, and `rozi extensions list --verbose` and
+`--json` include it when a UI is running.
+
+#### Lifecycle
+
+For each host, the client starts one extension runtime: in-process for the client's own machine,
+and over a separate SSH connection for a remote host. A remote runtime belongs to the client that
+started it. It ends, with everything it runs, when the client detaches the host's last session,
+exits, or loses the connection. Two clients attached to the same host each run their own. Nothing
+placed keeps running in a detached session; contributions that must, such as
+[agent definitions](#agent-definitions), come from extensions installed on the host itself.
+
+A placed service follows its `restart` policy like a client one. Disabling, removing, or changing the
+extension stops its placed processes on every host.
+
+#### What a placed process may do
+
+A placed process uses the normal `rozi` commands through `ROZI_BIN` and `ROZI_SOCKET`, including
+streams such as `rozi publish`, `rozi subscribe`, and `rozi pick`. Each process receives a
+credential in `ROZI_EXTENSION_CREDENTIAL` that identifies it to the client as its extension,
+generation, and host. The `rozi` CLI sends it automatically; never pass it on or log it. The client
+ignores any other identity a request claims and refuses a credential that was revoked or used from a
+different host.
+
+What the client honors depends on the command:
+
+- `pick`, `notify`, and `show-command`/`hide-command` work anywhere. Pickers and notifications from
+  a remote host name that host.
+- Commands that act on panes, such as `list-panes`, `capture-pane`, `send-text`, `send-keys`,
+  `split`, `focus`, `publish`, `agents list`, and `agents prompt`, apply only while the session on
+  screen is on the process's host (and, for an `active-session` or `each-session` placement, is its
+  session).
+  Otherwise they fail with `out-of-scope`, and `list-panes` and `agents list` return nothing. Panes
+  of the scratchpad and popups, which always run on the client, are never reachable.
+- `run-action` runs only the extension's own `active-session` commands.
+- Anything that could start a process on the client or read the whole client fails with
+  `not-permitted`: other actions, popups, UI captures, recordings, pane logging, metrics,
+  `extensions status`, and `agents report`/`release`.
+- `subscribe` receives only events that happen while a session within the process's binding is on
+  screen.
+
+These rules apply to placed processes on the client's own machine too, so a placed contribution
+behaves the same wherever it runs.
+
+#### Security
+
+Treat a remote host as able to read and change anything its own user can, including the extension
+snapshot and the credentials of the processes running there. `rozi` is built so that such a host
+cannot use them to act on the client: every request is checked by the client against the rules
+above, a credential only works for the host and generation it was issued for, and nothing a host
+sends can start a process on the client. The read-only snapshot protects against accidental changes;
+a process running as the same user can still change it, which the next verification catches.
+
+Placed contributions need `rozi` with the `remote-extension-runtime` capability on the client and
+on every host they run on. Set `min_rozi` to a release that has it (see
+[Check the installed API](control.md#check-the-installed-api)); an older `rozi` rejects the
+`placement` key.
 
 ### Settings
 
@@ -583,12 +721,15 @@ on_click = { send = "{line}" }
 | `interval` | integer seconds | `30`, minimum `5` |
 | `on_click` | action table | none |
 | `group_prefix` | string | none; command tabs only |
+| `placement` | `client` or `active-session` | `client`; command tabs only |
 
 - `{extension_dir}` is replaced in `command` and in action strings, and the processes they start
   receive the same [`ROZI_EXTENSION*` environment](#runtime-environment) as a command.
 - A command tab runs in the focused pane's working directory and re-lists when that directory
-  changes. Like a command, it runs on the client, so it uses no pane directory in a `--remote`
-  session.
+  changes. Like a command, it runs on the client unless it has a `placement`, so by default it uses
+  no pane directory in a `--remote` session.
+- `placement = "active-session"` runs a command tab's `command`, and an `on_click` `exec`, on the
+  host of the session on screen; see [Run on the session host](#run-on-the-session-host).
 - Every line a command tab prints is a clickable row unless it starts with `group_prefix`, which
   makes it a section header. Print status and empty-state lines with the prefix.
 - `on_click` with `send` may use `{line}`. With `run`, `popup`, or `exec`, the clicked row arrives in
@@ -660,7 +801,19 @@ Every extension command and service receives:
 | `ROZI_BIN` | The running `rozi` executable, when available. |
 | `ROZI_SOCKET` | The current UI's control endpoint, when available. |
 
-A service's `env` cannot override the four `ROZI_EXTENSION*` variables.
+A [placed](#run-on-the-session-host) contribution receives the same variables, with these
+differences:
+
+| Variable | Value |
+| --- | --- |
+| `ROZI_EXTENSION_DIR` | The extension's snapshot directory on the host that runs it. |
+| `ROZI_BIN` | The host's `rozi` executable. |
+| `ROZI_SOCKET` | The host's extension runtime, which relays requests to your client. |
+| `ROZI_EXTENSION_CREDENTIAL` | The process's own credential. Never pass it on or log it. |
+| `ROZI_SERVICE` | The service's public ID, for a placed service. |
+
+A service's `env` cannot override the four `ROZI_EXTENSION*` variables, and the runtime replaces
+any `ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.
 
 Call `rozi` through `ROZI_BIN` rather than assuming it is on `PATH`, and pass `ROZI_SOCKET` back to
 it:
@@ -671,10 +824,11 @@ it:
 
 When `ROZI_EXTENSION` is set, the `rozi` CLI tags each request with the extension's identity and
 generation. After the extension is disabled or reloaded, requests from its old processes are
-rejected; a process whose request is rejected should exit rather than retry. The generation keeps
-stale processes from acting, but it is not authentication: other processes running as the same user
-are not blocked. Pickers, activity rows, and subscriptions an extension opens close when its
-generation is retired.
+rejected; a process whose request is rejected should exit rather than retry. For a client
+contribution, the generation keeps stale processes from acting, but it is not authentication: other
+processes running as the same user are not blocked. A placed contribution's requests are
+authenticated by its credential instead. Pickers, activity rows, and subscriptions an extension
+opens close when its generation is retired.
 
 A session server cannot check the generation, so it refuses requests from extensions; see
 "Extensions and `--session`" in [Control](control.md). For stream ownership, see
@@ -698,6 +852,9 @@ After changing a linked or installed extension:
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
+
+For [placed](#run-on-the-session-host) contributions, `rozi extensions status` shows where each one
+runs and why one is unavailable.
 
 If a command fails, run its resolved argv from the verbose output yourself, in an isolated test
 environment. Because command output is not shown anywhere, have the process write deliberate
@@ -738,6 +895,8 @@ Extension API 1 is frozen. Within API 1, `rozi` will not break:
 - suggested keybindings: they target only the documented action allowlist, rank below user and
   built-in bindings, and never put extension code on the input path;
 - the `ROZI_EXTENSION*` environment variables and their meanings;
+- `placement` and what a placed process may do, as described under
+  [Run on the session host](#run-on-the-session-host);
 - the `rozi` control commands documented in [Control](control.md), and their exit codes;
 - atomic validity: an extension loads whole or not at all;
 - the `<prefix> x` chord space reserved for extension key suggestions;

@@ -199,6 +199,7 @@ attached.
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
+| `extensions status [--json]` | Report where the UI runs [placed extension processes](extensions.md#run-on-the-session-host). | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 
 `layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
@@ -229,7 +230,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 16,
+  "schema": 17,
   "session_protocol": 26,
   "capabilities": [
     "agent-waits",
@@ -247,6 +248,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "record-pane",
     "record-ui",
     "remote-control",
+    "remote-extension-runtime",
     "session-control",
     "split-size"
   ]
@@ -256,11 +258,15 @@ protocol version, and capabilities of the installed binary. It does not connect 
 `schema` is the version of the JSON schema and changes independently of `session_protocol`, which
 only concerns how two rozi binaries talk to each other.
 
+`remote-extension-runtime` means the binary can run
+[placed extension processes](extensions.md#run-on-the-session-host), as a client and as a host. Both
+need it.
+
 ## Output and exit status
 
-`list-panes`, `layout get`, `metrics`, `capture-pane`, `capture-ui`, and `record list` print human-readable output
-to a terminal and stable JSON when redirected. Use `--format text` or `--format json` to choose
-explicitly.
+`list-panes`, `layout get`, `metrics`, `capture-pane`, `capture-ui`, `record list`, and
+`extensions status` print human-readable output to a terminal and stable JSON when redirected. Use
+`--format text` or `--format json` to choose explicitly, or `--json` for `extensions status`.
 
 Other successful one-shot commands print a short acknowledgement on a terminal and the JSON
 response when redirected. A failure prints its error to stderr; with JSON output, the failure
@@ -923,6 +929,12 @@ extension
 An extension that wants to drive a session should go through a running UI. A person typing in a
 pane that an extension opened inherits `ROZI_EXTENSION` and hits the same refusal; run
 `env -u ROZI_EXTENSION rozi --session …` to make the request as yourself.
+
+A [placed](extensions.md#run-on-the-session-host) extension process reaches the UI that placed it
+through its runtime, wherever it runs. Its requests are authenticated by a credential rather than
+the generation token alone, and limited to what a placed process may do: commands that would run
+something on the client fail with `not-permitted`, and commands about a session outside the
+process's host fail with `out-of-scope`.
 
 ## Session lifecycle
 

@@ -2189,11 +2189,19 @@ mod tests {
         );
         assert_eq!(
             keys(&properties["commands"]["items"]["properties"]),
-            ["exec", "id", "key", "label", "send", "shell"]
+            ["exec", "id", "key", "label", "placement", "send", "shell"]
         );
         assert_eq!(
             keys(&properties["services"]["items"]["properties"]),
-            ["cwd", "env", "exec", "name", "restart", "shell"]
+            [
+                "cwd",
+                "env",
+                "exec",
+                "name",
+                "placement",
+                "restart",
+                "shell"
+            ]
         );
         assert_eq!(
             keys(&properties["navigation_targets"]["items"]["properties"]),
@@ -2220,7 +2228,8 @@ mod tests {
                 "interval",
                 "label",
                 "name",
-                "on_click"
+                "on_click",
+                "placement"
             ]
         );
         assert_eq!(

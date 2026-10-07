@@ -44,6 +44,9 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "ROZI_SERVICE",
 ];
 
+/// How long one read of a bridged connection waits before polling again.
+const BRIDGE_READ_POLL: Duration = Duration::from_millis(100);
+
 /// How often running processes are checked for exit.
 const TICK: Duration = Duration::from_millis(50);
 
@@ -612,7 +615,7 @@ fn relay_to_process(mut connection: IpcConnection, outbound: mpsc::Receiver<Opti
             break;
         }
     }
-    let _ = connection.shutdown(std::net::Shutdown::Write);
+    let _ = connection.finish_writes();
 }
 
 fn relay_to_client(
@@ -621,7 +624,10 @@ fn relay_to_client(
     writer: SharedWriter,
     events: mpsc::Sender<Event>,
 ) {
-    let _ = reader.set_read_timeout(None);
+    // A short timeout rather than a blocking read. A Windows pipe in blocking mode serializes the
+    // two directions, so a read waiting here would hold up the reply `relay_to_process` is writing
+    // on the same pipe; polling keeps it in non-waiting mode, where both proceed.
+    let _ = reader.set_read_timeout(Some(BRIDGE_READ_POLL));
     let mut chunk = vec![0u8; 64 * 1024];
     loop {
         match reader.read(&mut chunk) {
@@ -636,9 +642,11 @@ fn relay_to_client(
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
             Err(_) => break,
         }
     }
@@ -1010,9 +1018,27 @@ mod tests {
         assert!(!bridge_present());
     }
 
-    /// The bridge relays bytes and nothing else, both ways, per connection.
+    /// The bridge relays bytes and nothing else, both ways, per connection. Run under a watchdog:
+    /// the way this fails on a platform whose pipes serialize reads and writes is a hang.
     #[test]
     fn bridge_connections_are_relayed_to_the_client_and_back() {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            relay_both_ways();
+            let _ = done.send(());
+        });
+        match finished.recv_timeout(Duration::from_secs(30)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("the bridge relay deadlocked: no reply within 30 seconds")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the bridge relay test failed; see its output above")
+            }
+        }
+    }
+
+    fn relay_both_ways() {
         let mut client = Client::start();
         let bridge = std::fs::read_dir(&client.runtime_dir)
             .unwrap()

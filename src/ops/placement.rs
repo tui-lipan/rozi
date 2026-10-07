@@ -660,7 +660,36 @@ pub(crate) fn runtime_event(
         RuntimeEvent::Lost(detail) => {
             runtime_down(ctx, &host, Unavailable::RuntimeUnreachable { detail }, true)
         }
-        RuntimeEvent::Message(message) => update = runtime_message(ctx, &host, message),
+        RuntimeEvent::Message(message) => {
+            if let Some(connection) = ctx
+                .state
+                .extension_runtime
+                .hosts
+                .get(&host)
+                .and_then(|runtime| runtime.connection.as_ref())
+            {
+                connection.delivered();
+            }
+            match ownership(&ctx.state, &host, epoch, &message) {
+                Ownership::Ours => update = runtime_message(ctx, &host, message),
+                Ownership::Gone => {}
+                Ownership::Violation(detail) => {
+                    // A runtime that speaks for a process it was never given, or sends what only
+                    // a client may, is not trusted with anything more. Its connection closes and
+                    // is not retried until the host is attached again.
+                    runtime_down(
+                        ctx,
+                        &host,
+                        Unavailable::RuntimeUnreachable {
+                            detail: format!(
+                                "the runtime broke protocol and was disconnected: {detail}"
+                            ),
+                        },
+                        false,
+                    );
+                }
+            }
+        }
     }
     // Readiness and failures change what can start; reconcile now rather than on the next message.
     // Not as a change of sessions or extensions, though: an instance the host just refused must
@@ -703,6 +732,44 @@ fn runtime_down(ctx: &mut Context<AppRoot>, host: &HostKey, reason: Unavailable,
     }
 }
 
+/// Whether a runtime message is this runtime's to send.
+enum Ownership {
+    Ours,
+    /// About a process that has since been stopped; a reply crossing a kill.
+    Gone,
+    Violation(String),
+}
+
+/// A runtime may only speak for the processes it was asked to start, over the connection they were
+/// started through. Worker ids are client-wide, so without this a host could report, restage, or
+/// fail another host's worker.
+fn ownership(state: &State, host: &HostKey, epoch: u64, message: &Message) -> Ownership {
+    let worker = match message {
+        Message::Spawned { worker, .. }
+        | Message::SpawnFailed { worker, .. }
+        | Message::Exited { worker, .. } => WorkerId(*worker),
+        Message::Staged { .. } | Message::StageFailed { .. } => return Ownership::Ours,
+        Message::StageCommit { .. }
+        | Message::Spawn { .. }
+        | Message::Kill { .. }
+        | Message::BridgeOpen { .. }
+        | Message::BridgeClose { .. } => {
+            return Ownership::Violation("sent a message only a client sends".to_string());
+        }
+    };
+    let Some(process) = state.extension_runtime.processes.get(&worker) else {
+        return Ownership::Gone;
+    };
+    let issued_here = state
+        .extension_workers
+        .get(worker)
+        .is_none_or(|issued| issued.runtime == WorkerRuntime(epoch));
+    if &process.host != host || !issued_here {
+        return Ownership::Violation(format!("reported worker {} of another host", worker.0));
+    }
+    Ownership::Ours
+}
+
 fn runtime_message(ctx: &mut Context<AppRoot>, host: &HostKey, message: Message) -> Update {
     match message {
         Message::Staged { digest } => {
@@ -716,12 +783,19 @@ fn runtime_message(ctx: &mut Context<AppRoot>, host: &HostKey, message: Message)
             if let Some(runtime) = ctx.state.extension_runtime.hosts.get_mut(host) {
                 runtime.staging.remove(&digest);
             }
+            // Only this host's launches: another host staging the same digest is unaffected.
+            let processes = &ctx.state.extension_runtime.processes;
             let workers: Vec<WorkerId> = ctx
                 .state
                 .extension_runtime
                 .pending
                 .iter()
-                .filter(|pending| pending.digest == digest)
+                .filter(|pending| {
+                    pending.digest == digest
+                        && processes
+                            .get(&pending.worker)
+                            .is_some_and(|process| &process.host == host)
+                })
                 .map(|pending| pending.worker)
                 .collect();
             for worker in workers {
@@ -787,7 +861,7 @@ fn restage(ctx: &mut Context<AppRoot>, host: &HostKey, worker: WorkerId) -> bool
     let Some(process) = ctx.state.extension_runtime.processes.get(&worker) else {
         return false;
     };
-    if process.state == WorkerProcessState::Pending {
+    if process.state == WorkerProcessState::Pending || &process.host != host {
         return false;
     }
     let Some(placements) = ctx
@@ -1310,5 +1384,240 @@ pub(crate) fn status_report(state: &State) -> crate::control::ExtensionRuntimeRe
         runtimes,
         instances,
         processes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extension_runtime::protocol::Launch;
+    use crate::session::remote::RemoteTarget;
+    use crate::state::{PendingLaunch, WorkerBinding};
+    use tui_lipan::TestBackend;
+
+    const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn host(name: &str) -> HostKey {
+        HostKey::Remote(RemoteTarget::Alias(name.to_string()))
+    }
+
+    fn on_test_thread(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// Two hosts, each with a launch of the same bundle waiting to stage.
+    fn two_hosts() -> (TestBackend<AppRoot>, WorkerId, WorkerId) {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let state = backend.state_mut();
+        state
+            .extension_generations
+            .insert("sessions".to_string(), "g1".to_string());
+        // A session on each host, so both runtimes are wanted.
+        state.current_mut().session_attached = true;
+        state.current_mut().remote_target = host("pc").remote().cloned();
+        let mut background = crate::state::Attachment::new();
+        background.session_attached = true;
+        background.remote_target = host("server").remote().cloned();
+        state.background.insert(9_001, background);
+        let bundle = std::sync::Arc::new(
+            crate::extension_runtime::bundle::Bundle::from_files(Vec::new()).unwrap(),
+        );
+        state.config.extension_placements.insert(
+            "sessions".to_string(),
+            std::sync::Arc::new(crate::config::ExtensionPlacements {
+                id: "sessions".to_string(),
+                platforms: Vec::new(),
+                local_dir: "/x".to_string(),
+                bundle: bundle.clone(),
+                commands: Default::default(),
+                tabs: Default::default(),
+                services: Vec::new(),
+                client_unsupported: None,
+            }),
+        );
+        let mut workers = Vec::new();
+        for (name, epoch) in [("pc", 1), ("server", 2)] {
+            state.extension_runtime.hosts.insert(
+                host(name),
+                HostRuntime {
+                    host: host(name),
+                    epoch,
+                    status: HostRuntimeStatus::Ready {
+                        os: "linux".to_string(),
+                        version: None,
+                    },
+                    connection: None,
+                    staged: HashSet::new(),
+                    staging: [DIGEST.to_string()].into_iter().collect(),
+                    failures: 0,
+                    retry_at: None,
+                },
+            );
+            let worker = state
+                .extension_workers
+                .issue(
+                    ExtensionProvenance {
+                        id: "sessions".to_string(),
+                        generation: "g1".to_string(),
+                    },
+                    Placement::ActiveSession,
+                    WorkerBinding {
+                        host: host(name),
+                        session: None,
+                    },
+                    WorkerRuntime(epoch),
+                    WorkerKind::Command {
+                        id: "sessions.run".to_string(),
+                    },
+                )
+                .id;
+            state.extension_runtime.processes.insert(
+                worker,
+                WorkerProcess {
+                    host: host(name),
+                    purpose: WorkerPurpose::Command {
+                        label: "run".to_string(),
+                    },
+                    digest: DIGEST.to_string(),
+                    state: WorkerProcessState::Pending,
+                },
+            );
+            let message = Message::Spawn {
+                worker: worker.0,
+                digest: DIGEST.to_string(),
+                launch: Launch::Shell {
+                    line: "true".to_string(),
+                },
+                cwd: SpawnCwd::Inherit,
+                env: Vec::new(),
+                credential: "secret".to_string(),
+                platforms: Vec::new(),
+                capture: None,
+            };
+            state.extension_runtime.sent.insert(worker, message.clone());
+            state.extension_runtime.pending.push(PendingLaunch {
+                worker,
+                digest: DIGEST.to_string(),
+                message,
+                restaged: false,
+                bundle: bundle.clone(),
+            });
+            workers.push(worker);
+        }
+        (backend, workers[0], workers[1])
+    }
+
+    fn report(backend: &mut TestBackend<AppRoot>, name: &str, epoch: u64, message: Message) {
+        backend
+            .dispatch(crate::Msg::ExtensionRuntime {
+                host: host(name),
+                epoch,
+                event: RuntimeEvent::Message(message),
+            })
+            .unwrap();
+    }
+
+    /// The same bundle staging on two hosts: one host failing it fails only its own launch.
+    #[test]
+    fn a_staging_failure_on_one_host_leaves_another_host_staging_the_same_bundle_alone() {
+        on_test_thread(|| {
+            let (mut backend, on_pc, on_server) = two_hosts();
+            report(
+                &mut backend,
+                "pc",
+                1,
+                Message::StageFailed {
+                    digest: DIGEST.to_string(),
+                    detail: "disk full".to_string(),
+                },
+            );
+            let state = backend.state();
+            assert!(!state.extension_runtime.processes.contains_key(&on_pc));
+            assert!(state.extension_runtime.processes.contains_key(&on_server));
+            assert!(state.extension_workers.get(on_server).is_some());
+            assert!(
+                state
+                    .extension_runtime
+                    .pending
+                    .iter()
+                    .any(|pending| pending.worker == on_server)
+            );
+        });
+    }
+
+    /// A runtime naming another host's worker is disconnected, and nothing of that worker - its
+    /// launch, its credential, its state - moves to it.
+    #[test]
+    fn a_runtime_naming_another_hosts_worker_is_disconnected_and_changes_nothing_there() {
+        for message in [
+            |worker: u64| Message::Spawned { worker, pid: 1 },
+            |worker: u64| Message::Exited {
+                worker,
+                code: Some(0),
+                killed: false,
+                timed_out: false,
+                output: None,
+            },
+            |worker: u64| Message::SpawnFailed {
+                worker,
+                failure: SpawnFailure::BundleMissing,
+            },
+        ] {
+            on_test_thread(move || {
+                let (mut backend, _, on_server) = two_hosts();
+                // Pretend the server's launch went out, so a restage would have something to send.
+                backend
+                    .state_mut()
+                    .extension_runtime
+                    .processes
+                    .get_mut(&on_server)
+                    .unwrap()
+                    .state = WorkerProcessState::Starting;
+                report(&mut backend, "pc", 1, message(on_server.0));
+                let state = backend.state();
+                assert!(matches!(
+                    state.extension_runtime.hosts[&host("pc")].status,
+                    HostRuntimeStatus::Unavailable(_)
+                ));
+                assert!(
+                    state.extension_runtime.hosts[&host("pc")]
+                        .retry_at
+                        .is_none()
+                );
+                let process = &state.extension_runtime.processes[&on_server];
+                assert_eq!(process.host, host("server"));
+                assert_eq!(process.state, WorkerProcessState::Starting);
+                assert!(state.extension_workers.get(on_server).is_some());
+                assert!(
+                    !state
+                        .extension_runtime
+                        .pending
+                        .iter()
+                        .any(|pending| pending.worker == on_server && pending.restaged),
+                    "the server's launch was never queued again, for any host"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn a_runtime_sending_what_only_a_client_sends_is_disconnected() {
+        on_test_thread(|| {
+            let (mut backend, _, _) = two_hosts();
+            report(&mut backend, "pc", 1, Message::Kill { worker: 1 });
+            assert!(matches!(
+                backend.state().extension_runtime.hosts[&host("pc")].status,
+                HostRuntimeStatus::Unavailable(_)
+            ));
+            assert!(matches!(
+                backend.state().extension_runtime.hosts[&host("server")].status,
+                HostRuntimeStatus::Ready { .. }
+            ));
+        });
     }
 }

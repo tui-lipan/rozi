@@ -88,6 +88,13 @@ Without `--session`, control commands choose a UI endpoint in this order:
 Discovery fails if the runtime directory contains no live endpoints or more than one. Pass
 `--socket` when several UIs are running. Put `--socket PATH` before the command.
 
+`agents report` and `agents release` are the exception. Run from a pane with no `ROZI_SOCKET` — a
+remote pane, or one in a session with no window attached — and without `--target`, they go to the
+session server the pane runs in, which `ROZI_SESSION_INSTANCE` identifies. The session keeps the
+latest report, so every window attached to it shows the state, including one on another machine and
+one that attaches later. A session server started by an older rozi cannot be identified; the
+command then fails and names it, and restarting that session fixes it.
+
 | Platform | Endpoint named by `ROZI_SOCKET` |
 | --- | --- |
 | Linux | Unix-domain socket under `$XDG_RUNTIME_DIR/rozi`, `/run/user/<uid>/rozi`, or a private per-user temporary directory |
@@ -101,8 +108,9 @@ Every local pane receives `ROZI=1` and `ROZI_PANE`, plus `ROZI_SOCKET` and `ROZI
 is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
 server it runs in, so a UI holding several sessions can tell whose pane is asking. It is empty in
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
-neither does a pane opened by `rozi --session <NAME> split`, because there is no UI for them to
-name. Such a pane still reaches its own session with `rozi --session <NAME>`.
+neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
+there is no UI for them to name. Such a pane still reaches its own session with
+`rozi --session <NAME>`, and its agent reports reach it without one.
 
 ## Target selection
 
@@ -121,7 +129,8 @@ session `dev` has 3 panes and no focused pane; pass --target (ids: 1, 2, 5)
 ```
 
 `agents report` and `agents release` always require `--target` with `--session`, even for a
-one-pane session.
+one-pane session. Without `--session` in a pane that has no UI to name, they target the calling
+pane in its own session; see [Endpoint discovery](#endpoint-discovery).
 
 A pane addressing its own session names itself:
 

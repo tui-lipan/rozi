@@ -72,7 +72,8 @@ def state_path(env: dict[str, str]) -> Path:
     # that does not exec its last command leaves a fresh parent process for every hook, so no
     # process id identifies the client. Successive clients in a pane are told apart by their
     # lifecycle tokens instead: each one's first SessionStart releases the previous token.
-    identity = [env["ROZI_SOCKET"], env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"]]
+    # A pane with no UI to name (remote, or in a session no window shows) has no ROZI_SOCKET.
+    identity = [env.get("ROZI_SOCKET", ""), env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"]]
     key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     # Codex owns this persistent directory, separately from its cached plugin code.
     root = Path(env["PLUGIN_DATA"]) / "activity"
@@ -311,8 +312,9 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     args += ["--integration", row[0], "--seq", str(row[2])]
     if reason:
         args += ["--reason", reason]
-    # ROZI_PANE selects the calling pane through ROZI_SOCKET. Never infer a
-    # session name from a pane number, or open the platform-specific socket here.
+    # ROZI_PANE selects the calling pane: through ROZI_SOCKET when the pane has a UI, and
+    # otherwise in the session server ROZI_SESSION_INSTANCE names, which rozi finds itself.
+    # Never infer a session name from a pane number, or open the platform-specific socket here.
     result = subprocess.run(args, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             text=True, timeout=timeout, check=False)
@@ -409,7 +411,7 @@ def nested(event: dict, env: dict[str, str]) -> bool:
 
 
 def handle(event: dict, env: dict[str, str]) -> None:
-    required = ("ROZI_PANE", "ROZI_SOCKET", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA")
+    required = ("ROZI_PANE", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA")
     if env.get("ROZI") != "1" or not all(env.get(key) for key in required):
         return
     if not isinstance(event.get("session_id"), str) or not event["session_id"]:

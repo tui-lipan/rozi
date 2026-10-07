@@ -711,6 +711,7 @@ fn golden_session_info_json_shape() {
                 profile: Some("work".into()),
                 ..Default::default()
             },
+            instance: Some(super::SessionInstanceId::for_test("abc123")),
         })
         .unwrap(),
         serde_json::json!({
@@ -720,7 +721,8 @@ fn golden_session_info_json_shape() {
             "clients":1,
             "has_layout":true,
             "effective_protocol":PROTOCOL_VERSION,
-            "origin":{"profile":"work"}
+            "origin":{"profile":"work"},
+            "instance":"abc123"
         })
     );
 }

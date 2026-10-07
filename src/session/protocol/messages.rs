@@ -518,6 +518,11 @@ pub enum ServerMessage {
         #[serde(default)]
         effective_protocol: u32,
         origin: SessionOrigin,
+        /// The answering server's [`super::SessionInstanceId`]. A pane finds its own server by it
+        /// when it has no UI to ask: a session name can be reused or renamed, an instance cannot.
+        /// Missing on servers that predate it, which a caller must treat as "not mine".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instance: Option<super::SessionInstanceId>,
     },
     /// Reply to a [`ClientMessage::SessionControl`] request.
     ///

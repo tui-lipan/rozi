@@ -107,12 +107,13 @@ Failed transactions roll back before retrying, so an event is recorded once. The
 timeout is five seconds, leaving time for startup and delivery after persistence. Delivery stays
 best effort; a failed delivery leaves committed state pending.
 
-Reporting requires the pane's `ROZI_SOCKET`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`. Codex runs
-hooks in the client process, so this holds whether the thread runs in that process or in Codex's
-shared background server. Remote and headless panes without a local UI endpoint keep using Rozi's
-screen detection. If the UI endpoint goes away, hook reports cannot reach it. Restart Codex in an
-attached pane to begin a new reporting lifecycle. Removing the plugin while Codex is running also
-requires exiting that Codex client to release its last report.
+Reporting requires the pane's `ROZI_PANE` and `ROZI_SESSION_INSTANCE`. Codex runs hooks in the
+client process, so this holds whether the thread runs in that process or in Codex's shared
+background server. With `ROZI_SOCKET`, reports go through the pane's UI. Without it — in a remote
+pane, or a session with no window attached — they go straight to the session server the pane runs
+in, which needs the Rozi build containing this plugin on the pane's host. If neither is reachable,
+hook reports are lost until Codex starts a new reporting lifecycle. Removing the plugin while Codex
+is running also requires exiting that Codex client to release its last report.
 
 ## Verify
 

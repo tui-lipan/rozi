@@ -4219,6 +4219,24 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
             .text
             .contains("marker-1")
     );
+    // A restored pane learns where it runs exactly as a freshly split one does; agent hooks inside
+    // it give up without `ROZI` and `ROZI_PANE`.
+    let env = &restored.panes[&1].env;
+    assert!(
+        env.contains(&("ROZI".to_string(), "1".to_string())),
+        "{env:?}"
+    );
+    assert!(
+        env.contains(&("ROZI_PANE".to_string(), "1".to_string())),
+        "{env:?}"
+    );
+    assert!(
+        env.contains(&(
+            protocol::SESSION_INSTANCE_ENV.to_string(),
+            restored.instance_id().as_str().to_string()
+        )),
+        "{env:?}"
+    );
     assert_eq!(restored.layout_rev, 1);
     assert_eq!(restored.origin.profile.as_deref(), Some("work"));
     assert_eq!(

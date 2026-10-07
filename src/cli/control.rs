@@ -397,6 +397,47 @@ fn ask_session_endpoint(
     }
 }
 
+/// Ask the session server the calling pane runs in, found by its instance rather than a name.
+///
+/// Unlike [`ask_session_endpoint`] the request keeps `source_session`: the server refuses it unless
+/// it is that instance, which closes the gap between finding the server and asking it. The pane id
+/// already travels as the explicit target, so `source_pane` is dropped as it is there.
+fn ask_own_session_endpoint(
+    instance: &crate::session::protocol::SessionInstanceId,
+    mut request: control::ControlRequest,
+) -> Result<serde_json::Value> {
+    use crate::session::discovery::InstanceLookup;
+
+    let session = match crate::session::discovery::session_with_instance(instance) {
+        Ok(InstanceLookup::Found(session)) => session,
+        Ok(InstanceLookup::NotFound { unidentified }) if !unidentified.is_empty() => {
+            eprintln!(
+                "this pane's session server did not identify itself; it may be one running an older rozi (`{}`), which must be restarted to take reports from a pane with no UI",
+                unidentified.join("`, `")
+            );
+            std::process::exit(2);
+        }
+        Ok(InstanceLookup::NotFound { .. }) => {
+            eprintln!(
+                "this pane's session server is not running on this machine; set ROZI_SOCKET or pass --session"
+            );
+            std::process::exit(2);
+        }
+        Err(err) => {
+            eprintln!("could not look for this pane's session server: {err}");
+            std::process::exit(2);
+        }
+    };
+    request.source_pane = None;
+    match crate::session::headless::run_session_control(&session, request) {
+        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
 /// Run one control command against a session on another host, over the SSH transport `--remote`
 /// attach already uses.
 ///
@@ -523,14 +564,23 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         eprintln!("PNG output is binary; pass --output FILE or redirect stdout");
         std::process::exit(2);
     }
-    let value = match command.endpoint {
-        ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &command.request)?,
+    // Decided here rather than while parsing, like the discovery of a UI with no socket named: it
+    // reads the pane's environment, and a parse must mean the same thing wherever it runs.
+    let mut request = command.request.clone();
+    let endpoint = super::args::own_session_endpoint(
+        command.endpoint.clone(),
+        &mut request,
+        std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
+    );
+    let value = match endpoint {
+        ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &request)?,
         ControlEndpoint::Session(session) => {
             ask_session_endpoint(&session, command.request.clone())?
         }
         ControlEndpoint::Remote { target, session } => {
             ask_remote_endpoint(&target, &session, command.request.clone())?
         }
+        ControlEndpoint::OwnSession(instance) => ask_own_session_endpoint(&instance, request)?,
     };
     // A wait that failed still answers with what the pane showed at the end, which is the first
     // thing anyone debugging it wants; it is delivered where a capture would go, then the failure.

@@ -111,10 +111,11 @@ impl EndpointRegistry {
         IpcEndpoint::at_path(runtime_dir.join(format!("control-{pid}.sock")))
     }
 
-    /// An extension runtime's bridge, by the runtime's pid. Deliberately not `control-*`: the CLI's
-    /// fallback discovery of a UI must never find a bridge, which answers only placed processes.
-    pub fn extension_bridge_endpoint(runtime_dir: &Path, pid: u32) -> IpcEndpoint {
-        IpcEndpoint::at_path(runtime_dir.join(format!("extension-bridge-{pid}.sock")))
+    /// An extension runtime's bridge, by an id unique to that runtime. Deliberately not
+    /// `control-*`: the CLI's fallback discovery of a UI must never find a bridge, which answers
+    /// only placed processes.
+    pub fn extension_bridge_endpoint(runtime_dir: &Path, id: &str) -> IpcEndpoint {
+        IpcEndpoint::at_path(runtime_dir.join(format!("extension-bridge-{id}.sock")))
     }
 
     /// The named/ephemeral session endpoint for `name`.

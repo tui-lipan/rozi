@@ -112,7 +112,10 @@ pub fn serve_with(
         Some(dir) => dir,
         None => crate::control::runtime_dir()?,
     };
-    let endpoint = EndpointRegistry::extension_bridge_endpoint(&runtime_dir, std::process::id());
+    // Unique per runtime, not just per process: a Windows pipe is named after the entry's file
+    // name alone, and this machine's in-process runtime can be restarting while its predecessor
+    // still holds the old name.
+    let endpoint = EndpointRegistry::extension_bridge_endpoint(&runtime_dir, &bridge_id());
     let bridge_path = endpoint.path().to_path_buf();
     let listener = endpoint.bind()?.into_listener();
     let _bridge_guard = RemoveOnDrop(bridge_path.clone());
@@ -607,6 +610,13 @@ fn relay_to_client(
     let _ = events.send(Event::BridgeEnded { conn });
 }
 
+fn bridge_id() -> String {
+    let mut bytes = [0u8; 6];
+    getrandom::fill(&mut bytes).expect("operating-system randomness unavailable");
+    let suffix: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{}-{suffix}", std::process::id())
+}
+
 struct RemoveOnDrop(PathBuf);
 
 impl Drop for RemoveOnDrop {
@@ -669,7 +679,8 @@ mod tests {
             write_hello(&mut client.to_runtime, &Hello::current(None)).unwrap();
             let Some(Frame::Hello(hello)) = read_frame(&mut client.from_runtime, true).unwrap()
             else {
-                panic!("runtime answers with a hello");
+                let error = client.server.take().unwrap().join().unwrap();
+                panic!("runtime did not answer with a hello: {error:?}");
             };
             hello.validate().unwrap();
             assert_eq!(hello.os.as_deref(), Some(std::env::consts::OS));

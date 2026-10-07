@@ -35,9 +35,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
 /// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
 /// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, version 15 with
-/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, and version 16 with
-/// `command-visibility`.
-pub const API_SCHEMA_VERSION: u32 = 16;
+/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, version 16 with
+/// `command-visibility`, and version 17 with a request's `credential`, the `not-permitted` and
+/// `out-of-scope` error codes, and `extension-runtime-status`.
+pub const API_SCHEMA_VERSION: u32 = 17;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -441,6 +442,10 @@ pub enum ControlCommand {
         scrollback: Option<CaptureScrollback>,
     },
     Metrics,
+    /// Report this client's extension runtimes and the placed extension processes running through
+    /// them: where each runs, under which generation and bundle, and why one that is not running
+    /// is unavailable.
+    ExtensionRuntimeStatus,
     Focus {
         target: PaneId,
     },
@@ -1489,6 +1494,89 @@ impl FractionRect {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentListPayload(pub Vec<AgentInfo>);
 
+/// `extension-runtime-status`: what this client runs where.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionRuntimeReport {
+    /// One per host this client runs placed processes on: `local`, or a remote host.
+    pub runtimes: Vec<ExtensionRuntimeInfo>,
+    /// Instances of placed services, one per host or session their placement asks for.
+    pub instances: Vec<PlacedInstanceInfo>,
+    /// Every placed process that is starting or running, services, commands, and tab listings
+    /// alike.
+    pub processes: Vec<PlacedProcessInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionRuntimeInfo {
+    pub host: String,
+    /// The connection's epoch. A reconnect is a new epoch.
+    pub epoch: u64,
+    /// `connecting`, `ready`, or `unavailable`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    /// The host's Rozi version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UnavailableInfo>,
+}
+
+/// Why something placed is not running.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UnavailableInfo {
+    /// `unsupported-platform`, `runtime-unsupported`, `missing-executable`, `bundle-failed`,
+    /// `runtime-unreachable`, `no-session`, or `spawn-failed`.
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PlacedInstanceInfo {
+    /// Public service name, `<extension>.<service>`.
+    pub service: String,
+    pub extension: String,
+    /// `active-session`, `each-host`, or `each-session`.
+    pub placement: String,
+    pub host: String,
+    /// The session this instance is bound to, for a per-session or active-session placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    pub generation: String,
+    /// Content digest of the files the instance runs from.
+    pub bundle: String,
+    /// `running`, `restarting`, `stopped`, or `unavailable`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UnavailableInfo>,
+    pub failures: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PlacedProcessInfo {
+    pub extension: String,
+    /// `service`, `command`, or `tab`.
+    pub kind: String,
+    /// The service, command, or tab id.
+    pub id: String,
+    pub host: String,
+    pub generation: String,
+    pub bundle: String,
+    /// `pending`, `starting`, or `running`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
 /// One pane's captured screen, as `capture-pane` and `agents read` report it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2009,10 +2097,11 @@ pub enum ControlErrorCode {
     StaleReference,
     Timeout,
     RequestFailed,
-    /// A placed extension process asked for something no placed process may do, wherever it runs.
+    // A placed extension process asked for something no placed process may do, wherever it runs.
+    // (Plain comments: a documented variant would turn the schema's closed enum into a `oneOf`.)
     NotPermitted,
-    /// A placed extension process asked about a session outside the host or session it was
-    /// placed for.
+    // A placed extension process asked about a session outside the host or session it was placed
+    // for.
     OutOfScope,
 }
 

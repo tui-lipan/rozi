@@ -987,6 +987,19 @@
           "type": "object"
         },
         {
+          "description": "Report this client's extension runtimes and the placed extension processes running through\nthem: where each runs, under which generation and bundle, and why one that is not running\nis unavailable.",
+          "properties": {
+            "cmd": {
+              "const": "extension-runtime-status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "focus",
@@ -1994,7 +2007,9 @@
         "agent-replaced",
         "stale-reference",
         "timeout",
-        "request-failed"
+        "request-failed",
+        "not-permitted",
+        "out-of-scope"
       ],
       "type": "string"
     },
@@ -2339,6 +2354,19 @@
           "properties": {
             "cmd": {
               "const": "metrics",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Report this client's extension runtimes and the placed extension processes running through\nthem: where each runs, under which generation and bundle, and why one that is not running\nis unavailable.",
+          "properties": {
+            "cmd": {
+              "const": "extension-runtime-status",
               "type": "string"
             }
           },
@@ -3329,6 +3357,13 @@
         }
       ],
       "properties": {
+        "credential": {
+          "description": "The worker credential of a placed extension process, from `ROZI_EXTENSION_CREDENTIAL`.\nAutomatically attached by the CLI. When present, the UI identifies the caller from it alone\nand replaces `extension` with what the credential was issued for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "extension": {
           "anyOf": [
             {
@@ -3485,6 +3520,84 @@
       "required": [
         "id",
         "generation"
+      ],
+      "type": "object"
+    },
+    "ExtensionRuntimeInfo": {
+      "properties": {
+        "epoch": {
+          "description": "The connection's epoch. A reconnect is a new epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host": {
+          "type": "string"
+        },
+        "os": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnavailableInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "description": "`connecting`, `ready`, or `unavailable`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The host's Rozi version.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "host",
+        "epoch",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ExtensionRuntimeReport": {
+      "description": "`extension-runtime-status`: what this client runs where.",
+      "properties": {
+        "instances": {
+          "description": "Instances of placed services, one per host or session their placement asks for.",
+          "items": {
+            "$ref": "#/$defs/PlacedInstanceInfo"
+          },
+          "type": "array"
+        },
+        "processes": {
+          "description": "Every placed process that is starting or running, services, commands, and tab listings\nalike.",
+          "items": {
+            "$ref": "#/$defs/PlacedProcessInfo"
+          },
+          "type": "array"
+        },
+        "runtimes": {
+          "description": "One per host this client runs placed processes on: `local`, or a remote host.",
+          "items": {
+            "$ref": "#/$defs/ExtensionRuntimeInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runtimes",
+        "instances",
+        "processes"
       ],
       "type": "object"
     },
@@ -4303,6 +4416,128 @@
       },
       "required": [
         "id"
+      ],
+      "type": "object"
+    },
+    "PlacedInstanceInfo": {
+      "properties": {
+        "bundle": {
+          "description": "Content digest of the files the instance runs from.",
+          "type": "string"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extension": {
+          "type": "string"
+        },
+        "failures": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "placement": {
+          "description": "`active-session`, `each-host`, or `each-session`.",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnavailableInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service": {
+          "description": "Public service name, `<extension>.<service>`.",
+          "type": "string"
+        },
+        "session": {
+          "description": "The session this instance is bound to, for a per-session or active-session placement.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "`running`, `restarting`, `stopped`, or `unavailable`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "extension",
+        "placement",
+        "host",
+        "generation",
+        "bundle",
+        "status",
+        "failures"
+      ],
+      "type": "object"
+    },
+    "PlacedProcessInfo": {
+      "properties": {
+        "bundle": {
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "id": {
+          "description": "The service, command, or tab id.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`service`, `command`, or `tab`.",
+          "type": "string"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "`pending`, `starting`, or `running`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "extension",
+        "kind",
+        "id",
+        "host",
+        "generation",
+        "bundle",
+        "state"
       ],
       "type": "object"
     },
@@ -5960,6 +6195,23 @@
       ],
       "type": "object"
     },
+    "UnavailableInfo": {
+      "description": "Why something placed is not running.",
+      "properties": {
+        "code": {
+          "description": "`unsupported-platform`, `runtime-unsupported`, `missing-executable`, `bundle-failed`,\n`runtime-unreachable`, `no-session`, or `spawn-failed`.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
     "WireEvent": {
       "description": "One `subscribe` event as it goes out on the wire.\n\n`data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an\nevent carries grow over time and a subscriber is expected to read the ones it knows and ignore\nthe rest, so the schema describes the envelope and the closed vocabulary of event names without\nfreezing each kind's field list.",
       "properties": {
@@ -6031,5 +6283,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 16
+  "x-rozi-schema-version": 17
 }

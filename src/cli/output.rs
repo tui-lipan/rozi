@@ -571,6 +571,112 @@ pub(super) fn count_detail(
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
+/// `extensions status`: one line per runtime, service instance, and other placed process.
+pub(super) fn format_extension_runtime_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let report: control::ExtensionRuntimeReport = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok())
+        .unwrap_or_default();
+    if report.runtimes.is_empty() && report.instances.is_empty() && report.processes.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No placed extension processes.", OutputTone::Muted)
+        );
+    }
+    let short = |digest: &str| digest.chars().take(12).collect::<String>();
+    let reason = |reason: &Option<control::UnavailableInfo>| {
+        reason
+            .as_ref()
+            .map(|reason| format!(" · {}: {}", reason.code, reason.message))
+            .unwrap_or_default()
+    };
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{}\n",
+        styles.paint("Runtimes", OutputTone::Heading)
+    ));
+    for runtime in &report.runtimes {
+        let tone = match runtime.status.as_str() {
+            "ready" => OutputTone::Success,
+            "unavailable" => OutputTone::Error,
+            _ => OutputTone::Warning,
+        };
+        let platform = match (&runtime.os, &runtime.version) {
+            (Some(os), Some(version)) => format!(" · {os} · rozi {version}"),
+            (Some(os), None) => format!(" · {os}"),
+            _ => String::new(),
+        };
+        out.push_str(&format!(
+            "  {} {}{platform} · epoch {}{}\n",
+            styles.paint(&runtime.host, OutputTone::Key),
+            styles.paint(&runtime.status, tone),
+            runtime.epoch,
+            reason(&runtime.reason)
+        ));
+    }
+    if !report.instances.is_empty() {
+        out.push_str(&format!(
+            "{}\n",
+            styles.paint("Services", OutputTone::Heading)
+        ));
+    }
+    for instance in &report.instances {
+        let tone = match instance.status.as_str() {
+            "running" => OutputTone::Success,
+            "unavailable" => OutputTone::Error,
+            _ => OutputTone::Warning,
+        };
+        let pid = instance
+            .pid
+            .map(|pid| format!(" · pid {pid}"))
+            .unwrap_or_default();
+        let detail = instance
+            .detail
+            .as_ref()
+            .map(|detail| format!(" · {detail}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  {} {} on {} · {}{pid}{detail}{} · generation {} · bundle {}\n",
+            styles.paint(&instance.service, OutputTone::Key),
+            instance.placement,
+            instance.host,
+            styles.paint(&instance.status, tone),
+            reason(&instance.reason),
+            short(&instance.generation),
+            short(&instance.bundle),
+        ));
+    }
+    let others: Vec<_> = report
+        .processes
+        .iter()
+        .filter(|process| process.kind != "service")
+        .collect();
+    if !others.is_empty() {
+        out.push_str(&format!(
+            "{}\n",
+            styles.paint("Processes", OutputTone::Heading)
+        ));
+    }
+    for process in others {
+        let pid = process
+            .pid
+            .map(|pid| format!(" · pid {pid}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  {} {} on {} · {}{pid} · bundle {}\n",
+            styles.paint(&process.id, OutputTone::Key),
+            process.kind,
+            process.host,
+            process.state,
+            short(&process.bundle),
+        ));
+    }
+    out
+}
+
 pub(super) fn format_metrics_text(
     data: Option<&serde_json::Value>,
     styles: OutputStyles,
@@ -805,6 +911,9 @@ pub(super) fn format_control_text(
             }
         }
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
+        control::ControlCommand::ExtensionRuntimeStatus => {
+            format_extension_runtime_text(data, styles)
+        }
         control::ControlCommand::CapturePane { .. }
         | control::ControlCommand::CaptureUi { .. }
         | control::ControlCommand::SendText {

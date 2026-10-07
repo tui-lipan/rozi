@@ -1170,3 +1170,135 @@ pub(crate) fn click_tab(
     }
     Update::full()
 }
+
+fn host_name(host: &HostKey) -> String {
+    match host {
+        HostKey::Local => "local".to_string(),
+        HostKey::Remote(target) => target.display_label(),
+    }
+}
+
+fn unavailable_info(reason: &Unavailable) -> crate::control::UnavailableInfo {
+    crate::control::UnavailableInfo {
+        code: reason.code().to_string(),
+        message: reason.to_string(),
+    }
+}
+
+/// What `extension-runtime-status` reports: every runtime, service instance, and placed process.
+pub(crate) fn status_report(state: &State) -> crate::control::ExtensionRuntimeReport {
+    let runtime = &state.extension_runtime;
+    let mut runtimes: Vec<_> = runtime
+        .hosts
+        .values()
+        .map(|host| {
+            let (status, os, version, reason) = match &host.status {
+                HostRuntimeStatus::Connecting => ("connecting", None, None, None),
+                HostRuntimeStatus::Ready { os, version } => {
+                    ("ready", Some(os.clone()), version.clone(), None)
+                }
+                HostRuntimeStatus::Unavailable(reason) => {
+                    ("unavailable", None, None, Some(unavailable_info(reason)))
+                }
+            };
+            crate::control::ExtensionRuntimeInfo {
+                host: host_name(&host.host),
+                epoch: host.epoch,
+                status: status.to_string(),
+                os,
+                version,
+                reason,
+            }
+        })
+        .collect();
+    runtimes.sort_by(|a, b| a.host.cmp(&b.host));
+    let bundle_of = |extension: &str| {
+        state
+            .config
+            .extension_placements
+            .get(extension)
+            .map(|placements| placements.bundle_digest().to_string())
+            .unwrap_or_default()
+    };
+    let placement_of = |service: &str| {
+        state
+            .config
+            .extension_placements
+            .values()
+            .flat_map(|placements| placements.services.iter())
+            .find(|placed| placed.name == service)
+            .map_or("", |placed| placed.placement.as_str())
+            .to_string()
+    };
+    let pid_of = |worker: WorkerId| match runtime.processes.get(&worker).map(|p| &p.state) {
+        Some(WorkerProcessState::Running { pid }) => Some(*pid),
+        _ => None,
+    };
+    let mut instances: Vec<_> = runtime
+        .instances
+        .iter()
+        .map(|instance| {
+            let (status, pid, detail, reason) = match &instance.status {
+                InstanceStatus::Running { worker } => ("running", pid_of(*worker), None, None),
+                InstanceStatus::Restarting { .. } => ("restarting", None, None, None),
+                InstanceStatus::Stopped { detail } => ("stopped", None, Some(detail.clone()), None),
+                InstanceStatus::Unavailable(reason) => {
+                    ("unavailable", None, None, Some(unavailable_info(reason)))
+                }
+            };
+            crate::control::PlacedInstanceInfo {
+                service: instance.key.service.clone(),
+                extension: instance.extension.clone(),
+                placement: placement_of(&instance.key.service),
+                host: host_name(&instance.key.binding.host),
+                session: instance
+                    .key
+                    .binding
+                    .session
+                    .as_ref()
+                    .map(|session| session.as_str().to_string()),
+                generation: instance.generation.clone(),
+                bundle: bundle_of(&instance.extension),
+                status: status.to_string(),
+                pid,
+                detail,
+                reason,
+                failures: instance.failures,
+            }
+        })
+        .collect();
+    instances.sort_by(|a, b| (&a.service, &a.host).cmp(&(&b.service, &b.host)));
+    let mut processes: Vec<_> = runtime
+        .processes
+        .iter()
+        .filter_map(|(worker_id, process)| {
+            let worker = state.extension_workers.get(*worker_id)?;
+            let (kind, id) = match &worker.kind {
+                WorkerKind::Service { name } => ("service", name.clone()),
+                WorkerKind::Command { id } => ("command", id.clone()),
+                WorkerKind::Tab { id } => ("tab", id.clone()),
+            };
+            let (state_name, pid) = match process.state {
+                WorkerProcessState::Pending => ("pending", None),
+                WorkerProcessState::Starting => ("starting", None),
+                WorkerProcessState::Running { pid } => ("running", Some(pid)),
+            };
+            Some(crate::control::PlacedProcessInfo {
+                extension: worker.extension.id.clone(),
+                kind: kind.to_string(),
+                id,
+                host: host_name(&process.host),
+                generation: worker.extension.generation.clone(),
+                bundle: process.digest.clone(),
+                state: state_name.to_string(),
+                pid,
+            })
+        })
+        .collect();
+    processes.sort_by(|a, b| (&a.id, &a.host, a.pid).cmp(&(&b.id, &b.host, b.pid)));
+    crate::control::ExtensionRuntimeReport {
+        runtimes,
+        instances,
+        processes,
+    }
+}

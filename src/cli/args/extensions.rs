@@ -2,7 +2,10 @@ use std::iter::Peekable;
 use std::path::PathBuf;
 use std::vec::IntoIter;
 
-use super::{ExtensionsCommand, ParsedCli, reject_trailing_control_args, require_value};
+use super::{
+    ControlCli, ControlEndpoint, ExtensionsCommand, ListFormat, ParsedCli, control_request,
+    reject_trailing_control_args, require_value,
+};
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
 
 pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
@@ -30,6 +33,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row("remove <ID>", "Remove an installed extension"),
             row("new <ID>", "Create a valid extension scaffold"),
             row("check <PATH> [--json]", "Validate an unpacked extension"),
+            row(
+                "status [--json]",
+                "Show where placed extension processes run",
+            ),
         ],
     },
     HelpSection {
@@ -169,6 +176,25 @@ pub(super) fn parse(
         Some("remove") => parse_remove(iter, config_path),
         Some("new") => parse_new(iter),
         Some("check") => parse_check(iter),
+        Some("status") => {
+            let mut format = None;
+            for flag in iter {
+                match flag.as_str() {
+                    "--json" if format.is_none() => format = Some(ListFormat::Json),
+                    other => {
+                        return Err(format!(
+                            "unexpected argument `{other}` after extensions status"
+                        ));
+                    }
+                }
+            }
+            Ok(ParsedCli::Control(ControlCli {
+                endpoint: ControlEndpoint::Ui(None),
+                request: control_request(crate::control::ControlCommand::ExtensionRuntimeStatus),
+                output_format: format,
+                output: None,
+            }))
+        }
         Some("runtime") => {
             if iter.next().is_some() {
                 return Err("extensions runtime accepts no arguments".to_string());
@@ -176,7 +202,7 @@ pub(super) fn parse(
             Ok(ParsedCli::Extensions(ExtensionsCommand::Runtime))
         }
         Some(other) => Err(format!(
-            "unknown extensions command `{other}` (expected list, install, update, remove, new, or check)"
+            "unknown extensions command `{other}` (expected list, install, update, remove, new, check, or status)"
         )),
     }
 }
@@ -297,6 +323,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn status_asks_the_ui_and_the_runtime_subcommand_takes_no_arguments() {
+        let parse =
+            |args: &[&str]| parse_cli_args(args.iter().map(|arg| arg.to_string()).collect());
+        let Ok(ParsedCli::Control(cli)) = parse(&["extensions", "status", "--json"]) else {
+            panic!("status is a control command");
+        };
+        assert_eq!(
+            cli.request.command,
+            crate::control::ControlCommand::ExtensionRuntimeStatus
+        );
+        assert_eq!(cli.endpoint, ControlEndpoint::Ui(None));
+        assert_eq!(cli.output_format, Some(ListFormat::Json));
+        assert!(parse(&["extensions", "status", "--verbose"]).is_err());
+        assert!(matches!(
+            parse(&["extensions", "runtime"]),
+            Ok(ParsedCli::Extensions(ExtensionsCommand::Runtime))
+        ));
+        assert!(parse(&["extensions", "runtime", "extra"]).is_err());
+    }
+
+    #[test]
     fn extensions_namespace_parses_commands_and_help() {
         for args in [vec!["extensions"], vec!["extensions", "--help"]] {
             assert!(matches!(
@@ -411,7 +458,7 @@ mod tests {
         );
         assert_eq!(
             parse_cli_args(vec!["extensions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown extensions command `lst` (expected list, install, update, remove, new, or check)"
+            "unknown extensions command `lst` (expected list, install, update, remove, new, check, or status)"
         );
     }
 

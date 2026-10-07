@@ -140,6 +140,9 @@ pub(crate) fn handle_control_request(
         ControlCommand::AgentsList => {
             ControlResponse::ok(crate::control::AgentListPayload(list_agents(ctx)))
         }
+        ControlCommand::ExtensionRuntimeStatus => {
+            ControlResponse::ok(crate::ops::placement::status_report(&ctx.state))
+        }
         ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
             Ok(agent) => ControlResponse::ok(agent),
             Err(response) => response,

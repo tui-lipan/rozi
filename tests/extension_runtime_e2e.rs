@@ -241,6 +241,44 @@ fn a_placed_service_runs_from_its_bundle_and_reaches_the_ui_only_as_itself() {
             assert!(read(&report.join("forged.err")).contains("credential"));
             assert_ne!(read(&report.join("bare.code")).trim(), "0");
 
+            // `extensions status` tells where it runs, under which generation and bundle.
+            let socket = backend.state().control_socket_path.clone().unwrap();
+            let mut status = std::process::Command::new(env!("CARGO_BIN_EXE_rozi"))
+                .args(["extensions", "status", "--json"])
+                .env("ROZI_SOCKET", &socket)
+                .env_remove("ROZI_PANE")
+                .env_remove("ROZI_EXTENSION")
+                .env_remove("ROZI_EXTENSION_CREDENTIAL")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            pump_until(
+                &mut backend,
+                Duration::from_secs(10),
+                "extensions status",
+                |_| status.try_wait().unwrap().is_some(),
+            );
+            let mut text = String::new();
+            std::io::Read::read_to_string(status.stdout.as_mut().unwrap(), &mut text).unwrap();
+            let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let instance = report["data"]["instances"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|instance| instance["extension"] == EXTENSION_ID)
+                .unwrap_or_else(|| panic!("{report}"))
+                .clone();
+            assert_eq!(instance["placement"], "each-host");
+            assert_eq!(instance["host"], "local");
+            assert_eq!(instance["status"], "running");
+            assert_eq!(instance["pid"], pid);
+            assert_eq!(instance["bundle"], digest.as_str());
+            assert_eq!(
+                instance["generation"],
+                backend.state().extension_generations[EXTENSION_ID].as_str()
+            );
+            assert_eq!(report["data"]["runtimes"][0]["status"], "ready");
+
             // Editing the installed files is a new bundle and a new generation: the old worker
             // stops and a new one runs the new files.
             let generation = backend.state().extension_generations[EXTENSION_ID].clone();

@@ -154,6 +154,9 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
             Gate::Denied("a UI capture shows this whole client, not one session")
         }
         ControlCommand::Metrics => Gate::Denied("metrics describe this whole client"),
+        ControlCommand::ExtensionRuntimeStatus => {
+            Gate::Denied("the runtime status describes every placed process of this client")
+        }
         ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. } => {
             Gate::Denied("agent reports come from the pane an agent runs in")
         }

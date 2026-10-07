@@ -147,6 +147,7 @@ pub(crate) fn cancel_host_probe(ctx: &mut Context<AppRoot>) -> bool {
     let epoch = ctx.state.mint_remote_probe_epoch();
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
         picker.auto_open = false;
+        picker.startup_resume = None;
         picker.probe_epoch = epoch;
     }
     true
@@ -505,6 +506,9 @@ pub(crate) fn open_add_host_form(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     let initial = picker.host_input.text().trim().to_string();
+    // Editing takes precedence over the pending navigation; the connection can still finish.
+    picker.auto_open = false;
+    picker.startup_resume = None;
     picker.host_form = Some(crate::state::HostFormState::add(initial));
     picker.pending_forget = None;
     crate::ops::focus::request_host_form_focus(ctx);
@@ -529,6 +533,8 @@ pub(crate) fn open_edit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     }
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.auto_open = false;
+        picker.startup_resume = None;
         picker.host_form = Some(crate::state::HostFormState::edit(&target));
         picker.pending_forget = None;
     }
@@ -1058,6 +1064,154 @@ mod tests {
                 backend.state().remote_picker.as_ref().unwrap().host_probe,
                 crate::state::HostProbe::Idle
             );
+        });
+    }
+
+    #[test]
+    fn opening_a_host_form_cancels_navigation_but_preserves_the_connection() {
+        for edit in [false, true] {
+            with_backend(move |backend| {
+                let _persist = crate::test_support::lock_persisted_state();
+                let target = RemoteTarget::Alias("workbox".into());
+                let other = RemoteTarget::Alias("other".into());
+                primed_connecting_picker(backend, &target, 9);
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.show_session_picker = false;
+                state.session_picker = None;
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&other),
+                    &[],
+                    &[],
+                );
+                let picker = state.remote_picker.as_mut().unwrap();
+                picker.auto_open = true;
+                picker.startup_resume = Some("dev".into());
+                backend
+                    .update_level(Msg::RemotePickerHostSelect(other.clone()))
+                    .unwrap();
+                backend
+                    .update_level(if edit {
+                        Msg::RemotePickerEditHost
+                    } else {
+                        Msg::RemotePickerNewHost
+                    })
+                    .unwrap();
+                let picker = backend.state_mut().remote_picker.as_mut().unwrap();
+                assert!(!picker.auto_open);
+                assert!(picker.startup_resume.is_none());
+                assert!(picker.is_connecting(&target));
+                assert_eq!(picker.probe_epoch, 9);
+                let form = picker.host_form.as_mut().expect("host form opened");
+                form.host.set_text("unsaved-host");
+                form.user.set_text("alice");
+                form.port.set_text("2222");
+
+                backend
+                    .update_level(Msg::RemoteHostSessionsDiscovered {
+                        epoch: 9,
+                        target: target.clone(),
+                        rows: Ok(Vec::new()),
+                    })
+                    .unwrap();
+
+                let state = backend.state();
+                let picker = state
+                    .remote_picker
+                    .as_ref()
+                    .expect("host management stays open");
+                assert!(matches!(
+                    picker.host_probe,
+                    crate::state::HostProbe::Reached
+                ));
+                let form = picker
+                    .host_form
+                    .as_ref()
+                    .expect("unsaved form survives success");
+                if edit {
+                    assert!(
+                        matches!(&form.mode, crate::state::HostFormMode::Edit(original) if original == &other)
+                    );
+                } else {
+                    assert!(matches!(form.mode, crate::state::HostFormMode::Add));
+                }
+                assert_eq!(form.host.text(), "unsaved-host");
+                assert_eq!(form.user.text(), "alice");
+                assert_eq!(form.port.text(), "2222");
+                assert!(!state.show_session_picker);
+                assert!(state.session_picker.is_none());
+                assert!(matches!(
+                    state.remote.hosts.get(&target).unwrap().probe,
+                    crate::state::HostProbe::Reached
+                ));
+            });
+        }
+    }
+
+    #[test]
+    fn cancelling_startup_resume_does_not_attach_on_another_host() {
+        with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
+            let target = RemoteTarget::Alias("workbox".into());
+            let other = RemoteTarget::Alias("buildbox".into());
+            primed_connecting_picker(backend, &target, 9);
+            let state = backend.state_mut();
+            state.command_link = None;
+            *state.current_mut() = crate::state::Attachment::new();
+            state.show_session_picker = false;
+            state.session_picker = None;
+            state.remote.added_hosts.push(other.clone());
+            state
+                .remote
+                .hosts
+                .seed(&state.config.remote, &state.remote.added_hosts, &[], &[]);
+            let picker = state.remote_picker.as_mut().unwrap();
+            picker.auto_open = true;
+            picker.startup_resume = Some("dev".into());
+
+            backend.update_level(Msg::CloseRemotePicker).unwrap();
+            let picker = backend.state().remote_picker.as_ref().unwrap();
+            assert!(!picker.auto_open);
+            assert!(picker.startup_resume.is_none());
+            backend
+                .update_level(Msg::RemotePickerHostActivate(other.clone()))
+                .unwrap();
+            let picker = backend.state().remote_picker.as_ref().unwrap();
+            assert!(picker.auto_open);
+            assert!(picker.is_connecting(&other));
+            let epoch = picker.probe_epoch;
+            backend
+                .update_level(Msg::RemoteHostSessionsDiscovered {
+                    epoch,
+                    target: other.clone(),
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "dev".into(),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        host: Some("buildbox".into()),
+                        remote_target: Some(other.clone()),
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                        },
+                    }]),
+                })
+                .unwrap();
+
+            let state = backend.state();
+            assert!(state.remote_picker.is_none());
+            assert!(state.show_session_picker);
+            let picker = state
+                .session_picker
+                .as_ref()
+                .expect("buildbox Sessions opens");
+            assert_eq!(picker.tab.remote_target(), Some(&other));
+            assert!(picker.entries.iter().any(|row| row.name == "dev"));
+            assert!(state.current().pending_session_attach.is_none());
+            crate::session::forget_recent_remote(&other);
+            crate::session::forget_host_sessions(&other);
         });
     }
 

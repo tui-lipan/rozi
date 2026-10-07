@@ -67,7 +67,8 @@ shell; choose or create a session in Sessions.
 While a host is connecting, its row shows a spinner and `connecting…`, and `Esc` cancels the
 attempt. Only one connection runs at a time: `Enter` and `Ctrl+R` wait until it finishes, and a host
 added in the meantime is saved and selected but not connected. You can still move through the list
-and edit or forget other hosts.
+and edit or forget other hosts. Opening Add or Edit keeps you in Remote hosts when the connection
+finishes, preserving your form. Canceling a startup connection also cancels resuming its last session.
 
 `rozi --remote <host>` also opens Sessions on the host’s tab as soon as it connects.
 `Ctrl+R` reconnects and refreshes the host while staying on Remote hosts.

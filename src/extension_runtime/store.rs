@@ -78,11 +78,28 @@ fn guard(root: &Path) -> io::Result<std::fs::File> {
 /// other runtime's pruning can remove it in between.
 pub struct Lease {
     _lock: std::fs::File,
-    digests: std::fs::File,
+    digests: Box<dyn DigestLog>,
     root: PathBuf,
     lock_path: PathBuf,
     digests_path: PathBuf,
     recorded: HashSet<String>,
+    /// Why this lease can claim nothing more. A write that failed may have left part of a line in
+    /// the digest file, and a later line appended to it would not read as a digest: the claim would
+    /// look made and protect nothing. So after one failure the lease is done, and the runtime has
+    /// to end and start again with a new one.
+    poisoned: Option<String>,
+}
+
+/// Where a lease's digests go: an append-only file, made durable line by line.
+trait DigestLog: Send {
+    fn append(&mut self, line: &[u8]) -> io::Result<()>;
+}
+
+impl DigestLog for std::fs::File {
+    fn append(&mut self, line: &[u8]) -> io::Result<()> {
+        std::io::Write::write_all(self, line)?;
+        self.sync_data()
+    }
 }
 
 impl Lease {
@@ -99,11 +116,23 @@ impl Lease {
         if self.recorded.contains(digest) {
             return Ok(());
         }
+        if let Some(reason) = &self.poisoned {
+            return Err(io::Error::other(format!(
+                "this runtime's cache lease failed earlier and claims nothing more: {reason}"
+            )));
+        }
         let _guard = guard(&self.root)?;
-        std::io::Write::write_all(&mut self.digests, format!("{digest}\n").as_bytes())?;
-        self.digests.sync_data()?;
+        if let Err(error) = self.digests.append(format!("{digest}\n").as_bytes()) {
+            self.poisoned = Some(error.to_string());
+            return Err(error);
+        }
         self.recorded.insert(digest.to_string());
         Ok(())
+    }
+
+    /// Whether a failed write has left this lease unable to claim anything more.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.is_some()
     }
 }
 
@@ -232,11 +261,12 @@ impl BundleStore {
             .open(&digests_path)?;
         Ok(Lease {
             _lock: lock,
-            digests,
+            digests: Box::new(digests),
             root: self.root.clone(),
             lock_path,
             digests_path,
             recorded: HashSet::new(),
+            poisoned: None,
         })
     }
 
@@ -866,6 +896,47 @@ mod tests {
         let live = sample();
         lease.record(live.digest()).unwrap();
         assert!(pruner.leased().contains(live.digest()));
+    }
+
+    /// A write that fails partway leaves part of a line behind. A retry appending to it would
+    /// write a line no prune reads as a digest while reporting the claim made, so after one failure
+    /// the lease claims nothing more.
+    #[test]
+    fn a_lease_whose_write_failed_partway_claims_nothing_more() {
+        struct PartialThenFine {
+            file: std::fs::File,
+            failed: bool,
+        }
+        impl DigestLog for PartialThenFine {
+            fn append(&mut self, line: &[u8]) -> io::Result<()> {
+                if !self.failed {
+                    self.failed = true;
+                    std::io::Write::write_all(&mut self.file, &line[..10])?;
+                    return Err(io::Error::other("no space left on device"));
+                }
+                self.file.append(line)
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(temp.path().join("bundles")).unwrap();
+        let mut lease = store.lease("partial").unwrap();
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&lease.digests_path)
+            .unwrap();
+        lease.digests = Box::new(PartialThenFine {
+            file,
+            failed: false,
+        });
+        let digest = sample().digest().to_string();
+
+        assert!(lease.record(&digest).is_err());
+        assert!(lease.is_poisoned());
+        // The underlying problem has gone away, but the retry must not report a claim the prune
+        // would not see.
+        assert!(lease.record(&digest).is_err());
+        assert!(lease.record(&"b".repeat(64)).is_err());
+        assert!(!store.leased().contains(&digest));
     }
 
     /// A runtime that died without dropping its lease leaves its lock unheld; the next prune treats

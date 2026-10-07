@@ -232,10 +232,11 @@ impl Runtime {
                 // A bundle this runtime cannot claim could be pruned by another runtime the moment
                 // it lands, so it is not staged at all.
                 if let Err(error) = self.lease.record(&digest) {
-                    return self.message(&Message::StageFailed {
+                    self.message(&Message::StageFailed {
                         digest,
                         detail: format!("cannot lease the bundle in the cache: {error}"),
-                    });
+                    })?;
+                    return self.end_if_lease_failed();
                 }
                 let result = Bundle::from_archive(&archive, &digest)
                     .and_then(|bundle| self.store.stage(&bundle).map_err(|e| e.to_string()));
@@ -274,7 +275,8 @@ impl Runtime {
                     Ok(pid) => Message::Spawned { worker, pid },
                     Err(failure) => Message::SpawnFailed { worker, failure },
                 };
-                self.message(&reply)
+                self.message(&reply)?;
+                self.end_if_lease_failed()
             }
             Message::Kill { worker } => {
                 if let Some(mut running) = self.running.remove(&worker) {
@@ -421,6 +423,16 @@ impl Runtime {
             },
         );
         Ok(pid)
+    }
+
+    /// A lease that failed to record claims nothing more, so this runtime could never safely
+    /// stage or run another bundle. Ending it makes the client connect again, with a new runtime
+    /// and a new lease, rather than keep failing every launch.
+    fn end_if_lease_failed(&self) -> io::Result<()> {
+        if self.lease.is_poisoned() {
+            return Err(io::Error::other("the cache lease failed"));
+        }
+        Ok(())
     }
 
     fn tick(&mut self) -> io::Result<()> {

@@ -203,6 +203,10 @@ pub enum Message {
     BridgeOpen { conn: u64 },
     /// Either side: one end of a bridged connection closed.
     BridgeClose { conn: u64 },
+    /// Runtime: it cannot go on and is about to end. Unlike a failure of one launch, every
+    /// process placed through it is affected, and the client should connect again for a new
+    /// runtime rather than give up on any of them.
+    RuntimeFatal { detail: String },
 }
 
 /// One frame off the wire.

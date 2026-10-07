@@ -260,7 +260,9 @@ fn host_retry_due(
     match state.extension_runtime.hosts.get(host) {
         None => true,
         Some(runtime) => match (&runtime.status, runtime.retry_at) {
-            (HostRuntimeStatus::Ready { .. }, _) => true,
+            // A launch on a runtime still connecting waits for it to be ready. Every instance the
+            // host lost is relaunched, not only the first, whose launch started the reconnect.
+            (HostRuntimeStatus::Ready { .. } | HostRuntimeStatus::Connecting, _) => true,
             (HostRuntimeStatus::Unavailable(_), Some(at)) if at <= now => true,
             (HostRuntimeStatus::Unavailable(_), Some(at)) => {
                 *next_wake = Some(next_wake.map_or(at, |wake| wake.min(at)));
@@ -704,6 +706,11 @@ fn runtime_down(ctx: &mut Context<AppRoot>, host: &HostKey, reason: Unavailable,
     let Some(runtime) = ctx.state.extension_runtime.hosts.get_mut(host) else {
         return;
     };
+    // Already down: a runtime that announced its end is then also lost when its channel closes,
+    // and that is one failure, not two.
+    if matches!(runtime.status, HostRuntimeStatus::Unavailable(_)) {
+        return;
+    }
     let epoch = runtime.epoch;
     runtime.connection = None;
     runtime.staged.clear();
@@ -748,7 +755,9 @@ fn ownership(state: &State, host: &HostKey, epoch: u64, message: &Message) -> Ow
         Message::Spawned { worker, .. }
         | Message::SpawnFailed { worker, .. }
         | Message::Exited { worker, .. } => WorkerId(*worker),
-        Message::Staged { .. } | Message::StageFailed { .. } => return Ownership::Ours,
+        Message::Staged { .. } | Message::StageFailed { .. } | Message::RuntimeFatal { .. } => {
+            return Ownership::Ours;
+        }
         Message::StageCommit { .. }
         | Message::Spawn { .. }
         | Message::Kill { .. }
@@ -772,6 +781,12 @@ fn ownership(state: &State, host: &HostKey, epoch: u64, message: &Message) -> Ow
 
 fn runtime_message(ctx: &mut Context<AppRoot>, host: &HostKey, message: Message) -> Update {
     match message {
+        // The runtime is ending and its processes with it. Taken down here, while they are still
+        // registered, so every one of them is marked unreachable and relaunched once the reconnect
+        // backoff passes - not left failed for a reason that was never theirs.
+        Message::RuntimeFatal { detail } => {
+            runtime_down(ctx, host, Unavailable::RuntimeUnreachable { detail }, true);
+        }
         Message::Staged { digest } => {
             if let Some(runtime) = ctx.state.extension_runtime.hosts.get_mut(host) {
                 runtime.staging.remove(&digest);
@@ -1618,6 +1633,177 @@ mod tests {
                 backend.state().extension_runtime.hosts[&host("server")].status,
                 HostRuntimeStatus::Ready { .. }
             ));
+        });
+    }
+
+    /// A runtime whose cache lease failed announces its end. Every service it ran - not just the
+    /// one whose launch hit the failure - is marked unreachable, the host reconnects once the
+    /// backoff passes, and all of them are launched again under the new runtime.
+    #[test]
+    fn a_fatal_runtime_relaunches_every_service_it_ran_after_reconnecting() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while backend.state().command_link.is_none() {
+                assert!(Instant::now() < deadline, "no command link");
+                backend.pump().unwrap();
+            }
+            let state = backend.state_mut();
+            state
+                .extension_generations
+                .insert("sessions".to_string(), "g1".to_string());
+            state.current_mut().session_attached = true;
+            let service = |name: &str| crate::config::PlacedService {
+                name: format!("sessions.{name}"),
+                placement: Placement::EachHost,
+                launch: LaunchTemplate::Shell("exit 0".to_string()),
+                cwd: ".".to_string(),
+                restart: ServiceRestart::Always,
+                env: Default::default(),
+            };
+            state.config.extension_placements.insert(
+                "sessions".to_string(),
+                std::sync::Arc::new(crate::config::ExtensionPlacements {
+                    id: "sessions".to_string(),
+                    platforms: Vec::new(),
+                    local_dir: "/x".to_string(),
+                    bundle: std::sync::Arc::new(
+                        crate::extension_runtime::bundle::Bundle::from_files(Vec::new()).unwrap(),
+                    ),
+                    commands: Default::default(),
+                    tabs: Default::default(),
+                    services: vec![service("one"), service("two")],
+                    client_unsupported: None,
+                }),
+            );
+            // Both services running on this machine's runtime, epoch 1.
+            state.extension_runtime.next_epoch = 1;
+            state.extension_runtime.hosts.insert(
+                HostKey::Local,
+                HostRuntime {
+                    host: HostKey::Local,
+                    epoch: 1,
+                    status: HostRuntimeStatus::Ready {
+                        os: std::env::consts::OS.to_string(),
+                        version: None,
+                    },
+                    connection: None,
+                    staged: HashSet::new(),
+                    staging: HashSet::new(),
+                    failures: 0,
+                    retry_at: None,
+                },
+            );
+            let binding = WorkerBinding {
+                host: HostKey::Local,
+                session: None,
+            };
+            for name in ["one", "two"] {
+                let key = InstanceKey {
+                    service: format!("sessions.{name}"),
+                    binding: binding.clone(),
+                };
+                let worker = state
+                    .extension_workers
+                    .issue(
+                        ExtensionProvenance {
+                            id: "sessions".to_string(),
+                            generation: "g1".to_string(),
+                        },
+                        Placement::EachHost,
+                        binding.clone(),
+                        WorkerRuntime(1),
+                        WorkerKind::Service {
+                            name: key.service.clone(),
+                        },
+                    )
+                    .id;
+                state.extension_runtime.processes.insert(
+                    worker,
+                    WorkerProcess {
+                        host: HostKey::Local,
+                        purpose: WorkerPurpose::Service { key: key.clone() },
+                        digest: DIGEST.to_string(),
+                        state: WorkerProcessState::Running { pid: 1 },
+                    },
+                );
+                state.extension_runtime.instances.push(PlacedInstance {
+                    key,
+                    extension: "sessions".to_string(),
+                    generation: "g1".to_string(),
+                    status: InstanceStatus::Running { worker },
+                    started_at: Some(Instant::now()),
+                    failures: 0,
+                    backoff: INITIAL_BACKOFF,
+                    reported: None,
+                });
+            }
+            let signature = signature(state);
+            state.extension_runtime.signature = Some(signature);
+
+            let event = |event| crate::Msg::ExtensionRuntime {
+                host: HostKey::Local,
+                epoch: 1,
+                event,
+            };
+            backend
+                .dispatch(event(RuntimeEvent::Message(Message::RuntimeFatal {
+                    detail: "cannot lease".to_string(),
+                })))
+                .unwrap();
+            // The channel closing right after is the same failure, not a second one.
+            backend
+                .dispatch(event(RuntimeEvent::Lost("closed".to_string())))
+                .unwrap();
+            let state = backend.state();
+            let runtime = &state.extension_runtime.hosts[&HostKey::Local];
+            assert!(matches!(runtime.status, HostRuntimeStatus::Unavailable(_)));
+            assert_eq!(runtime.failures, 1);
+            assert!(runtime.retry_at.is_some());
+            assert!(
+                state.extension_workers.is_empty(),
+                "epoch 1 credentials revoked"
+            );
+            for instance in &state.extension_runtime.instances {
+                assert!(
+                    matches!(
+                        instance.status,
+                        InstanceStatus::Unavailable(Unavailable::RuntimeUnreachable { .. })
+                    ),
+                    "{:?}",
+                    instance.status
+                );
+            }
+
+            // The backoff passes.
+            let past = Instant::now() - Duration::from_secs(1);
+            let state = backend.state_mut();
+            state
+                .extension_runtime
+                .hosts
+                .get_mut(&HostKey::Local)
+                .unwrap()
+                .retry_at = Some(past);
+            state.extension_runtime.wake_at = Some(past);
+            backend.dispatch(crate::Msg::PlacementTick).unwrap();
+
+            let state = backend.state();
+            let runtime = &state.extension_runtime.hosts[&HostKey::Local];
+            assert_eq!(runtime.epoch, 2, "a new runtime");
+            assert_eq!(runtime.status, HostRuntimeStatus::Connecting);
+            assert_eq!(state.extension_runtime.instances.len(), 2);
+            for instance in &state.extension_runtime.instances {
+                let InstanceStatus::Running { worker } = instance.status else {
+                    panic!(
+                        "{} was not relaunched: {:?}",
+                        instance.key.service, instance.status
+                    );
+                };
+                assert_eq!(
+                    state.extension_workers.get(worker).unwrap().runtime,
+                    WorkerRuntime(2)
+                );
+            }
         });
     }
 }

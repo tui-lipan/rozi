@@ -231,12 +231,8 @@ impl Runtime {
                 let archive = self.pending_stage.remove(&digest).unwrap_or_default();
                 // A bundle this runtime cannot claim could be pruned by another runtime the moment
                 // it lands, so it is not staged at all.
-                if let Err(error) = self.lease.record(&digest) {
-                    self.message(&Message::StageFailed {
-                        digest,
-                        detail: format!("cannot lease the bundle in the cache: {error}"),
-                    })?;
-                    return self.end_if_lease_failed();
+                if let Err(detail) = self.claim(&digest)? {
+                    return self.message(&Message::StageFailed { digest, detail });
                 }
                 let result = Bundle::from_archive(&archive, &digest)
                     .and_then(|bundle| self.store.stage(&bundle).map_err(|e| e.to_string()));
@@ -262,6 +258,14 @@ impl Runtime {
                 platforms,
                 capture,
             } => {
+                // Claimed before it is verified: once the claim holds, no other runtime's pruning
+                // removes the bundle, so what is verified is what runs.
+                if let Err(detail) = self.claim(&digest)? {
+                    return self.message(&Message::SpawnFailed {
+                        worker,
+                        failure: SpawnFailure::SpawnFailed { detail },
+                    });
+                }
                 let reply = match self.spawn(
                     worker,
                     &digest,
@@ -275,8 +279,7 @@ impl Runtime {
                     Ok(pid) => Message::Spawned { worker, pid },
                     Err(failure) => Message::SpawnFailed { worker, failure },
                 };
-                self.message(&reply)?;
-                self.end_if_lease_failed()
+                self.message(&reply)
             }
             Message::Kill { worker } => {
                 if let Some(mut running) = self.running.remove(&worker) {
@@ -304,7 +307,8 @@ impl Runtime {
             | Message::Spawned { .. }
             | Message::SpawnFailed { .. }
             | Message::Exited { .. }
-            | Message::BridgeOpen { .. } => Ok(()),
+            | Message::BridgeOpen { .. }
+            | Message::RuntimeFatal { .. } => Ok(()),
         }
     }
 
@@ -324,13 +328,6 @@ impl Runtime {
         if !platforms.is_empty() && !platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
         }
-        // Claimed before it is verified: once the claim holds, no other runtime's pruning removes the
-        // bundle, so what is verified is what runs. Without the claim nothing runs.
-        self.lease
-            .record(digest)
-            .map_err(|error| SpawnFailure::SpawnFailed {
-                detail: format!("cannot lease the extension's files in the cache: {error}"),
-            })?;
         // Verified now, immediately before the launch, not when it was staged.
         let bundle_dir = self.store.verified(digest).map_err(|error| match error {
             StoreError::Missing => SpawnFailure::BundleMissing,
@@ -425,14 +422,22 @@ impl Runtime {
         Ok(pid)
     }
 
-    /// A lease that failed to record claims nothing more, so this runtime could never safely
-    /// stage or run another bundle. Ending it makes the client connect again, with a new runtime
-    /// and a new lease, rather than keep failing every launch.
-    fn end_if_lease_failed(&self) -> io::Result<()> {
-        if self.lease.is_poisoned() {
-            return Err(io::Error::other("the cache lease failed"));
+    /// Lease `digest` before it is staged or run. `Ok(Err(..))` refuses this one request. A lease
+    /// that cannot be written claims nothing more, so this runtime could never safely stage or run
+    /// another bundle: it tells the client so with `RuntimeFatal` and ends (`Err`), and the client
+    /// connects again for a new runtime and a new lease and relaunches everything it had placed
+    /// here.
+    fn claim(&mut self, digest: &str) -> io::Result<Result<(), String>> {
+        match self.lease.record(digest) {
+            Ok(()) => Ok(Ok(())),
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(Err(error.to_string())),
+            Err(error) => {
+                self.message(&Message::RuntimeFatal {
+                    detail: format!("cannot lease the extension's files in the cache: {error}"),
+                })?;
+                Err(io::Error::other("the cache lease failed"))
+            }
         }
-        Ok(())
     }
 
     fn tick(&mut self) -> io::Result<()> {
@@ -1083,7 +1088,7 @@ mod tamper_tests {
             bridges: HashMap::new(),
             pending_stage: HashMap::new(),
         };
-        let result = runtime.spawn(
+        let tampered = runtime.spawn(
             1,
             bundle.digest(),
             &Launch::Direct {
@@ -1096,8 +1101,63 @@ mod tamper_tests {
             None,
         );
         assert!(
-            matches!(result, Err(SpawnFailure::BundleCorrupt { .. })),
-            "{result:?}"
+            matches!(tampered, Err(SpawnFailure::BundleCorrupt { .. })),
+            "{tampered:?}"
+        );
+    }
+
+    /// A lease that can claim nothing more makes the whole runtime unusable: it says so with
+    /// `RuntimeFatal`, not with a failure of the one launch, and ends.
+    #[test]
+    fn a_failed_lease_ends_the_runtime_with_a_fatal_message() {
+        #[derive(Clone, Default)]
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl Write for Shared {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(store_dir.path().join("bundles")).unwrap();
+        let mut lease = store.lease("fatal-test").unwrap();
+        lease.poison_for_test();
+        let output = Shared::default();
+        let mut runtime = Runtime {
+            writer: Arc::new(Mutex::new(Box::new(output.clone()))),
+            store,
+            lease,
+            bridge_path: PathBuf::from("/nonexistent"),
+            running: HashMap::new(),
+            bridges: HashMap::new(),
+            pending_stage: HashMap::new(),
+        };
+        let ended = runtime.handle_message(Message::Spawn {
+            worker: 4,
+            digest: "c".repeat(64),
+            launch: Launch::Shell {
+                line: "true".to_string(),
+            },
+            cwd: SpawnCwd::Inherit,
+            env: Vec::new(),
+            credential: "c".to_string(),
+            platforms: Vec::new(),
+            capture: None,
+        });
+        assert!(ended.is_err(), "the runtime ends");
+        let written = output.0.lock().unwrap().clone();
+        let mut reader = written.as_slice();
+        assert!(matches!(
+            read_frame(&mut reader, false).unwrap(),
+            Some(Frame::Message(Message::RuntimeFatal { .. }))
+        ));
+        assert_eq!(
+            read_frame(&mut reader, false).unwrap(),
+            None,
+            "and sends nothing else"
         );
     }
 }

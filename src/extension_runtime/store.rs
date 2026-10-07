@@ -130,6 +130,11 @@ impl Lease {
         Ok(())
     }
 
+    #[cfg(all(test, unix))]
+    pub(crate) fn poison_for_test(&mut self) {
+        self.poisoned = Some("injected".to_string());
+    }
+
     /// Whether a failed write has left this lease unable to claim anything more.
     pub fn is_poisoned(&self) -> bool {
         self.poisoned.is_some()

@@ -180,6 +180,35 @@ pub(crate) fn configure_command_group(command: &mut std::process::Command) {
 #[cfg(windows)]
 pub(crate) fn configure_command_group(_command: &mut std::process::Command) {}
 
+/// Have the kernel kill the child if this process dies without stopping it.
+///
+/// A clean exit stops supervised children itself; this covers the exits that run no code at all
+/// (`SIGKILL`, an abort, the OOM killer), which otherwise leave them running forever, reparented to
+/// init. Linux delivers the signal when the *thread* that spawned the child exits, so spawn from a
+/// thread that lives as long as the supervisor does. Only the direct child is signalled; anything
+/// it started stays its own responsibility. Windows gets the same guarantee from the kill-on-close
+/// job in [`CommandGroup`], and other Unix systems have no equivalent.
+#[cfg(target_os = "linux")]
+pub(crate) fn kill_on_supervisor_death(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    let supervisor = std::process::id() as libc::pid_t;
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // A supervisor that died between the fork and the `prctl` would never signal us.
+            if libc::getppid() != supervisor {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn kill_on_supervisor_death(_command: &mut std::process::Command) {}
+
 #[cfg(unix)]
 pub(crate) fn process_is_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };

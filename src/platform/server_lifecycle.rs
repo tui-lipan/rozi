@@ -6,6 +6,9 @@
 //! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix starts a
 //!   new process session and closes all three stdio streams; Windows additionally passes
 //!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
+//! - [`DetachedServer`] - the spawned server's handle. Dropping it never kills the server, but on
+//!   Unix it hands the still-running child to a waiter thread so the server's exit is reaped
+//!   rather than left behind as a zombie of the client for the client's whole lifetime.
 //! - [`on_hangup`] - the *client* half of console-control handling. Unix installs a `SIGHUP`/
 //!   `SIGTERM` handler; Windows installs a `SetConsoleCtrlHandler` for Ctrl+C/close/logoff/shutdown.
 //!   Both map to the same thing: run a clean detach instead of dying where we stand.
@@ -63,6 +66,15 @@ pub fn spawn_detached_server(
     name: &str,
     fresh: bool,
     startup_nonce: Option<&str>,
+) -> io::Result<DetachedServer> {
+    spawn_server_child(exe, name, fresh, startup_nonce).map(|child| DetachedServer(Some(child)))
+}
+
+fn spawn_server_child(
+    exe: &Path,
+    name: &str,
+    fresh: bool,
+    startup_nonce: Option<&str>,
 ) -> io::Result<std::process::Child> {
     #[cfg(windows)]
     {
@@ -91,6 +103,48 @@ pub fn spawn_detached_server(
         let mut command = base_server_command(exe, name, fresh, startup_nonce);
         configure_detached_server(&mut command);
         command.spawn()
+    }
+}
+
+/// A session server this process spawned. It derefs to the [`std::process::Child`] for polling,
+/// signalling, and waiting during startup.
+///
+/// The server is meant to outlive the handle, so dropping it never kills anything. A Unix child
+/// that has not been reaped by then would turn into a zombie when it exits and stay one until this
+/// process does, so the drop passes it to a thread that waits for it. Windows has no zombies; the
+/// drop just closes the process handle.
+#[derive(Debug)]
+pub struct DetachedServer(Option<std::process::Child>);
+
+impl std::ops::Deref for DetachedServer {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("child is present until drop")
+    }
+}
+
+impl std::ops::DerefMut for DetachedServer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("child is present until drop")
+    }
+}
+
+impl Drop for DetachedServer {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(mut child) = self.0.take()
+            && matches!(child.try_wait(), Ok(None))
+        {
+            // A refused thread leaves the zombie this exists to prevent, which is no worse than
+            // not trying; the server itself is unaffected either way.
+            let _ = std::thread::Builder::new()
+                .name("rozi-server-reaper".to_string())
+                .stack_size(64 * 1024)
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+        }
     }
 }
 
@@ -559,6 +613,27 @@ mod tests {
             !status.success(),
             "expected a signalled exit, got {status:?}"
         );
+    }
+
+    #[test]
+    fn a_dropped_server_handle_reaps_the_server_once_it_exits() {
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 0.2")
+            .spawn()
+            .expect("spawn short-lived child");
+        let pid = child.id() as libc::pid_t;
+        drop(DetachedServer(Some(child)));
+
+        // A zombie still answers `kill(pid, 0)`; only a reaped pid stops existing.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "server exit was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]

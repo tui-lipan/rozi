@@ -1,5 +1,7 @@
 use crate::config::{ServiceConfig, ServiceLaunch, expand_path};
-use crate::platform::command::{CommandGroup, ShellEnv, configure_command_group};
+use crate::platform::command::{
+    CommandGroup, ShellEnv, configure_command_group, kill_on_supervisor_death,
+};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService, State};
 use crate::{AppRoot, Msg};
 use std::time::{Duration, Instant};
@@ -116,10 +118,13 @@ pub(crate) fn spawn_service_child(
     command.env("ROZI", "1");
     command.env("ROZI_SERVICE", &config.name);
     command.envs(&config.env);
-    command.stdin(std::process::Stdio::null());
+    // Rozi never writes to the pipe. It stays open while rozi runs, so a service sees end of file
+    // on stdin once rozi is gone, however it went: the portable way to notice an orphaning.
+    command.stdin(std::process::Stdio::piped());
     command.stdout(std::process::Stdio::null());
     command.stderr(std::process::Stdio::null());
     configure_command_group(&mut command);
+    kill_on_supervisor_death(&mut command);
 
     let mut child = spawn_retrying_on_busy(&mut command)?;
     let group = match CommandGroup::new(&child) {
@@ -835,5 +840,69 @@ mod tests {
             assert!(Instant::now() < deadline, "service descendants survived");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    fn sleeper(name: &str) -> ServiceConfig {
+        ServiceConfig {
+            name: name.to_string(),
+            launch: shell("sleep 30"),
+            cwd: None,
+            restart: ServiceRestart::Never,
+            env: BTreeMap::new(),
+        }
+    }
+
+    /// A rozi that dies without running its exit path (`SIGKILL`, an abort) must not leave its
+    /// services behind. The kernel ties the service to the spawning thread, so a thread that exits
+    /// stands in for the whole process dying.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_service_dies_with_the_thread_that_supervised_it() {
+        let mut child = std::thread::spawn(|| {
+            let (child, _group) = spawn_service_child(&sleeper("orphan"), None, None).unwrap();
+            child
+        })
+        .join()
+        .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "service outlived its supervisor");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+    }
+
+    /// Stdin is the portable signal: it stays open while rozi runs and reaches end of file once
+    /// rozi is gone, which closing the write end here simulates.
+    #[cfg(unix)]
+    #[test]
+    fn a_service_sees_end_of_file_on_stdin_once_rozi_is_gone() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("eof");
+        let mut config = sleeper("lifeline");
+        config.launch = shell("cat >/dev/null; : > \"$ROZI_TEST_MARKER\"");
+        config
+            .env
+            .insert("ROZI_TEST_MARKER".to_string(), marker.display().to_string());
+        let (mut child, group) = spawn_service_child(&config, None, None).unwrap();
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            child.try_wait().unwrap().is_none() && !marker.exists(),
+            "stdin reached end of file while rozi was still running"
+        );
+
+        drop(child.stdin.take());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "service never saw end of file");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        group.terminate(&mut child);
     }
 }

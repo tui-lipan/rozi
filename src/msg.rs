@@ -385,15 +385,6 @@ pub enum Msg {
         target: crate::session::remote::RemoteTarget,
         installing: bool,
     },
-    RemotePickerSessionQueryChanged(String),
-    RemotePickerSessionSelect(crate::state::RemoteSessionIdentity),
-    RemotePickerSessionActivate(crate::state::RemoteSessionIdentity),
-    RemotePickerCreateSession,
-    RemotePickerEphemeral,
-    RemotePickerKillSession,
-    RemotePickerRestartSession,
-    RemotePickerDisconnectSession,
-    RemotePickerDisconnectHost,
     /// OpenSSH asked for a password, a key passphrase, or a host-key confirmation on a connection
     /// this client owns. Raised from the askpass broker's worker thread, which blocks on the
     /// answer — see [`session::remote::askpass`].

@@ -42,7 +42,7 @@ pub(crate) enum SessionStart {
         epoch: u64,
     },
     /// `--remote <host>` with a startup policy that chose no session: land in that host's own
-    /// launcher (`Sessions · <host>`) rather than this machine's picker, and contact the host once
+    /// launcher (Sessions on the host tab) rather than this machine's picker, and contact the host once
     /// the runtime is up.
     RemotePicker {
         target: crate::session::remote::RemoteTarget,

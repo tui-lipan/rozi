@@ -396,21 +396,6 @@ pub struct SessionPickerState {
     pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RemoteSessionIdentity {
-    pub target: crate::session::remote::RemoteTarget,
-    pub name: String,
-}
-
-impl RemoteSessionIdentity {
-    pub fn of(session: &DiscoveredSession) -> Option<Self> {
-        Some(Self {
-            target: session.remote_target.clone()?,
-            name: session.name.clone(),
-        })
-    }
-}
-
 /// Where one row of the global Agents view points, and therefore what opening it has to do.
 ///
 /// The session in front of the user is *here*: its panes are live, and landing on one is a focus
@@ -495,14 +480,6 @@ impl AgentPickerState {
             selected,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RemotePickerMode {
-    Hosts,
-    HostSessions {
-        target: crate::session::remote::RemoteTarget,
-    },
 }
 
 /// Whether the host editor is creating a durable host entry or correcting one that already exists.
@@ -687,16 +664,10 @@ impl HostFormState {
     }
 }
 
-/// The dedicated remote-host browser. Host and session navigation retain independent text fields
-/// and identity-based selections so returning from a host never loses the user's place and a
-/// reordered async result cannot redirect a destructive confirmation.
+/// Host management and its explicit, cancellable connection probe. Sessions use the shared picker.
 pub struct RemotePickerState {
-    pub mode: RemotePickerMode,
     pub host_input: TextInput,
     pub selected_host: Option<crate::session::remote::RemoteTarget>,
-    pub session_input: TextInput,
-    pub selected_session: Option<RemoteSessionIdentity>,
-    pub sessions: Vec<DiscoveredSession>,
     pub probe_epoch: u64,
     pub host_probe: super::HostProbe,
     /// The host the in-flight probe is contacting, which is *not* necessarily the highlighted one:
@@ -706,8 +677,6 @@ pub struct RemotePickerState {
     pub probe_target: Option<crate::session::remote::RemoteTarget>,
     pub host_form: Option<HostFormState>,
     pub pending_forget: Option<crate::session::remote::RemoteTarget>,
-    pub pending_kill: Option<RemoteSessionIdentity>,
-    pub pending_restart: Option<RemoteSessionIdentity>,
     /// The session `startup = "last"` remembered on this host, waiting on discovery to say whether
     /// the host still has it. Attached when the first successful probe lists it, dropped otherwise —
     /// `last` reopens a session, it never revives one, so a name the host does not report leaves the
@@ -716,7 +685,7 @@ pub struct RemotePickerState {
     /// Consumed by that first probe whatever it finds, so a host reopened by hand later is a plain
     /// browse rather than a second, surprising auto-attach.
     pub startup_resume: Option<String>,
-    /// Whether the next successful probe should step straight into `Sessions · <host>` instead of
+    /// Whether the next successful probe should open Sessions on the host tab instead of
     /// staying on the host list.
     ///
     /// Set only by a launch that named a machine (`--remote <host>`). Reaching a host and opening it
@@ -728,19 +697,13 @@ pub struct RemotePickerState {
 impl RemotePickerState {
     pub fn new(selected_host: Option<crate::session::remote::RemoteTarget>) -> Self {
         Self {
-            mode: RemotePickerMode::Hosts,
             host_input: TextInput::new(""),
             selected_host,
-            session_input: TextInput::new(""),
-            selected_session: None,
-            sessions: Vec::new(),
             probe_epoch: 0,
             host_probe: super::HostProbe::Idle,
             probe_target: None,
             host_form: None,
             pending_forget: None,
-            pending_kill: None,
-            pending_restart: None,
             startup_resume: None,
             auto_open: false,
         }
@@ -750,62 +713,6 @@ impl RemotePickerState {
     pub fn is_connecting(&self, target: &crate::session::remote::RemoteTarget) -> bool {
         matches!(self.host_probe, super::HostProbe::InFlight)
             && self.probe_target.as_ref() == Some(target)
-    }
-
-    pub fn enter_host_sessions(&mut self, target: crate::session::remote::RemoteTarget) {
-        self.selected_host = Some(target.clone());
-        self.mode = RemotePickerMode::HostSessions { target };
-        self.sessions.clear();
-        self.selected_session = None;
-        self.host_probe = super::HostProbe::Idle;
-        self.probe_target = None;
-        self.pending_forget = None;
-        self.pending_kill = None;
-        self.pending_restart = None;
-        self.host_form = None;
-    }
-
-    pub fn return_to_hosts(&mut self) {
-        self.mode = RemotePickerMode::Hosts;
-        self.sessions.clear();
-        self.selected_session = None;
-        self.host_probe = super::HostProbe::Idle;
-        self.probe_target = None;
-        self.pending_kill = None;
-        self.pending_restart = None;
-        self.host_form = None;
-    }
-
-    pub fn replace_sessions(&mut self, sessions: Vec<DiscoveredSession>) {
-        let changed = self.sessions != sessions;
-        self.sessions = sessions;
-        let selected = self.selected_session.take().filter(|selected| {
-            self.sessions
-                .iter()
-                .filter_map(RemoteSessionIdentity::of)
-                .any(|identity| &identity == selected)
-        });
-        self.selected_session =
-            selected.or_else(|| self.sessions.first().and_then(RemoteSessionIdentity::of));
-        let identity_exists = |pending: &RemoteSessionIdentity| {
-            self.sessions
-                .iter()
-                .filter_map(RemoteSessionIdentity::of)
-                .any(|identity| &identity == pending)
-        };
-        if changed
-            || self
-                .pending_kill
-                .as_ref()
-                .is_some_and(|pending| !identity_exists(pending))
-            || self
-                .pending_restart
-                .as_ref()
-                .is_some_and(|pending| !identity_exists(pending))
-        {
-            self.pending_kill = None;
-            self.pending_restart = None;
-        }
     }
 }
 
@@ -1015,14 +922,6 @@ pub enum OverlayOrigin {
     RemoteHosts {
         query: String,
         selected_target: Option<crate::session::remote::RemoteTarget>,
-    },
-    RemoteHostSessions {
-        target: crate::session::remote::RemoteTarget,
-        query: String,
-        selected_session: Option<RemoteSessionIdentity>,
-        /// The picker below Remote hosts, retained while a naming prompt temporarily replaces the
-        /// remote picker.
-        parent: Option<Box<OverlayOrigin>>,
     },
 }
 
@@ -1250,47 +1149,6 @@ mod host_form_tests {
             "the host line holds only the host, so the login line is the user's"
         );
         assert_eq!(form.target().expect("valid"), target);
-    }
-}
-
-#[cfg(test)]
-mod remote_picker_tests {
-    use super::*;
-
-    #[test]
-    fn mode_transitions_clear_incompatible_confirmations() {
-        let first = crate::session::remote::RemoteTarget::Alias("first".into());
-        let second = crate::session::remote::RemoteTarget::Alias("second".into());
-        let session = RemoteSessionIdentity {
-            target: second.clone(),
-            name: "dev".into(),
-        };
-        let mut picker = RemotePickerState::new(Some(first.clone()));
-        picker.pending_forget = Some(first);
-        picker.enter_host_sessions(second);
-        assert!(picker.pending_forget.is_none());
-
-        picker.pending_kill = Some(session.clone());
-        picker.pending_restart = Some(session);
-        picker.return_to_hosts();
-        assert!(picker.pending_kill.is_none());
-        assert!(picker.pending_restart.is_none());
-    }
-
-    #[test]
-    fn replacing_sessions_disarms_a_stale_confirmation() {
-        let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
-        let identity = RemoteSessionIdentity {
-            target: target.clone(),
-            name: "dev".into(),
-        };
-        let mut picker = RemotePickerState::new(Some(target.clone()));
-        picker.enter_host_sessions(target);
-        picker.pending_kill = Some(identity.clone());
-        picker.pending_restart = Some(identity);
-        picker.replace_sessions(Vec::new());
-        assert!(picker.pending_kill.is_none());
-        assert!(picker.pending_restart.is_none());
     }
 }
 

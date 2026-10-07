@@ -155,6 +155,15 @@ pub(crate) fn apply_discovered_sessions(
         &successful_targets,
     );
     sort_session_rows(&mut rows);
+    replace_picker_rows(ctx, rows);
+    Update::with_command(session_watch_command(
+        epoch,
+        ctx.state.local_current_session_name().map(str::to_string),
+    ))
+}
+
+/// Share selection preservation and confirmation invalidation between local sweeps and host pushes.
+pub(crate) fn replace_picker_rows(ctx: &mut Context<AppRoot>, rows: Vec<DiscoveredSession>) {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         let selected_identity = picker
             .entries
@@ -179,10 +188,6 @@ pub(crate) fn apply_discovered_sessions(
             picker.pending_restart = None;
         }
     }
-    Update::with_command(session_watch_command(
-        epoch,
-        ctx.state.local_current_session_name().map(str::to_string),
-    ))
 }
 
 pub(crate) fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
@@ -318,7 +323,7 @@ pub(crate) fn push_cached_known_remote_rows(
         let Some(sessions) = crate::session::host_sessions_for(cache, &target) else {
             continue;
         };
-        for session in sessions {
+        for session in sessions.iter().filter(|session| !session.ephemeral) {
             merge_current_session_row(
                 rows,
                 DiscoveredSession {

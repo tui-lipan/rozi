@@ -44,16 +44,9 @@ fn host_sessions_backend(
         w: 100,
         h: 30,
     });
-    backend
-        .dispatch(rozi::Msg::SessionPickerRemoteHosts)
-        .expect("open the remote picker");
-    let picker = backend
-        .state_mut()
-        .remote_picker
-        .as_mut()
-        .expect("the picker is open");
-    picker.enter_host_sessions(target.clone());
-    picker.replace_sessions(rows);
+    backend.state_mut().session_picker =
+        Some(rozi::state::SessionPickerState::new(rows).on_tab(Some(target.clone())));
+    backend.state_mut().show_session_picker = true;
     backend
 }
 

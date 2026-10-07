@@ -566,7 +566,7 @@ fn session_openable_by_name(name: &str) -> bool {
 /// seconds of black terminal. Being a cache, it can be wrong in both directions — and both are
 /// recoverable. A session that has since died is autostarted by name on the far host, which is what
 /// `rozi --remote workbox dev` does anyway; one the cache has never heard of drops the launch into
-/// `Sessions · workbox`, where the live list is one probe away.
+/// Sessions on the workbox tab, where the live list is one probe away.
 fn remote_session_known(target: &crate::session::remote::RemoteTarget, name: &str) -> bool {
     let cache = crate::session::read_host_session_cache();
     crate::session::host_sessions_for(&cache, target)

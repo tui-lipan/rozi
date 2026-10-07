@@ -63,10 +63,11 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">
 </CaptureGallery>
 
-Sessions shows **Local**, a tab for each remote host, then **All** below the search field. Remote
-hosts are sorted by name. A host gets a tab while a session there is on screen or in the background,
-while the launcher is scoped to it, or while Sessions lists sessions on it. Sessions opens on the
-host of the session you are in, or the host the launcher is scoped to.
+Sessions shows **Local**, a tab for each remote host, then **All** below the search field.
+The tab strip is hidden when only local sessions are available. Remote hosts are sorted by name.
+A host gets a tab while a session there is on screen or in the background, while the launcher is
+scoped to it, while it is explicitly connected, or while Sessions lists sessions on it. Sessions
+opens on the host of the session you are in, or the host the launcher is scoped to.
 
 **All** lists sessions across hosts and labels remote rows `name@host`. A host tab lists only that
 host's sessions with bare names. Typing searches all known hosts and highlights **All**, like
@@ -124,8 +125,8 @@ On a `last seen` row:
 - `Ctrl+K` twice forgets the entry locally, without contacting the host. If the host still reports
   the session later, it is listed again.
 
-To kill or restart a session on a remote host, connect the host first: press `Ctrl+R`, then choose
-the host, or expand it in the Sessions sidebar.
+To kill or restart a session on a remote host, connect the host first: press `Ctrl+R`, then connect
+the host and open its Sessions tab, or expand it in the Sessions sidebar.
 
 ## Scope: where an action happens
 
@@ -135,7 +136,6 @@ Each picker names the scope it acts in, and its keys act only in that scope.
 | --- | --- | --- | --- |
 | **Sessions** | The browsing host; on All, the foreground or launcher host | New named session on that host | Temporary shell on that host |
 | **Remote hosts** | Host management | Add a host | — |
-| **Sessions · host** | That one host | New named session on the host | Temporary session on the host |
 
 Attached to `backend@workbox`, Sessions opens on the `workbox` tab, so `Ctrl+N` creates a session on
 `workbox`. Switch to **Local** to create one on this machine. See
@@ -173,8 +173,8 @@ Agents
 ```
 
 The picker opens on **All**, showing agents across sessions. Session tabs come first and **All**
-comes last below the search field. Tabs select individual sessions; remote tabs include the
-hostname, such as **workbox/backend**. Switch tabs with `Tab` / `Shift+Tab`, `Left` / `Right`,
+comes last below the search field. The tab strip is hidden when agents belong to only one
+session. Tabs select individual sessions; remote tabs include the hostname, such as **workbox/backend**. Switch tabs with `Tab` / `Shift+Tab`, `Left` / `Right`,
 or a click. Search stays in place and filters the selected session. A session tab omits the
 session and hostname from its rows. If its last agent disappears, the tab stays open with an
 empty list. With no sessions to list, the tab strip is hidden.
@@ -242,15 +242,15 @@ A bare `rozi` applies this setting locally. `rozi --remote workbox` applies it o
 
 | Value | `rozi --remote workbox` |
 | --- | --- |
-| `picker` | Connect, list sessions, and open `Sessions · workbox`. No session is created. |
+| `picker` | Connect, list sessions, and open **Sessions** on the **workbox** tab. No session is created. |
 | `ephemeral` | Create or attach a temporary session on `workbox`. |
-| `last` | Attach the last session used on `workbox` if it is still there, else `Sessions · workbox`. |
-| `profile` | Open or create the default-profile session on `workbox`, else `Sessions · workbox`. |
+| `last` | Attach the last session used on `workbox` if it is still there, else **Sessions** on the **workbox** tab. |
+| `profile` | Open or create the default-profile session on `workbox`, else **Sessions** on the **workbox** tab. |
 
 `last` is remembered separately for each host. It only reattaches a session that is still running;
-it never restores or creates one. On a remote host, rozi opens `Sessions · workbox` and attaches the
-remembered session only if the host still lists it, without waiting on SSH before drawing the first
-frame. `profile`, by contrast, creates its session when needed.
+it never restores or creates one. On a remote host, rozi opens **Sessions** on the host’s tab and
+attaches the remembered session only if the host still lists it, without waiting on SSH before
+drawing the first frame. `profile`, by contrast, creates its session when needed.
 
 A session you name explicitly — as a target, with `sessions attach` or `sessions new`, or through
 `--pick` — overrides `[session] startup`. If `last` or `profile` cannot find its session, rozi opens
@@ -272,9 +272,9 @@ A launcher can be scoped to a remote host without a session or an open SSH conne
 ```
 
 You land here when you dismiss the picker after `rozi --remote workbox` with `startup = "picker"`,
-or close `Sessions · workbox` with nothing attached. `Enter` then starts a temporary shell on
-`workbox`. Sessions opened from this launcher starts on the `workbox` tab, and switching tabs there
-moves the launcher's scope with it.
+or close **Sessions** on the **workbox** tab with nothing attached. `Enter` then starts a temporary
+shell on `workbox`. Sessions opened from this launcher starts on the `workbox` tab, and switching
+tabs there moves the launcher's scope with it.
 
 The scope follows the session you work in, so killing a remote session leaves you in that host's
 launcher. Opening another host, switching tabs in Sessions, disconnecting the host with `Ctrl+X`,

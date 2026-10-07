@@ -168,11 +168,14 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             }),
     );
     if tabs.len() > 1 {
-        overlay = overlay.tabs(OverlayTabs::new(
-            tabs.iter().map(|tab| tab.label(&ctx.state)).collect(),
-            active,
-            Msg::AgentPickerTab,
-        ));
+        overlay = overlay.tabs(
+            OverlayTabs::new(
+                tabs.iter().map(|tab| tab.label(&ctx.state)).collect(),
+                active,
+                Msg::AgentPickerTab,
+            )
+            .with_all(),
+        );
     }
     overlay.render(ctx)
 }

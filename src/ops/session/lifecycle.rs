@@ -109,7 +109,7 @@ pub(crate) fn default_session_picker_tab(
 }
 
 /// The Sessions picker's tabs: **Local**, remote hosts by name, then **All**. Hosts come from the
-/// open tab, foreground session, launcher scope, parked sessions, and listed rows, so the strip
+/// open tab, foreground session, launcher scope, connected hosts, parked sessions, and listed rows, so the strip
 /// keeps its order while the user moves through it.
 pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
     let picker = state.session_picker.as_ref();
@@ -122,6 +122,14 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
                 .flatten(),
         )
         .chain(state.active_launcher_scope())
+        .chain(
+            state
+                .remote
+                .hosts
+                .iter()
+                .filter(|host| matches!(host.probe, crate::state::HostProbe::Reached))
+                .map(|host| &host.target),
+        )
         .chain(
             state
                 .background
@@ -630,17 +638,6 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
-/// Open this client's temporary remote session on an explicitly selected host. The picker target
-/// is authoritative even when a different remote attachment is visible behind the overlay.
-pub(crate) fn open_ephemeral_session_on_host(
-    ctx: &mut Context<AppRoot>,
-    target: crate::session::remote::RemoteTarget,
-) -> Update {
-    crate::ops::overlay_return::leave(ctx);
-    let name = crate::state::remote_ephemeral_session_name();
-    attach_ephemeral_by_name(ctx, name, Some(target.display_label()), Some(target))
-}
-
 pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     // Cancelling any session naming prompt - including the detach-and-name one - just returns to the
     // session. A detach never tears panes down: quitting (with its own confirmation) is the only
@@ -686,7 +683,7 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
 /// Drop one last-seen session from this client's host-session cache. Local only: no SSH, and no
 /// attempt to kill anything on the host. A later probe that still reports the session lists it
 /// again — forget means "stop remembering that I saw this", not "hide it forever".
-pub(crate) fn forget_last_seen_session(ctx: &mut Context<AppRoot>, entry: &DiscoveredSession) {
+fn forget_last_seen_session(ctx: &mut Context<AppRoot>, entry: &DiscoveredSession) {
     let Some(target) = entry.remote_target.as_ref() else {
         return;
     };
@@ -868,7 +865,7 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
     disconnect_discovered_attachment(ctx, entry)
 }
 
-pub(crate) fn disconnect_discovered_attachment(
+fn disconnect_discovered_attachment(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {

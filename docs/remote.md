@@ -40,19 +40,20 @@ Open **Sessions** (`Ctrl+A`, then `s`) and press `Ctrl+R` to open **Remote hosts
 configured hosts, hosts you added, recently used hosts, and hosts with a live attachment. Opening or
 returning to this list does not contact any machine.
 
-`Enter` on a connected host opens `Sessions · <host>`, the list of sessions on that host.
+`Enter` on a connected host opens **Sessions** with that host’s tab selected.
+Switch tabs to browse local sessions or another host without backing through the host list.
 
-| Key | Remote hosts | Sessions · host |
-| --- | --- | --- |
-| `Enter` | Connect the selected host, or open it if it is already connected | Attach or switch to the selected session |
-| `Ctrl+N` | Add a host | Create a named session on this host |
-| `Ctrl+E` | Edit the selected host | Restart the selected session (twice) |
-| `Ctrl+R` | Reconnect a connected host and refresh its sessions | — |
-| `Ctrl+T` | — | Create or switch to a temporary session on this host |
-| `Ctrl+K` twice | Forget the selected host | Kill a live session, or forget a `last seen` entry |
-| `Ctrl+W` | — | Disconnect a background session attachment |
-| `Ctrl+X` | — | Disconnect this client from the host |
-| `Esc` | Cancel a connection in progress, otherwise return to Sessions | Return to Remote hosts |
+| Key | Remote hosts |
+| --- | --- |
+| `Enter` | Connect the selected host, or open its Sessions tab if already connected |
+| `Ctrl+N` | Add a host |
+| `Ctrl+E` | Edit the selected host |
+| `Ctrl+R` | Reconnect a connected host and refresh its sessions |
+| `Ctrl+K` twice | Forget the selected host |
+| `Esc` | Cancel a connection in progress, otherwise return to the previous picker |
+
+The [Sessions picker](sessions.md#use-the-session-picker) provides session creation, switching,
+restart, kill, and disconnect actions. `Esc` closes Sessions; `Ctrl+R` opens host management.
 
 ### Connect and open a host
 
@@ -61,14 +62,14 @@ Connecting and opening are separate steps:
 1. Press `Enter` on a disconnected host. rozi contacts it and stays on **Remote hosts**. The row
    changes from `○` to `●` and shows the session count, and a toast confirms the connection. No
    session is attached and no shell starts.
-2. Press `Enter` again to open `Sessions · <host>`.
+2. Press `Enter` again to open **Sessions** on that host’s tab.
 
 While a host is connecting, its row shows a spinner and `connecting…`, and `Esc` cancels the
 attempt. Only one connection runs at a time: `Enter` and `Ctrl+R` wait until it finishes, and a host
 added in the meantime is saved and selected but not connected. You can still move through the list
 and edit or forget other hosts.
 
-`rozi --remote <host>` skips the extra step and opens the host's sessions as soon as it connects.
+`rozi --remote <host>` skips the extra step and opens Sessions on the host’s tab as soon as it connects.
 
 ### Add a host
 
@@ -134,12 +135,11 @@ session there:
 
 This is a normal state, not an error, and it does not mean an SSH connection is open. `Enter`
 starts a temporary shell on `workbox`. You land here after `rozi --remote workbox` under
-`startup = "picker"` once you dismiss the picker, and when you close `Sessions · workbox` with
-nothing attached.
+`startup = "picker"` once you dismiss the picker, and when you close **Sessions** on the **workbox**
+tab with nothing attached.
 
-Pressing `Esc` in `Sessions · <host>` to go back to **Remote hosts** keeps the scope. To leave the
-host, press `Ctrl+X` in `Sessions · <host>`; it is available whenever this client is tied to that
-host, including by scope alone.
+Closing Sessions keeps the scope. To leave the host, press `Ctrl+X` on its Sessions tab;
+it is available whenever this client is tied to that host, including by scope alone.
 
 **Sessions** opened from this state starts on the host's tab, so its `Ctrl+N` and `Ctrl+T` create
 sessions on that host; switch to **Local** for this machine. See

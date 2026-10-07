@@ -570,7 +570,7 @@ fn settings_key_handler(
         .filter(|action| action.enabled && action.intercept)
         .map(|action| (action.key.clone(), action.msg.clone()))
         .collect::<Vec<_>>();
-    ctx.link().key_handler(move |key| {
+    let handler = ctx.link().key_handler(move |key| {
         let direction = key.left_alt_arrow();
         let plain = direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
         let navigation = match direction.unwrap_or(key.code) {
@@ -607,6 +607,10 @@ fn settings_key_handler(
                 })
                 .map(|(_, msg)| msg.clone())
         })
+    });
+    KeyHandler::new(move |key| {
+        // Give picker actions first refusal, then keep empty-result navigation out of text input.
+        handler.handle(key) || matches!(key.left_alt_arrow(), Some(KeyCode::Up | KeyCode::Down))
     })
 }
 

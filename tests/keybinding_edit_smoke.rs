@@ -514,3 +514,82 @@ fn left_alt_navigates_picker_rows_and_tabs_without_filtering() {
         .join()
         .expect("picker navigation completes");
 }
+
+#[test]
+fn left_alt_row_navigation_preserves_empty_custom_picker_queries() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use rozi::input::Action;
+            use tui_lipan::AltSide;
+
+            for action in [
+                Action::ToggleHelp,
+                Action::OpenSettings,
+                Action::OpenExtensions,
+            ] {
+                let mut backend = backend();
+                if action != Action::ToggleHelp {
+                    send(&mut backend, KeyCode::Esc);
+                    backend
+                        .dispatch(rozi::Msg::RunAction(action))
+                        .expect("open picker");
+                }
+                frame(&mut backend);
+                let query = "zzzznomatchingpickerrow";
+                for ch in query.chars() {
+                    send(&mut backend, KeyCode::Char(ch));
+                }
+                assert!(frame(&mut backend).contains("No matches"), "{action:?}");
+                let query_text = |backend: &TestBackend<AppRoot>| match action {
+                    Action::ToggleHelp => backend
+                        .state()
+                        .keybindings
+                        .as_ref()
+                        .unwrap()
+                        .query
+                        .text()
+                        .to_owned(),
+                    Action::OpenSettings => {
+                        backend.state().settings_navigation.query.text().to_owned()
+                    }
+                    Action::OpenExtensions => backend
+                        .state()
+                        .extensions
+                        .as_ref()
+                        .unwrap()
+                        .query
+                        .text()
+                        .to_owned(),
+                    _ => unreachable!(),
+                };
+                for ch in ['j', 'k'] {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(ch),
+                            mods: KeyMods {
+                                alt_side: AltSide::Left,
+                                ..KeyMods::ALT
+                            },
+                        })
+                        .expect("navigate empty picker");
+                    assert_eq!(query_text(&backend), query, "{action:?}: left Alt+{ch}");
+                }
+                send(&mut backend, KeyCode::Char('j'));
+                assert_eq!(
+                    query_text(&backend),
+                    format!("{query}j"),
+                    "{action:?}: plain j"
+                );
+                send(&mut backend, KeyCode::Char('k'));
+                assert_eq!(
+                    query_text(&backend),
+                    format!("{query}jk"),
+                    "{action:?}: plain k"
+                );
+            }
+        })
+        .expect("spawn empty picker navigation test")
+        .join()
+        .expect("empty picker navigation completes");
+}

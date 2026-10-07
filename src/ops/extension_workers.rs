@@ -246,6 +246,17 @@ pub(crate) fn admit(
             if let Some(source) = request.source_pane {
                 shared_pane(state, worker, source)?;
             }
+            // With no source pane, a new pane opens in the scratchpad while it is showing - and the
+            // scratchpad runs on this client, whatever session is on screen.
+            if matches!(request.command, ControlCommand::NewPane { .. })
+                && request.source_pane.is_none()
+                && state.scratch_visible
+            {
+                return Err(ControlResponse::error_with(
+                    ControlErrorCode::OutOfScope,
+                    "the scratchpad is open, and a new pane would open there, on this client",
+                ));
+            }
             for target in pane_targets(&request.command)? {
                 match target {
                     Some(id) => shared_pane(state, worker, id)?,
@@ -690,6 +701,45 @@ mod tests {
                     "{command:?}"
                 );
             }
+        });
+    }
+
+    /// A new pane with no source opens in the scratchpad while it shows, and the scratchpad runs
+    /// on this client. A placed process must never get a pane there.
+    #[test]
+    fn a_split_never_lands_in_the_client_local_scratchpad() {
+        on_test_thread(|| {
+            let mut backend = backend();
+            show_session_on(&mut backend, &pc());
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
+            let split = request(ControlCommand::NewPane {
+                command: Some("id".to_string()),
+                argv: None,
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+                workspace: None,
+                size: None,
+            });
+            let worker_ref = backend
+                .state()
+                .extension_workers
+                .get(worker)
+                .unwrap()
+                .clone();
+            assert_eq!(
+                admit(backend.state(), &worker_ref, &split).unwrap(),
+                Admission::Proceed
+            );
+            backend.state_mut().scratch_visible = true;
+            assert_eq!(
+                admit(backend.state(), &worker_ref, &split)
+                    .unwrap_err()
+                    .code,
+                Some(ControlErrorCode::OutOfScope)
+            );
+            assert!(backend.state().scratch.panes.is_empty());
         });
     }
 

@@ -54,7 +54,17 @@ fn attached(state: &State) -> (Vec<HostKey>, Vec<WorkerBinding>) {
     let mut hosts = Vec::new();
     let mut sessions = Vec::new();
     for attachment in std::iter::once(state.current()).chain(state.background.values()) {
-        if !attachment.session_attached {
+        // A session whose link is reconnecting is still this client's: tearing down its host's
+        // runtime over a blip would restart every placed process there. Same rule the host
+        // monitor uses for a held host.
+        let held = attachment.session_attached
+            || attachment.pending_session_attach.is_some() && attachment.session_instance.is_some()
+            || matches!(
+                attachment.connection,
+                crate::state::ConnectionState::Reconnecting
+                    | crate::state::ConnectionState::AuthRequired
+            ) && attachment.session_instance.is_some();
+        if !held {
             continue;
         }
         let host = HostKey::of(attachment.remote_target.as_ref());

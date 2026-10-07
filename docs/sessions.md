@@ -64,8 +64,8 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 </CaptureGallery>
 
 Sessions shows **Local**, a tab for each remote host, then **All** below the search field.
-The tab strip is hidden when Local and All would show the same sessions. Remote hosts are sorted
-by name.
+The tab strip is hidden when there are no remote host tabs and All contains nothing beyond Local.
+Remote hosts are sorted by name.
 A host gets a tab while a session there is on screen or in the background, while the launcher is
 scoped to it, while it is connected, or after you explicitly open it in this picker. Cached
 `last seen` sessions alone do not create a host tab; they remain listed in **All**. Use **Remote hosts**

@@ -207,8 +207,16 @@ impl BundleStore {
     /// client on this host shares the cache, and only a lease tells one runtime's pruning that
     /// another still runs - or is about to run - a bundle.
     pub fn lease(&self, id: &str) -> io::Result<Lease> {
+        self.lease_pausing(id, || {})
+    }
+
+    /// [`Self::lease`], calling `after_open` once the lease's lock file exists and before it is
+    /// locked, with the guard held. Tests use it to land a prune right there.
+    fn lease_pausing(&self, id: &str, after_open: impl FnOnce()) -> io::Result<Lease> {
+        // Created under the guard: an unlocked lock file is what a prune takes for a dead runtime's
+        // lease, so the moment between creating it and locking it must be one no prune can see.
+        let _guard = guard(&self.root)?;
         let dir = self.root.join(LEASES);
-        crate::platform::fs_security::ensure_private_dir(&dir)?;
         let lock_path = dir.join(format!("{id}.lock"));
         let digests_path = dir.join(format!("{id}.digests"));
         let lock = std::fs::OpenOptions::new()
@@ -216,6 +224,7 @@ impl BundleStore {
             .truncate(false)
             .write(true)
             .open(&lock_path)?;
+        after_open();
         lock.lock()?;
         let digests = std::fs::OpenOptions::new()
             .create(true)
@@ -811,6 +820,52 @@ mod tests {
         recorder.prune(&HashSet::new());
         assert!(root.join(oldest.digest()).exists());
         drop(lease);
+    }
+
+    /// A lease being created has a lock file before it has a lock. A prune must never see it in
+    /// that state, or it would take the new lease for a dead runtime's and delete it from under the
+    /// runtime about to rely on it.
+    #[test]
+    fn a_prune_cannot_see_a_lease_half_created() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("bundles");
+        let creator = BundleStore::open(root.clone()).unwrap();
+        let pruner = BundleStore::open(root.clone()).unwrap();
+
+        let (opened, wait_opened) = std::sync::mpsc::channel();
+        let (resume, wait_resume) = std::sync::mpsc::channel::<()>();
+        let creating = std::thread::spawn(move || {
+            creator
+                .lease_pausing("new", || {
+                    opened.send(()).unwrap();
+                    wait_resume.recv().unwrap();
+                })
+                .unwrap()
+        });
+        wait_opened.recv().unwrap();
+
+        let (pruned, wait_pruned) = std::sync::mpsc::channel();
+        let pruning = std::thread::spawn(move || {
+            pruner.prune(&HashSet::new());
+            pruned.send(()).unwrap();
+            pruner
+        });
+        assert!(
+            wait_pruned
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "a prune ran while a lease was half created"
+        );
+        resume.send(()).unwrap();
+        let mut lease = creating.join().unwrap();
+        wait_pruned.recv().unwrap();
+        let pruner = pruning.join().unwrap();
+
+        // The lease survived the prune, and protects what it records.
+        assert!(root.join(LEASES).join("new.lock").exists());
+        let live = sample();
+        lease.record(live.digest()).unwrap();
+        assert!(pruner.leased().contains(live.digest()));
     }
 
     /// A runtime that died without dropping its lease leaves its lock unheld; the next prune treats

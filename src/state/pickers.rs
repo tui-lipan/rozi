@@ -391,7 +391,7 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
     pub pending_restart: Option<usize>,
-    /// The browsing page. A nonempty query temporarily shows All without changing this choice.
+    /// The selected host scope, used for both browsing and search.
     pub tab: SessionPickerTab,
     pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
 }
@@ -688,9 +688,8 @@ pub struct RemotePickerState {
     /// Whether the next successful probe should open Sessions on the host tab instead of
     /// staying on the host list.
     ///
-    /// Set only by a launch that named a machine (`--remote <host>`). Reaching a host and opening it
-    /// are two different acts, and an ordinary `Enter` does the first one and stops so the user can
-    /// see it worked; a launch already said which machine it wants to work on, so it does both.
+    /// Set by opening a host with Enter or `--remote`. Reconnecting or adding a host stays
+    /// on the management list.
     pub auto_open: bool,
 }
 
@@ -975,19 +974,11 @@ impl SessionPickerState {
         self
     }
 
-    pub fn effective_tab(&self) -> SessionPickerTab {
-        if self.input.text().trim().is_empty() {
-            self.tab.clone()
-        } else {
-            SessionPickerTab::All
-        }
-    }
-
     /// Whether `entry` is listed under the active tab.
     pub fn in_tab(&self, entry: &DiscoveredSession) -> bool {
-        match self.effective_tab() {
+        match &self.tab {
             SessionPickerTab::All => true,
-            SessionPickerTab::Host(target) => entry.remote_target == target,
+            SessionPickerTab::Host(target) => &entry.remote_target == target,
         }
     }
 

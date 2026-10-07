@@ -67,20 +67,23 @@ Sessions shows **Local**, a tab for each remote host, then **All** below the sea
 The tab strip is hidden when only local sessions are available. Remote hosts are sorted by name.
 A host gets a tab while a session there is on screen or in the background, while the launcher is
 scoped to it, while it is explicitly connected, or while Sessions lists sessions on it. Sessions
-opens on the host of the session you are in, or the host the launcher is scoped to.
+opens on the host of the session you are in, the host the launcher is scoped to, or Local.
+To open on **All** every time, choose **Settings → Sessions → Open Sessions on → All sessions**
+or set `session.picker_open_on = "all"`. **Current host** is the default. Opening a host from
+Remote hosts always selects that host's tab.
 
 **All** lists sessions across hosts and labels remote rows `name@host`. A host tab lists only that
-host's sessions with bare names. Typing searches all known hosts and highlights **All**, like
-Settings searches all categories. Clear the query to return to the previous browsing tab and
-highlight. Choosing a tab clears the query and browses that host. Search uses known sessions;
-it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
+host's sessions with bare names. Search filters the selected tab: Local searches local sessions,
+a remote host searches its sessions, and All searches every known host. Clearing the query
+restores the previous highlight within that tab. Choosing a tab clears the query and browses that
+host. Search uses known sessions; it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
 global rows append the exact target, such as **workbox (ssh://workbox)**. The exact target is
 searchable in Sessions and Agents.
 
-Creation stays on the browsing host while searching. On **All**, it uses the foreground session's
-host, or the launcher's host when no session is attached. The footer names the destination with
-**new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
-that destination. `Ctrl+X` disconnects the browsing tab's host even while searching All.
+Creation uses the selected host tab. On **All**, it uses the foreground session's
+host, or the launcher's host when no session is attached. On All, the footer names the destination
+with **new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
+that destination. `Ctrl+X` disconnects the selected host tab's host.
 Row actions always apply to the selected session, including remote search results.
 
 Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and

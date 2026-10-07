@@ -119,7 +119,7 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
             "a filter empty-state keeps the same 1-cell left inset:\n{rendered}"
         );
         assert!(
-            rendered.contains("ephemeral shell on Local Enter"),
+            rendered.contains("ephemeral shell Enter"),
             "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"
         );
     });
@@ -389,7 +389,7 @@ fn a_scoped_launcher_names_its_host_and_says_where_its_shell_lands() {
 }
 
 #[test]
-fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
+fn search_filters_only_the_selected_host_or_all() {
     use rozi::state::SessionPickerTab;
     on_a_big_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
@@ -438,13 +438,7 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
         let found = screen(&mut backend);
         let picker = backend.state().session_picker.as_ref().unwrap();
         assert_eq!(picker.tab, SessionPickerTab::Host(None));
-        assert_eq!(picker.effective_tab(), SessionPickerTab::All);
-        assert_eq!(
-            picker.entries[picker.selected].host.as_deref(),
-            Some("workbox")
-        );
-        assert!(found.contains("dev@workbox"), "{found}");
-        assert!(found.contains("new on Local"), "{found}");
+        assert!(found.contains("No sessions match"), "{found}");
         for _ in "dev@workbox".chars() {
             backend
                 .send_key(KeyEvent {
@@ -455,9 +449,42 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
         }
         let cleared = screen(&mut backend);
         let picker = backend.state().session_picker.as_ref().unwrap();
-        assert_eq!(picker.effective_tab(), SessionPickerTab::Host(None));
+        assert_eq!(picker.tab, SessionPickerTab::Host(None));
         assert_eq!(picker.selected, 0);
         assert!(!cleared.contains("dev@workbox"), "{cleared}");
+        // Search on a remote tab must not reveal a matching row on another host.
+        backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
+        screen(&mut backend);
+        backend
+            .dispatch(Msg::SessionPickerQueryChanged("api".into()))
+            .unwrap();
+        let scoped = screen(&mut backend);
+        assert!(!scoped.contains("api@buildbox"), "{scoped}");
+        assert!(scoped.contains("No sessions match"), "{scoped}");
+        assert_eq!(
+            backend
+                .state()
+                .session_picker
+                .as_ref()
+                .unwrap()
+                .tab
+                .remote_target(),
+            Some(&rozi::session::remote::RemoteTarget::Alias(
+                "workbox".into()
+            ))
+        );
+        backend.dispatch(Msg::SessionPickerTab(3)).unwrap();
+        screen(&mut backend);
+        backend
+            .dispatch(Msg::SessionPickerQueryChanged("api".into()))
+            .unwrap();
+        let global = screen(&mut backend);
+        assert!(global.contains("api@buildbox"), "{global}");
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.tab, SessionPickerTab::All);
+        assert_eq!(picker.entries[picker.selected].name, "api");
+        backend.dispatch(Msg::SessionPickerTab(0)).unwrap();
+        screen(&mut backend);
         backend
             .send_key(KeyEvent {
                 code: KeyCode::Char('x'),
@@ -478,7 +505,7 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
 }
 
 #[test]
-fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
+fn choosing_a_host_tab_clears_search_and_keeps_creation_on_that_host() {
     use rozi::session::remote::RemoteTarget;
     use rozi::state::SessionPickerTab;
     on_a_big_stack(|| {
@@ -498,8 +525,8 @@ fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
         backend
             .dispatch(Msg::SessionPickerQueryChanged("dev".into()))
             .unwrap();
-        let global = screen(&mut backend);
-        assert!(global.contains("new on workbox"), "{global}");
+        let scoped_search = screen(&mut backend);
+        assert!(!scoped_search.contains("dev@"), "{scoped_search}");
         assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
         backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
         assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
@@ -593,7 +620,8 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
                 .unwrap();
         }
         let found = screen(&mut backend);
-        assert!(found.contains("new on workbox (ssh://workbox)"), "{found}");
+        assert!(found.contains("new Ctrl+N"), "{found}");
+        assert!(found.contains("dev@ssh://workbox"), "{found}");
         let picker = backend.state().session_picker.as_ref().unwrap();
         assert_eq!(
             picker.entries[picker.selected].remote_target,

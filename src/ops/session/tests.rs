@@ -22,6 +22,61 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
     }
 }
 
+#[test]
+fn session_picker_opening_preference_uses_context_or_all_without_changing_creation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().command_link = None;
+            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            let other = crate::session::remote::RemoteTarget::Alias("other".into());
+            for (attached, current_host, launcher_host, contextual_host) in [
+                (false, None, None, None),
+                (false, None, Some(workbox.clone()), Some(workbox.clone())),
+                (true, None, Some(other.clone()), None),
+                (true, Some(workbox.clone()), Some(other), Some(workbox)),
+            ] {
+                for preference in crate::config::SessionPickerOpenOn::all() {
+                    let state = backend.state_mut();
+                    *state.current_mut() = crate::state::Attachment::new();
+                    if attached {
+                        state.current_mut().session_name = Some("dev".into());
+                        state.current_mut().remote_target = current_host.clone();
+                    }
+                    state.launcher_scope = launcher_host.clone();
+                    state.config.session.picker_open_on = *preference;
+                    backend
+                        .update_level(crate::Msg::RunAction(
+                            crate::input::Action::OpenSessionPicker,
+                        ))
+                        .unwrap();
+                    let state = backend.state();
+                    let picker = state.session_picker.as_ref().unwrap();
+                    let expected = match preference {
+                        crate::config::SessionPickerOpenOn::CurrentHost => {
+                            crate::state::SessionPickerTab::Host(contextual_host.clone())
+                        }
+                        crate::config::SessionPickerOpenOn::All => {
+                            crate::state::SessionPickerTab::All
+                        }
+                    };
+                    assert_eq!(picker.tab, expected);
+                    assert_eq!(session_picker_creation_target(state), contextual_host);
+                    assert_eq!(state.launcher_scope, launcher_host);
+                    backend
+                        .update_level(crate::Msg::CloseSessionPicker)
+                        .unwrap();
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 /// Under `--remote` the discovery scan already returns the attached session, so merging the
 /// current-session row must not add a second copy — otherwise the picker shows two
 /// `name@host • current` entries. A same-name row on a *different* host is a real distinct

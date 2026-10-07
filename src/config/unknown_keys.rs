@@ -76,6 +76,7 @@ const SESSION_KEYS: &[&str] = &[
     "keep_awake_while_agents_work",
     "path",
     "startup",
+    "picker_open_on",
     "resurrect",
     "resurrect_foreground",
     "resurrect_agents",

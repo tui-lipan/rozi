@@ -330,6 +330,9 @@
 # scratch session immediately, "last" reopens the last named session, "profile" opens the
 # session named after the [profile] default.
 #startup = "picker"
+# Initial Sessions tab: "current-host" uses the current or launcher-selected host (otherwise Local).
+# "all" opens All sessions. Explicitly opening a host still selects that host.
+#picker_open_on = "current-host"
 # Let a writable follower take the layout-control lease immediately with request-control.
 # Set false when sharing with another person, so a request waits to be granted.
 #allow_takeover = true

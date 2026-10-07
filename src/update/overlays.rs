@@ -401,6 +401,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleAlertBorder
         | CycleAlertPaint
         | CycleWorkbarAlert
+        | CycleSessionPickerOpenOn
         | CycleStartupMode
         | CycleResurrectForeground => {
             return open_settings_choice(ctx, action);
@@ -869,6 +870,14 @@ fn persist_applied_settings_choice(
             if let Err(err) = crate::config::persist_workbar_alert_string(
                 "mode",
                 ctx.state.config.workbar.alert.mode.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleSessionPickerOpenOn => {
+            if let Err(err) = crate::config::persist_session_string(
+                "picker_open_on",
+                ctx.state.config.session.picker_open_on.id(),
             ) {
                 preference_error(ctx, err);
             }
@@ -1760,6 +1769,38 @@ mod tests {
             assert_eq!(
                 backend.state().settings_selected,
                 Some(crate::state::SettingsAction::Theme)
+            );
+        });
+    }
+
+    #[test]
+    fn sessions_opening_preference_is_saved_from_settings() {
+        on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().config.session.picker_open_on =
+                crate::config::SessionPickerOpenOn::CurrentHost;
+            let action = crate::state::SettingsAction::CycleSessionPickerOpenOn;
+            backend.update_level(Msg::SettingsActivate(action)).unwrap();
+            let editor = backend.state().settings_choice.as_ref().unwrap();
+            assert_eq!(editor.options, ["Current host", "All sessions"]);
+            backend.update_level(Msg::SettingsChoicePick(1)).unwrap();
+            assert_eq!(
+                backend.state().config.session.picker_open_on,
+                crate::config::SessionPickerOpenOn::All
+            );
+            assert_eq!(
+                crate::config::load_config().config.session.picker_open_on,
+                crate::config::SessionPickerOpenOn::All
+            );
+            assert!(backend.state().show_settings);
+            backend
+                .update_level(Msg::SettingsCycleChoice(action))
+                .unwrap();
+            assert_eq!(
+                crate::config::load_config().config.session.picker_open_on,
+                crate::config::SessionPickerOpenOn::CurrentHost
             );
         });
     }

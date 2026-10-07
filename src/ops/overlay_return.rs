@@ -375,8 +375,8 @@ mod tests {
             backend
                 .dispatch(Msg::SessionPickerRemoteHosts)
                 .expect("open remote hosts again");
-            // A search still spans All after returning. Clearing it restores the saved host,
-            // falling back to that host's first row if the old selection disappeared.
+            // Search stays on the restored host. Clearing it falls back to that host's
+            // first row if the old selection disappeared.
             backend.state_mut().remote.live_sessions = vec![earlier];
             backend
                 .dispatch(Msg::CloseRemotePicker)
@@ -387,7 +387,6 @@ mod tests {
                 crate::state::SessionPickerTab::Host(row.remote_target)
             );
             assert_eq!(picker.input.text(), "backend");
-            assert_eq!(picker.effective_tab(), crate::state::SessionPickerTab::All);
             backend
                 .dispatch(Msg::SessionPickerQueryChanged(String::new()))
                 .unwrap();

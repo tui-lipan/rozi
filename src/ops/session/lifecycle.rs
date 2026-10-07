@@ -96,15 +96,22 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
     clear_pending_kill(ctx);
 }
 
-/// The tab the Sessions picker opens on: the host of the session on screen, or in the launcher the
-/// host it is scoped to, so the picker starts out agreeing with the badge behind it.
-pub(crate) fn default_session_picker_tab(
-    state: &State,
-) -> Option<crate::session::remote::RemoteTarget> {
+/// The contextual destination: the foreground session's host, the launcher's selected host,
+/// or Local when neither supplies a remote host.
+fn contextual_session_host(state: &State) -> Option<crate::session::remote::RemoteTarget> {
     if state.is_launcher() {
         state.active_launcher_scope().cloned()
     } else {
         state.current().remote_target.clone()
+    }
+}
+
+fn initial_session_picker_tab(state: &State) -> SessionPickerTab {
+    match state.config.session.picker_open_on {
+        crate::config::SessionPickerOpenOn::CurrentHost => {
+            SessionPickerTab::Host(contextual_session_host(state))
+        }
+        crate::config::SessionPickerOpenOn::All => SessionPickerTab::All,
     }
 }
 
@@ -186,7 +193,9 @@ pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Open instantly from local discovery and the last successful remote-host snapshots. The
     // recurring watcher refreshes local state only; remote discovery is explicit in Remote hosts.
     let rows = immediate_picker_rows(ctx);
-    let mut picker = SessionPickerState::new(rows).on_tab(default_session_picker_tab(&ctx.state));
+    let mut picker = SessionPickerState::new(rows);
+    picker.tab = initial_session_picker_tab(&ctx.state);
+    picker.keep_selection_in_tab();
     if let Some(pos) = picker
         .entries
         .iter()
@@ -216,7 +225,9 @@ pub(crate) fn open_startup_session_picker(
     highlight: Option<String>,
 ) -> u64 {
     let rows = immediate_picker_rows(ctx);
-    let mut picker = SessionPickerState::new(rows).on_tab(default_session_picker_tab(&ctx.state));
+    let mut picker = SessionPickerState::new(rows);
+    picker.tab = initial_session_picker_tab(&ctx.state);
+    picker.keep_selection_in_tab();
     if let Some(highlight) = highlight
         && let Some(index) = picker
             .entries
@@ -326,7 +337,7 @@ pub(crate) fn session_picker_creation_target(
 ) -> Option<crate::session::remote::RemoteTarget> {
     match state.session_picker.as_ref().map(|picker| &picker.tab) {
         Some(SessionPickerTab::Host(target)) => target.clone(),
-        _ => default_session_picker_tab(state),
+        _ => contextual_session_host(state),
     }
 }
 
@@ -337,8 +348,8 @@ pub(crate) fn session_picker_creation_target(
 /// already is — because from the keyboard they are the same request. Already being on it is a
 /// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
 ///
-/// A browsing host fixes the creation destination even during global search. All uses the
-/// foreground or launcher host; the footer names that destination.
+/// A host tab fixes the creation destination. All uses the foreground or launcher host;
+/// the footer names that destination.
 pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     let scope = session_picker_creation_target(&ctx.state);

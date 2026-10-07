@@ -40,12 +40,12 @@ Open **Sessions** (`Ctrl+A`, then `s`) and press `Ctrl+R` to open **Remote hosts
 configured hosts, hosts you added, recently used hosts, and hosts with a live attachment. Opening or
 returning to this list does not contact any machine.
 
-`Enter` on a connected host opens **Sessions** with that host’s tab selected.
+`Enter` opens **Sessions** with that host’s tab selected.
 Switch tabs to browse local sessions or another host without backing through the host list.
 
 | Key | Remote hosts |
 | --- | --- |
-| `Enter` | Connect the selected host, or open its Sessions tab if already connected |
+| `Enter` | Open the selected host’s Sessions tab, connecting first if needed |
 | `Ctrl+N` | Add a host |
 | `Ctrl+E` | Edit the selected host |
 | `Ctrl+R` | Reconnect a connected host and refresh its sessions |
@@ -57,19 +57,18 @@ restart, kill, and disconnect actions. `Esc` closes Sessions; `Ctrl+R` opens hos
 
 ### Connect and open a host
 
-Connecting and opening are separate steps:
-
-1. Press `Enter` on a disconnected host. rozi contacts it and stays on **Remote hosts**. The row
-   changes from `○` to `●` and shows the session count, and a toast confirms the connection. No
-   session is attached and no shell starts.
-2. Press `Enter` again to open **Sessions** on that host’s tab.
+Press `Enter` on a host to open **Sessions** on its tab. A disconnected host connects first;
+a connected host opens immediately. Connection failures leave the host list open with the error
+on its row so you can retry or edit the host. Opening a host does not attach a session or start a
+shell; choose or create a session in Sessions.
 
 While a host is connecting, its row shows a spinner and `connecting…`, and `Esc` cancels the
 attempt. Only one connection runs at a time: `Enter` and `Ctrl+R` wait until it finishes, and a host
 added in the meantime is saved and selected but not connected. You can still move through the list
 and edit or forget other hosts.
 
-`rozi --remote <host>` skips the extra step and opens Sessions on the host’s tab as soon as it connects.
+`rozi --remote <host>` also opens Sessions on the host’s tab as soon as it connects.
+`Ctrl+R` reconnects and refreshes the host while staying on Remote hosts.
 
 ### Add a host
 

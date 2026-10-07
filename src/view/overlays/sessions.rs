@@ -438,7 +438,7 @@ fn session_creation_label(
     picker: &SessionPickerState,
     action: &str,
 ) -> String {
-    if picker.effective_tab() != crate::state::SessionPickerTab::All {
+    if picker.tab != crate::state::SessionPickerTab::All {
         return action.to_string();
     }
     let host = crate::ops::session::session_picker_creation_target(&ctx.state).map_or_else(
@@ -453,7 +453,6 @@ fn push_session_creation_actions(
     picker: &SessionPickerState,
     actions: &mut Vec<OverlayAction>,
 ) {
-    // Creation retains the browsing host during global search.
     actions.push(OverlayAction::new(
         "ctrl-n",
         session_creation_label(ctx, picker, "new"),
@@ -619,7 +618,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         } else {
             entry.name.as_str()
         };
-        let label = if picker.effective_tab() == crate::state::SessionPickerTab::All {
+        let label = if picker.tab == crate::state::SessionPickerTab::All {
             entry.remote_target.as_ref().map_or_else(
                 || name.to_string(),
                 |target| format!("{name}@{}", ctx.state.remote_target_label(target)),
@@ -715,16 +714,12 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
     }
-    // A nonempty query temporarily highlights All when host navigation is visible.
     if tabs.len() > 1 {
-        let active = tabs
-            .iter()
-            .position(|tab| *tab == picker.effective_tab())
-            .unwrap_or(0);
+        let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
         let labels = tabs.iter().map(|tab| tab.label(&ctx.state)).collect();
         overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab).with_all());
     }
-    if let Some(target) = picker.effective_tab().remote_target() {
+    if let Some(target) = picker.tab.remote_target() {
         overlay = overlay.header_right(remote_tab_status(ctx, target));
     }
     overlay.render(ctx)

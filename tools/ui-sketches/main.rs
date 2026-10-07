@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 8] = [
+const SCENARIOS: [(&str, &str, fn()); 9] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -33,8 +33,13 @@ const SCENARIOS: [(&str, &str, fn()); 8] = [
     ),
     (
         "session-picker",
-        "All, host browsing, and global session search",
+        "All, host browsing, and tab-scoped session search",
         session_picker,
+    ),
+    (
+        "session-picker-settings",
+        "Sessions opening preference and its choice editor",
+        session_picker_settings,
     ),
     (
         "agent-picker",
@@ -788,12 +793,26 @@ fn session_picker() {
             SessionPickerTab::Host(Some(RemoteTarget::Alias("workbox".into()))),
             "",
         ),
-        ("search", SessionPickerTab::Host(None), "dev@workbox"),
+        ("local-search", SessionPickerTab::Host(None), "dev"),
+        ("all-search", SessionPickerTab::All, "dev@workbox"),
+        (
+            "host-search",
+            SessionPickerTab::Host(Some(RemoteTarget::Alias("workbox".into()))),
+            "dev",
+        ),
+        (
+            "local-search-empty",
+            SessionPickerTab::Host(None),
+            "dev@workbox",
+        ),
     ] {
         let picker = backend.state_mut().session_picker.as_mut().unwrap();
         picker.tab = tab;
-        picker.input.set_text(query);
+        picker.input.set_text("");
         picker.keep_selection_in_tab();
+        backend
+            .update_level(Msg::SessionPickerQueryChanged(query.into()))
+            .unwrap();
         for (width, height) in [(64, 22), (100, 30)] {
             backend.set_viewport(viewport(width, height));
             backend.render();
@@ -860,6 +879,38 @@ fn session_picker() {
         write_png(
             &mut backend,
             &format!("session-picker-from-host-{width}x{height}"),
+        );
+    }
+}
+
+fn session_picker_settings() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.enabled = false;
+    backend.state_mut().show_session_picker = false;
+    backend.state_mut().session_picker = None;
+    backend.state_mut().show_settings = true;
+    backend.state_mut().settings_navigation.tab = rozi::state::SettingsTab::Sessions;
+    backend.state_mut().settings_selected =
+        Some(rozi::state::SettingsAction::CycleSessionPickerOpenOn);
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-settings-{width}x{height}"),
+        );
+    }
+    backend
+        .update_level(Msg::SettingsActivate(
+            rozi::state::SettingsAction::CycleSessionPickerOpenOn,
+        ))
+        .unwrap();
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-opening-choice-{width}x{height}"),
         );
     }
 }

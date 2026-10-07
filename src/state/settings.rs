@@ -2,7 +2,7 @@ use tui_lipan::prelude::{CapStyle, TextInput};
 
 use crate::config::{
     Config, CopyOnSelect, ForegroundRestore, MiddleClickPaste, RightClickClipboardAction,
-    SessionStartup, WhichKey,
+    SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::layout::anim::PaneAnimationStyle;
 
@@ -157,6 +157,7 @@ pub enum SettingsAction {
     ToggleSoundDone,
     ToggleSoundError,
     CycleStartupMode,
+    CycleSessionPickerOpenOn,
     ToggleSessionAutosave,
     ToggleKeepAwakeWhileAgentsWork,
     ToggleSessionResurrect,
@@ -248,6 +249,7 @@ impl SettingsAction {
             Self::ToggleSoundError,
             // Sessions
             Self::CycleStartupMode,
+            Self::CycleSessionPickerOpenOn,
             Self::ToggleSessionAutosave,
             Self::ToggleKeepAwakeWhileAgentsWork,
             Self::ToggleSessionResurrect,
@@ -405,6 +407,12 @@ impl SettingsAction {
                 config.workbar.alert.mode,
                 AlertMode::label,
             )),
+            Self::CycleSessionPickerOpenOn => Some(choice_ring(
+                "Open Sessions on",
+                SessionPickerOpenOn::all(),
+                config.session.picker_open_on,
+                SessionPickerOpenOn::label,
+            )),
             Self::CycleStartupMode => {
                 let choices = SessionStartup::choices(config.profile.default.is_some());
                 Some(choice_ring(
@@ -559,6 +567,11 @@ impl SettingsAction {
             Self::CycleWorkbarAlert => {
                 assign_choice(AlertMode::all(), index, &mut config.workbar.alert.mode)
             }
+            Self::CycleSessionPickerOpenOn => assign_choice(
+                SessionPickerOpenOn::all(),
+                index,
+                &mut config.session.picker_open_on,
+            ),
             Self::CycleStartupMode => {
                 let choices = SessionStartup::choices(config.profile.default.is_some());
                 assign_choice(&choices, index, &mut config.session.startup)

@@ -5,8 +5,9 @@ use crate::ops::focus::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
 };
 use crate::ops::session::attach::{
-    attach_session_by_name, disconnect_host, held_ephemeral_session_in, kill_current_session,
-    refresh_picker_after_kill, restart_current_session, start_launcher_shell_in,
+    attach_ephemeral_by_name, attach_session_by_name, disconnect_host, held_ephemeral_session_in,
+    kill_current_session, refresh_picker_after_kill, restart_current_session,
+    start_launcher_shell_in,
 };
 use crate::ops::session::control_lease::require_attached;
 use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
@@ -349,11 +350,11 @@ pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     match scope {
         Some(target) => {
             let name = held.unwrap_or_else(crate::state::remote_ephemeral_session_name);
-            attach_session_by_name(ctx, name, Some(target.display_label()), Some(target), true)
+            attach_ephemeral_by_name(ctx, name, Some(target.display_label()), Some(target))
         }
         None => {
             let name = held.unwrap_or_else(crate::state::ephemeral_session_name);
-            attach_session_by_name(ctx, name, None, None, true)
+            attach_ephemeral_by_name(ctx, name, None, None)
         }
     }
 }
@@ -637,7 +638,7 @@ pub(crate) fn open_ephemeral_session_on_host(
 ) -> Update {
     crate::ops::overlay_return::leave(ctx);
     let name = crate::state::remote_ephemeral_session_name();
-    attach_session_by_name(ctx, name, Some(target.display_label()), Some(target), true)
+    attach_ephemeral_by_name(ctx, name, Some(target.display_label()), Some(target))
 }
 
 pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
@@ -771,6 +772,14 @@ pub(crate) fn restart_discovered_session(
     let restart_name = restart_session_name(&mut ctx.state, &entry);
     // Recreate and make it active immediately. The picker giving way to the restarted session is
     // the confirmation, so a success toast would only repeat the visible state change.
+    if entry.ephemeral {
+        return attach_ephemeral_by_name(
+            ctx,
+            restart_name,
+            entry.host.clone(),
+            entry.remote_target.clone(),
+        );
+    }
     attach_session_by_name(
         ctx,
         restart_name,

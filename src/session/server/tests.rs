@@ -3590,6 +3590,82 @@ fn clients_changed_contains_roster_and_lock_state() {
 }
 
 #[test]
+fn unchanged_resize_preserves_server_content_before_and_after_output() {
+    for local in [false, true] {
+        for output_seen in [false, true] {
+            let mut server = SessionServer::new_named("dev");
+            let (controller, _stream) = attach_client(&mut server);
+            let mut pane = test_pane(2);
+            pane.output_seen = output_seen;
+            if output_seen {
+                pane.terminal.process_bytes(b"kept");
+            }
+            let before = pane.terminal.render_snapshot();
+            let content_generation = pane.content_generation;
+            if local {
+                server.local_panes.insert((controller, 1), pane);
+            } else {
+                server.panes.insert(1, pane);
+            }
+            let responses = server.handle_message(
+                controller,
+                ClientMessage::Resize {
+                    pane_id: 1,
+                    local,
+                    generation: 2,
+                    cols: 20,
+                    rows: 5,
+                    cell_width: 0,
+                    cell_height: 0,
+                },
+            );
+            assert!(
+                responses.is_empty(),
+                "unchanged geometry must not broadcast a resize"
+            );
+            let pane = if local {
+                server.local_panes.get_mut(&(controller, 1)).unwrap()
+            } else {
+                server.panes.get_mut(&1).unwrap()
+            };
+            assert_eq!(pane.content_generation, content_generation);
+            let after = pane.screen_without_change().render_snapshot();
+            assert!(Arc::ptr_eq(&before.color_lines, &after.color_lines));
+            assert_eq!(after.text, before.text);
+        }
+    }
+}
+
+#[test]
+fn pixel_only_resize_updates_cell_size_without_reflowing_the_grid() {
+    for output_seen in [false, true] {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _stream) = attach_client(&mut server);
+        let mut pane = test_pane(2);
+        pane.output_seen = output_seen;
+        let content_generation = pane.content_generation;
+        server.panes.insert(1, pane);
+        let resize = |width, height| ClientMessage::Resize {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            cols: 20,
+            rows: 5,
+            cell_width: width,
+            cell_height: height,
+        };
+        assert!(!server.handle_message(controller, resize(9, 18)).is_empty());
+        let pane = &server.panes[&1];
+        assert_eq!(pane.cell, tui_lipan::TerminalCellSize::new(9, 18));
+        assert_eq!(pane.screen().cell_size(), pane.cell);
+        assert_eq!(pane.content_generation, content_generation + 1);
+        assert!(server.handle_message(controller, resize(0, 0)).is_empty());
+        assert!(server.handle_message(controller, resize(9, 18)).is_empty());
+        assert_eq!(server.panes[&1].content_generation, content_generation + 1);
+    }
+}
+
+#[test]
 fn resize_updates_screen_and_broadcasts_ack() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _s1) = attach_client(&mut server);

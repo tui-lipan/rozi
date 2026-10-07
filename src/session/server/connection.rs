@@ -519,23 +519,30 @@ impl SessionServer {
                 let scrollback = self.settings.scrollback;
                 let image_media_policy = self.image_media_policy();
                 if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
-                    pane.cols = cols.max(1);
-                    pane.rows = rows.max(1);
-                    let (rows, cols) = (pane.rows, pane.cols);
+                    let (cols, rows) = (cols.max(1), rows.max(1));
+                    let reported_cell = cell_size(cell_width, cell_height);
+                    let dimensions_changed = cols != pane.cols || rows != pane.rows;
+                    let cell_changed = reported_cell.is_some_and(|cell| cell != pane.cell);
+                    if !dimensions_changed && !cell_changed {
+                        return Vec::new();
+                    }
+                    pane.cols = cols;
+                    pane.rows = rows;
                     // The controller's cell size is canonical alongside its pane size: the child
                     // reads it out of the PTY to decide how many cells a picture needs, and the
                     // pane that renders that picture is measuring against the same value.
-                    let reported_cell = cell_size(cell_width, cell_height);
                     if let Some(cell) = reported_cell {
                         pane.cell = cell;
                     }
                     if pane.output_seen {
-                        pane.screen_mut().resize(rows, cols);
-                        if reported_cell.is_some() {
+                        if dimensions_changed {
+                            pane.screen_mut().resize(rows, cols);
+                        }
+                        if cell_changed {
                             let cell = pane.cell;
                             pane.screen_mut().set_cell_size(cell);
                         }
-                    } else {
+                    } else if dimensions_changed {
                         // The spawn request uses a fallback geometry before the client's layout is
                         // available. Rebuild the still-empty parser at its authoritative size so a
                         // width reflow cannot discard the spare history-allocation slot.
@@ -546,6 +553,9 @@ impl SessionServer {
                         screen.set_image_media_policy(image_media_policy);
                         screen.set_palette(pane.palette.into());
                         pane.replace_empty_screen(screen);
+                    } else if cell_changed {
+                        let cell = pane.cell;
+                        pane.screen_mut().set_cell_size(cell);
                     }
                     if let Some(pty) = &pane.pty {
                         let _ = pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell);

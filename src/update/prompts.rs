@@ -204,43 +204,7 @@ pub(super) fn sessions_discovered(
 }
 
 pub(super) fn session_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
-    if let Some(picker) = ctx.state.session_picker.as_mut() {
-        let was_empty = picker.input.text().trim().is_empty();
-        let is_empty = query.trim().is_empty();
-        if was_empty && !is_empty {
-            picker.browse_selected = picker
-                .entries
-                .get(picker.selected)
-                .map(|entry| (entry.name.clone(), entry.remote_target.clone()));
-        }
-        picker.input.set_text(query);
-        if is_empty {
-            if let Some((name, target)) = picker.browse_selected.take()
-                && let Some(index) = picker
-                    .entries
-                    .iter()
-                    .position(|entry| entry.name == name && entry.remote_target == target)
-            {
-                picker.selected = index;
-            }
-            picker.keep_selection_in_tab();
-        }
-    }
-    // Keep row actions on the visible result even when filtering replaces the first row
-    // without moving the palette's numeric cursor.
-    if let Some(picker) = ctx.state.session_picker.as_ref() {
-        let query = picker.input.text().trim().to_ascii_lowercase();
-        let matches = |entry: &crate::session::discovery::DiscoveredSession| {
-            picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
-        };
-        if !picker.entries.get(picker.selected).is_some_and(matches)
-            && let Some(index) = picker.entries.iter().position(matches)
-        {
-            ctx.state.session_picker.as_mut().unwrap().selected = index;
-        }
-    }
-    crate::ops::session::clear_pending_session_arms(ctx);
-    Update::full()
+    crate::ops::session::set_session_picker_query(ctx, query)
 }
 
 pub(super) fn session_picker_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {

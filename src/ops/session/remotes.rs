@@ -282,6 +282,10 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Open the shared Sessions picker on a reached host, replacing the host-management flow.
 fn open_host_sessions(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
+    let query = match ctx.state.overlay_return.as_ref() {
+        Some(crate::state::OverlayOrigin::SessionPicker { query, .. }) => Some(query.clone()),
+        _ => None,
+    };
     scope_launcher_to(ctx, &target);
     dismiss_remote_picker(&mut ctx.state);
     crate::ops::overlay_return::leave(ctx);
@@ -289,6 +293,9 @@ fn open_host_sessions(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Updat
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.tab = SessionPickerTab::Host(Some(target));
         picker.keep_selection_in_tab();
+    }
+    if let Some(query) = query {
+        crate::ops::session::set_session_picker_query(ctx, query);
     }
     ctx.state.commands_dirty = true;
     update
@@ -1060,7 +1067,12 @@ mod tests {
         with_backend(|backend| {
             let _persist = crate::test_support::lock_persisted_state();
             let target = RemoteTarget::Alias("workbox".into());
-            primed_connecting_picker(backend, &target, 9);
+            backend.state_mut().remote.added_hosts.push(target.clone());
+            let mut sessions = crate::state::SessionPickerState::new(Vec::new());
+            sessions.input.set_text("API");
+            backend.state_mut().session_picker = Some(sessions);
+            backend.state_mut().show_session_picker = true;
+            backend.update_level(Msg::SessionPickerRemoteHosts).unwrap();
             backend.state_mut().command_link = None;
             backend.state_mut().config.animations.enabled = false;
             backend.state_mut().config.session.picker_open_on =
@@ -1111,6 +1123,8 @@ mod tests {
                 Some(&target)
             );
             let picker = state.session_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "API");
+            assert_eq!(picker.entries[picker.selected], fresh);
             assert!(
                 picker.entries.contains(&fresh),
                 "fresh rows must not become last-seen on opening: {:?}",

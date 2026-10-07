@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 9] = [
+const SCENARIOS: [(&str, &str, fn()); 10] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -35,6 +35,11 @@ const SCENARIOS: [(&str, &str, fn()); 9] = [
         "session-picker",
         "All, host browsing, and tab-scoped session search",
         session_picker,
+    ),
+    (
+        "session-picker-no-results",
+        "unmatched local and remote search with contextual recovery actions",
+        session_picker_no_results,
     ),
     (
         "session-picker-settings",
@@ -912,5 +917,36 @@ fn session_picker_settings() {
             &mut backend,
             &format!("session-picker-opening-choice-{width}x{height}"),
         );
+    }
+}
+
+fn session_picker_no_results() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        *state.current_mut() = rozi::state::Attachment::new();
+        state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+        state.current_mut().session_attached = true;
+        state.show_session_picker = true;
+    }
+    for (name, target) in [
+        ("local", None),
+        (
+            "host",
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into())),
+        ),
+    ] {
+        let mut picker = rozi::state::SessionPickerState::new(Vec::new()).on_tab(target);
+        picker.input.set_text("Efefef");
+        backend.state_mut().session_picker = Some(picker);
+        for (width, height) in [(64, 22), (100, 30)] {
+            backend.set_viewport(viewport(width, height));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!("session-picker-no-results-{name}-{width}x{height}"),
+            );
+        }
     }
 }

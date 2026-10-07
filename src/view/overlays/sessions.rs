@@ -347,14 +347,8 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
 /// `forget` the same way: it is local cached knowledge, not a live server. Global picker actions
 /// follow. Restart is omitted when there is no live server to recreate.
 ///
-/// `ephemeral shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always
-/// reaches this client's scratch session, but saying so is only worth a pill when the list cannot
-/// say it already. With nothing to pick, Enter is free and carries it; with the scratch session
-/// itself on the list, its own row is the obvious way to it. The label borrows the word the rows
-/// use (`ephemeral`) so the hint and the session it lands on read as the same thing.
-///
-/// Every creating key acts on the active tab's host, which the tab strip names, so no label needs
-/// to repeat it.
+/// With an unmatched query, keep recovery actions visible and reuse the typed name. Enter
+/// starts a temporary shell only when the query is empty; Ctrl+T remains explicit during search.
 fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Vec::new();
@@ -387,7 +381,7 @@ fn push_session_activation(
     last_seen: bool,
     actions: &mut Vec<OverlayAction>,
 ) {
-    if picker_list_is_empty(&ctx.state, picker) {
+    if picker.input.text().trim().is_empty() && picker_list_is_empty(&ctx.state, picker) {
         actions.push(OverlayAction::new(
             "enter",
             session_creation_label(ctx, picker, "ephemeral shell"),
@@ -438,7 +432,9 @@ fn session_creation_label(
     picker: &SessionPickerState,
     action: &str,
 ) -> String {
-    if picker.tab != crate::state::SessionPickerTab::All {
+    if picker.tab != crate::state::SessionPickerTab::All
+        && !picker_has_unmatched_query(&ctx.state, picker)
+    {
         return action.to_string();
     }
     let host = crate::ops::session::session_picker_creation_target(&ctx.state).map_or_else(
@@ -459,12 +455,13 @@ fn push_session_creation_actions(
         Msg::SessionPickerCreateFromQuery,
         true,
     ));
-    let show_ephemeral = !picker_list_is_empty(&ctx.state, picker)
-        && crate::ops::session::held_ephemeral_session_in(
-            &ctx.state,
-            crate::ops::session::session_picker_creation_target(&ctx.state).as_ref(),
-        )
-        .is_none();
+    let show_ephemeral = picker_has_unmatched_query(&ctx.state, picker)
+        || (!picker_list_is_empty(&ctx.state, picker)
+            && crate::ops::session::held_ephemeral_session_in(
+                &ctx.state,
+                crate::ops::session::session_picker_creation_target(&ctx.state).as_ref(),
+            )
+            .is_none());
     actions.push(OverlayAction::new(
         "ctrl-t",
         session_creation_label(ctx, picker, "ephemeral shell"),
@@ -560,13 +557,17 @@ fn selected_session<'a>(
 }
 
 /// Whether the active tab is showing no session at all — nothing discovered, or nothing left by the
-/// query. There is then no row for Enter to activate, which is what frees it to start a shell.
+/// query. With an empty query, Enter can start a temporary shell.
 fn picker_list_is_empty(state: &crate::state::State, picker: &SessionPickerState) -> bool {
     let query = picker.input.text().trim().to_ascii_lowercase();
     !picker
         .entries
         .iter()
         .any(|entry| picker.in_tab(entry) && state.matches_session_query(entry, &query))
+}
+
+fn picker_has_unmatched_query(state: &crate::state::State, picker: &SessionPickerState) -> bool {
+    !picker.input.text().trim().is_empty() && picker_list_is_empty(state, picker)
 }
 
 fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> Element {
@@ -649,12 +650,10 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
-    let empty_text = if picker.first_in_tab().is_none() {
-        "No sessions".to_string()
-    } else if query.is_empty() {
-        "Type to filter sessions".to_string()
+    let empty_text = if !query.is_empty() {
+        format!("No sessions match `{}`", picker.input.text().trim())
     } else {
-        format!("No sessions match `{query}`")
+        "No sessions".to_string()
     };
 
     let pending_kill = picker.pending_kill;

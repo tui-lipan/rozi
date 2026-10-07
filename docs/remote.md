@@ -42,6 +42,8 @@ returning to this list does not contact any machine.
 
 `Enter` opens **Sessions** with that host’s tab selected.
 Switch tabs to browse local sessions or another host without backing through the host list.
+If you came from a Sessions search, opening a host keeps that query on its Sessions tab;
+returning without opening a host restores the original tab and query.
 
 | Key | Remote hosts |
 | --- | --- |

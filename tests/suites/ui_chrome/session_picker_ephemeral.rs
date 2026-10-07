@@ -100,28 +100,105 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
 }
 
 #[test]
-fn a_query_that_matches_nothing_frees_enter_the_same_way() {
+fn unmatched_queries_offer_recovery_actions_and_leave_enter_inactive() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(VIEWPORT);
-        {
-            let state = backend.state_mut();
-            *state.current_mut() = rozi::state::Attachment::new();
-            state.show_session_picker = true;
-            let mut picker = SessionPickerState::new(vec![session_row("dev")]);
-            picker.input.set_text("zzz".to_string());
-            state.session_picker = Some(picker);
-        }
+        for target in [
+            None,
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into())),
+        ] {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = rozi::state::Attachment::new();
+                state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+                state.current_mut().session_attached = true;
+                state.show_session_picker = true;
+                let mut picker =
+                    SessionPickerState::new(vec![session_row("dev")]).on_tab(target.clone());
+                picker.input.set_text("Efefef");
+                state.session_picker = Some(picker);
+            }
+            let rendered = screen(&mut backend);
+            assert!(
+                rendered.contains("No sessions match `Efefef`"),
+                "{rendered}"
+            );
+            let host = target.as_ref().map_or("Local", |_| "workbox");
+            for hint in [
+                format!("new on {host} Ctrl+N"),
+                format!("ephemeral shell on {host} Ctrl+T"),
+                "name current Ctrl+S".into(),
+                "remote hosts Ctrl+R".into(),
+            ] {
+                assert!(rendered.contains(&hint), "missing {hint}: {rendered}");
+            }
+            assert!(!rendered.contains("shell Enter"), "{rendered}");
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Enter,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            assert!(backend.state().show_session_picker);
+            assert!(backend.state().current().pending_session_attach.is_none());
+            assert!(backend.state().rename_session.is_none());
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                "Efefef"
+            );
 
-        let rendered = screen(&mut backend);
-        assert!(
-            rendered.contains("│ No sessions match"),
-            "a filter empty-state keeps the same 1-cell left inset:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("ephemeral shell Enter"),
-            "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"
-        );
+            for (key, mode) in [
+                ('n', rozi::state::NamingMode::CreateSession),
+                ('s', rozi::state::NamingMode::NameEphemeralSession),
+            ] {
+                screen(&mut backend);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char(key),
+                        mods: KeyMods::CTRL,
+                    })
+                    .unwrap();
+                let prompt = backend.state().rename_session.as_ref().unwrap();
+                assert_eq!(prompt.input.text(), "Efefef");
+                assert_eq!(prompt.mode, mode);
+                if key == 'n' {
+                    assert_eq!(prompt.host_target, target);
+                }
+                backend.dispatch(Msg::CloseRenameSession).unwrap();
+                let picker = backend.state().session_picker.as_ref().unwrap();
+                assert_eq!(picker.input.text(), "Efefef");
+                assert_eq!(picker.tab.remote_target(), target.as_ref());
+            }
+            screen(&mut backend);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('r'),
+                    mods: KeyMods::CTRL,
+                })
+                .unwrap();
+            assert!(backend.state().remote_picker.is_some());
+            backend.dispatch(Msg::CloseRemotePicker).unwrap();
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "Efefef");
+            assert_eq!(picker.tab.remote_target(), target.as_ref());
+            if target.is_none() {
+                screen(&mut backend);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('t'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .unwrap();
+                assert!(!backend.state().show_session_picker);
+            }
+        }
     });
 }
 

@@ -244,6 +244,48 @@ pub(crate) fn open_startup_session_picker(
     ctx.state.session_picker_epoch
 }
 
+/// Apply a query and keep selection and row actions on a visible match. Shared by typing and
+/// returning from host management with the original search text.
+pub(crate) fn set_session_picker_query(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        let was_empty = picker.input.text().trim().is_empty();
+        let is_empty = query.trim().is_empty();
+        if was_empty && !is_empty {
+            picker.browse_selected = picker
+                .entries
+                .get(picker.selected)
+                .map(|entry| (entry.name.clone(), entry.remote_target.clone()));
+        }
+        picker.input.set_text(query);
+        if is_empty {
+            if let Some((name, target)) = picker.browse_selected.take()
+                && let Some(index) = picker
+                    .entries
+                    .iter()
+                    .position(|entry| entry.name == name && entry.remote_target == target)
+            {
+                picker.selected = index;
+            }
+            picker.keep_selection_in_tab();
+        }
+    }
+    // Keep row actions on the visible result even when filtering replaces the first row
+    // without moving the palette's numeric cursor.
+    if let Some(picker) = ctx.state.session_picker.as_ref() {
+        let query = picker.input.text().trim().to_ascii_lowercase();
+        let matches = |entry: &crate::session::discovery::DiscoveredSession| {
+            picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
+        };
+        if !picker.entries.get(picker.selected).is_some_and(matches)
+            && let Some(index) = picker.entries.iter().position(matches)
+        {
+            ctx.state.session_picker.as_mut().unwrap().selected = index;
+        }
+    }
+    clear_pending_session_arms(ctx);
+    Update::full()
+}
+
 pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Carry the typed query and the highlighted row across the rebuild. After a kill the killed row
     // is gone, so clamping keeps the highlight on the row that slid into its place instead of
@@ -342,7 +384,7 @@ pub(crate) fn session_picker_creation_target(
 }
 
 /// Go to this client's scratch session on the Sessions picker's active tab: its `Ctrl+T`, and its
-/// `Enter` when there is nothing on the list to activate.
+/// `Enter` when both the query and the list are empty.
 ///
 /// One key covers both directions — start the ephemeral when there is none, switch to it when there
 /// already is — because from the keyboard they are the same request. Already being on it is a
@@ -505,11 +547,21 @@ pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     let ephemeral = ctx.state.is_ephemeral_session();
-    let initial = if ephemeral {
-        String::new()
-    } else {
-        ctx.state.current().session_name.clone().unwrap_or_default()
-    };
+    let initial = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .filter(|_| ctx.state.show_session_picker)
+        .map(|picker| picker.input.text().trim())
+        .filter(|query| !query.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if ephemeral {
+                String::new()
+            } else {
+                ctx.state.current().session_name.clone().unwrap_or_default()
+            }
+        });
     let mode = if ephemeral {
         NamingMode::NameEphemeralSession
     } else {

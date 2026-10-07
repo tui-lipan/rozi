@@ -81,10 +81,16 @@ global rows append the exact target, such as **workbox (ssh://workbox)**. The ex
 searchable in Sessions and Agents.
 
 Creation uses the selected host tab. On **All**, it uses the foreground session's
-host, or the launcher's host when no session is attached. On All, the footer names the destination
-with **new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
-that destination. `Ctrl+X` disconnects the selected host tab's host.
+host, or the launcher's host when no session is attached. On All and when a search has no results,
+the footer names the destination with **new on Local** or **new on workbox**. `Ctrl+N` and `Ctrl+T`
+use that destination. `Ctrl+X` disconnects the selected host tab's host.
 Row actions always apply to the selected session, including remote search results.
+
+When a non-empty query matches no sessions, `Enter` does nothing. `Ctrl+N` opens a new-session
+prompt with the query as its proposed name. If the current session is temporary, `Ctrl+S` names
+it using the same proposed name. `Ctrl+T` remains available to open a temporary shell explicitly.
+`Ctrl+R` opens Remote hosts without losing the query; opening a host carries it into that host's
+Sessions tab. With an empty query and no sessions listed, `Enter` opens a temporary shell.
 
 Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
 highlighted session you were browsing. If that session is gone, Sessions highlights the first row
@@ -95,6 +101,7 @@ Sessions and the launcher to **Local**.
 | --- | --- |
 | `Enter` | Connect, switch to a background session, or restore a snapshot |
 | Type a name, then `Ctrl+N` | Create and switch to a named session at the footer's destination |
+| `Ctrl+S` | Name the current temporary session, prefilling the search query |
 | `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a `last seen` entry |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |

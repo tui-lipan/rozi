@@ -374,9 +374,10 @@ fn key_handler(
         .map(|action| (action.key.clone(), action.msg.clone()))
         .collect::<Vec<_>>();
     let switch = move |steps: isize| Msg::ExtensionsTabSelected(tab.stepped(steps).index());
-    ctx.link().key_handler(move |key| {
-        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
-        let navigation = match key.code {
+    let handler = ctx.link().key_handler(move |key| {
+        let direction = key.left_alt_arrow();
+        let plain = direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
+        let navigation = match direction.unwrap_or(key.code) {
             KeyCode::Tab if plain && !key.mods.shift => Some(switch(1)),
             KeyCode::BackTab | KeyCode::Tab if plain => Some(switch(-1)),
             KeyCode::Left if plain && !key.mods.shift => Some(switch(-1)),
@@ -405,6 +406,10 @@ fn key_handler(
                 .find(|(binding, _)| binding.matches_sequence(&[key]))
                 .map(|(_, msg)| msg.clone())
         })
+    });
+    KeyHandler::new(move |key| {
+        // Give picker actions first refusal, then keep empty-result navigation out of text input.
+        handler.handle(key) || matches!(key.left_alt_arrow(), Some(KeyCode::Up | KeyCode::Down))
     })
 }
 

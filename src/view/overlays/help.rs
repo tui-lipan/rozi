@@ -438,9 +438,10 @@ fn keybindings_key_handler(
         .filter(|action| action.enabled && action.intercept)
         .map(|action| (action.key.clone(), action.msg.clone()))
         .collect::<Vec<_>>();
-    ctx.link().key_handler(move |key| {
-        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
-        let navigation = match key.code {
+    let handler = ctx.link().key_handler(move |key| {
+        let direction = key.left_alt_arrow();
+        let plain = direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
+        let navigation = match direction.unwrap_or(key.code) {
             KeyCode::Esc if plain => Some(Msg::CloseHelp),
             KeyCode::Tab if plain && !key.mods.shift => Some(help_tab_msg(tab, 1)),
             KeyCode::BackTab | KeyCode::Tab if plain => Some(help_tab_msg(tab, -1)),
@@ -471,6 +472,10 @@ fn keybindings_key_handler(
                 .find(|(binding, _)| binding.matches_sequence(&[key]))
                 .map(|(_, msg)| msg.clone())
         })
+    });
+    KeyHandler::new(move |key| {
+        // Give picker actions first refusal, then keep empty-result navigation out of text input.
+        handler.handle(key) || matches!(key.left_alt_arrow(), Some(KeyCode::Up | KeyCode::Down))
     })
 }
 

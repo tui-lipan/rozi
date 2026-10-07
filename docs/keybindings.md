@@ -306,6 +306,13 @@ In the new-worktree form, `Ctrl+E` adds a worktree directory inside the reposito
 In every overlay, `Esc` closes it, or returns to the parent overlay if one opened another. `Enter`
 activates the selected row or submits a prompt.
 
+In pickers, hold **left** `Alt` and press `j`/`k` to select the next/previous row, or `h`/`l`
+to switch to the previous/next tab. Plain `h/j/k/l` still type into the filter. Right `Alt`
+and `AltGr` do not navigate. These shortcuts require a terminal that reports physical modifier
+presses through the Kitty keyboard protocol; arrows remain available everywhere. If you opened
+the picker with `Alt` already held, release and press it again before navigating. Left `Alt+j`/`Alt+k`
+leave the search text unchanged even when there are no matches.
+
 - **Layouts:** `Ctrl+F` saves the highlighted layout as the default.
 - **Scrollback search:** the arrow and paging keys move through results, `Enter` selects one, and
   `Tab` changes the scope.

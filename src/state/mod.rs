@@ -12,6 +12,7 @@ mod appearance;
 mod attachment;
 mod capture;
 mod drag;
+mod extension_workers;
 mod identity;
 mod keybindings;
 mod layout;
@@ -32,6 +33,7 @@ pub use appearance::*;
 pub use attachment::*;
 pub use capture::*;
 pub use drag::*;
+pub use extension_workers::*;
 pub use identity::*;
 pub use keybindings::*;
 pub use layout::*;
@@ -90,6 +92,9 @@ pub struct PublishStreamState {
     pub id: u64,
     pub sender: std::sync::mpsc::SyncSender<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
+    /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
+    /// within this binding.
+    pub binding: Option<WorkerBinding>,
 }
 
 pub struct ExtensionSubscriptionState {
@@ -116,6 +121,8 @@ pub struct State {
     runtime_frame_rate: u16,
     /// Opaque per-runtime fencing tokens keyed by stable extension id.
     pub extension_generations: HashMap<String, String>,
+    /// Credentials of the placed extension processes this client has launched.
+    pub extension_workers: WorkerRegistry,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
@@ -545,6 +552,7 @@ impl State {
             runtime_frame_rate: config.frame_rate,
             config,
             extension_generations,
+            extension_workers: WorkerRegistry::default(),
             window_focused: true,
             runtime_epoch: 0,
             session_view_revision: 0,

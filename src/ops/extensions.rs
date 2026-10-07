@@ -8,9 +8,21 @@ pub(crate) fn subscription_opened(
     ctx: &mut Context<AppRoot>,
     id: u64,
     provenance: crate::config::ExtensionProvenance,
+    worker: Option<crate::state::WorkerId>,
     cancel: std::sync::mpsc::SyncSender<()>,
-    reply: std::sync::mpsc::Sender<bool>,
+    reply: std::sync::mpsc::Sender<
+        std::result::Result<Option<crate::state::WorkerBinding>, crate::control::ControlResponse>,
+    >,
 ) -> Update {
+    let binding =
+        match worker.map(|worker| crate::ops::extension_workers::live_worker(&ctx.state, worker)) {
+            None => None,
+            Some(Ok(worker)) => Some(worker.binding.clone()),
+            Some(Err(response)) => {
+                let _ = reply.send(Err(response));
+                return Update::none();
+            }
+        };
     let active = crate::config::provenance_is_active(&ctx.state.extension_generations, &provenance);
     if active {
         ctx.state.extension_subscriptions.insert(
@@ -21,7 +33,14 @@ pub(crate) fn subscription_opened(
             },
         );
     }
-    let _ = reply.send(active);
+    let _ = reply.send(if active {
+        Ok(binding)
+    } else {
+        Err(crate::control::ControlResponse::error_with(
+            crate::control::ControlErrorCode::ExtensionInactive,
+            "extension generation is not active",
+        ))
+    });
     Update::none()
 }
 

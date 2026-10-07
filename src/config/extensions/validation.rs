@@ -13,6 +13,10 @@ use super::manifest::{
     ExtensionSidebarTabFile, ExtensionSuggestedKeybindingFile,
 };
 use super::paths::{normalize_direct_argv, resolve_declared_path};
+use super::placement::{
+    LaunchTemplate, PlacedCommand, PlacedContributions, PlacedService, PlacedTab, Placement,
+    check_host_program, host_relative_cwd,
+};
 use super::{
     ExtensionInfo, ExtensionNavigationTargetDiagnostic, ExtensionSuggestedKeybindingDiagnostic,
     ExtensionSuggestedKeybindingStatus, RESERVED_EXTENSION_ENV, RESERVED_EXTENSION_IDS,
@@ -222,6 +226,7 @@ pub(super) fn validate_command(
     seen: &mut HashSet<String>,
     info: &mut ExtensionInfo,
     commands: &mut Vec<NamedCommand>,
+    placed: &mut PlacedContributions,
 ) {
     let Some(local_id) = raw
         .id
@@ -245,6 +250,28 @@ pub(super) fn validate_command(
         return;
     }
     info.commands.push(id.clone());
+    let placement = match Placement::parse(raw.placement.as_deref(), false) {
+        Ok(placement) => placement,
+        Err(error) => {
+            info.errors
+                .push(format!("extension command `{id}`: {error}"));
+            Placement::Client
+        }
+    };
+    let mut template = None;
+    if !placement.is_client() {
+        if raw.send.is_some() {
+            info.errors.push(format!(
+                "extension command `{id}` sends text to a pane and starts no process, so it has \
+                 no placement"
+            ));
+        } else if let Some(argv) = &raw.exec {
+            check_host_program(argv, &id, &mut info.errors);
+            template = Some(LaunchTemplate::Direct(argv.clone()));
+        } else if let Some(shell) = raw.shell.as_deref().map(str::trim) {
+            template = Some(LaunchTemplate::Shell(shell.to_string()));
+        }
+    }
     let label = clean_optional(raw.label);
     let action_count = usize::from(raw.exec.is_some())
         + usize::from(raw.shell.is_some())
@@ -264,6 +291,7 @@ pub(super) fn validate_command(
                     &id,
                     &mut info.command_paths,
                     &mut info.errors,
+                    placement.is_client(),
                 )
                 .map(|argv| UserCommandAction::ExecDirect { argv })
             } else if raw.shell.is_some() {
@@ -308,6 +336,11 @@ pub(super) fn validate_command(
             None
         }
     });
+    if let Some(launch) = template {
+        placed
+            .commands
+            .insert(id.clone(), PlacedCommand { placement, launch });
+    }
     if let Some(action) = action {
         commands.push(NamedCommand {
             id,
@@ -327,6 +360,7 @@ pub(super) fn validate_command(
 /// rather than reported: `ExtensionInfo` carries errors, and an error here would take the whole
 /// extension down over a detail the author can read in the docs. Anything that stops the tab
 /// existing is an error, matching how a malformed command or service is treated.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_sidebar_tab(
     raw: ExtensionSidebarTabFile,
     extension_id: &str,
@@ -335,6 +369,7 @@ pub(super) fn validate_sidebar_tab(
     seen: &mut HashSet<String>,
     info: &mut ExtensionInfo,
     tabs: &mut Vec<SidebarTab>,
+    placed: &mut PlacedContributions,
 ) {
     let Some(local_name) = raw
         .name
@@ -361,6 +396,28 @@ pub(super) fn validate_sidebar_tab(
     // A tab's strings are shell command lines and pane input, not argv, so `{extension_dir}` is
     // substituted here rather than resolved as a path. Without it a contributed tab has no way to
     // name its own program: the tab is not a command or a service, so it never had one.
+    let placement = match Placement::parse(raw.placement.as_deref(), false) {
+        Ok(placement) => placement,
+        Err(error) => {
+            info.errors.push(format!("sidebar tab `{id}`: {error}"));
+            Placement::Client
+        }
+    };
+    let placed_tab = if placement.is_client() {
+        None
+    } else if let Some(command) = raw.command.clone() {
+        Some(PlacedTab {
+            placement,
+            command,
+            on_click_exec: raw.on_click.as_ref().and_then(|action| action.exec.clone()),
+        })
+    } else {
+        info.errors.push(format!(
+            "sidebar tab `{id}` has a placement but no `command`; a launcher tab's entries \
+             already run in panes, on the session's host"
+        ));
+        None
+    };
     let expand = |value: String| value.replace("{extension_dir}", directory);
     let parts = super::super::sidebar::CustomTabParts {
         label: raw.label.unwrap_or_default(),
@@ -390,6 +447,9 @@ pub(super) fn validate_sidebar_tab(
     let mut advisories = Vec::new();
     match super::super::sidebar::build_custom_tab(SidebarTabId::new(&id), parts, &mut advisories) {
         Ok(tab) => {
+            if let Some(placed_tab) = placed_tab {
+                placed.tabs.insert(SidebarTabId::new(&id), placed_tab);
+            }
             info.sidebar_tabs.push(id);
             tabs.push(tab);
         }
@@ -406,6 +466,7 @@ pub(super) fn validate_service(
     seen: &mut HashSet<String>,
     info: &mut ExtensionInfo,
     services: &mut Vec<ServiceConfig>,
+    placed: &mut PlacedContributions,
 ) {
     let Some(local_name) = raw
         .name
@@ -437,6 +498,26 @@ pub(super) fn validate_service(
             ));
         }
     }
+    let placement = match Placement::parse(raw.placement.as_deref(), true) {
+        Ok(placement) => placement,
+        Err(error) => {
+            info.errors
+                .push(format!("extension service `{name}`: {error}"));
+            Placement::Client
+        }
+    };
+    let template = if placement.is_client() {
+        None
+    } else if let Some(argv) = &raw.exec {
+        check_host_program(argv, &name, &mut info.errors);
+        Some(LaunchTemplate::Direct(argv.clone()))
+    } else {
+        raw.shell
+            .as_deref()
+            .map(|shell| LaunchTemplate::Shell(shell.trim().to_string()))
+    };
+    let host_cwd = (!placement.is_client())
+        .then(|| host_relative_cwd(raw.cwd.as_deref(), &name, &mut info.errors));
     let launch_count = usize::from(raw.exec.is_some()) + usize::from(raw.shell.is_some());
     let launch = match launch_count {
         0 => {
@@ -453,6 +534,7 @@ pub(super) fn validate_service(
                     &name,
                     &mut info.service_paths,
                     &mut info.errors,
+                    placement.is_client(),
                 )
                 .map(ServiceLaunch::Direct)
             } else {
@@ -506,6 +588,20 @@ pub(super) fn validate_service(
             None
         }
     };
+    if launch.is_some()
+        && let (Some(restart), Some(template), Some(cwd)) = (restart, template, host_cwd)
+    {
+        let mut env = raw.env.clone();
+        env.remove("ROZI_EXTENSION_DIR");
+        placed.services.push(PlacedService {
+            name: name.clone(),
+            placement,
+            launch: template,
+            cwd,
+            restart,
+            env,
+        });
+    }
     if let (Some(launch), Some(restart)) = (launch, restart) {
         services.push(ServiceConfig {
             name,

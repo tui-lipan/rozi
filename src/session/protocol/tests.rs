@@ -960,6 +960,7 @@ fn session_control_messages_round_trip_with_the_documented_wire_shape() {
         source_pane: None,
         source_session: None,
         extension: None,
+        credential: None,
     };
     let msg = ClientMessage::SessionControl {
         capabilities: None,
@@ -1019,6 +1020,7 @@ fn attached_control_messages_round_trip_with_the_documented_wire_shape() {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         },
     };
     let mut buf = Vec::new();

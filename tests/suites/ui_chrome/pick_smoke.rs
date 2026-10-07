@@ -26,6 +26,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReply
             tab: None,
             sender: tx,
             ack: ack_tx,
+            worker: None,
         })
         .expect("dispatch open");
 
@@ -183,6 +184,7 @@ fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
                 tab: None,
                 sender: tx,
                 ack: ack_tx,
+                worker: None,
             })
             .expect("dispatch open");
 
@@ -248,6 +250,7 @@ fn a_masked_prompt_hides_its_seed_value() {
                 tab: None,
                 sender: tx,
                 ack: ack_tx,
+                worker: None,
             })
             .expect("dispatch open");
         backend
@@ -290,6 +293,7 @@ fn a_long_description_never_costs_a_row_its_label() {
                 tab: None,
                 sender: tx,
                 ack: ack_tx,
+                worker: None,
             })
             .expect("dispatch open");
         backend
@@ -381,6 +385,7 @@ fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::Pi
             extension: None,
             sender: tx,
             ack: ack_tx,
+            worker: None,
         })
         .expect("dispatch open");
     for (tab, labels) in [

@@ -1813,6 +1813,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         }
     }
 
@@ -3380,6 +3381,7 @@ mod tests {
                 source_pane: Some(3),
                 source_session: None,
                 extension: None,
+                credential: None,
             },
         );
         let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =
@@ -3506,6 +3508,7 @@ mod tests {
                         id: "git-tools".to_string(),
                         generation: "whatever-the-caller-claims".to_string(),
                     }),
+                    credential: None,
                 },
             );
             let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =

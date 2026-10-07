@@ -361,6 +361,7 @@ mod tests {
                 },
                 cwd: "focused-pane-input".to_string(),
                 injected_env: BTreeMap::new(),
+                placement: "client".to_string(),
             }],
             service_details: vec![ExtensionServiceDiagnostic {
                 id: "tasks.watch".to_string(),
@@ -370,6 +371,7 @@ mod tests {
                 cwd: ".".to_string(),
                 restart: "on-failure".to_string(),
                 injected_env: BTreeMap::new(),
+                placement: "client".to_string(),
                 configured_env_keys: vec!["TOKEN".to_string()],
             }],
             command_paths: BTreeMap::new(),

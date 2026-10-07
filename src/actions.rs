@@ -1281,8 +1281,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch control action");
 

@@ -6,6 +6,7 @@ pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;
 pub(crate) mod exit;
+pub(crate) mod extension_workers;
 pub(crate) mod extensions;
 pub(crate) mod extensions_manager;
 pub(crate) mod focus;

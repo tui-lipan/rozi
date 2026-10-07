@@ -262,6 +262,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
             )
             .expect_err("hostile name must be refused");
@@ -281,6 +282,7 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                credential: None,
             },
         )
         .expect_err("a session that does not exist cannot answer");

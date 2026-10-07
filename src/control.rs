@@ -136,6 +136,11 @@ pub struct ControlRequest {
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
+    /// The worker credential of a placed extension process, from `ROZI_EXTENSION_CREDENTIAL`.
+    /// Automatically attached by the CLI. When present, the UI identifies the caller from it alone
+    /// and replaces `extension` with what the credential was issued for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
 }
 
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
@@ -2003,12 +2008,51 @@ pub enum ControlErrorCode {
     StaleReference,
     Timeout,
     RequestFailed,
+    /// A placed extension process asked for something no placed process may do, wherever it runs.
+    NotPermitted,
+    /// A placed extension process asked about a session outside the host or session it was
+    /// placed for.
+    OutOfScope,
+}
+
+/// Where a control request came from. Never part of the wire format: it is what the UI knows about
+/// the connection, not anything the caller claims.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestOrigin {
+    /// This machine's control endpoint.
+    #[default]
+    Local,
+    /// The extension bridge of a remote runtime, by the epoch of the runtime connection it arrived
+    /// over.
+    Bridged { runtime: u64 },
+}
+
+/// What authorizing a request established about its caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionGrant {
+    pub provenance: crate::config::ExtensionProvenance,
+    /// Set when the caller presented a worker credential.
+    pub worker: Option<crate::state::WorkerId>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ControlEnvelope {
     pub request: ControlRequest,
     pub reply: mpsc::Sender<ControlResponse>,
+    /// The placed worker that sent this, as its credential established. Re-checked when the request
+    /// is handled, so a worker revoked in between is refused.
+    pub worker: Option<crate::state::WorkerId>,
+}
+
+impl ControlEnvelope {
+    /// A request made by this client itself, or by an unplaced local process.
+    pub fn local(request: ControlRequest, reply: mpsc::Sender<ControlResponse>) -> Self {
+        Self {
+            request,
+            reply,
+            worker: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2197,6 +2241,7 @@ fn run_publish_stream(
     stream_id: u64,
     requested_pane: Option<PaneId>,
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
@@ -2210,6 +2255,7 @@ fn run_publish_stream(
         stream_id,
         requested_pane,
         extension,
+        worker,
         sender: tx,
         ack: ack_tx,
     });
@@ -2222,12 +2268,8 @@ fn run_publish_stream(
             );
             pane_id
         }
-        Ok(Err(error)) => {
-            let _ = writeln!(
-                stream,
-                "{}",
-                serde_json::to_string(&ControlResponse::error(error)).unwrap()
-            );
+        Ok(Err(response)) => {
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
             return;
         }
         Err(_) => {
@@ -2310,6 +2352,7 @@ fn run_pick_stream(
     tabs: Vec<crate::state::PickTab>,
     tab: Option<String>,
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
@@ -2331,6 +2374,7 @@ fn run_pick_stream(
         tabs,
         tab,
         extension,
+        worker,
         sender: reply_tx,
         ack: ack_tx,
     });
@@ -2416,30 +2460,38 @@ fn write_control_response(stream: &mut IpcConnection, response: &ControlResponse
     let _ = writeln!(stream, "{}", serde_json::to_string(response).unwrap());
 }
 
-fn authorize_extension_request(
+/// Establish who sent `request`, or answer it with the reason it is refused.
+///
+/// A request with neither provenance nor a credential, from this machine, is an ordinary local
+/// caller and needs nothing. Anything else is decided by the UI, which alone knows which
+/// generations and worker credentials are live.
+fn authorize_request(
     stream: &mut IpcConnection,
     link: &CommandLink<Msg>,
-    provenance: Option<&crate::config::ExtensionProvenance>,
-) -> bool {
-    let Some(provenance) = provenance else {
-        return true;
-    };
+    request: &ControlRequest,
+    origin: RequestOrigin,
+) -> Option<Option<ExtensionGrant>> {
+    if request.extension.is_none() && request.credential.is_none() && origin == RequestOrigin::Local
+    {
+        return Some(None);
+    }
     let (reply, authorized) = mpsc::channel();
     link.send(Msg::AuthorizeExtensionControl {
-        provenance: provenance.clone(),
+        provenance: request.extension.clone(),
+        credential: request.credential.clone(),
+        origin,
         reply,
     });
-    if authorized.recv_timeout(Duration::from_secs(10)) == Ok(true) {
-        return true;
-    }
-    write_control_response(
-        stream,
-        &ControlResponse::error_with(
+    let response = match authorized.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(grant)) => return Some(grant),
+        Ok(Err(response)) => response,
+        Err(_) => ControlResponse::error_with(
             ControlErrorCode::ExtensionInactive,
             "extension generation is not active",
         ),
-    );
-    false
+    };
+    write_control_response(stream, &response);
+    None
 }
 
 fn run_subscription(
@@ -2448,6 +2500,7 @@ fn run_subscription(
     event_hub: EventHub,
     events: &[String],
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let mut kinds = std::collections::HashSet::new();
     for id in events {
@@ -2473,25 +2526,37 @@ fn run_subscription(
         link.send(Msg::ExtensionSubscriptionOpen {
             id,
             provenance,
+            worker,
             cancel,
             reply,
         });
         (id, cancelled, opened)
     });
-    if let Some((_, _, opened)) = &owned_subscription
-        && opened.recv_timeout(Duration::from_secs(10)) != Ok(true)
-    {
-        write_control_response(
-            &mut stream,
-            &ControlResponse::error_with(
-                ControlErrorCode::ExtensionInactive,
-                "extension generation is not active",
-            ),
-        );
-        return;
+    // A placed worker only hears what happens while the session on screen lies within its
+    // binding: events describe that session's panes, and a worker on another machine has no claim
+    // on a session somewhere else.
+    let mut binding = None;
+    if let Some((_, _, opened)) = &owned_subscription {
+        match opened.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(bound)) => binding = bound,
+            Ok(Err(response)) => {
+                write_control_response(&mut stream, &response);
+                return;
+            }
+            Err(_) => {
+                write_control_response(
+                    &mut stream,
+                    &ControlResponse::error_with(
+                        ControlErrorCode::ExtensionInactive,
+                        "extension generation is not active",
+                    ),
+                );
+                return;
+            }
+        }
     }
 
-    let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
+    let rx = event_hub.subscribe_bound((!kinds.is_empty()).then_some(kinds), binding);
     write_control_response(&mut stream, &ControlResponse::empty());
     let _ = stream.set_read_timeout(None);
     loop {
@@ -2571,7 +2636,18 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
     })
 }
 
-fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
+fn handle_connection(stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
+    serve_connection(stream, link, event_hub, RequestOrigin::Local);
+}
+
+/// Serve one control connection, local or relayed from a remote runtime's extension bridge. Both
+/// speak exactly the same protocol; only what the UI is told about the caller differs.
+pub(crate) fn serve_connection(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    event_hub: EventHub,
+    origin: RequestOrigin,
+) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
     let reader_stream = match stream.try_clone() {
@@ -2597,7 +2673,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             return;
         }
     };
-    let request = match serde_json::from_str::<ControlRequest>(&line) {
+    let mut request = match serde_json::from_str::<ControlRequest>(&line) {
         Ok(request) => request,
         Err(err) => {
             write_control_response(
@@ -2610,11 +2686,23 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             return;
         }
     };
-    if !authorize_extension_request(&mut stream, &link, request.extension.as_ref()) {
+    let Some(grant) = authorize_request(&mut stream, &link, &request, origin) else {
         return;
+    };
+    let worker = grant.as_ref().and_then(|grant| grant.worker);
+    if let Some(grant) = grant {
+        // The credential, not the request, says which extension and generation this is.
+        request.extension = Some(grant.provenance);
     }
     if let ControlCommand::Subscribe { events } = &request.command {
-        run_subscription(stream, link, event_hub, events, request.extension.clone());
+        run_subscription(
+            stream,
+            link,
+            event_hub,
+            events,
+            request.extension.clone(),
+            worker,
+        );
         return;
     }
     if let ControlCommand::Publish = &request.command {
@@ -2626,6 +2714,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             stream_id,
             request.source_pane,
             request.extension.clone(),
+            worker,
         );
         return;
     }
@@ -2653,12 +2742,17 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             tabs.clone(),
             tab.clone(),
             request.extension.clone(),
+            worker,
         );
         return;
     }
     let reply_timeout = control_reply_timeout(&request.command);
     let (tx, rx) = mpsc::channel();
-    link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));
+    link.send(Msg::ControlRequest(ControlEnvelope {
+        request,
+        reply: tx,
+        worker,
+    }));
     let response = rx.recv_timeout(reply_timeout).unwrap_or_else(|_| {
         ControlResponse::error_with(
             ControlErrorCode::RequestTimeout,
@@ -2777,6 +2871,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -2794,6 +2889,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         assert_eq!(
             serde_json::to_string(&request).unwrap(),
@@ -3226,6 +3322,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
@@ -3299,6 +3396,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
         assert_eq!(
@@ -3311,6 +3409,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
         assert_eq!(
@@ -3333,6 +3432,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -3352,6 +3452,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -3385,6 +3486,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(

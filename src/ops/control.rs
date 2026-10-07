@@ -37,6 +37,33 @@ pub(crate) fn handle_control_request(
         ));
         return Update::none();
     }
+    // A placed worker's request is admitted here, in the same update that carries it out, so the
+    // session it was checked against is the session it acts on.
+    let mut attribution = None;
+    if let Some(worker) = envelope.worker {
+        let admission =
+            crate::ops::extension_workers::live_worker(&ctx.state, worker).and_then(|worker| {
+                attribution = Some(worker.clone());
+                crate::ops::extension_workers::admit(&ctx.state, worker, &envelope.request)
+            });
+        match admission {
+            Err(response) => {
+                let _ = envelope.reply.send(response);
+                return Update::none();
+            }
+            Ok(crate::ops::extension_workers::Admission::EmptyListing) => {
+                let response = match envelope.request.command {
+                    ControlCommand::AgentsList => {
+                        ControlResponse::ok(crate::control::AgentListPayload(Vec::new()))
+                    }
+                    _ => ControlResponse::ok(crate::control::PaneListPayload(Vec::new())),
+                };
+                let _ = envelope.reply.send(response);
+                return Update::none();
+            }
+            Ok(crate::ops::extension_workers::Admission::Proceed) => {}
+        }
+    }
     if envelope.request.command.pane_wait().is_some() {
         return crate::ops::capture_wait::start(ctx, envelope);
     }
@@ -57,7 +84,8 @@ pub(crate) fn handle_control_request(
     };
     let extension = envelope.request.extension.clone();
     let response = match envelope.request.command {
-        ControlCommand::ListPanes => list_panes(ctx),
+        // The scratchpad's panes are this client's own, never a placed worker's to see.
+        ControlCommand::ListPanes => list_panes(ctx, attribution.is_none()),
         ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
         ControlCommand::LayoutSet {
             workspace,
@@ -208,7 +236,16 @@ pub(crate) fn handle_control_request(
             message,
             title,
             level,
-        } => notify_command(ctx, message, title, level),
+        } => match &attribution {
+            // A toast from another machine names it, so it cannot pass for this client's own.
+            Some(worker) => notify_command(
+                ctx,
+                crate::ops::extension_workers::attribute(worker, &message),
+                title.map(|title| crate::ops::extension_workers::attribute(worker, &title)),
+                level,
+            ),
+            None => notify_command(ctx, message, title, level),
+        },
         ControlCommand::CommandVisibility { command, visible } => {
             crate::ops::command_visibility::set(
                 &mut ctx.state,
@@ -926,7 +963,7 @@ fn pane_close(
     )
 }
 
-fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
+fn list_panes(ctx: &Context<AppRoot>, include_scratch: bool) -> ControlResponse {
     let mut panes = Vec::new();
     let attachment = ctx.state.current();
     let session = session_label(attachment);
@@ -942,7 +979,13 @@ fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
             panes.push(info);
         }
     }
-    for pane in ctx.state.scratch.panes.iter().filter(|pane| !pane.closing) {
+    for pane in ctx
+        .state
+        .scratch
+        .panes
+        .iter()
+        .filter(|pane| include_scratch && !pane.closing)
+    {
         panes.push(PaneInfo::new(pane, 0, &session, None));
     }
     ControlResponse::ok(crate::control::PaneListPayload(panes))
@@ -2069,8 +2112,10 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                credential: None,
             },
             reply,
+            worker: None,
         });
         (message, response)
     }
@@ -2299,8 +2344,10 @@ mod tests {
                                 id: "tools".to_string(),
                                 generation: "retired".to_string(),
                             }),
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .unwrap();
 
@@ -2332,8 +2379,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .unwrap();
 
@@ -2435,8 +2484,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch writable status request");
                 assert!(response.recv().unwrap().ok);
@@ -2470,8 +2521,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch read-only status request");
                 let response = response.recv().unwrap();
@@ -2533,8 +2586,10 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
                 reply,
+                worker: None,
             },
             response,
         )
@@ -2691,8 +2746,10 @@ mod tests {
                                     source_pane: None,
                                     source_session: None,
                                     extension: None,
+                                    credential: None,
                                 },
                                 reply: tx,
+                                worker: None,
                             },
                         ))
                         .expect("dispatch notify");
@@ -2714,8 +2771,10 @@ mod tests {
                                 source_pane: None,
                                 source_session: None,
                                 extension: None,
+                                credential: None,
                             },
                             reply: tx,
+                            worker: None,
                         },
                     ))
                     .expect("dispatch notify");
@@ -2794,8 +2853,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch send-text at a starting pane");
                 assert!(response.recv().unwrap().ok);
@@ -2857,8 +2918,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch send-text at an exited pane");
                 let response = response.recv().unwrap();
@@ -2896,8 +2959,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch list panes");
                 let data = response.recv().unwrap().data.unwrap();
@@ -2932,8 +2997,10 @@ mod tests {
                                 source_pane: None,
                                 source_session: None,
                                 extension: None,
+                                credential: None,
                             },
                             reply,
+                            worker: None,
                         }))
                         .expect("dispatch layout get");
                     let response = response.recv().unwrap();
@@ -3014,8 +3081,10 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
                 reply,
+                worker: None,
             }))
             .expect("dispatch control request");
         response.recv().unwrap()
@@ -3845,8 +3914,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("update metrics");
                 assert_eq!(level, tui_lipan::UpdateLevel::None);
@@ -3908,8 +3979,10 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
                 reply,
+                worker: None,
             }))
             .expect("dispatch control request");
         response

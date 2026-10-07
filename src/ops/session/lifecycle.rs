@@ -891,7 +891,7 @@ fn disconnect_discovered_attachment(
 }
 
 /// Disconnect the client from a remote host: close every attachment (current and retained) to the
-/// selected row's host, leaving the remote servers running. A host-wide sibling of
+/// browsing tab's host, leaving the remote servers running. A host-wide sibling of
 /// [`disconnect_selected_attachment`]; if the current session lives on that host the UI lands on the
 /// session picker or launcher. Non-destructive - the remote sessions can be reattached later.
 pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
@@ -900,7 +900,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .session_picker
         .as_ref()
-        .and_then(|picker| picker.effective_tab().remote_target().cloned())
+        .and_then(|picker| picker.tab.remote_target().cloned())
     else {
         return Update::none();
     };

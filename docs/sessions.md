@@ -80,7 +80,8 @@ searchable in Sessions and Agents.
 Creation stays on the browsing host while searching. On **All**, it uses the foreground session's
 host, or the launcher's host when no session is attached. The footer names the destination with
 **new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
-that destination. Row actions always apply to the selected session, including remote search results.
+that destination. `Ctrl+X` disconnects the browsing tab's host even while searching All.
+Row actions always apply to the selected session, including remote search results.
 
 Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
 highlighted session you were browsing. If that session is gone, Sessions highlights the first row

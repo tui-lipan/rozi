@@ -531,7 +531,7 @@ fn push_session_management_actions(
         ));
     }
     if picker
-        .effective_tab()
+        .tab
         .remote_target()
         .is_some_and(|target| crate::ops::session::host_can_disconnect(&ctx.state, target))
     {

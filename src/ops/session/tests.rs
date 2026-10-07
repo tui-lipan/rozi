@@ -1955,33 +1955,45 @@ fn a_host_held_only_by_the_launcher_scope_can_still_be_disconnected() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
-            {
-                let state = backend.state_mut();
-                *state.current_mut() = crate::state::Attachment::new();
-                state.launcher_scope = Some(workbox.clone());
-                state.session_picker =
-                    Some(SessionPickerState::new(Vec::new()).on_tab(Some(workbox.clone())));
-                state.show_session_picker = true;
+            crate::test_support::isolate_user_dirs();
+            for query in ["", "missing"] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+                {
+                    let state = backend.state_mut();
+                    *state.current_mut() = crate::state::Attachment::new();
+                    state.launcher_scope = Some(workbox.clone());
+                    state.session_picker =
+                        Some(SessionPickerState::new(Vec::new()).on_tab(Some(workbox.clone())));
+                    state.session_picker.as_mut().unwrap().input.set_text(query);
+                    state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                    state.show_session_picker = true;
+                }
+                assert!(
+                    crate::ops::session::host_can_disconnect(backend.state(), &workbox),
+                    "the scope alone is enough to have something to disconnect"
+                );
+
+                backend.render();
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(
+                    rendered.contains("disconnect host"),
+                    "query {query:?}: {rendered}"
+                );
+
+                backend
+                    .update_level(Msg::SessionPickerDisconnectHost)
+                    .expect("disconnect a host we only point at");
+
+                assert!(
+                    backend.state().launcher_scope.is_none(),
+                    "the launcher stops naming a host we just walked away from"
+                );
+                assert!(
+                    !crate::ops::session::host_can_disconnect(backend.state(), &workbox),
+                    "with the scope gone there is nothing left to disconnect"
+                );
             }
-            assert!(
-                crate::ops::session::host_can_disconnect(backend.state(), &workbox),
-                "the scope alone is enough to have something to disconnect"
-            );
-
-            backend
-                .update_level(Msg::SessionPickerDisconnectHost)
-                .expect("disconnect a host we only point at");
-
-            assert!(
-                backend.state().launcher_scope.is_none(),
-                "the launcher stops naming a host we just walked away from"
-            );
-            assert!(
-                !crate::ops::session::host_can_disconnect(backend.state(), &workbox),
-                "with the scope gone there is nothing left to disconnect"
-            );
         })
         .expect("spawn scope-only disconnect test")
         .join()

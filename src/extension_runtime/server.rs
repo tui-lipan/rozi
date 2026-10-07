@@ -648,7 +648,10 @@ mod tests {
         fn start() -> Self {
             let store = tempfile::tempdir().unwrap();
             let run = short_dir();
-            let runtime_dir = run.path().to_path_buf();
+            // The endpoint's directory has to be private, as a real runtime directory is: Windows
+            // refuses to publish a pipe's entry anywhere else.
+            let runtime_dir = run.path().join("run");
+            crate::platform::fs_security::ensure_private_dir(&runtime_dir).unwrap();
             let (from_client, to_runtime) = std::io::pipe().unwrap();
             let (from_runtime, to_client) = std::io::pipe().unwrap();
             let options = ServeOptions {

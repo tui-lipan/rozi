@@ -22,6 +22,10 @@ use super::bundle::{self, Bundle, BundleFile};
 /// bundle, so without a bound the cache only ever grows.
 const RETAINED_BUNDLES: usize = 16;
 
+/// How old a staging directory must be before pruning treats it as left behind by a runtime that
+/// died, rather than one another runtime on this host is still writing.
+const ABANDONED_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum StoreError {
     /// No bundle with this digest is cached; the client should send it.
@@ -93,11 +97,17 @@ impl BundleStore {
             discard(&staging);
             return Err(error);
         }
-        if target.exists() {
-            discard(&target);
+        // Another client's runtime on this host may have staged the same digest meanwhile. Its copy
+        // is as good as ours once it verifies; only a copy that fails is replaced.
+        if self.verified(bundle.digest()).is_ok() {
+            discard(&staging);
+            return Ok(target);
         }
         if let Err(error) = std::fs::rename(&staging, &target) {
             discard(&staging);
+            if self.verified(bundle.digest()).is_ok() {
+                return Ok(target);
+            }
             return Err(StoreError::Io(format!("cannot install bundle: {error}")));
         }
         Ok(target)
@@ -139,8 +149,17 @@ impl BundleStore {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with(".staging-") {
-                // A staging directory survives only a runtime that died mid-write.
-                discard(&entry.path());
+                // A staging directory survives a runtime that died mid-write. A recent one may be
+                // another client's runtime writing right now, so only an old one is abandoned.
+                let abandoned = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > ABANDONED_STAGING);
+                if abandoned {
+                    discard(&entry.path());
+                }
                 continue;
             }
             if !bundle::is_digest(&name) || keep.contains(&name) {
@@ -559,12 +578,25 @@ mod tests {
             store.stage(&bundle).unwrap();
             digests.push(bundle.digest().to_string());
         }
-        std::fs::create_dir(store.root().join(".staging-leftover")).unwrap();
+        // Backdating a directory's time needs a handle to it, which only Unix opens like a file.
+        let leftover = store.root().join(".staging-leftover");
+        #[cfg(unix)]
+        {
+            std::fs::create_dir(&leftover).unwrap();
+            std::fs::File::open(&leftover)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - 2 * ABANDONED_STAGING)
+                .unwrap();
+        }
+        // Another runtime's staging in progress is left alone.
+        let busy = store.root().join(".staging-busy");
+        std::fs::create_dir(&busy).unwrap();
         let keep: std::collections::HashSet<_> = [digests[0].clone()].into_iter().collect();
         store.prune(&keep);
         let remaining = std::fs::read_dir(store.root()).unwrap().count();
-        assert_eq!(remaining, RETAINED_BUNDLES + 1);
+        assert_eq!(remaining, RETAINED_BUNDLES + 2);
         assert!(store.root().join(&digests[0]).exists());
-        assert!(!store.root().join(".staging-leftover").exists());
+        assert!(!leftover.exists());
+        assert!(busy.exists());
     }
 }

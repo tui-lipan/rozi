@@ -63,16 +63,23 @@ unset ROZI_SOCKET ROZI_PANE ROZI_BIN ROZI_SESSION_INSTANCE ROZI_CONFIG
 export HOME="$FAKE_HOST/home" XDG_RUNTIME_DIR="$FAKE_HOST/run" XDG_CACHE_HOME="$FAKE_HOST/cache"
 export XDG_DATA_HOME="$FAKE_HOST/data" XDG_STATE_HOME="$FAKE_HOST/state" XDG_CONFIG_HOME="$FAKE_HOST/config"
 export ROZI_TEST_HOST=pc
+cd "$HOME"
 case "$*" in
   *extensions*runtime*)
     if [ -n "$FAKE_HOST_OLD_ROZI" ]; then
       echo "rozi: unknown extensions command \`runtime\` (expected list, install, update, remove, new, or check)" >&2
       exit 2
     fi
-    echo "$$" >> "$FAKE_HOST/runtimes"
+    # Like sshd, keep the remote command a process of its own: when the client kills its ssh, the
+    # command loses its channel - end of input - rather than dying with it. The explicit
+    # redirection keeps the shell from giving a background job /dev/null for stdin.
+    exec 3<&0
+    /bin/sh -c "exec $*" 0<&3 3<&- &
+    echo "$!" >> "$FAKE_HOST/runtimes"
+    wait "$!"
+    exit "$?"
     ;;
 esac
-cd "$HOME"
 exec /bin/sh -c "$*"
 "#,
         );
@@ -586,7 +593,13 @@ fn main_case() {
     let old_epoch = backend.state().extension_runtime.hosts[&HostKey::Remote(pc())].epoch;
     let old_runtime = *runtimes().last().unwrap();
     kill(old_runtime);
-    wait_dead(backend, edited);
+    // A runtime killed outright cannot stop what it started. Linux kills its processes with it;
+    // elsewhere they are left to notice their closed stdin, which this probe does not watch.
+    if cfg!(target_os = "linux") {
+        wait_dead(backend, edited);
+    } else {
+        kill(edited);
+    }
     let (reconnected, _) = worker(backend, &[pid, restarted, edited]);
     let new_epoch = backend.state().extension_runtime.hosts[&HostKey::Remote(pc())].epoch;
     assert!(new_epoch > old_epoch);

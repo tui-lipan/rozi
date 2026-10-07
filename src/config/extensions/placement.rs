@@ -308,7 +308,9 @@ mod tests {
         assert_eq!(
             argv,
             [
-                std::path::Path::new("/cache/bundles/abc/bin/run")
+                std::path::Path::new("/cache/bundles/abc")
+                    .join("bin")
+                    .join("run")
                     .to_string_lossy()
                     .to_string(),
                 "/cache/bundles/abc/data".to_string()

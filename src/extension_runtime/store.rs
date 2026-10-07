@@ -13,6 +13,7 @@
 //! the verification does not trust them either: a bundle whose files have regained a write bit is
 //! treated as tampered with, the same as one whose contents changed.
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,36 @@ impl std::fmt::Display for StoreError {
 
 pub struct BundleStore {
     root: PathBuf,
+}
+
+/// Where runtimes keep their leases, inside the cache.
+const LEASES: &str = ".leases";
+
+/// One runtime's claim on the bundles it uses. Recorded before a bundle is staged or run, so no
+/// other runtime's pruning can remove it in between.
+pub struct Lease {
+    _lock: std::fs::File,
+    digests: std::fs::File,
+    lock_path: PathBuf,
+    digests_path: PathBuf,
+    recorded: HashSet<String>,
+}
+
+impl Lease {
+    pub fn record(&mut self, digest: &str) -> io::Result<()> {
+        if !bundle::is_digest(digest) || !self.recorded.insert(digest.to_string()) {
+            return Ok(());
+        }
+        std::io::Write::write_all(&mut self.digests, format!("{digest}\n").as_bytes())?;
+        self.digests.sync_data()
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.digests_path);
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
 }
 
 impl BundleStore {
@@ -140,8 +171,77 @@ impl BundleStore {
         }
     }
 
-    /// Drop all but the most recently used bundles, never one in `keep`.
-    pub fn prune(&self, keep: &std::collections::HashSet<String>) {
+    /// Take a lease on the cache for one runtime, held until it is dropped. Every runtime of every
+    /// client on this host shares the cache, and only a lease tells one runtime's pruning that
+    /// another still runs - or is about to run - a bundle.
+    pub fn lease(&self, id: &str) -> io::Result<Lease> {
+        let dir = self.root.join(LEASES);
+        crate::platform::fs_security::ensure_private_dir(&dir)?;
+        let lock_path = dir.join(format!("{id}.lock"));
+        let digests_path = dir.join(format!("{id}.digests"));
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)?;
+        lock.lock()?;
+        let digests = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&digests_path)?;
+        Ok(Lease {
+            _lock: lock,
+            digests,
+            lock_path,
+            digests_path,
+            recorded: HashSet::new(),
+        })
+    }
+
+    /// Digests some live runtime's lease names. A lease whose lock nobody holds belonged to a
+    /// runtime that died without dropping it, and is removed.
+    fn leased(&self) -> HashSet<String> {
+        let dir = self.root.join(LEASES);
+        let mut live = HashSet::new();
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return live;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "lock") {
+                continue;
+            }
+            let digests = path.with_extension("digests");
+            let Ok(lock) = std::fs::OpenOptions::new().write(true).open(&path) else {
+                continue;
+            };
+            match lock.try_lock() {
+                Ok(()) => {
+                    drop(lock);
+                    let _ = std::fs::remove_file(&digests);
+                    let _ = std::fs::remove_file(&path);
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    let text = std::fs::read_to_string(&digests).unwrap_or_default();
+                    // A line still being appended is incomplete and not a digest; the bundle it
+                    // names is recorded before it is used, so the next prune sees it whole.
+                    live.extend(
+                        text.lines()
+                            .filter(|line| bundle::is_digest(line))
+                            .map(str::to_string),
+                    );
+                }
+                Err(std::fs::TryLockError::Error(_)) => {}
+            }
+        }
+        live
+    }
+
+    /// Drop all but the most recently used bundles, never one in `keep` or in any live runtime's
+    /// lease.
+    pub fn prune(&self, keep: &HashSet<String>) {
+        let leased = self.leased();
+        let keep: HashSet<&String> = keep.iter().chain(leased.iter()).collect();
         let Ok(entries) = std::fs::read_dir(&self.root) else {
             return;
         };
@@ -219,7 +319,7 @@ fn verify(root: &Path, digest: &str, sealed: bool) -> Result<(), StoreError> {
 fn collect(
     directory: &Path,
     prefix: String,
-    executables: &Option<std::collections::HashSet<String>>,
+    executables: &Option<HashSet<String>>,
     sealed: bool,
     files: &mut Vec<BundleFile>,
 ) -> Result<(), String> {
@@ -368,7 +468,7 @@ fn pending_executable(path: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn read_modes(_root: &Path) -> Option<std::collections::HashSet<String>> {
+fn read_modes(_root: &Path) -> Option<HashSet<String>> {
     None
 }
 
@@ -384,7 +484,7 @@ fn write_modes(root: &Path, bundle: &Bundle) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn read_modes(root: &Path) -> Option<std::collections::HashSet<String>> {
+fn read_modes(root: &Path) -> Option<HashSet<String>> {
     let text = std::fs::read_to_string(root.join(MODES_FILE)).unwrap_or_default();
     Some(
         text.lines()
@@ -553,6 +653,73 @@ mod tests {
             store.verified(bundle.digest()),
             Err(StoreError::Corrupt(_))
         ));
+    }
+
+    /// Two clients' runtimes share the cache. One staging enough newer bundles to prune must not
+    /// remove a bundle the other still runs from; once that runtime is gone, it may.
+    #[test]
+    fn a_bundle_another_runtime_leases_survives_pruning_until_its_lease_ends() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("bundles");
+        let first = BundleStore::open(root.clone()).unwrap();
+        let second = BundleStore::open(root.clone()).unwrap();
+        let live = sample();
+        first.stage(&live).unwrap();
+        let mut lease = first.lease("first").unwrap();
+        lease.record(live.digest()).unwrap();
+
+        let _own = second.lease("second").unwrap();
+        for index in 0..(RETAINED_BUNDLES + 4) {
+            let newer = Bundle::from_files(vec![BundleFile {
+                path: "n".to_string(),
+                executable: false,
+                contents: index.to_string().into_bytes(),
+            }])
+            .unwrap();
+            second.stage(&newer).unwrap();
+            // Newer than the leased one, so it would go first without the lease.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        second.prune(&HashSet::new());
+        // Checked by path: verifying would refresh its recency and keep it for that reason alone.
+        assert!(
+            root.join(live.digest()).exists(),
+            "another runtime's live bundle was pruned"
+        );
+
+        drop(lease);
+        second.prune(&HashSet::new());
+        assert!(!root.join(live.digest()).exists());
+        // The ended lease left nothing behind.
+        let leases: Vec<_> = std::fs::read_dir(root.join(LEASES))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(
+            leases.len(),
+            2,
+            "only `second`'s own lease remains: {leases:?}"
+        );
+    }
+
+    /// A runtime that died without dropping its lease leaves its lock unheld; the next prune treats
+    /// the lease as gone.
+    #[test]
+    fn a_lease_nobody_holds_is_stale() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(temp.path().join("bundles")).unwrap();
+        let live = sample();
+        store.stage(&live).unwrap();
+        let dir = store.root().join(LEASES);
+        std::fs::write(dir.join("dead.lock"), b"").unwrap_or_else(|_| {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("dead.lock"), b"").unwrap();
+        });
+        std::fs::write(dir.join("dead.digests"), format!("{}\n", live.digest())).unwrap();
+        assert!(store.leased().is_empty());
+        assert!(!dir.join("dead.lock").exists());
+        assert!(!dir.join("dead.digests").exists());
     }
 
     #[test]

@@ -107,6 +107,8 @@ pub fn serve_with(
         Some(root) => BundleStore::open(root)?,
         None => BundleStore::open_default()?,
     };
+    let bridge_id = bridge_id();
+    let lease = store.lease(&bridge_id)?;
     store.prune(&HashSet::new());
     let runtime_dir = match options.runtime_dir {
         Some(dir) => dir,
@@ -115,7 +117,7 @@ pub fn serve_with(
     // Unique per runtime, not just per process: a Windows pipe is named after the entry's file
     // name alone, and this machine's in-process runtime can be restarting while its predecessor
     // still holds the old name.
-    let endpoint = EndpointRegistry::extension_bridge_endpoint(&runtime_dir, &bridge_id());
+    let endpoint = EndpointRegistry::extension_bridge_endpoint(&runtime_dir, &bridge_id);
     let bridge_path = endpoint.path().to_path_buf();
     let listener = endpoint.bind()?.into_listener();
     let _bridge_guard = RemoveOnDrop(bridge_path.clone());
@@ -152,6 +154,7 @@ pub fn serve_with(
     let mut runtime = Runtime {
         writer,
         store,
+        lease,
         bridge_path,
         running: HashMap::new(),
         bridges: HashMap::new(),
@@ -187,6 +190,9 @@ pub fn serve_with(
 struct Runtime {
     writer: SharedWriter,
     store: BundleStore,
+    /// This runtime's claim on the bundles it stages and runs, so another client's runtime on
+    /// this host never prunes one out from under a live process.
+    lease: super::store::Lease,
     bridge_path: PathBuf,
     running: HashMap<u64, Running>,
     bridges: HashMap<u64, mpsc::Sender<Option<Vec<u8>>>>,
@@ -222,6 +228,7 @@ impl Runtime {
     fn handle_message(&mut self, message: Message) -> io::Result<()> {
         match message {
             Message::StageCommit { digest } => {
+                let _ = self.lease.record(&digest);
                 let archive = self.pending_stage.remove(&digest).unwrap_or_default();
                 let result = Bundle::from_archive(&archive, &digest)
                     .and_then(|bundle| self.store.stage(&bundle).map_err(|e| e.to_string()));
@@ -308,6 +315,7 @@ impl Runtime {
         if !platforms.is_empty() && !platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
         }
+        let _ = self.lease.record(digest);
         // Verified now, immediately before the launch, not when it was staged.
         let bundle_dir = self.store.verified(digest).map_err(|error| match error {
             StoreError::Missing => SpawnFailure::BundleMissing,
@@ -1040,9 +1048,11 @@ mod tamper_tests {
         )
         .unwrap();
         std::fs::write(staged.join("bin/probe"), "#!/bin/sh\necho pwned\n").unwrap();
+        let lease = store.lease("tamper-test").unwrap();
         let mut runtime = Runtime {
             writer: Arc::new(Mutex::new(Box::new(Vec::new()))),
             store,
+            lease,
             bridge_path: PathBuf::from("/nonexistent"),
             running: HashMap::new(),
             bridges: HashMap::new(),

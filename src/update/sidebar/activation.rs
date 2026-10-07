@@ -183,6 +183,20 @@ pub(crate) fn command_row_activate(
             } if name == &tab_id => Some((action.clone(), env.clone())),
             _ => None,
         });
+    // A placed tab's `exec` runs on the active session's host, like its listing did.
+    if let Some((placements, placed)) = crate::ops::placement::placed_tab(&ctx.state, &tab_id)
+        && placed.on_click_exec.is_some()
+        && let Some((UserCommandAction::Exec { .. }, env)) = &found
+    {
+        return crate::ops::placement::click_tab(
+            ctx,
+            &tab_id,
+            placements,
+            &placed,
+            &line,
+            env.clone(),
+        );
+    }
     found.map_or_else(Update::none, |(action, mut env)| {
         // `send` gets the row substituted as literal keystrokes. `run`/`popup`/`exec` never do — a
         // row is command output and must not compose a command line — so they receive it as

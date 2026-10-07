@@ -31,6 +31,36 @@ pub(crate) use target::{validate_remote_executable_token, validate_remote_target
 
 use crate::config::{RemoteConfig, RemoteHostConfig};
 
+/// Start `rozi <args>` on `target` over a channel of its own, for a connection nobody is waiting
+/// on: the host monitor, an extension runtime. Batch mode, so it never raises an SSH prompt, and on
+/// Linux the ssh process dies with the thread that started it. Returns the channel and a collector
+/// for the ssh process's stderr, which is where a refusal is explained.
+pub(crate) fn spawn_rozi_channel(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    args: &[&str],
+) -> std::io::Result<(
+    crate::platform::ipc::IpcConnection,
+    std::thread::JoinHandle<String>,
+)> {
+    validate_remote_target(target).map_err(std::io::Error::other)?;
+    let resolved = ResolvedRemote::resolve(target, config);
+    let config = config.unattended();
+    let binary = binary::resolve(target, &config).map_err(std::io::Error::other)?;
+    let mut command = ssh_base_command(&resolved, &config);
+    append_ssh_destination(&mut command, &resolved);
+    append_remote_rozi_command(&mut command, &binary.path, args, binary.family);
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    crate::platform::command::kill_on_supervisor_death(&mut command);
+    let mut child = command.spawn()?;
+    let stderr = connect::spawn_stderr_collector(child.stderr.take().expect("piped stderr"));
+    let connection = crate::platform::ipc::connection_from_child(child)?;
+    Ok((connection, stderr))
+}
+
 /// Format a failed namespaced session command, translating an old remote parser's diagnostics into
 /// a version-skew message while preserving stderr for unrelated failures.
 pub(crate) fn sessions_command_failure(verb: &str, stderr: &str) -> String {

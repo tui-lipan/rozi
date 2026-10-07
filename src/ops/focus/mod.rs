@@ -3358,8 +3358,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("cross-workspace focus");
                 assert!(response.recv().unwrap().ok);
@@ -3380,8 +3382,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("same-workspace focus");
                 assert!(response.recv().unwrap().ok);

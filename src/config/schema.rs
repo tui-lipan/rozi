@@ -1261,6 +1261,9 @@ pub struct Config {
     /// Process-facing definitions used to preserve or rotate opaque runtime fencing tokens.
     pub(crate) extension_runtime:
         std::collections::BTreeMap<String, super::extensions::ExtensionRuntimeFingerprint>,
+    /// Contributions that run on a session host rather than here, per extension that has any.
+    pub extension_placements:
+        std::collections::BTreeMap<String, super::extensions::placement::SharedPlacements>,
     pub logging: LoggingConfig,
     pub capture: CaptureConfig,
     pub recording: RecordingConfig,
@@ -1627,7 +1630,7 @@ impl SidebarPosition {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SidebarTabId(String);
 
 impl SidebarTabId {
@@ -1991,6 +1994,7 @@ impl Default for Config {
             extension_action_key_defaults: HashMap::new(),
             suggested_keybinding_resolutions: Vec::new(),
             extension_runtime: std::collections::BTreeMap::new(),
+            extension_placements: std::collections::BTreeMap::new(),
             logging: LoggingConfig::default(),
             capture: CaptureConfig::default(),
             recording: RecordingConfig::default(),

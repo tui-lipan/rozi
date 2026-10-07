@@ -61,8 +61,8 @@ use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND,
-    ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, GENERIC_READ,
-    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING,
+    ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, ReadFile,
@@ -466,6 +466,20 @@ impl IpcConnection {
         }
     }
 
+    /// Stop writing, so the peer reads end of file once it has read everything written before.
+    ///
+    /// A server end disconnects to end the stream, and disconnecting discards whatever the client
+    /// has not read yet. So it first waits for the client to drain the pipe - which ends early with
+    /// an error if the client goes away instead.
+    pub fn finish_writes(&self) -> io::Result<()> {
+        if let Self::Local(local) = self
+            && local.server_end
+        {
+            unsafe { windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(local.handle.0) };
+        }
+        self.shutdown(std::net::Shutdown::Write)
+    }
+
     pub fn shutdown(&self, _how: std::net::Shutdown) -> io::Result<()> {
         match self {
             Self::Local(local) => {
@@ -640,7 +654,8 @@ impl Read for LocalConnection {
             match err.raw_os_error().map(|code| code as u32) {
                 // The genuine "peer closed the pipe" case, and the only thing that may become the
                 // `Ok(0)` that means EOF to `io::Read`.
-                Some(ERROR_BROKEN_PIPE) => return Ok(0),
+                // A server that disconnected its end is gone just as surely as one that closed it.
+                Some(ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED) => return Ok(0),
                 Some(ERROR_NO_DATA) => match self.wait_or_block(deadline)? {
                     Waited::Retry => continue,
                     Waited::WouldBlock => {

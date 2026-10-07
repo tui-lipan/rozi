@@ -20,21 +20,56 @@ pub(crate) fn stream_opened(
     stream_id: u64,
     requested_pane: Option<PaneId>,
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
     sender: std::sync::mpsc::SyncSender<String>,
-    ack: std::sync::mpsc::Sender<std::result::Result<PaneId, String>>,
+    ack: std::sync::mpsc::Sender<std::result::Result<PaneId, crate::control::ControlResponse>>,
 ) -> Update {
+    use crate::control::ControlResponse;
     if extension.as_ref().is_some_and(|provenance| {
         !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
     }) {
-        let _ = ack.send(Err("extension is not active".to_string()));
+        let _ = ack.send(Err(ControlResponse::error_with(
+            crate::control::ControlErrorCode::ExtensionInactive,
+            "extension is not active",
+        )));
         return Update::none();
     }
+    // A placed worker publishes only into a pane of a session within its binding, and its rows
+    // keep flowing only while that session is the one on screen: pane ids repeat across sessions,
+    // and a later report must never land in whichever session happens to be showing then.
+    let binding = match worker {
+        None => None,
+        Some(worker) => {
+            let admitted =
+                crate::ops::extension_workers::live_worker(&ctx.state, worker).and_then(|worker| {
+                    let request = crate::control::ControlRequest {
+                        command: crate::control::ControlCommand::Publish,
+                        source_pane: requested_pane,
+                        source_session: None,
+                        extension: None,
+                        credential: None,
+                    };
+                    crate::ops::extension_workers::admit(&ctx.state, worker, &request)
+                        .map(|_| worker.binding.clone())
+                });
+            match admitted {
+                Ok(binding) => Some(binding),
+                Err(response) => {
+                    let _ = ack.send(Err(response));
+                    return Update::none();
+                }
+            }
+        }
+    };
     let Some(pane_id) = requested_pane.or_else(|| ctx.state.focused_pane()) else {
-        let _ = ack.send(Err("publish requires a live pane".to_string()));
+        let _ = ack.send(Err(ControlResponse::error("publish requires a live pane")));
         return Update::none();
     };
     if crate::pane::lifecycle::find_pane(&ctx.state, pane_id).is_none() {
-        let _ = ack.send(Err(format!("pane {pane_id} not found")));
+        let _ = ack.send(Err(ControlResponse::error_with(
+            crate::control::ControlErrorCode::PaneNotFound,
+            format!("pane {pane_id} not found"),
+        )));
         return Update::none();
     }
     ctx.state.publish_streams.insert(
@@ -43,6 +78,7 @@ pub(crate) fn stream_opened(
             id: stream_id,
             sender,
             extension,
+            binding,
         },
     );
     let _ = ack.send(Ok(pane_id));
@@ -57,11 +93,18 @@ pub(crate) fn rows_reported(
     pane_id: PaneId,
     rows: Vec<PublishedRow>,
 ) -> Update {
-    if ctx
+    let Some(stream) = ctx
         .state
         .publish_streams
         .get(&pane_id)
-        .is_none_or(|stream| stream.id != stream_id)
+        .filter(|stream| stream.id == stream_id)
+    else {
+        return Update::none();
+    };
+    if stream
+        .binding
+        .as_ref()
+        .is_some_and(|binding| !crate::ops::extension_workers::in_scope(&ctx.state, binding))
     {
         return Update::none();
     }
@@ -212,6 +255,7 @@ mod tests {
                 extension,
                 sender,
                 ack,
+                worker: None,
             })
             .expect("dispatch stream open");
         assert_eq!(reply.recv().unwrap(), Ok(1));
@@ -400,11 +444,12 @@ mod tests {
                     }),
                     sender: tx,
                     ack,
+                    worker: None,
                 })
                 .expect("dispatch stream open");
             assert_eq!(
-                reply.recv().unwrap(),
-                Err("extension is not active".to_string())
+                reply.recv().unwrap().unwrap_err().code,
+                Some(crate::control::ControlErrorCode::ExtensionInactive)
             );
             assert!(backend.state().publish_streams.is_empty());
         });

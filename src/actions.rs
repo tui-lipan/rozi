@@ -83,6 +83,12 @@ fn run_named_command(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(command) = ctx.state.config.commands.get(index).cloned() else {
         return Update::none();
     };
+    // A command placed on the active session runs on that session's host, never here.
+    if let Some((placements, placed)) =
+        crate::ops::placement::placed_command(&ctx.state, &command.id)
+    {
+        return crate::ops::placement::run_command(ctx, &command, placements, &placed, Vec::new());
+    }
     user_command::execute_with_env(ctx, &command.action, command.env)
 }
 
@@ -1281,8 +1287,10 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            credential: None,
                         },
                         reply,
+                        worker: None,
                     }))
                     .expect("dispatch control action");
 

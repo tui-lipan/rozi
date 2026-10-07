@@ -79,6 +79,9 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
 - Run hooks when pane, focus, workspace, session, or profile events occur.
 - Build extensions with static navigation targets plus out-of-process commands, services, tabbed
   pickers, activity rows, and notifications.
+- Place an extension's commands, services, and sidebar tabs on the host of an attached session, so
+  they run on a remote machine from a verified copy of the extension and reach your client only
+  through rozi. See [Run on the session host](extensions.md#run-on-the-session-host).
 - Discover public `rozi-extension` repositories in-app and install their exact indexed commits after
   reviewing source, compatibility, and contribution counts.
 

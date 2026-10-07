@@ -639,8 +639,10 @@ the prefix becomes a section header showing the rest of the line. A line holding
 dropped, like a blank line. Headers cannot be selected, so `on_click` applies to every other row.
 
 A command tab runs in the focused pane's working directory and lists again when that directory
-changes. Its `on_click` `send` action may use `{line}` for the row's text. `run`, `popup`, and
-`exec` receive the row in `ROZI_ROW` instead of having it inserted into the command.
+changes. The command runs on this machine, so in a session attached with `--remote` it runs in
+`rozi`'s own directory rather than in the remote pane's. Its `on_click` `send` action may use
+`{line}` for the row's text. `run`, `popup`, and `exec` receive the row in `ROZI_ROW` instead of
+having it inserted into the command.
 
 ### Opening a diff viewer or editor from a row
 
@@ -811,7 +813,7 @@ Named commands have stable IDs, so you can bind them under `[keys]` and run them
 | `run` | string | none | Opens a pane running the command through `command_shell`. |
 | `send` | string | none | Sends literal text to the focused pane. |
 | `popup` | string | none | Opens a centered popup running the command through `command_shell`. |
-| `exec` | string | none | Runs the command in the background through `command_shell` and discards its output. Shares the 32-job limit with hooks. |
+| `exec` | string | none | Runs the command in the background through `command_shell` and discards its output. Shares the 32-job limit with hooks. It runs on this machine, in the focused pane's directory only when that pane is local. |
 | `keep_open` | bool | `true` | For `run` and `popup`: keeps the pane or popup open after the command exits. |
 
 Set exactly one of `run`, `send`, `popup`, or `exec`.

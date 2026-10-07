@@ -39,6 +39,19 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
     }
 }
 
+/// Ask the running UI for its extension runtime report, if one answers promptly. Never fails the
+/// caller: `extensions list` works without a UI, and only adds this when there is one to ask.
+pub(crate) fn live_extension_runtime() -> Option<control::ExtensionRuntimeReport> {
+    let path = discover_socket(None).ok()?;
+    let mut stream = IpcEndpoint::at_path(&path).connect().ok()?;
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+    let request = control_request(control::ControlCommand::ExtensionRuntimeStatus);
+    writeln!(stream, "{}", serde_json::to_string(&request).ok()?).ok()?;
+    let line = read_socket_line(&mut BufReader::new(stream)).ok()?;
+    let response: control::ControlResponse = serde_json::from_str(&line).ok()?;
+    serde_json::from_value(response.data?).ok()
+}
+
 /// Bridge stdin/stdout to a `publish` control stream for the calling pane.
 ///
 /// Runs until either side closes: rozi withdraws the pane's rows on EOF, so a publisher that

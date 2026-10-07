@@ -131,7 +131,11 @@ fn exec_argv(
         );
         return Update::none();
     };
-    let cwd = crate::pane::lifecycle::focused_spawn_cwd(&ctx.state);
+    // The cwd belongs to the machine running the process. This one runs here, on the client, so it
+    // gets the focused pane's directory only when that pane is local too. Under `--remote` the
+    // pane's path names a directory on the session host; handed to a local spawn it would either
+    // fail or, where the same path exists here, run in the wrong directory without a word.
+    let cwd = crate::pane::lifecycle::focused_local_cwd(&ctx.state);
     let mut environment = vec![("ROZI".to_string(), "1".to_string())];
     if let Some(path) = ctx.state.control_socket_path.as_deref() {
         environment.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
@@ -193,4 +197,116 @@ fn exec_argv(
         }
     }
     Update::none()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use tui_lipan::TestBackend;
+
+    fn settled_backend() -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(std::time::Instant::now() < deadline, "no command link");
+            backend.pump().expect("settle the mount");
+            std::thread::yield_now();
+        }
+        backend
+    }
+
+    /// Run `exec` from a pane whose directory is `pane_cwd` and return the directory the command
+    /// actually started in.
+    fn exec_cwd(remote: bool, pane_cwd: &str) -> String {
+        let scratch = tempfile::tempdir().unwrap();
+        let out = scratch.path().join("pwd");
+        let mut backend = settled_backend();
+        {
+            let state = backend.state_mut();
+            if remote {
+                state.current_mut().remote_host = Some("pc".to_string());
+            }
+            let focused = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(focused);
+            state.current_mut().workspaces[0].focused_pane = Some(focused);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(pane_cwd.to_string());
+        }
+        backend
+            .state_mut()
+            .config
+            .commands
+            .push(crate::config::NamedCommand {
+                id: "probe".to_string(),
+                label: None,
+                action: UserCommandAction::Exec {
+                    command: format!("pwd -P > '{}'", out.display()),
+                },
+                category: "Test".to_string(),
+                env: Vec::new(),
+                default_key: None,
+                hidden: false,
+            });
+        let index = backend.state().config.commands.len() - 1;
+        backend
+            .dispatch(crate::Msg::RunAction(
+                crate::input::Action::RunNamedCommand(index),
+            ))
+            .expect("run the command");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let _ = backend.pump();
+            if let Ok(text) = std::fs::read_to_string(&out)
+                && text.ends_with('\n')
+            {
+                return text.trim_end().to_string();
+            }
+            assert!(std::time::Instant::now() < deadline, "exec never ran");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn canonical(path: &std::path::Path) -> String {
+        std::fs::canonicalize(path).unwrap().display().to_string()
+    }
+
+    fn on_test_thread(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// A local pane's directory is a directory here, so a client-run command starts in it.
+    #[test]
+    fn exec_from_a_local_pane_starts_in_its_directory() {
+        on_test_thread(|| {
+            let project = tempfile::tempdir().unwrap();
+            let cwd = exec_cwd(false, &project.path().display().to_string());
+            assert_eq!(cwd, canonical(project.path()));
+        });
+    }
+
+    /// A remote pane's directory does not exist here. The command still runs - on the client, in
+    /// the client's own directory - instead of failing to start over a path from another machine.
+    #[test]
+    fn exec_from_a_remote_pane_whose_directory_is_missing_here_still_runs_on_the_client() {
+        on_test_thread(|| {
+            let cwd = exec_cwd(true, "/nonexistent/rozi/remote/project");
+            assert_eq!(cwd, canonical(&std::env::current_dir().unwrap()));
+        });
+    }
+
+    /// The dangerous case: the remote path happens to exist on the client too. Running there would
+    /// look right and act on the wrong machine's files, so the client must not adopt it.
+    #[test]
+    fn exec_from_a_remote_pane_never_adopts_a_path_that_also_exists_here() {
+        on_test_thread(|| {
+            let same_path = tempfile::tempdir().unwrap();
+            let cwd = exec_cwd(true, &same_path.path().display().to_string());
+            assert_ne!(cwd, canonical(same_path.path()));
+            assert_eq!(cwd, canonical(&std::env::current_dir().unwrap()));
+        });
+    }
 }

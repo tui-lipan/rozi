@@ -133,6 +133,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Subscribe { .. } => Some(
             "subscribe streams UI events; a session server does not raise them (poll `list-panes` for pane state)",
         ),
+        ControlCommand::ExtensionRuntimeStatus => {
+            Some("extension runtimes belong to a UI; a session server runs no extension processes")
+        }
     }
 }
 
@@ -1813,6 +1816,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         }
     }
 
@@ -3380,6 +3384,7 @@ mod tests {
                 source_pane: Some(3),
                 source_session: None,
                 extension: None,
+                credential: None,
             },
         );
         let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =
@@ -3506,6 +3511,7 @@ mod tests {
                         id: "git-tools".to_string(),
                         generation: "whatever-the-caller-claims".to_string(),
                     }),
+                    credential: None,
                 },
             );
             let [(Target::Sender, ServerMessage::SessionControlResult { response, .. })] =

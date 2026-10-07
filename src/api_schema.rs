@@ -40,6 +40,7 @@ pub fn bundle() -> Value {
     add::<crate::control::PaneClosed>(&mut generator, &mut roots);
     add::<crate::control::PaneRevealed>(&mut generator, &mut roots);
     add::<crate::control::AgentListPayload>(&mut generator, &mut roots);
+    add::<crate::control::ExtensionRuntimeReport>(&mut generator, &mut roots);
     add::<crate::control::PaneCapture>(&mut generator, &mut roots);
     add::<crate::control::UiCapture>(&mut generator, &mut roots);
     add::<crate::control::SpanFrame>(&mut generator, &mut roots);

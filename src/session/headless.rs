@@ -81,7 +81,7 @@ pub fn run_session_control(
     if !endpoint.is_live() {
         return Err(SessionControlError::NoSuchSession(name.to_string()));
     }
-    let mut stream = endpoint.connect().map_err(|err| {
+    let mut stream = connect_patiently(&endpoint).map_err(|err| {
         // An endpoint file whose server is gone answers here rather than at `is_live`, and the
         // useful thing to say is that the session is not running, not that a connect failed.
         if matches!(
@@ -94,6 +94,30 @@ pub fn run_session_control(
         }
     })?;
     exchange(name, &mut stream, request)
+}
+
+/// How long a busy endpoint is retried before the request gives up on it.
+const BUSY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Connect, retrying while the endpoint reports itself busy. A Windows pipe is momentarily busy
+/// between one client taking its waiting instance - a liveness probe, a discovery sweep - and the
+/// server creating the next, and on a loaded machine that moment outlasts the one wait `connect`
+/// allows. A server that stays busy past the patience is reported as before.
+fn connect_patiently(
+    endpoint: &crate::platform::ipc::IpcEndpoint,
+) -> std::io::Result<crate::platform::ipc::IpcConnection> {
+    let deadline = std::time::Instant::now() + BUSY_PATIENCE;
+    loop {
+        match endpoint.connect() {
+            Err(err)
+                if crate::platform::ipc::is_busy_error(&err)
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// How long to wait for the server's answer, which is a different question per command.
@@ -262,6 +286,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
             )
             .expect_err("hostile name must be refused");
@@ -281,6 +306,7 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                credential: None,
             },
         )
         .expect_err("a session that does not exist cannot answer");

@@ -308,8 +308,10 @@ fn command_visibility_follows_the_extension_generation_inner() {
                         id: "visibility".to_string(),
                         generation: generation.to_string(),
                     }),
+                    credential: None,
                 },
                 reply,
+                worker: None,
             }))
             .unwrap();
         answer.recv_timeout(Duration::from_secs(5)).unwrap()

@@ -45,6 +45,8 @@ pub(super) struct ExtensionSidebarTabFile {
     pub(super) interval: Option<u64>,
     pub(super) on_click: Option<super::super::file::UserCommandTableSpec>,
     pub(super) group_prefix: Option<String>,
+    /// Where the listing command and an `on_click` `exec` run. See [`super::placement`].
+    pub(super) placement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +63,8 @@ pub(super) struct ExtensionCommandFile {
     pub(super) send: Option<String>,
     /// Start out of the command palette until the extension shows it with `command-visibility`.
     pub(super) hidden: Option<bool>,
+    /// Where the command's process runs. See [`super::placement`].
+    pub(super) placement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +77,8 @@ pub(super) struct ExtensionServiceFile {
     pub(super) restart: Option<String>,
     #[serde(default)]
     pub(super) env: BTreeMap<String, String>,
+    /// Where, and how many, instances run. See [`super::placement`].
+    pub(super) placement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

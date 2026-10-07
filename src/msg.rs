@@ -499,27 +499,49 @@ pub enum Msg {
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
-    /// Control-listener authorization for a request carrying extension provenance.
+    /// Control-listener authorization for a request carrying extension provenance, a worker
+    /// credential, or arriving over a remote runtime's extension bridge.
     AuthorizeExtensionControl {
-        provenance: crate::config::ExtensionProvenance,
-        reply: std::sync::mpsc::Sender<bool>,
+        provenance: Option<crate::config::ExtensionProvenance>,
+        credential: Option<String>,
+        origin: control::RequestOrigin,
+        reply: std::sync::mpsc::Sender<
+            std::result::Result<Option<control::ExtensionGrant>, control::ControlResponse>,
+        >,
     },
+    /// An extension process opened a `subscribe` stream. A placed worker's reply carries its
+    /// binding, which filters the events it hears.
     ExtensionSubscriptionOpen {
         id: u64,
         provenance: crate::config::ExtensionProvenance,
+        worker: Option<crate::state::WorkerId>,
         cancel: std::sync::mpsc::SyncSender<()>,
-        reply: std::sync::mpsc::Sender<bool>,
+        reply: std::sync::mpsc::Sender<
+            std::result::Result<Option<crate::state::WorkerBinding>, control::ControlResponse>,
+        >,
     },
     ExtensionSubscriptionClosed {
         id: u64,
     },
+    /// Something an extension runtime connection learned: it is ready, it failed, it ended, or the
+    /// runtime sent a message. Ignored unless `epoch` is that host's current connection.
+    ExtensionRuntime {
+        host: crate::state::HostKey,
+        epoch: u64,
+        event: crate::extension_runtime::client::RuntimeEvent,
+    },
+    /// A placed service's restart or a runtime's reconnect is due.
+    PlacementTick,
     /// A pane's program opened a `publish` stream. The sender carries activations back to it.
     PublishStreamOpen {
         stream_id: u64,
         requested_pane: Option<crate::state::PaneId>,
         extension: Option<crate::config::ExtensionProvenance>,
+        worker: Option<crate::state::WorkerId>,
         sender: std::sync::mpsc::SyncSender<String>,
-        ack: std::sync::mpsc::Sender<std::result::Result<crate::state::PaneId, String>>,
+        ack: std::sync::mpsc::Sender<
+            std::result::Result<crate::state::PaneId, control::ControlResponse>,
+        >,
     },
     /// One row list from an open stream, replacing whatever that pane published before.
     PublishedRowsReported {
@@ -543,6 +565,7 @@ pub enum Msg {
         tabs: Vec<crate::state::PickTab>,
         tab: Option<String>,
         extension: Option<crate::config::ExtensionProvenance>,
+        worker: Option<crate::state::WorkerId>,
         sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },

@@ -14,6 +14,10 @@ mod unknown_keys;
 mod workbar;
 
 pub use appearance::*;
+pub use extensions::placement::{
+    ExtensionPlacements, LaunchTemplate, PlacedCommand, PlacedService, PlacedTab, Placement,
+    SharedPlacements,
+};
 pub use extensions::{
     EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument,
     ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic, ExtensionListDocument,

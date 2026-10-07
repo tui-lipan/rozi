@@ -64,7 +64,7 @@ enum Stage {
 
 /// Start the wait `envelope` asks for, answering at once if it is refused or already satisfied.
 pub(crate) fn start(ctx: &mut Context<AppRoot>, envelope: ControlEnvelope) -> Update {
-    let ControlEnvelope { request, reply } = envelope;
+    let ControlEnvelope { request, reply, .. } = envelope;
     match register(ctx, &request, reply.clone()) {
         Ok(()) => {}
         Err(response) => {

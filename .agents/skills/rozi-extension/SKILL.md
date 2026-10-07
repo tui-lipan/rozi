@@ -180,6 +180,36 @@ Bind the same public ID:
 "git-tools.branches" = "g"
 ```
 
+## Placement
+
+Add `placement` to run a contribution on the host of an attached session instead of the client:
+
+```toml
+[[services]]
+name = "watch"
+exec = ["python3", "./bin/watch.py"]
+placement = "each-host"   # client | active-session | each-host | each-session
+```
+
+- Commands and command tabs take `client` or `active-session`; services take all four. `send`
+  commands and launcher tabs take none.
+- A placed program is a bare `PATH` name on the host or a `./` path inside the extension; an
+  absolute path, `~`, or `../` is invalid. A placed service `cwd` is relative to the extension.
+- It runs from a verified snapshot of the extension's files; `ROZI_EXTENSION_DIR` and
+  `{extension_dir}` name that snapshot on the host. Never write into it.
+- It reaches the client only through `ROZI_BIN`/`ROZI_SOCKET`, carrying
+  `ROZI_EXTENSION_CREDENTIAL`, which the CLI sends for you. Never log or forward it. It ties
+  requests to the host and generation; it does not separate processes of the same user there.
+- Pane commands apply only while a session on its own host (and session, for `active-session`
+  and `each-session`) is on screen: `list-panes` returns nothing otherwise, others fail with
+  `out-of-scope`. Code for that case rather than treating it as an error.
+- `run-action` works only for the extension's own `active-session` commands. Anything that could
+  start a process on the client fails with `not-permitted`.
+- `platforms` is checked on each host; a missing program, an old host Rozi, or an unreachable host
+  makes the contribution unavailable with a reason. Nothing falls back to the client.
+- Diagnose with `rozi extensions status` and `rozi extensions list --verbose`.
+- Set `min_rozi` to a release with the `remote-extension-runtime` capability.
+
 ## Environment
 
 Every extension command and service receives:
@@ -320,7 +350,9 @@ from their original source.
 ## Trust and portability
 
 An installed extension is trusted local executable code. Rozi validates declarations and lifecycle
-ownership; it does not sandbox code or enforce capability permissions.
+ownership; it does not sandbox code or enforce capability permissions. A placed process on another
+host is the exception that is confined: the client admits its requests by placement, so the host as
+a whole cannot act on the client beyond what its placed processes together may do.
 
 - Prefer structured argv and standard process APIs.
 - Avoid shell unless pipelines/redirection are required; never assume `/bin/sh`.

@@ -242,6 +242,9 @@ pub(crate) enum ExtensionsCommand {
         id: String,
         config_path: Option<String>,
     },
+    /// Serve a client's extension runtime over stdio. Started by Rozi itself over SSH; not listed
+    /// in help.
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1623,6 +1626,9 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
             .ok()
             .and_then(|v| crate::session::protocol::SessionInstanceId::from_env_value(&v)),
         extension: crate::config::provenance_from_process(),
+        credential: std::env::var(crate::state::CREDENTIAL_ENV)
+            .ok()
+            .filter(|credential| !credential.is_empty()),
     }
 }
 
@@ -1755,6 +1761,7 @@ mod tests {
                 source_pane: pane,
                 source_session: shared.then(|| instance.clone()),
                 extension: None,
+                credential: None,
             }
         };
         let report = |target| control::ControlCommand::AgentReport {

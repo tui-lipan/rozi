@@ -189,6 +189,11 @@ impl IpcConnection {
             Self::Piped(piped) => piped.shutdown(),
         }
     }
+
+    /// Stop writing, so the peer reads end of file once it has read everything written before.
+    pub fn finish_writes(&self) -> io::Result<()> {
+        self.shutdown(std::net::Shutdown::Write)
+    }
 }
 
 impl Read for IpcConnection {

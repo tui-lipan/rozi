@@ -1069,6 +1069,7 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
         service_details: Vec::new(),
         command_paths: Default::default(),
         service_paths: Default::default(),
+        bundle: None,
         errors: Vec::new(),
     }
 }

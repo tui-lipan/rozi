@@ -35,9 +35,10 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
 /// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
 /// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, version 15 with
-/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, and version 16 with
-/// `command-visibility`.
-pub const API_SCHEMA_VERSION: u32 = 16;
+/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, version 16 with
+/// `command-visibility`, and version 17 with a request's `credential`, the `not-permitted` and
+/// `out-of-scope` error codes, and `extension-runtime-status`.
+pub const API_SCHEMA_VERSION: u32 = 17;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -115,6 +116,7 @@ impl ApiDescription {
                 RECORD_PANE_CAPABILITY,
                 RECORD_UI_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
+                crate::extension_runtime::protocol::CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,
             ],
@@ -136,6 +138,11 @@ pub struct ControlRequest {
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
+    /// The worker credential of a placed extension process, from `ROZI_EXTENSION_CREDENTIAL`.
+    /// Automatically attached by the CLI. When present, the UI identifies the caller from it alone
+    /// and replaces `extension` with what the credential was issued for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
 }
 
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
@@ -435,6 +442,10 @@ pub enum ControlCommand {
         scrollback: Option<CaptureScrollback>,
     },
     Metrics,
+    /// Report this client's extension runtimes and the placed extension processes running through
+    /// them: where each runs, under which generation and bundle, and why one that is not running
+    /// is unavailable.
+    ExtensionRuntimeStatus,
     Focus {
         target: PaneId,
     },
@@ -1483,6 +1494,89 @@ impl FractionRect {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentListPayload(pub Vec<AgentInfo>);
 
+/// `extension-runtime-status`: what this client runs where.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionRuntimeReport {
+    /// One per host this client runs placed processes on: `local`, or a remote host.
+    pub runtimes: Vec<ExtensionRuntimeInfo>,
+    /// Instances of placed services, one per host or session their placement asks for.
+    pub instances: Vec<PlacedInstanceInfo>,
+    /// Every placed process that is starting or running, services, commands, and tab listings
+    /// alike.
+    pub processes: Vec<PlacedProcessInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionRuntimeInfo {
+    pub host: String,
+    /// The connection's epoch. A reconnect is a new epoch.
+    pub epoch: u64,
+    /// `connecting`, `ready`, or `unavailable`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    /// The host's Rozi version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UnavailableInfo>,
+}
+
+/// Why something placed is not running.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UnavailableInfo {
+    /// `unsupported-platform`, `runtime-unsupported`, `missing-executable`, `bundle-failed`,
+    /// `runtime-unreachable`, `no-session`, or `spawn-failed`.
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PlacedInstanceInfo {
+    /// Public service name, `<extension>.<service>`.
+    pub service: String,
+    pub extension: String,
+    /// `active-session`, `each-host`, or `each-session`.
+    pub placement: String,
+    pub host: String,
+    /// The session this instance is bound to, for a per-session or active-session placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    pub generation: String,
+    /// Content digest of the files the instance runs from.
+    pub bundle: String,
+    /// `running`, `restarting`, `stopped`, or `unavailable`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UnavailableInfo>,
+    pub failures: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PlacedProcessInfo {
+    pub extension: String,
+    /// `service`, `command`, or `tab`.
+    pub kind: String,
+    /// The service, command, or tab id.
+    pub id: String,
+    pub host: String,
+    pub generation: String,
+    pub bundle: String,
+    /// `pending`, `starting`, or `running`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
 /// One pane's captured screen, as `capture-pane` and `agents read` report it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2003,12 +2097,52 @@ pub enum ControlErrorCode {
     StaleReference,
     Timeout,
     RequestFailed,
+    // A placed extension process asked for something no placed process may do, wherever it runs.
+    // (Plain comments: a documented variant would turn the schema's closed enum into a `oneOf`.)
+    NotPermitted,
+    // A placed extension process asked about a session outside the host or session it was placed
+    // for.
+    OutOfScope,
+}
+
+/// Where a control request came from. Never part of the wire format: it is what the UI knows about
+/// the connection, not anything the caller claims.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestOrigin {
+    /// This machine's control endpoint.
+    #[default]
+    Local,
+    /// The extension bridge of a remote runtime, by the epoch of the runtime connection it arrived
+    /// over.
+    Bridged { runtime: u64 },
+}
+
+/// What authorizing a request established about its caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionGrant {
+    pub provenance: crate::config::ExtensionProvenance,
+    /// Set when the caller presented a worker credential.
+    pub worker: Option<crate::state::WorkerId>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ControlEnvelope {
     pub request: ControlRequest,
     pub reply: mpsc::Sender<ControlResponse>,
+    /// The placed worker that sent this, as its credential established. Re-checked when the request
+    /// is handled, so a worker revoked in between is refused.
+    pub worker: Option<crate::state::WorkerId>,
+}
+
+impl ControlEnvelope {
+    /// A request made by this client itself, or by an unplaced local process.
+    pub fn local(request: ControlRequest, reply: mpsc::Sender<ControlResponse>) -> Self {
+        Self {
+            request,
+            reply,
+            worker: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2197,6 +2331,7 @@ fn run_publish_stream(
     stream_id: u64,
     requested_pane: Option<PaneId>,
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
@@ -2210,6 +2345,7 @@ fn run_publish_stream(
         stream_id,
         requested_pane,
         extension,
+        worker,
         sender: tx,
         ack: ack_tx,
     });
@@ -2222,12 +2358,8 @@ fn run_publish_stream(
             );
             pane_id
         }
-        Ok(Err(error)) => {
-            let _ = writeln!(
-                stream,
-                "{}",
-                serde_json::to_string(&ControlResponse::error(error)).unwrap()
-            );
+        Ok(Err(response)) => {
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
             return;
         }
         Err(_) => {
@@ -2310,6 +2442,7 @@ fn run_pick_stream(
     tabs: Vec<crate::state::PickTab>,
     tab: Option<String>,
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
@@ -2331,6 +2464,7 @@ fn run_pick_stream(
         tabs,
         tab,
         extension,
+        worker,
         sender: reply_tx,
         ack: ack_tx,
     });
@@ -2416,30 +2550,38 @@ fn write_control_response(stream: &mut IpcConnection, response: &ControlResponse
     let _ = writeln!(stream, "{}", serde_json::to_string(response).unwrap());
 }
 
-fn authorize_extension_request(
+/// Establish who sent `request`, or answer it with the reason it is refused.
+///
+/// A request with neither provenance nor a credential, from this machine, is an ordinary local
+/// caller and needs nothing. Anything else is decided by the UI, which alone knows which
+/// generations and worker credentials are live.
+fn authorize_request(
     stream: &mut IpcConnection,
     link: &CommandLink<Msg>,
-    provenance: Option<&crate::config::ExtensionProvenance>,
-) -> bool {
-    let Some(provenance) = provenance else {
-        return true;
-    };
+    request: &ControlRequest,
+    origin: RequestOrigin,
+) -> Option<Option<ExtensionGrant>> {
+    if request.extension.is_none() && request.credential.is_none() && origin == RequestOrigin::Local
+    {
+        return Some(None);
+    }
     let (reply, authorized) = mpsc::channel();
     link.send(Msg::AuthorizeExtensionControl {
-        provenance: provenance.clone(),
+        provenance: request.extension.clone(),
+        credential: request.credential.clone(),
+        origin,
         reply,
     });
-    if authorized.recv_timeout(Duration::from_secs(10)) == Ok(true) {
-        return true;
-    }
-    write_control_response(
-        stream,
-        &ControlResponse::error_with(
+    let response = match authorized.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(grant)) => return Some(grant),
+        Ok(Err(response)) => response,
+        Err(_) => ControlResponse::error_with(
             ControlErrorCode::ExtensionInactive,
             "extension generation is not active",
         ),
-    );
-    false
+    };
+    write_control_response(stream, &response);
+    None
 }
 
 fn run_subscription(
@@ -2448,6 +2590,7 @@ fn run_subscription(
     event_hub: EventHub,
     events: &[String],
     extension: Option<crate::config::ExtensionProvenance>,
+    worker: Option<crate::state::WorkerId>,
 ) {
     let mut kinds = std::collections::HashSet::new();
     for id in events {
@@ -2473,25 +2616,37 @@ fn run_subscription(
         link.send(Msg::ExtensionSubscriptionOpen {
             id,
             provenance,
+            worker,
             cancel,
             reply,
         });
         (id, cancelled, opened)
     });
-    if let Some((_, _, opened)) = &owned_subscription
-        && opened.recv_timeout(Duration::from_secs(10)) != Ok(true)
-    {
-        write_control_response(
-            &mut stream,
-            &ControlResponse::error_with(
-                ControlErrorCode::ExtensionInactive,
-                "extension generation is not active",
-            ),
-        );
-        return;
+    // A placed worker only hears what happens while the session on screen lies within its
+    // binding: events describe that session's panes, and a worker on another machine has no claim
+    // on a session somewhere else.
+    let mut binding = None;
+    if let Some((_, _, opened)) = &owned_subscription {
+        match opened.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(bound)) => binding = bound,
+            Ok(Err(response)) => {
+                write_control_response(&mut stream, &response);
+                return;
+            }
+            Err(_) => {
+                write_control_response(
+                    &mut stream,
+                    &ControlResponse::error_with(
+                        ControlErrorCode::ExtensionInactive,
+                        "extension generation is not active",
+                    ),
+                );
+                return;
+            }
+        }
     }
 
-    let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
+    let rx = event_hub.subscribe_bound((!kinds.is_empty()).then_some(kinds), binding);
     write_control_response(&mut stream, &ControlResponse::empty());
     let _ = stream.set_read_timeout(None);
     loop {
@@ -2571,7 +2726,18 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
     })
 }
 
-fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
+fn handle_connection(stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
+    serve_connection(stream, link, event_hub, RequestOrigin::Local);
+}
+
+/// Serve one control connection, local or relayed from a remote runtime's extension bridge. Both
+/// speak exactly the same protocol; only what the UI is told about the caller differs.
+pub(crate) fn serve_connection(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    event_hub: EventHub,
+    origin: RequestOrigin,
+) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
     let reader_stream = match stream.try_clone() {
@@ -2597,7 +2763,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             return;
         }
     };
-    let request = match serde_json::from_str::<ControlRequest>(&line) {
+    let mut request = match serde_json::from_str::<ControlRequest>(&line) {
         Ok(request) => request,
         Err(err) => {
             write_control_response(
@@ -2610,11 +2776,23 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             return;
         }
     };
-    if !authorize_extension_request(&mut stream, &link, request.extension.as_ref()) {
+    let Some(grant) = authorize_request(&mut stream, &link, &request, origin) else {
         return;
+    };
+    let worker = grant.as_ref().and_then(|grant| grant.worker);
+    if let Some(grant) = grant {
+        // The credential, not the request, says which extension and generation this is.
+        request.extension = Some(grant.provenance);
     }
     if let ControlCommand::Subscribe { events } = &request.command {
-        run_subscription(stream, link, event_hub, events, request.extension.clone());
+        run_subscription(
+            stream,
+            link,
+            event_hub,
+            events,
+            request.extension.clone(),
+            worker,
+        );
         return;
     }
     if let ControlCommand::Publish = &request.command {
@@ -2626,6 +2804,7 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             stream_id,
             request.source_pane,
             request.extension.clone(),
+            worker,
         );
         return;
     }
@@ -2653,12 +2832,17 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
             tabs.clone(),
             tab.clone(),
             request.extension.clone(),
+            worker,
         );
         return;
     }
     let reply_timeout = control_reply_timeout(&request.command);
     let (tx, rx) = mpsc::channel();
-    link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));
+    link.send(Msg::ControlRequest(ControlEnvelope {
+        request,
+        reply: tx,
+        worker,
+    }));
     let response = rx.recv_timeout(reply_timeout).unwrap_or_else(|_| {
         ControlResponse::error_with(
             ControlErrorCode::RequestTimeout,
@@ -2777,6 +2961,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -2794,6 +2979,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         assert_eq!(
             serde_json::to_string(&request).unwrap(),
@@ -3226,6 +3412,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
@@ -3299,6 +3486,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
         assert_eq!(
@@ -3311,6 +3499,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
         assert_eq!(
@@ -3333,6 +3522,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -3352,6 +3542,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -3385,6 +3576,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(

@@ -204,6 +204,7 @@ fn send(ctx: &mut Context<AppRoot>, command: ControlCommand, action: RecordingAc
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         },
         AttachedReply::Action(action),
     );

@@ -7,6 +7,7 @@ pub(super) fn normalize_direct_argv(
     public_id: &str,
     resolved: &mut BTreeMap<String, String>,
     errors: &mut Vec<String>,
+    on_this_machine: bool,
 ) -> Option<Vec<String>> {
     if argv.is_empty() || argv[0].trim().is_empty() {
         errors.push(format!(
@@ -34,7 +35,9 @@ pub(super) fn normalize_direct_argv(
         resolved.insert(public_id.to_string(), path_text.clone());
         validate_target(&path, public_id, true, errors);
         argv[0] = path_text;
-    } else if !crate::platform::command::program_exists(&original_program) {
+    } else if on_this_machine && !crate::platform::command::program_exists(&original_program) {
+        // A placed process looks its program up on the host that runs it, which is checked there
+        // when it starts: this client lacking `python3` says nothing about a server that has it.
         errors.push(format!(
             "`{public_id}` executable `{original_program}` was not found on PATH"
         ));

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{RemoteTarget, ResolvedRemote};
+use super::RemoteTarget;
 use crate::platform::ipc::IpcConnection;
 use crate::session::discovery::DiscoveredSession;
 
@@ -173,25 +173,7 @@ fn connect(
     target: &RemoteTarget,
     config: &crate::config::RemoteConfig,
 ) -> io::Result<(IpcConnection, std::thread::JoinHandle<String>)> {
-    super::validate_remote_target(target).map_err(io::Error::other)?;
-    let resolved = ResolvedRemote::resolve(target, config);
-    let config = config.unattended();
-    let binary = super::binary::resolve(target, &config).map_err(io::Error::other)?;
-    let mut command = super::ssh_base_command(&resolved, &config);
-    super::append_ssh_destination(&mut command, &resolved);
-    super::append_remote_rozi_command(
-        &mut command,
-        &binary.path,
-        &["sessions", "watch"],
-        binary.family,
-    );
-    command
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = command.spawn()?;
-    let stderr = super::connect::spawn_stderr_collector(child.stderr.take().expect("piped stderr"));
-    let connection = crate::platform::ipc::connection_from_child(child)?;
+    let (connection, stderr) = super::spawn_rozi_channel(target, config, &["sessions", "watch"])?;
     connection.set_read_timeout(Some(DEADLINE))?;
     Ok((connection, stderr))
 }

@@ -317,8 +317,10 @@ mod tests {
                     source_pane,
                     source_session: source_session.map(SessionInstanceId::for_test),
                     extension: None,
+                    credential: None,
                 },
                 reply,
+                worker: None,
             }))
             .expect("dispatch a record request");
         response
@@ -512,8 +514,10 @@ mod tests {
                         source_pane: Some(7),
                         source_session: Some(SessionInstanceId::for_test("a")),
                         extension: None,
+                        credential: None,
                     },
                     reply: mpsc::channel().0,
+                    worker: None,
                 })
             };
             let commands = [
@@ -587,8 +591,10 @@ mod tests {
                         source_pane: None,
                         source_session: None,
                         extension: None,
+                        credential: None,
                     },
                     reply,
+                    worker: None,
                 }))
                 .unwrap();
             assert_eq!(
@@ -710,8 +716,10 @@ mod tests {
                         source_pane: None,
                         source_session: None,
                         extension: None,
+                        credential: None,
                     },
                     reply,
+                    worker: None,
                 }))
                 .unwrap();
             let [(_, request)] = forwarded(&outbound).try_into().unwrap();

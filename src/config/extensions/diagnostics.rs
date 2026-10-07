@@ -8,13 +8,21 @@ pub const EXTENSION_DIAGNOSTICS_SCHEMA_VERSION: u32 = 1;
 pub struct ExtensionListDocument {
     pub schema_version: u32,
     pub extensions: Vec<ExtensionInfo>,
+    /// What the running UI reports about placed processes, when one answered: where each placed
+    /// contribution runs, under which generation and bundle, and why one is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<crate::control::ExtensionRuntimeReport>,
 }
 
 impl ExtensionListDocument {
-    pub(crate) fn new(extensions: Vec<ExtensionInfo>) -> Self {
+    pub(crate) fn new(
+        extensions: Vec<ExtensionInfo>,
+        runtime: Option<crate::control::ExtensionRuntimeReport>,
+    ) -> Self {
         Self {
             schema_version: EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
             extensions,
+            runtime,
         }
     }
 }
@@ -312,6 +320,23 @@ fn format_env(env: &std::collections::BTreeMap<String, String>) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The runtime report is there only when a UI answered, so a list taken without one keeps the
+    /// document it always had.
+    #[test]
+    fn a_list_carries_the_live_runtime_report_only_when_one_was_taken() {
+        let offline = serde_json::to_value(ExtensionListDocument::new(Vec::new(), None)).unwrap();
+        assert!(offline.get("runtime").is_none());
+        let live = serde_json::to_value(ExtensionListDocument::new(
+            Vec::new(),
+            Some(crate::control::ExtensionRuntimeReport::default()),
+        ))
+        .unwrap();
+        assert_eq!(
+            live["runtime"],
+            serde_json::json!({"runtimes": [], "instances": [], "processes": []})
+        );
+    }
+
     use std::collections::BTreeMap;
 
     use super::*;
@@ -361,6 +386,7 @@ mod tests {
                 },
                 cwd: "focused-pane-input".to_string(),
                 injected_env: BTreeMap::new(),
+                placement: "client".to_string(),
             }],
             service_details: vec![ExtensionServiceDiagnostic {
                 id: "tasks.watch".to_string(),
@@ -370,10 +396,12 @@ mod tests {
                 cwd: ".".to_string(),
                 restart: "on-failure".to_string(),
                 injected_env: BTreeMap::new(),
+                placement: "client".to_string(),
                 configured_env_keys: vec!["TOKEN".to_string()],
             }],
             command_paths: BTreeMap::new(),
             service_paths: BTreeMap::new(),
+            bundle: None,
             errors: vec!["one problem".to_string()],
         }
     }

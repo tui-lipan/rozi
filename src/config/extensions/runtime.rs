@@ -36,6 +36,10 @@ pub(crate) struct ExtensionRuntimeFingerprint {
     pub(crate) directory: String,
     pub(crate) commands: Vec<ExtensionCommandFingerprint>,
     pub(crate) services: Vec<ServiceConfig>,
+    /// Placed contributions, including the digest of the files they run from. A linked extension
+    /// edited on disk keeps its manifest but changes this, so its placed processes move to a new
+    /// generation running the new files instead of the old ones carrying on.
+    pub(crate) placements: Option<super::placement::SharedPlacements>,
 }
 
 pub(crate) fn reconcile_generations(
@@ -144,6 +148,7 @@ pub(crate) fn fingerprint(
     directory: String,
     commands: &[crate::config::NamedCommand],
     services: &[ServiceConfig],
+    placements: Option<super::placement::SharedPlacements>,
 ) -> ExtensionRuntimeFingerprint {
     ExtensionRuntimeFingerprint {
         api,
@@ -157,6 +162,7 @@ pub(crate) fn fingerprint(
             })
             .collect(),
         services: services.to_vec(),
+        placements,
     }
 }
 
@@ -195,7 +201,7 @@ mod tests {
         config.active_extensions.insert(id.clone());
         config.extension_runtime.insert(
             id,
-            fingerprint(1, "/extensions/tools".to_string(), &[command], &[]),
+            fingerprint(1, "/extensions/tools".to_string(), &[command], &[], None),
         );
         config
     }

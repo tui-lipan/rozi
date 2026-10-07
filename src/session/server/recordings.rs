@@ -761,6 +761,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    credential: None,
                 },
             )
             .into_iter()
@@ -1137,6 +1138,7 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                credential: None,
             },
         );
     }
@@ -1278,6 +1280,7 @@ mod tests {
                     id: "ext".into(),
                     generation: "g".into(),
                 }),
+                credential: None,
             },
         );
         assert!(!refusal(&server, 3).0);

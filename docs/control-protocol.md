@@ -67,8 +67,17 @@ Every request has `cmd`. Any request may also carry these fields:
 | `source_pane` | integer or null | Calling pane, used as the default target where a command supports it. A session endpoint ignores it; see [Session transport](#session-transport). |
 | `source_session` | string | The session server `source_pane` belongs to, from the caller's `ROZI_SESSION_INSTANCE`. Only the recording requests sent to a UI read it; see [Pane recordings](#pane-recordings). |
 | `extension` | object | Extension ownership, with `id` and an opaque `generation`. The CLI adds it from the extension environment. |
+| `credential` | string | A placed extension process's credential, from `ROZI_EXTENSION_CREDENTIAL`. The CLI adds it. |
 
 Do not synthesize extension provenance. A request with a retired generation is rejected.
+
+A request that arrives through an extension runtime's bridge — from a
+[placed](extensions.md#run-on-the-session-host) extension process — must carry a `credential`. The
+UI identifies the caller from it alone: it replaces `extension` with the extension and generation
+the credential was issued for, and refuses a credential that was revoked or issued for another
+host's runtime. The credential distinguishes hosts and generations, not processes on one host: any
+process of the same user there can read it. It then admits each request by the rules in
+[What a placed process may do](extensions.md#what-a-placed-process-may-do).
 
 ## Responses
 
@@ -96,10 +105,15 @@ Branch on `code`; the message may gain context or change wording. The error code
 `pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
 `session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
 `invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
-`agent-replaced`, `stale-reference`, `timeout`, and `request-failed`.
+`agent-replaced`, `stale-reference`, `timeout`, `request-failed`, `not-permitted`, and
+`out-of-scope`.
 
 An error normally has no `data`. A failed [pane wait](#pane-waits) is the exception: `timeout` and
 `pane-not-running` carry the pane's capture in `data` when the pane still exists.
+
+`not-permitted` and `out-of-scope` answer only placed extension processes: the first for a command
+no placed process may send, the second for one that acts on a session outside the host or session
+the process was placed for.
 
 `request-failed` is the fallback for a failure with no narrower category. Older servers may omit
 `code`, so a client that supports version skew must also handle an error without it.
@@ -899,7 +913,8 @@ rozi publish
 
 ## Stream ownership
 
-The CLI attaches the extension `id` and `generation` when both are present in its environment.
+The CLI attaches the extension `id` and `generation` when both are present in its environment, and
+a placed process's `credential`.
 Picker, publisher, and subscription streams owned by an extension close when its generation
 retires: when the extension is disabled, removed, or has a change that affects its processes.
 Changes to metadata only keep the generation.

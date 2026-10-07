@@ -22,6 +22,8 @@ pub(crate) struct ExtensionContributions {
     /// right now, and the user's arrangement should survive disabling or a broken update.
     pub(crate) installed_ids: HashSet<String>,
     pub(crate) runtime: BTreeMap<String, ExtensionRuntimeFingerprint>,
+    /// Placed contributions per loaded extension that has any.
+    pub(crate) placements: BTreeMap<String, super::placement::SharedPlacements>,
     pub(crate) warnings: Vec<String>,
     pub(crate) problem_count: usize,
 }
@@ -41,6 +43,7 @@ pub(super) fn build(
     let mut active_ids = HashSet::new();
     let mut installed_ids = HashSet::new();
     let mut runtime = Vec::new();
+    let mut placements = BTreeMap::new();
     let mut problem_count = 0;
     let mut warnings = scan.root_errors;
     for extension in scan.extensions {
@@ -68,6 +71,14 @@ pub(super) fn build(
             for service in &mut extension_services {
                 service.env.insert(SETTINGS_ENV.to_string(), value.clone());
             }
+            // A placed process gets its settings from the same merge; the placement keeps its own
+            // copy of the environment because it is started away from `extension_services`.
+            let extension_placements = extension.placements.map(|mut placed| {
+                for service in &mut placed.services {
+                    service.env.insert(SETTINGS_ENV.to_string(), value.clone());
+                }
+                std::sync::Arc::new(placed)
+            });
             let mut extension_tabs = extension.sidebar_tabs;
             for tab in &mut extension_tabs {
                 if let SidebarTab::Launcher { env, .. } | SidebarTab::Command { env, .. } = tab {
@@ -82,8 +93,12 @@ pub(super) fn build(
                         extension.info.path.clone(),
                         &extension_commands,
                         &extension_services,
+                        extension_placements.clone(),
                     ),
                 ));
+                if let Some(placed) = extension_placements {
+                    placements.insert(id.clone(), placed);
+                }
                 active_ids.insert(id);
             }
             commands.extend(extension_commands);
@@ -123,6 +138,7 @@ pub(super) fn build(
         active_ids,
         installed_ids,
         runtime: fingerprints_by_id(runtime),
+        placements,
         warnings,
         problem_count,
     }

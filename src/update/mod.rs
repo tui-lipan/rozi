@@ -494,18 +494,30 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
-        Msg::AuthorizeExtensionControl { provenance, reply } => {
-            let active =
-                crate::config::provenance_is_active(&ctx.state.extension_generations, &provenance);
-            let _ = reply.send(active);
+        Msg::AuthorizeExtensionControl {
+            provenance,
+            credential,
+            origin,
+            reply,
+        } => {
+            let _ = reply.send(crate::ops::extension_workers::authorize(
+                &ctx.state, provenance, credential, origin,
+            ));
             Update::none()
         }
         Msg::ExtensionSubscriptionOpen {
             id,
             provenance,
+            worker,
             cancel,
             reply,
-        } => crate::ops::extensions::subscription_opened(ctx, id, provenance, cancel, reply),
+        } => {
+            crate::ops::extensions::subscription_opened(ctx, id, provenance, worker, cancel, reply)
+        }
+        Msg::ExtensionRuntime { host, epoch, event } => {
+            crate::ops::placement::runtime_event(ctx, host, epoch, event)
+        }
+        Msg::PlacementTick => crate::ops::placement::tick(ctx),
         Msg::ExtensionSubscriptionClosed { id } => {
             crate::ops::extensions::subscription_closed(ctx, id)
         }
@@ -514,6 +526,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             stream_id,
             requested_pane,
             extension,
+            worker,
             sender,
             ack,
         } => crate::ops::published_rows::stream_opened(
@@ -521,6 +534,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             stream_id,
             requested_pane,
             extension,
+            worker,
             sender,
             ack,
         ),
@@ -542,24 +556,42 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             tabs,
             tab,
             extension,
+            worker,
             sender,
             ack,
-        } => crate::ops::pick::open_pick_stream(
-            ctx,
-            crate::ops::pick::PickOpen {
-                id,
-                title,
-                placeholder,
-                empty,
-                width,
-                actions,
-                tabs,
-                tab,
-                extension,
-            },
-            sender,
-            ack,
-        ),
+        } => {
+            // A picker from a process on another machine says so in its title: it is the one
+            // prompt a compromised host could otherwise dress up as this client's own.
+            let title = match worker
+                .map(|worker| crate::ops::extension_workers::live_worker(&ctx.state, worker))
+            {
+                None => title,
+                Some(Ok(worker)) => Some(crate::ops::extension_workers::attribute(
+                    worker,
+                    title.as_deref().unwrap_or("Pick"),
+                )),
+                Some(Err(response)) => {
+                    let _ = ack.send(response);
+                    return Update::none();
+                }
+            };
+            crate::ops::pick::open_pick_stream(
+                ctx,
+                crate::ops::pick::PickOpen {
+                    id,
+                    title,
+                    placeholder,
+                    empty,
+                    width,
+                    actions,
+                    tabs,
+                    tab,
+                    extension,
+                },
+                sender,
+                ack,
+            )
+        }
         Msg::PickQueryChanged(query) => crate::ops::pick::query_changed(ctx, query),
         Msg::PickActionKey(index) => crate::ops::pick::invoke_action(ctx, index),
         Msg::PickPromptChanged(event) => crate::ops::pick::prompt_changed(ctx, event),
@@ -1037,6 +1069,7 @@ fn post_update_sync(
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);
     hosts::sync(ctx);
+    crate::ops::placement::sync(ctx);
     if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);

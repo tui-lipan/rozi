@@ -189,6 +189,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            credential: None,
         };
         for name in ["../escape", "dev;rm -rf /", "", "dev\npanes"] {
             assert_eq!(

@@ -794,6 +794,7 @@ fn load_config_from_text_with_extensions(
         config.installed_extensions = contributions.installed_ids;
         config.extension_problems = contributions.problem_count;
         config.extension_runtime = contributions.runtime;
+        config.extension_placements = contributions.placements;
         config.services = contributions.services;
         config.agents = contributions.agents;
         config
@@ -1288,6 +1289,7 @@ fn load_config_from_text_with_extensions(
     config.active_extensions = contributions.active_ids;
     config.installed_extensions = contributions.installed_ids;
     config.extension_runtime = contributions.runtime;
+    config.extension_placements = contributions.placements;
     config.commands.extend(contributions.commands);
     // Config entries first: an id shared with a built-in replaces it, and an extension's ids are
     // namespaced so they can only ever add.

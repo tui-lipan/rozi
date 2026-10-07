@@ -26,6 +26,7 @@ fn request(command: ControlCommand) -> ControlRequest {
         source_pane: None,
         source_session: None,
         extension: None,
+        credential: None,
     }
 }
 

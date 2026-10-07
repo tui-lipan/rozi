@@ -37,6 +37,9 @@ struct PipedBuf {
     done: Option<io::Result<()>>,
     shutdown: bool,
     high_water: usize,
+    /// Most bytes the pump retains before it stops reading, and where it resumes.
+    capacity: usize,
+    low_water: usize,
 }
 
 impl PipedBuf {
@@ -55,7 +58,7 @@ impl PipedBuf {
         PipedBufferStats {
             current: self.bytes.len(),
             high_water: self.high_water,
-            capacity: PIPED_BUFFER_CAPACITY,
+            capacity: self.capacity,
         }
     }
 }
@@ -148,10 +151,44 @@ impl PipedConnection {
         Self::new(Box::new(writer), Box::new(reader), None)
     }
 
+    /// Like [`Self::from_reader_writer`], but the pump stops reading once `capacity` bytes are
+    /// waiting rather than the default 8 MiB. For a reader whose producer is not trusted: what it
+    /// cannot push into this buffer stays wherever the producer's own bound applies.
+    pub fn from_reader_writer_bounded(
+        writer: impl Write + Send + 'static,
+        reader: impl Read + Send + 'static,
+        capacity: usize,
+    ) -> Self {
+        let capacity = capacity.max(PUMP_CHUNK);
+        Self::with_capacity(
+            Box::new(writer),
+            Box::new(reader),
+            None,
+            capacity,
+            capacity / 2,
+        )
+    }
+
     fn new(
+        writer: Box<dyn Write + Send>,
+        reader: Box<dyn Read + Send>,
+        child: Option<Arc<OwnedChild>>,
+    ) -> Self {
+        Self::with_capacity(
+            writer,
+            reader,
+            child,
+            PIPED_BUFFER_CAPACITY,
+            PIPED_BUFFER_LOW_WATER,
+        )
+    }
+
+    fn with_capacity(
         writer: Box<dyn Write + Send>,
         mut reader: Box<dyn Read + Send>,
         child: Option<Arc<OwnedChild>>,
+        capacity: usize,
+        low_water: usize,
     ) -> Self {
         let shared = Arc::new(PipedShared {
             writer: Mutex::new(Some(writer)),
@@ -160,6 +197,8 @@ impl PipedConnection {
                 done: None,
                 shutdown: false,
                 high_water: 0,
+                capacity,
+                low_water,
             }),
             data: Condvar::new(),
             connections: AtomicUsize::new(1),
@@ -185,15 +224,15 @@ impl PipedConnection {
                         break;
                     }
                     Ok(n) => {
-                        if buf.bytes.len() + n > PIPED_BUFFER_CAPACITY {
-                            while !buf.shutdown && buf.bytes.len() > PIPED_BUFFER_LOW_WATER {
+                        if buf.bytes.len() + n > buf.capacity {
+                            while !buf.shutdown && buf.bytes.len() > buf.low_water {
                                 buf = pump.data.wait(buf).expect("piped producer wait");
                             }
                         }
                         if buf.shutdown {
                             break;
                         }
-                        debug_assert!(buf.bytes.len() + n <= PIPED_BUFFER_CAPACITY);
+                        debug_assert!(buf.bytes.len() + n <= buf.capacity);
                         buf.bytes.extend(&chunk[..n]);
                         buf.high_water = buf.high_water.max(buf.bytes.len());
                         pump.data.notify_all();
@@ -287,9 +326,10 @@ impl PipedConnection {
         let mut buf = self.shared.buf.lock().expect("piped buf");
         loop {
             if !buf.bytes.is_empty() {
-                let was_above_low_water = buf.bytes.len() > PIPED_BUFFER_LOW_WATER;
+                let low_water = buf.low_water;
+                let was_above_low_water = buf.bytes.len() > low_water;
                 let n = buf.read_into(out);
-                if was_above_low_water && buf.bytes.len() <= PIPED_BUFFER_LOW_WATER {
+                if was_above_low_water && buf.bytes.len() <= low_water {
                     self.shared.data.notify_all();
                 }
                 return Ok(n);
@@ -550,6 +590,8 @@ mod tests {
             done: None,
             shutdown: false,
             high_water: 8,
+            capacity: PIPED_BUFFER_CAPACITY,
+            low_water: PIPED_BUFFER_LOW_WATER,
         };
         let mut out = [0; 6];
 

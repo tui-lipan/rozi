@@ -511,6 +511,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
             let ack = ack_rx.recv().expect("ack received");
@@ -564,6 +565,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
 
@@ -602,6 +604,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
 
@@ -649,6 +652,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
 
@@ -680,6 +684,7 @@ mod tests {
                     tab: None,
                     sender: tx1,
                     ack: ack_tx1,
+                    worker: None,
                 })
                 .expect("dispatch open 1");
             assert!(ack_rx1.recv().unwrap().ok);
@@ -699,6 +704,7 @@ mod tests {
                     tab: None,
                     sender: tx2,
                     ack: ack_tx2,
+                    worker: None,
                 })
                 .expect("dispatch open 2");
             let ack2 = ack_rx2.recv().unwrap();
@@ -727,6 +733,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
             let ack = ack_rx.recv().unwrap();
@@ -766,6 +773,7 @@ mod tests {
                 tab: None,
                 sender: tx,
                 ack: ack_tx,
+                worker: None,
             })
             .expect("dispatch open");
         backend
@@ -1114,6 +1122,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
             let pick = backend.state().pick.as_ref().expect("picker open");
@@ -1179,6 +1188,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
 
@@ -1233,6 +1243,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
             assert!(ack_rx.recv().unwrap().ok);
@@ -1269,6 +1280,7 @@ mod tests {
                     tab: None,
                     sender: tx,
                     ack: ack_tx,
+                    worker: None,
                 })
                 .expect("dispatch open");
             let response = ack_rx.recv().unwrap();
@@ -1318,6 +1330,7 @@ mod tests {
                 extension: None,
                 sender: tx,
                 ack: ack_tx,
+                worker: None,
             })
             .expect("dispatch open");
         assert!(ack_rx.recv().unwrap().ok);

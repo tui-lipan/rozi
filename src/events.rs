@@ -117,19 +117,71 @@ impl Event {
 struct Subscriber {
     tx: mpsc::SyncSender<String>,
     kinds: Option<HashSet<EventKind>>,
+    binding: Option<crate::state::WorkerBinding>,
 }
 
 #[derive(Clone, Default)]
 pub struct EventHub(Arc<Mutex<Vec<Subscriber>>>);
 
+/// The session on screen when an event happened, which is what a placed worker's subscription is
+/// filtered by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventScope {
+    pub host: crate::state::HostKey,
+    pub session: Option<crate::session::protocol::SessionInstanceId>,
+}
+
+impl EventScope {
+    /// The scope an event belongs to: the session on screen, unless the event is about one of this
+    /// client's own panes (the scratchpad, the popup), which belong to this machine whatever session
+    /// is showing. An id the local namespace shares with a session pane counts as local, so
+    /// ambiguity never reaches a worker on another host.
+    pub fn of(state: &crate::state::State, event: &Event) -> Self {
+        let local_pane = event
+            .fields
+            .iter()
+            .find(|(key, _)| *key == "pane")
+            .and_then(|(_, value)| value.parse().ok())
+            .is_some_and(|id| crate::pane::lifecycle::pane_is_local(state, id));
+        if local_pane {
+            return Self {
+                host: crate::state::HostKey::Local,
+                session: None,
+            };
+        }
+        Self {
+            host: crate::state::HostKey::of(state.current().remote_target.as_ref()),
+            session: state.current().session_instance.clone(),
+        }
+    }
+}
+
 impl EventHub {
     pub fn subscribe(&self, kinds: Option<HashSet<EventKind>>) -> mpsc::Receiver<String> {
+        self.subscribe_bound(kinds, None)
+    }
+
+    /// Subscribe on behalf of a placed worker, which hears an event only when it happened while
+    /// the session on screen lay within `binding`.
+    pub fn subscribe_bound(
+        &self,
+        kinds: Option<HashSet<EventKind>>,
+        binding: Option<crate::state::WorkerBinding>,
+    ) -> mpsc::Receiver<String> {
         let (tx, rx) = mpsc::sync_channel(128);
-        self.0.lock().unwrap().push(Subscriber { tx, kinds });
+        self.0
+            .lock()
+            .unwrap()
+            .push(Subscriber { tx, kinds, binding });
         rx
     }
 
+    /// Publish an event that belongs to no session. Placed workers do not hear it.
     pub fn publish(&self, event: &Event) {
+        self.publish_scoped(event, None);
+    }
+
+    pub fn publish_scoped(&self, event: &Event, scope: Option<&EventScope>) {
         let mut subscribers = self.0.lock().unwrap();
         // Zero subscribers is the common case (hover-focus emits on every pane crossing);
         // skip the JSON serialization entirely then.
@@ -145,13 +197,20 @@ impl EventHub {
             {
                 return true;
             }
+            if let Some(binding) = &subscriber.binding
+                && !scope.is_some_and(|scope| binding.admits(&scope.host, scope.session.as_ref()))
+            {
+                return true;
+            }
             subscriber.tx.try_send(json.clone()).is_ok()
         });
     }
 }
 
 pub fn emit(state: &crate::state::State, event: Event) {
-    state.event_hub.publish(&event);
+    state
+        .event_hub
+        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
     run_hooks(state, &event);
 }
 
@@ -159,7 +218,9 @@ pub fn emit(state: &crate::state::State, event: Event) {
 /// controller. Server-owned transitions reach every client, so this prevents duplicate external
 /// side effects while preserving each client's local `subscribe` stream.
 pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
-    state.event_hub.publish(&event);
+    state
+        .event_hub
+        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
     if state.is_controller() {
         run_hooks(state, &event);
     }
@@ -234,6 +295,39 @@ pub(crate) fn hook_env_for_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A placed worker hears what happens in a session within its binding, and nothing that
+    /// happened while another host's session - or no session - was on screen.
+    #[test]
+    fn a_bound_subscriber_hears_only_events_from_sessions_within_its_binding() {
+        let hub = EventHub::default();
+        let pc = crate::state::HostKey::Remote(crate::session::remote::RemoteTarget::Alias(
+            "pc".to_string(),
+        ));
+        let bound = hub.subscribe_bound(
+            None,
+            Some(crate::state::WorkerBinding {
+                host: pc.clone(),
+                session: None,
+            }),
+        );
+        let everything = hub.subscribe(None);
+        let local = EventScope {
+            host: crate::state::HostKey::Local,
+            session: None,
+        };
+        let remote = EventScope {
+            host: pc,
+            session: None,
+        };
+        hub.publish_scoped(&Event::new(EventKind::PaneSpawned, vec![]), Some(&local));
+        hub.publish(&Event::new(EventKind::ConfigReloaded, vec![]));
+        hub.publish_scoped(&Event::new(EventKind::PaneExited, vec![]), Some(&remote));
+        let heard: Vec<_> = bound.try_iter().collect();
+        assert_eq!(heard.len(), 1);
+        assert!(heard[0].contains("pane-exited"), "{heard:?}");
+        assert_eq!(everything.try_iter().count(), 3);
+    }
 
     #[test]
     fn event_kind_ids_round_trip() {

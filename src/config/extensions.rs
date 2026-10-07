@@ -15,6 +15,7 @@ mod discovery;
 mod keybindings;
 mod manifest;
 mod paths;
+pub mod placement;
 mod runtime;
 mod settings;
 mod validation;
@@ -118,6 +119,9 @@ pub struct ExtensionInfo {
     pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
     pub service_paths: BTreeMap<String, String>,
+    /// Content digest of the files placed contributions run from, for an extension that has any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<String>,
     pub errors: Vec<String>,
 }
 
@@ -172,6 +176,8 @@ pub struct ExtensionCommandDiagnostic {
     /// Commands inherit the focused pane's live project directory when invoked.
     pub cwd: String,
     pub injected_env: BTreeMap<String, String>,
+    /// Where the process runs: `client` or `active-session`.
+    pub placement: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -183,6 +189,8 @@ pub struct ExtensionServiceDiagnostic {
     /// Only Rozi-owned values are shown. Manifest environment values may contain secrets.
     pub injected_env: BTreeMap<String, String>,
     pub configured_env_keys: Vec<String>,
+    /// Where instances run: `client`, `active-session`, `each-host`, or `each-session`.
+    pub placement: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -226,6 +234,7 @@ pub(crate) struct DiscoveredExtension {
     navigation_targets: Vec<super::schema::NavigationTargetContribution>,
     suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     settings: ExtensionSettings,
+    placements: Option<placement::ExtensionPlacements>,
 }
 
 #[derive(Debug, Default)]
@@ -398,6 +407,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         service_details: Vec::new(),
         command_paths: BTreeMap::new(),
         service_paths: BTreeMap::new(),
+        bundle: None,
         errors: Vec::new(),
     };
     if directory.to_str().is_none() {
@@ -421,6 +431,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
+                placements: None,
             };
         }
     };
@@ -437,6 +448,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
+                placements: None,
             };
         }
     };
@@ -454,6 +466,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
+                placements: None,
             };
         }
     };
@@ -497,8 +510,12 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     // Facts about *this machine*, as opposed to facts about the manifest. The platform reason wins
     // over the version one because an extension for another operating system is not also "too new",
     // and neither is worth reporting as the other.
-    let environment_error =
-        unsupported_platform(&info.platforms).or_else(|| rozi_too_old(minimum_rozi.as_ref()));
+    // Kept apart because they are not the same kind of fact: a Rozi too old for the manifest can
+    // load none of it, while a platform the client is not on only rules out what runs *here* - a
+    // contribution placed on a session host answers to that host's platform instead.
+    let platform_error = unsupported_platform(&info.platforms);
+    let version_error = rozi_too_old(minimum_rozi.as_ref());
+    let mut placed = placement::PlacedContributions::default();
 
     let mut commands = Vec::new();
     let mut services = Vec::new();
@@ -524,6 +541,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut seen_commands,
             &mut info,
             &mut commands,
+            &mut placed,
         );
     }
     let declared_settings = settings::declared(manifest.settings, &mut info.errors);
@@ -539,6 +557,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut seen_sidebar_tabs,
             &mut info,
             &mut sidebar_tabs,
+            &mut placed,
         );
     }
     let mut seen_services = HashSet::new();
@@ -551,6 +570,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut seen_services,
             &mut info,
             &mut services,
+            &mut placed,
         );
     }
     let mut navigation_targets = Vec::new();
@@ -588,8 +608,30 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     info.errors.extend(agent_errors);
     info.agents = agents.iter().map(|agent| agent.id().to_string()).collect();
 
-    info.command_details = commands.iter().map(command_diagnostic).collect();
-    info.service_details = services.iter().map(service_diagnostic).collect();
+    info.command_details = commands
+        .iter()
+        .map(|command| command_diagnostic(command, placed.commands.get(&command.id)))
+        .collect();
+    info.service_details = services
+        .iter()
+        .map(|service| {
+            service_diagnostic(
+                service,
+                placed
+                    .services
+                    .iter()
+                    .find(|placed| placed.name == service.name),
+            )
+        })
+        .collect();
+    // A placed service is supervised per host by the placement runtime, never by the client's own
+    // service loop: that one would start it here whatever its placement said.
+    services.retain(|service| {
+        !placed
+            .services
+            .iter()
+            .any(|placed| placed.name == service.name)
+    });
     if !id_valid {
         info.commands.clear();
         info.services.clear();
@@ -613,12 +655,32 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     // coincide: `platforms = ["windows", "darwin"]` on Linux is both at once, and calling that an
     // incompatibility would advise running it on a platform that does not exist instead of naming
     // the typo. Only then the environment.
+    // A placed contribution runs from a snapshot of exactly these files. Taking it now, with the
+    // manifest, is what makes it the generation that loaded rather than whatever is on disk later.
+    let mut bundle = None;
+    if api_error.is_none() && info.errors.is_empty() && !placed.is_empty() {
+        match crate::extension_runtime::bundle::snapshot(&directory) {
+            Ok(snapshot) => {
+                info.bundle = Some(snapshot.digest().to_string());
+                bundle = Some(std::sync::Arc::new(snapshot));
+            }
+            Err(error) => info.errors.push(format!(
+                "cannot snapshot the extension for a session host: {error}"
+            )),
+        }
+    }
     let refusal = if let Some(error) = api_error {
         Some((ExtensionStatus::Incompatible, Some(error)))
     } else if !info.errors.is_empty() {
         Some((ExtensionStatus::Invalid, None))
+    } else if let Some(error) = version_error {
+        Some((ExtensionStatus::Incompatible, Some(error)))
+    } else if placed.is_empty() {
+        platform_error
+            .clone()
+            .map(|error| (ExtensionStatus::Incompatible, Some(error)))
     } else {
-        environment_error.map(|error| (ExtensionStatus::Incompatible, Some(error)))
+        None
     };
     if let Some((status, error)) = refusal {
         info.status = status;
@@ -635,6 +697,36 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info.status = ExtensionStatus::Loaded;
         info.enabled = true;
     }
+    let placements = bundle
+        .filter(|_| info.status == ExtensionStatus::Loaded)
+        .map(|bundle| {
+            // The client is not a platform this extension runs on, but a session host may be. Only
+            // what runs here is withheld; the placed contributions still load and answer to the
+            // platform of whichever host they execute on.
+            if platform_error.is_some() {
+                commands.retain(|command| {
+                    matches!(command.action, UserCommandAction::Send(_))
+                        || placed.commands.contains_key(&command.id)
+                });
+                services.clear();
+                sidebar_tabs.retain(|tab| match tab {
+                    super::schema::SidebarTab::Command { name, .. } => {
+                        placed.tabs.contains_key(name)
+                    }
+                    _ => true,
+                });
+            }
+            placement::ExtensionPlacements {
+                id: info.id.clone().unwrap_or_default(),
+                platforms: info.platforms.clone(),
+                local_dir: info.path.clone(),
+                bundle,
+                commands: placed.commands,
+                tabs: placed.tabs,
+                services: placed.services,
+                client_unsupported: platform_error,
+            }
+        });
     DiscoveredExtension {
         info,
         commands,
@@ -644,10 +736,14 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         navigation_targets,
         suggested_keybindings,
         settings: declared_settings,
+        placements,
     }
 }
 
-fn command_diagnostic(command: &NamedCommand) -> ExtensionCommandDiagnostic {
+fn command_diagnostic(
+    command: &NamedCommand,
+    placed: Option<&placement::PlacedCommand>,
+) -> ExtensionCommandDiagnostic {
     let launches_process = !matches!(&command.action, UserCommandAction::Send(_));
     let launch = match &command.action {
         UserCommandAction::ExecDirect { argv } => {
@@ -677,10 +773,17 @@ fn command_diagnostic(command: &NamedCommand) -> ExtensionCommandDiagnostic {
         } else {
             BTreeMap::new()
         },
+        placement: placed
+            .map_or(placement::Placement::Client, |placed| placed.placement)
+            .as_str()
+            .to_string(),
     }
 }
 
-fn service_diagnostic(service: &ServiceConfig) -> ExtensionServiceDiagnostic {
+fn service_diagnostic(
+    service: &ServiceConfig,
+    placed: Option<&placement::PlacedService>,
+) -> ExtensionServiceDiagnostic {
     let launch = match &service.launch {
         ServiceLaunch::Direct(argv) => ExtensionLaunchDiagnostic::Direct { argv: argv.clone() },
         ServiceLaunch::Shell(command) => ExtensionLaunchDiagnostic::Shell {
@@ -690,7 +793,12 @@ fn service_diagnostic(service: &ServiceConfig) -> ExtensionServiceDiagnostic {
     ExtensionServiceDiagnostic {
         id: service.name.clone(),
         launch,
-        cwd: service.cwd.clone().unwrap_or_else(|| ".".to_string()),
+        // A placed service starts inside the extension's files on whichever host runs it, so its
+        // directory is only meaningful relative to them.
+        cwd: placed.map_or_else(
+            || service.cwd.clone().unwrap_or_else(|| ".".to_string()),
+            |placed| placed.cwd.clone(),
+        ),
         restart: match service.restart {
             ServiceRestart::Always => "always",
             ServiceRestart::OnFailure => "on-failure",
@@ -710,6 +818,10 @@ fn service_diagnostic(service: &ServiceConfig) -> ExtensionServiceDiagnostic {
             .filter(|key| !RESERVED_EXTENSION_ENV.contains(&key.as_str()))
             .cloned()
             .collect(),
+        placement: placed
+            .map_or(placement::Placement::Client, |placed| placed.placement)
+            .as_str()
+            .to_string(),
     }
 }
 
@@ -2077,11 +2189,19 @@ mod tests {
         );
         assert_eq!(
             keys(&properties["commands"]["items"]["properties"]),
-            ["exec", "id", "key", "label", "send", "shell"]
+            ["exec", "id", "key", "label", "placement", "send", "shell"]
         );
         assert_eq!(
             keys(&properties["services"]["items"]["properties"]),
-            ["cwd", "env", "exec", "name", "restart", "shell"]
+            [
+                "cwd",
+                "env",
+                "exec",
+                "name",
+                "placement",
+                "restart",
+                "shell"
+            ]
         );
         assert_eq!(
             keys(&properties["navigation_targets"]["items"]["properties"]),
@@ -2108,7 +2228,8 @@ mod tests {
                 "interval",
                 "label",
                 "name",
-                "on_click"
+                "on_click",
+                "placement"
             ]
         );
         assert_eq!(
@@ -2191,5 +2312,252 @@ mod tests {
         assert!(contributions.sidebar_tabs.is_empty());
         assert!(!contributions.active_ids.contains("git-tools"));
         assert!(contributions.installed_ids.contains("git-tools"));
+    }
+
+    fn placed_manifest(id: &str, body: &str) -> String {
+        format!("{}{body}", manifest(id, "1"))
+    }
+
+    fn contributions_in(root: &Path) -> contributions::ExtensionContributions {
+        scan_extensions_in(root).into_contributions(&[], &BTreeMap::new())
+    }
+
+    /// A placed service is the placement runtime's to start, per host. Left in the client's own
+    /// service list it would also start here, whatever the manifest asked for.
+    #[test]
+    fn placed_contributions_are_carried_apart_from_client_ones() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = write_manifest(
+            temp.path(),
+            "sessions",
+            &placed_manifest(
+                "sessions",
+                "[[commands]]\nid = \"here\"\nexec = [\"./bin/run\"]\n\
+                 [[commands]]\nid = \"there\"\nexec = [\"./bin/run\", \"{extension_dir}/x\"]\n\
+                 placement = \"active-session\"\n\
+                 [[services]]\nname = \"watch\"\nexec = [\"definitely-not-on-this-path-rozi\"]\n\
+                 placement = \"each-host\"\ncwd = \"bin\"\n\
+                 [[sidebar_tabs]]\nname = \"rows\"\nlabel = \"Rows\"\ncommand = \"{extension_dir}/bin/run\"\n\
+                 placement = \"active-session\"\n",
+            ),
+        );
+        write_program(&dir, "bin/run");
+        let contributions = contributions_in(temp.path());
+        assert!(
+            contributions.warnings.is_empty(),
+            "{:?}",
+            contributions.warnings
+        );
+        assert!(contributions.services.is_empty());
+        let placed = &contributions.placements["sessions"];
+        assert_eq!(placed.services.len(), 1);
+        assert_eq!(placed.services[0].placement, placement::Placement::EachHost);
+        assert_eq!(placed.services[0].cwd, "bin");
+        assert!(!placed.services[0].env.contains_key("ROZI_EXTENSION_DIR"));
+        assert_eq!(placed.services[0].env["ROZI_EXTENSION"], "sessions");
+        assert!(placed.commands.contains_key("sessions.there"));
+        assert!(!placed.commands.contains_key("sessions.here"));
+        assert_eq!(
+            placed.commands["sessions.there"].launch,
+            placement::LaunchTemplate::Direct(vec![
+                "./bin/run".to_string(),
+                "{extension_dir}/x".to_string()
+            ])
+        );
+        assert!(
+            placed
+                .tabs
+                .contains_key(&crate::config::SidebarTabId::new("sessions.rows"))
+        );
+        assert!(crate::extension_runtime::bundle::is_digest(
+            placed.bundle_digest()
+        ));
+        assert_eq!(contributions.commands.len(), 2);
+    }
+
+    #[test]
+    fn placement_mistakes_invalidate_the_extension() {
+        for (case, body) in [
+            (
+                "command-each-host",
+                "[[commands]]\nid = \"c\"\nshell = \"true\"\nplacement = \"each-host\"\n",
+            ),
+            (
+                "send-placed",
+                "[[commands]]\nid = \"c\"\nsend = \"x\"\nplacement = \"active-session\"\n",
+            ),
+            (
+                "absolute-program",
+                "[[services]]\nname = \"s\"\nexec = [\"/usr/bin/env\"]\nplacement = \"each-host\"\n",
+            ),
+            (
+                "climbing-program",
+                "[[services]]\nname = \"s\"\nexec = [\"./../escape\"]\nplacement = \"each-host\"\n",
+            ),
+            (
+                "absolute-cwd",
+                "[[services]]\nname = \"s\"\nshell = \"true\"\ncwd = \"/tmp\"\nplacement = \"each-session\"\n",
+            ),
+            (
+                "launcher-tab",
+                "[[sidebar_tabs]]\nname = \"t\"\nentries = [{ label = \"x\", run = \"true\" }]\n\
+                 placement = \"active-session\"\n",
+            ),
+            (
+                "unknown",
+                "[[services]]\nname = \"s\"\nshell = \"true\"\nplacement = \"everywhere\"\n",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            write_manifest(temp.path(), "broken", &placed_manifest("broken", body));
+            let entry = scan_extensions_in(temp.path()).entries().remove(0);
+            assert_eq!(entry.status, ExtensionStatus::Invalid, "{case}: {entry:?}");
+        }
+    }
+
+    /// The client's platform rules out what runs on the client, not what runs on a session host.
+    #[test]
+    fn an_unsupported_client_still_loads_contributions_placed_on_session_hosts() {
+        let other = if std::env::consts::OS == "linux" {
+            "windows"
+        } else {
+            "linux"
+        };
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "remote-only",
+            &format!(
+                "[extension]\nid = \"remote-only\"\napi = 1\nplatforms = [\"{other}\"]\n\
+                 [[commands]]\nid = \"local\"\nshell = \"true\"\n\
+                 [[services]]\nname = \"watch\"\nshell = \"true\"\nplacement = \"each-host\"\n"
+            ),
+        );
+        write_manifest(
+            temp.path(),
+            "client-only",
+            &format!(
+                "[extension]\nid = \"client-only\"\napi = 1\nplatforms = [\"{other}\"]\n\
+                 [[commands]]\nid = \"local\"\nshell = \"true\"\n"
+            ),
+        );
+        let scan = scan_extensions_in(temp.path());
+        let entries = scan.entries();
+        let status = |id: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(id))
+                .unwrap()
+                .status
+        };
+        assert_eq!(status("client-only"), ExtensionStatus::Incompatible);
+        assert_eq!(status("remote-only"), ExtensionStatus::Loaded);
+        let contributions = scan.into_contributions(&[], &BTreeMap::new());
+        assert!(contributions.commands.is_empty());
+        let placed = &contributions.placements["remote-only"];
+        assert!(placed.client_unsupported.is_some());
+        assert!(!placed.supports(std::env::consts::OS));
+        assert!(placed.supports(other));
+    }
+
+    /// A linked extension edited on disk keeps its manifest. Its placed processes still have to
+    /// move to the new files, so the edit has to reach the generation.
+    #[test]
+    fn editing_a_placed_extensions_files_rotates_its_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = write_manifest(
+            temp.path(),
+            "linked",
+            &placed_manifest(
+                "linked",
+                "[[services]]\nname = \"watch\"\nexec = [\"./bin/run\"]\nplacement = \"each-host\"\n",
+            ),
+        );
+        write_program(&dir, "bin/run");
+        let load = || {
+            let contributions = contributions_in(temp.path());
+            crate::config::Config {
+                extension_runtime: contributions.runtime,
+                extension_placements: contributions.placements,
+                ..Default::default()
+            }
+        };
+        let mut first = load();
+        let (tokens, _) =
+            reconcile_generations(None, &mut first, &std::collections::HashMap::new());
+        let mut unchanged = load();
+        let (same, retired) = reconcile_generations(Some(&first), &mut unchanged, &tokens);
+        assert!(retired.is_empty());
+        assert_eq!(same["linked"], tokens["linked"]);
+
+        std::fs::write(dir.join("bin/run"), "exit 1\n").unwrap();
+        let mut edited = load();
+        assert_ne!(
+            edited.extension_placements["linked"].bundle_digest(),
+            unchanged.extension_placements["linked"].bundle_digest()
+        );
+        let (rotated, retired) = reconcile_generations(Some(&unchanged), &mut edited, &same);
+        assert!(retired.contains("linked"));
+        assert_ne!(rotated["linked"], same["linked"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_placed_extension_with_a_link_out_of_itself_is_invalid() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "key").unwrap();
+        let dir = write_manifest(
+            temp.path(),
+            "leaky",
+            &placed_manifest(
+                "leaky",
+                "[[services]]\nname = \"watch\"\nshell = \"true\"\nplacement = \"each-host\"\n",
+            ),
+        );
+        std::os::unix::fs::symlink(outside.path().join("secret"), dir.join("secret")).unwrap();
+        let entry = scan_extensions_in(temp.path()).entries().remove(0);
+        assert_eq!(entry.status, ExtensionStatus::Invalid);
+        assert!(
+            entry
+                .errors
+                .iter()
+                .any(|error| error.contains("points outside the extension")),
+            "{:?}",
+            entry.errors
+        );
+    }
+
+    /// A client-run program must exist here; a placed one is looked up on the host running it.
+    #[test]
+    fn only_client_programs_must_be_on_this_machines_path() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "client",
+            &placed_manifest(
+                "client",
+                "[[services]]\nname = \"s\"\nexec = [\"definitely-not-on-this-path-rozi\"]\n",
+            ),
+        );
+        write_manifest(
+            temp.path(),
+            "placed",
+            &placed_manifest(
+                "placed",
+                "[[services]]\nname = \"s\"\nexec = [\"definitely-not-on-this-path-rozi\"]\n\
+                 placement = \"active-session\"\n",
+            ),
+        );
+        let entries = scan_extensions_in(temp.path()).entries();
+        let status = |id: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(id))
+                .unwrap()
+                .status
+        };
+        assert_eq!(status("client"), ExtensionStatus::Invalid);
+        assert_eq!(status("placed"), ExtensionStatus::Loaded);
     }
 }

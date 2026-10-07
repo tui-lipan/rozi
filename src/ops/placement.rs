@@ -273,11 +273,14 @@ fn arm_wake(state: &mut State, at: Option<Instant>) {
         return;
     }
     state.extension_runtime.wake_at = Some(at);
-    if let Some(link) = state.command_link.as_ref() {
-        link.send_after(
-            at.saturating_duration_since(Instant::now()),
-            crate::Msg::PlacementTick,
-        );
+    // A real timer, because the deadlines it serves are wall-clock `Instant`s: restart backoff and
+    // reconnect delay are measured against the processes and connections they wait on.
+    if let Some(link) = state.command_link.clone() {
+        let delay = at.saturating_duration_since(Instant::now());
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            link.send(crate::Msg::PlacementTick);
+        });
     }
 }
 
@@ -650,8 +653,11 @@ pub(crate) fn runtime_event(
         RuntimeEvent::Message(message) => update = runtime_message(ctx, &host, message),
     }
     // Readiness and failures change what can start; reconcile now rather than on the next message.
-    ctx.state.extension_runtime.signature = None;
-    sync(ctx);
+    // Not as a change of sessions or extensions, though: an instance the host just refused must
+    // not be retried because the refusal itself arrived.
+    if ctx.state.command_link.is_some() {
+        reconcile(ctx, false);
+    }
     update
 }
 

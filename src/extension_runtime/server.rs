@@ -984,3 +984,55 @@ mod tests {
         client.close();
     }
 }
+
+#[cfg(all(test, unix))]
+mod tamper_tests {
+    use super::*;
+    use crate::extension_runtime::bundle::BundleFile;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_bundle_tampered_with_after_staging_is_refused_at_the_next_launch() {
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(store_dir.path().join("bundles")).unwrap();
+        let bundle = Bundle::from_files(vec![BundleFile {
+            path: "bin/probe".to_string(),
+            executable: true,
+            contents: b"#!/bin/sh\nexit 0\n".to_vec(),
+        }])
+        .unwrap();
+        let staged = store.stage(&bundle).unwrap();
+        std::fs::set_permissions(staged.join("bin"), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        std::fs::set_permissions(
+            staged.join("bin/probe"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        std::fs::write(staged.join("bin/probe"), "#!/bin/sh\necho pwned\n").unwrap();
+        let mut runtime = Runtime {
+            writer: Arc::new(Mutex::new(Box::new(Vec::new()))),
+            store,
+            bridge_path: PathBuf::from("/nonexistent"),
+            running: HashMap::new(),
+            bridges: HashMap::new(),
+            pending_stage: HashMap::new(),
+        };
+        let result = runtime.spawn(
+            1,
+            bundle.digest(),
+            &Launch::Direct {
+                argv: vec!["./bin/probe".to_string()],
+            },
+            &SpawnCwd::Inherit,
+            Vec::new(),
+            "c",
+            &[],
+            None,
+        );
+        assert!(
+            matches!(result, Err(SpawnFailure::BundleCorrupt { .. })),
+            "{result:?}"
+        );
+    }
+}

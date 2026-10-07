@@ -871,6 +871,11 @@ A restarting service waits 1, 2, 4, 8, 16, then 30 seconds between attempts. Aft
 failures within 60 seconds, the service stays stopped until you change its definition. rozi stops
 each service's process group when the client exits.
 
+A service's stdin is a pipe that rozi holds open and never writes to. If the client ends without
+stopping its services — for example, it is killed or crashes — stdin reaches end of file, so a
+service that reads stdin can exit on its own. In that case, Linux also kills the service process,
+but not processes it started, and Windows kills the service with everything it started.
+
 For packaged automation, use extension services instead. See [Extensions](extensions.md).
 
 ## `[keys]`

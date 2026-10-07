@@ -130,8 +130,7 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, Opt
     while Instant::now() < deadline {
         match endpoint.connect() {
             Ok(stream) => {
-                // Detached session server outlives this proxy; do not kill it on drop.
-                let _ = child.try_wait();
+                // Detached session server outlives this proxy; dropping the handle only reaps it.
                 drop(child);
                 return Ok((stream, Some(nonce)));
             }

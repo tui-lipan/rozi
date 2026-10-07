@@ -550,10 +550,10 @@ extension stops its placed processes on every host.
 
 A placed process uses the normal `rozi` commands through `ROZI_BIN` and `ROZI_SOCKET`, including
 streams such as `rozi publish`, `rozi subscribe`, and `rozi pick`. Each process receives a
-credential in `ROZI_EXTENSION_CREDENTIAL` that identifies it to the client as its extension,
-generation, and host. The `rozi` CLI sends it automatically; never pass it on or log it. The client
-ignores any other identity a request claims and refuses a credential that was revoked or used from a
-different host.
+credential in `ROZI_EXTENSION_CREDENTIAL` that tells the client which extension, generation, and
+host it was started for. The `rozi` CLI sends it automatically; never pass it on or log it. The
+client ignores any other identity a request claims, and refuses a credential that was revoked, that
+belongs to a retired generation, or that arrives from a different host.
 
 What the client honors depends on the command:
 
@@ -577,12 +577,23 @@ behaves the same wherever it runs.
 
 #### Security
 
-Treat a remote host as able to read and change anything its own user can, including the extension
-snapshot and the credentials of the processes running there. `rozi` is built so that such a host
-cannot use them to act on the client: every request is checked by the client against the rules
-above, a credential only works for the host and generation it was issued for, and nothing a host
-sends can start a process on the client. The read-only snapshot protects against accidental changes;
-a process running as the same user can still change it, which the next verification catches.
+The trust boundary is the host, not the process. Any process running as the same user on a host can
+read the credentials of the placed processes there, and can change their files, so a credential
+does not tell one process on a host from another. What it does is tie a request to one host, one
+extension, and one live generation: it stops a retired or restarted process from acting, keeps one
+host from speaking for another, and attributes requests to the extension that made them.
+
+Treat a remote host as able to do anything the placed processes on it together may do, as
+described above, and nothing more. That is what the client enforces, whatever runs on the host:
+every request is checked against those rules, a host's runtime can only answer for the processes it
+was asked to start, the resources a host can make the client hold are bounded, and nothing a host
+sends can start a process on the client. A host that breaks the protocol or goes past a bound is
+disconnected.
+
+The snapshot's digest checks integrity rather than security. Its read-only copy protects against
+accidental changes, and verification before every launch catches any change, deliberate or not,
+but a process on the host that can change the snapshot can also change what runs there in other
+ways.
 
 Placed contributions need `rozi` with the `remote-extension-runtime` capability on the client and
 on every host they run on. Set `min_rozi` to a release that has it (see
@@ -826,8 +837,9 @@ When `ROZI_EXTENSION` is set, the `rozi` CLI tags each request with the extensio
 generation. After the extension is disabled or reloaded, requests from its old processes are
 rejected; a process whose request is rejected should exit rather than retry. For a client
 contribution, the generation keeps stale processes from acting, but it is not authentication: other
-processes running as the same user are not blocked. A placed contribution's requests are
-authenticated by its credential instead. Pickers, activity rows, and subscriptions an extension
+processes running as the same user are not blocked. A placed contribution's requests carry its
+credential instead, which ties them to its host and generation; see
+[Security](#security). Pickers, activity rows, and subscriptions an extension
 opens close when its generation is retired.
 
 A session server cannot check the generation, so it refuses requests from extensions; see

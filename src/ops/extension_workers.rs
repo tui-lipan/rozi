@@ -17,6 +17,9 @@
 //! The same rules hold for a placed worker running on this machine, so an extension behaves the
 //! same wherever Rozi places it, and one tested locally does not start failing once it runs on a
 //! server.
+//!
+//! A compromised host can read every credential issued to it, so these rules are written for the
+//! union of what all of a host's workers may do: nothing here may hand a host more than that.
 
 use crate::config::ExtensionProvenance;
 use crate::control::{

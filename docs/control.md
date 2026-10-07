@@ -931,8 +931,8 @@ pane that an extension opened inherits `ROZI_EXTENSION` and hits the same refusa
 `env -u ROZI_EXTENSION rozi --session …` to make the request as yourself.
 
 A [placed](extensions.md#run-on-the-session-host) extension process reaches the UI that placed it
-through its runtime, wherever it runs. Its requests are authenticated by a credential rather than
-the generation token alone, and limited to what a placed process may do: commands that would run
+through its runtime, wherever it runs. Its requests carry a credential that ties them to the host
+and generation it was started for, and are limited to what a placed process may do: commands that would run
 something on the client fail with `not-permitted`, and commands about a session outside the
 process's host fail with `out-of-scope`.
 

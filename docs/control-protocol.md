@@ -75,7 +75,8 @@ A request that arrives through an extension runtime's bridge — from a
 [placed](extensions.md#run-on-the-session-host) extension process — must carry a `credential`. The
 UI identifies the caller from it alone: it replaces `extension` with the extension and generation
 the credential was issued for, and refuses a credential that was revoked or issued for another
-host's runtime. It then admits each request by the rules in
+host's runtime. The credential distinguishes hosts and generations, not processes on one host: any
+process of the same user there can read it. It then admits each request by the rules in
 [What a placed process may do](extensions.md#what-a-placed-process-may-do).
 
 ## Responses

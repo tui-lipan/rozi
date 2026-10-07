@@ -4,8 +4,13 @@
 //! only as what it launched it as: one extension, one generation, bound to one host (and, for some
 //! placements, one session). That identity is never read from anything the process says about
 //! itself. It is looked up from an unguessable credential the process was handed at launch, and
-//! for a worker on another machine only when the credential arrives over the very runtime
-//! connection the worker was started through.
+//! only when the credential arrives over the very runtime connection the worker was started
+//! through.
+//!
+//! The trust boundary is the host, not the worker. A credential lives in the worker's environment,
+//! where any process of the same user on that host can read it, so it tells hosts and generations
+//! apart, not processes on one host. Everything the UI allows a credential is therefore something it
+//! is willing to let that whole host do.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;

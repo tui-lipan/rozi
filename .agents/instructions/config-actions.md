@@ -55,7 +55,9 @@ instead of adding an unlinked snippet.
   runtime (`rozi extensions runtime`, in-process for this machine, over SSH otherwise) from a
   verified bundle, never on the client as a fallback. Each process gets `ROZI_EXTENSION_CREDENTIAL`;
   the CLI sends it as `credential`, and the UI identifies the caller from it alone and admits each
-  request in `src/ops/extension_workers.rs`. Adding a `ControlCommand` means choosing its gate there
+  request in `src/ops/extension_workers.rs`. The trust boundary is the host: any same-user process
+  there can read credentials, so policy must hold for the union of what a host's workers may do,
+  and a runtime may only answer for workers it was given (`ops/placement.rs` `ownership`). Adding a `ControlCommand` means choosing its gate there
   too: anything that could start a process on the client, or reads the whole client, is denied.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus
   `ROZI_REMOTE_HOST` for remote attachments. Use `events::EventKind::ALL` as the current event list

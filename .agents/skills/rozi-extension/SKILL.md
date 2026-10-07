@@ -197,8 +197,9 @@ placement = "each-host"   # client | active-session | each-host | each-session
   absolute path, `~`, or `../` is invalid. A placed service `cwd` is relative to the extension.
 - It runs from a verified snapshot of the extension's files; `ROZI_EXTENSION_DIR` and
   `{extension_dir}` name that snapshot on the host. Never write into it.
-- It reaches the client only through `ROZI_BIN`/`ROZI_SOCKET`, authenticated by
-  `ROZI_EXTENSION_CREDENTIAL`, which the CLI sends for you. Never log or forward it.
+- It reaches the client only through `ROZI_BIN`/`ROZI_SOCKET`, carrying
+  `ROZI_EXTENSION_CREDENTIAL`, which the CLI sends for you. Never log or forward it. It ties
+  requests to the host and generation; it does not separate processes of the same user there.
 - Pane commands apply only while a session on its own host (and session, for `active-session`
   and `each-session`) is on screen: `list-panes` returns nothing otherwise, others fail with
   `out-of-scope`. Code for that case rather than treating it as an error.
@@ -350,8 +351,8 @@ from their original source.
 
 An installed extension is trusted local executable code. Rozi validates declarations and lifecycle
 ownership; it does not sandbox code or enforce capability permissions. A placed process on another
-host is the exception that is confined: the client admits its requests by placement, so it cannot
-act on the client beyond what a placed process may do.
+host is the exception that is confined: the client admits its requests by placement, so the host as
+a whole cannot act on the client beyond what its placed processes together may do.
 
 - Prefer structured argv and standard process APIs.
 - Avoid shell unless pipelines/redirection are required; never assume `/bin/sh`.

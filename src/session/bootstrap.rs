@@ -175,7 +175,7 @@ fn attach_session_client_with_profile(
     let deadline = Instant::now() + Duration::from_secs(5);
     let reconnect_deadline = Instant::now() + LOCAL_RECONNECT_BUSY_DEADLINE;
     let mut spawned = false;
-    let mut server_child: Option<std::process::Child> = None;
+    let mut server_child: Option<crate::platform::server_lifecycle::DetachedServer> = None;
     loop {
         let mailbox = super::client::InboundMailbox::new(epoch, name.clone(), link.clone());
         match super::client::SessionClient::connect_attached_mailbox(
@@ -194,7 +194,7 @@ fn attach_session_client_with_profile(
                     return;
                 }
                 if create_only {
-                    let expected = server_child.as_ref().map(std::process::Child::id);
+                    let expected = server_child.as_ref().map(|child| child.id());
                     if expected.is_none() || client.server_pid() != expected {
                         client.detach();
                         link.send(Msg::SessionAttachFailed {

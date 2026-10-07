@@ -443,6 +443,11 @@ Let `rozi` supervise the process rather than daemonizing it or writing your own 
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
 [`rozi publish`](control.md#published-activity). Extensions cannot declare [hooks](hooks.md).
 
+A service's stdin stays open while its client runs and reaches end of file once the client is gone,
+even if it was killed or crashed. Watch stdin and exit at end of file, so the service does not
+outlive a client that could not stop it. In that case, Linux also kills the service process, but
+not processes it started, and Windows kills the service with everything it started.
+
 ### Settings
 
 Declare the settings an extension understands, each with its default value:

@@ -304,12 +304,24 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_missing_endpoint_or_plugin_data_does_not_touch_disk(self):
-        for key in ("ROZI", "ROZI_PANE", "ROZI_SOCKET", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA"):
+        for key in ("ROZI", "ROZI_PANE", "ROZI_SESSION_INSTANCE", "PLUGIN_DATA"):
             env = self.env.copy()
             env.pop(key)
             activity.handle({"hook_event_name": "SessionStart", "session_id": "id"}, env)
         self.assertEqual(self.calls, [])
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
+    def test_pane_without_ui_endpoint_reports_to_its_own_session(self):
+        # A remote pane, or one in a session no window shows, has no ROZI_SOCKET. rozi sends
+        # its report to the session server ROZI_SESSION_INSTANCE names, so the hook still reports.
+        self.env.pop("ROZI_SOCKET")
+        self.hook("SessionStart")
+        args, kwargs = self.calls[-1]
+        self.assertEqual(args[1:3], ["agents", "report"])
+        self.assertNotIn("--session", args)
+        self.assertNotIn("--target", args)
+        self.assertNotIn("ROZI_SOCKET", kwargs["env"])
+        self.assertEqual(kwargs["env"]["ROZI_SESSION_INSTANCE"], "session-instance")
 
     def test_invalid_thread_id_cannot_claim_pane(self):
         self.hook("SessionStart", session=None)

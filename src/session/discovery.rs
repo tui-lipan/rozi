@@ -255,6 +255,30 @@ fn peer_hung_up(kind: std::io::ErrorKind) -> bool {
     )
 }
 
+/// What one session server said about itself.
+struct QueryAnswer {
+    status: DiscoveredSessionStatus,
+    origin: crate::session::origin::SessionOrigin,
+    agents: Vec<crate::session::protocol::AgentSummary>,
+    /// `None` from a server that predates reporting it, as well as from one we cannot speak to.
+    instance: Option<crate::session::protocol::SessionInstanceId>,
+}
+
+impl QueryAnswer {
+    fn unknown() -> Self {
+        Self::without_answer(DiscoveredSessionStatus::Unknown)
+    }
+
+    fn without_answer(status: DiscoveredSessionStatus) -> Self {
+        Self {
+            status,
+            origin: Default::default(),
+            agents: Vec::new(),
+            instance: None,
+        }
+    }
+}
+
 /// Ask one connected endpoint what it is. `Err` means the handshake never completed; a server that
 /// answers with anything but `SessionInfo` speaks a protocol we cannot use and is `Unknown`.
 ///
@@ -264,11 +288,7 @@ fn query_status(
     name: &str,
     stream: &mut IpcConnection,
     capabilities: Option<&crate::session::protocol::Capabilities>,
-) -> std::io::Result<(
-    DiscoveredSessionStatus,
-    crate::session::origin::SessionOrigin,
-    Vec<crate::session::protocol::AgentSummary>,
-)> {
+) -> std::io::Result<QueryAnswer> {
     let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
     let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
     crate::session::protocol::write_frame(
@@ -287,22 +307,66 @@ fn query_status(
             has_layout,
             origin,
             agents,
+            instance,
             ..
-        } => Ok((
-            DiscoveredSessionStatus::Running {
+        } => Ok(QueryAnswer {
+            status: DiscoveredSessionStatus::Running {
                 panes,
                 clients,
                 has_layout,
             },
             origin,
             agents,
-        )),
-        _ => Ok((
-            DiscoveredSessionStatus::Unknown,
-            Default::default(),
-            Vec::new(),
-        )),
+            instance,
+        }),
+        _ => Ok(QueryAnswer::unknown()),
     }
+}
+
+/// What looking for a pane's own server by instance found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstanceLookup {
+    /// The session whose server answers to the instance.
+    Found(String),
+    /// No server here answers to it. `unidentified` names live servers that answered without an
+    /// instance - an older rozi - any of which may be the one; they are never guessed at.
+    NotFound { unidentified: Vec<String> },
+}
+
+/// The local session whose server is `instance`, for a pane that has to reach its own server and
+/// knows only that. Every live endpoint is asked in parallel, as a discovery sweep asks them.
+///
+/// A name is never guessed, because a report applied to the wrong session lands on a stranger's
+/// pane with the same id. The session may have ended, the pane may not be on this machine, or its
+/// server may predate reporting its instance.
+pub fn session_with_instance(
+    instance: &crate::session::protocol::SessionInstanceId,
+) -> std::io::Result<InstanceLookup> {
+    let dir = crate::control::runtime_dir()?;
+    let handles: Vec<_> = EndpointRegistry::list_session_endpoints(&dir)?
+        .into_iter()
+        .map(|(name, endpoint)| {
+            std::thread::spawn(move || {
+                let mut stream = endpoint.connect().ok()?;
+                let answer = query_status(&name, &mut stream, None).ok()?;
+                matches!(answer.status, DiscoveredSessionStatus::Running { .. })
+                    .then_some((name, answer.instance))
+            })
+        })
+        .collect();
+    let mut unidentified = Vec::new();
+    for (name, answered) in handles
+        .into_iter()
+        .filter_map(|handle| handle.join().ok().flatten())
+    {
+        match answered {
+            Some(answered) if &answered == instance => return Ok(InstanceLookup::Found(name)),
+            Some(_) => {}
+            None => unidentified.push(name),
+        }
+    }
+    unidentified.sort();
+    Ok(InstanceLookup::NotFound { unidentified })
 }
 
 /// Sessions on this host with a worktree origin, from snapshots and live servers.
@@ -371,7 +435,11 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
             }
         };
         match query_status(&name, &mut stream, None) {
-            Ok((DiscoveredSessionStatus::Running { .. }, origin, _)) => {
+            Ok(QueryAnswer {
+                status: DiscoveredSessionStatus::Running { .. },
+                origin,
+                ..
+            }) => {
                 if let Some(tree) = origin.worktree.as_ref() {
                     live.insert(name.clone());
                     known.insert((name, canonical(&tree.path)));
@@ -429,7 +497,12 @@ fn probe_session_endpoint(
     endpoint: &IpcEndpoint,
     capabilities: Option<&crate::session::protocol::Capabilities>,
 ) -> Option<ProbedSession> {
-    let (status, origin, agents) = match endpoint.connect() {
+    let QueryAnswer {
+        status,
+        origin,
+        agents,
+        ..
+    } = match endpoint.connect() {
         Ok(mut stream) => match query_status(name, &mut stream, capabilities) {
             Ok(answer) => answer,
             Err(err)
@@ -438,11 +511,7 @@ fn probe_session_endpoint(
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                (
-                    DiscoveredSessionStatus::Busy,
-                    Default::default(),
-                    Vec::new(),
-                )
+                QueryAnswer::without_answer(DiscoveredSessionStatus::Busy)
             }
             // Accepted, then hung up mid-handshake: a server on its way out, whose endpoint has
             // simply not been retired yet. Drop the row rather than reporting it "unavailable" for
@@ -451,11 +520,7 @@ fn probe_session_endpoint(
             // next sweep once connecting is refused outright.
             Err(err) if peer_hung_up(err.kind()) => return None,
             // Answered, but not in a language we speak. Stays listed so it can be killed.
-            Err(_) => (
-                DiscoveredSessionStatus::Unknown,
-                Default::default(),
-                Vec::new(),
-            ),
+            Err(_) => QueryAnswer::unknown(),
         },
         Err(err)
             if matches!(
@@ -463,11 +528,7 @@ fn probe_session_endpoint(
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
             ) =>
         {
-            (
-                DiscoveredSessionStatus::Busy,
-                Default::default(),
-                Vec::new(),
-            )
+            QueryAnswer::without_answer(DiscoveredSessionStatus::Busy)
         }
         Err(_) => {
             let _ = std::fs::remove_file(endpoint.path());

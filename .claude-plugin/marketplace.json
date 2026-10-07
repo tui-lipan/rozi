@@ -7,7 +7,7 @@
       "name": "rozi",
       "source": "./plugins/claude-code",
       "description": "Report Claude Code activity and conversation identity to Rozi.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }

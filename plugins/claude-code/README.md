@@ -93,10 +93,11 @@ timeout setting does not raise that budget. To allow the full five seconds durin
 conversation switching, launch Claude with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=5000`.
 See the [SessionEnd timeout reference](https://code.claude.com/docs/en/hooks#sessionend).
 
-Reporting requires the pane's `ROZI_SOCKET`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`. Remote and
-headless panes without a local UI endpoint keep using Rozi's screen detection. If the UI endpoint
-goes away, hook reports cannot reach it. Restart Claude Code in an attached pane to begin a new
-reporting lifecycle. Removing the plugin while Claude is running also requires ending that
+Reporting requires the pane's `ROZI_PANE` and `ROZI_SESSION_INSTANCE`. With `ROZI_SOCKET`, reports
+go through the pane's UI. Without it — in a remote pane, or a session with no window attached —
+they go straight to the session server the pane runs in, which needs the Rozi build containing this
+plugin on the pane's host. If neither is reachable, hook reports are lost until Claude Code starts a
+new reporting lifecycle. Removing the plugin while Claude is running also requires ending that
 Claude session to release its last report.
 
 Use the Rozi build containing this plugin for session switching: it routes reports to the

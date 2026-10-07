@@ -35,7 +35,11 @@ instead of adding an unlinked snippet.
   attachment instead of the session on screen.
 - Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SOCKET`, and `ROZI_BIN`. Remote panes suppress
   local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
-  `rozi --session <NAME> split`, which has no UI to name.
+  `rozi --session <NAME> split` or restored by resurrection, which has no UI to name.
+- `agents report`/`release` with no `--target`, `--socket`, `--session`, or `ROZI_SOCKET` go to the
+  pane's own session server, found by matching `ROZI_SESSION_INSTANCE` against the `instance` each
+  server reports in `SessionInfo`. The request keeps `source_session`, and a session endpoint
+  refuses a request whose `source_session` is another instance (`instance-mismatch`).
 - `--session <NAME>` before a control command routes it to that session server instead of a UI.
   `src/session/server/headless.rs` decides which commands a server can answer; adding a
   `ControlCommand` means choosing a side there.

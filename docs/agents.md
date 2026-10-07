@@ -31,10 +31,11 @@ Install it in Claude Code:
 /plugin install rozi@rozi
 ```
 
-Restart Claude Code inside a local Rozi pane. The plugin needs Python 3.10 or newer available as
+Restart Claude Code inside a Rozi pane. The plugin needs Python 3.10 or newer available as
 `python` and a current Claude Code with exec-form hooks and `CLAUDE_PLUGIN_DATA`. It requires
-`rozi agents report` and `rozi agents release`; no Rozi extension is needed. Remote and headless
-panes without a local UI endpoint continue using screen detection.
+`rozi agents report` and `rozi agents release`; no Rozi extension is needed. It also reports from
+remote panes and from sessions with no window attached, as long as the pane's host runs a matching
+rozi.
 
 The plugin reports one activity for the main conversation. Child-agent completion cannot mark the
 parent done, and background tasks or scheduled wakeups keep a completed response working.
@@ -55,10 +56,11 @@ codex plugin marketplace add tui-lipan/rozi
 codex plugin add rozi@rozi
 ```
 
-Restart Codex inside a local Rozi pane and trust the plugin's hooks when Codex asks you to review
+Restart Codex inside a Rozi pane and trust the plugin's hooks when Codex asks you to review
 them. The plugin needs Python 3.10 or newer available as `python3`. It requires
-`rozi agents report` and `rozi agents release`; no Rozi extension is needed. Remote and headless
-panes without a local UI endpoint continue using screen detection.
+`rozi agents report` and `rozi agents release`; no Rozi extension is needed. It also reports from
+remote panes and from sessions with no window attached, as long as the pane's host runs a matching
+rozi.
 
 Codex starts a thread's hooks at its first prompt, so after `/resume` the pane reports the new
 thread once you send it something. The plugin reports one activity for the thread on screen.
@@ -326,8 +328,10 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   every conversation correctly.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
-(`ROZI_PANE`). With `--session`, always pass `--target`, because an inherited pane number may belong
-to a different session.
+(`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report
+goes to the session the pane runs in, which keeps it for every window that attaches, now or later.
+With `--session`,
+always pass `--target`, because an inherited pane number may belong to a different session.
 
 Pane hooks carry `ROZI_SESSION_INSTANCE`, so reports and releases follow the calling pane's
 session even after the UI switches to another attached session. If that session is no longer

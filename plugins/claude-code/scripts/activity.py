@@ -87,7 +87,8 @@ def transition(event: dict) -> tuple[str, str | None] | None:
 def state_path(env: dict[str, str], parent_pid: int) -> Path:
     # Exec-form hooks run directly under Claude. A conversation id alone is not a
     # process identity: two processes can resume the same conversation.
-    identity = [env["ROZI_SOCKET"], env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"], parent_pid]
+    # A pane with no UI to name (remote, or in a session no window shows) has no ROZI_SOCKET.
+    identity = [env.get("ROZI_SOCKET", ""), env["ROZI_SESSION_INSTANCE"], env["ROZI_PANE"], parent_pid]
     key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     # Claude owns this persistent directory, separately from its cached plugin code.
     root = Path(env["CLAUDE_PLUGIN_DATA"]) / "activity"
@@ -312,8 +313,9 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     args += ["--integration", row[0], "--seq", str(row[2])]
     if reason:
         args += ["--reason", reason]
-    # ROZI_PANE selects the calling pane through ROZI_SOCKET. Never infer a
-    # session name from a pane number, or open the platform-specific socket here.
+    # ROZI_PANE selects the calling pane: through ROZI_SOCKET when the pane has a UI, and
+    # otherwise in the session server ROZI_SESSION_INSTANCE names, which rozi finds itself.
+    # Never infer a session name from a pane number, or open the platform-specific socket here.
     result = subprocess.run(args, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             text=True, timeout=timeout, check=False)
@@ -403,7 +405,7 @@ def deliver_pending(db: sqlite3.Connection, env: dict[str, str], deadline: float
 
 
 def handle(event: dict, env: dict[str, str], parent_pid: int) -> None:
-    required = ("ROZI_PANE", "ROZI_SOCKET", "ROZI_SESSION_INSTANCE", "CLAUDE_PLUGIN_DATA")
+    required = ("ROZI_PANE", "ROZI_SESSION_INSTANCE", "CLAUDE_PLUGIN_DATA")
     if env.get("ROZI") != "1" or not all(env.get(key) for key in required):
         return
     if not isinstance(event.get("session_id"), str) or not event["session_id"]:

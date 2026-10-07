@@ -228,8 +228,15 @@ impl Runtime {
     fn handle_message(&mut self, message: Message) -> io::Result<()> {
         match message {
             Message::StageCommit { digest } => {
-                let _ = self.lease.record(&digest);
                 let archive = self.pending_stage.remove(&digest).unwrap_or_default();
+                // A bundle this runtime cannot claim could be pruned by another runtime the moment
+                // it lands, so it is not staged at all.
+                if let Err(error) = self.lease.record(&digest) {
+                    return self.message(&Message::StageFailed {
+                        digest,
+                        detail: format!("cannot lease the bundle in the cache: {error}"),
+                    });
+                }
                 let result = Bundle::from_archive(&archive, &digest)
                     .and_then(|bundle| self.store.stage(&bundle).map_err(|e| e.to_string()));
                 let keep: HashSet<String> = self
@@ -315,7 +322,13 @@ impl Runtime {
         if !platforms.is_empty() && !platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
         }
-        let _ = self.lease.record(digest);
+        // Claimed before it is verified: once the claim holds, no other runtime's pruning removes the
+        // bundle, so what is verified is what runs. Without the claim nothing runs.
+        self.lease
+            .record(digest)
+            .map_err(|error| SpawnFailure::SpawnFailed {
+                detail: format!("cannot lease the extension's files in the cache: {error}"),
+            })?;
         // Verified now, immediately before the launch, not when it was staged.
         let bundle_dir = self.store.verified(digest).map_err(|error| match error {
             StoreError::Missing => SpawnFailure::BundleMissing,

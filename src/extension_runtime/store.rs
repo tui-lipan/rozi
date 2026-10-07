@@ -55,23 +55,55 @@ pub struct BundleStore {
 /// Where runtimes keep their leases, inside the cache.
 const LEASES: &str = ".leases";
 
+/// The cache-wide lock that orders recording a lease against pruning, inside [`LEASES`].
+const GUARD: &str = "cache.guard";
+
+/// Hold the cache-wide guard for the life of the returned file. Recording a lease and pruning both
+/// take it, so a prune's view of the leases cannot go stale while it deletes: a digest recorded
+/// before the prune read the leases is spared, and one recorded after waits until the prune is done,
+/// then finds out whether its bundle is still there.
+fn guard(root: &Path) -> io::Result<std::fs::File> {
+    let dir = root.join(LEASES);
+    crate::platform::fs_security::ensure_private_dir(&dir)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(GUARD))?;
+    file.lock()?;
+    Ok(file)
+}
+
 /// One runtime's claim on the bundles it uses. Recorded before a bundle is staged or run, so no
 /// other runtime's pruning can remove it in between.
 pub struct Lease {
     _lock: std::fs::File,
     digests: std::fs::File,
+    root: PathBuf,
     lock_path: PathBuf,
     digests_path: PathBuf,
     recorded: HashSet<String>,
 }
 
 impl Lease {
+    /// Claim `digest` for this runtime. Once this returns `Ok`, no prune - including one already
+    /// running - deletes it. An error means the claim is not durable, and the caller must not
+    /// stage or run the bundle on the strength of it.
     pub fn record(&mut self, digest: &str) -> io::Result<()> {
-        if !bundle::is_digest(digest) || !self.recorded.insert(digest.to_string()) {
+        if !bundle::is_digest(digest) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("`{digest}` is not a bundle digest"),
+            ));
+        }
+        if self.recorded.contains(digest) {
             return Ok(());
         }
+        let _guard = guard(&self.root)?;
         std::io::Write::write_all(&mut self.digests, format!("{digest}\n").as_bytes())?;
-        self.digests.sync_data()
+        self.digests.sync_data()?;
+        self.recorded.insert(digest.to_string());
+        Ok(())
     }
 }
 
@@ -192,6 +224,7 @@ impl BundleStore {
         Ok(Lease {
             _lock: lock,
             digests,
+            root: self.root.clone(),
             lock_path,
             digests_path,
             recorded: HashSet::new(),
@@ -240,7 +273,19 @@ impl BundleStore {
     /// Drop all but the most recently used bundles, never one in `keep` or in any live runtime's
     /// lease.
     pub fn prune(&self, keep: &HashSet<String>) {
+        self.prune_pausing(keep, || {});
+    }
+
+    /// [`Self::prune`], calling `after_snapshot` once the leases are read and before anything is
+    /// deleted, with the guard held. Tests use it to land another runtime's record right there.
+    fn prune_pausing(&self, keep: &HashSet<String>, after_snapshot: impl FnOnce()) {
+        // Without the guard a prune could act on leases that have since grown, so it prunes nothing
+        // rather than guess.
+        let Ok(_guard) = guard(&self.root) else {
+            return;
+        };
         let leased = self.leased();
+        after_snapshot();
         let keep: HashSet<&String> = keep.iter().chain(leased.iter()).collect();
         let Ok(entries) = std::fs::read_dir(&self.root) else {
             return;
@@ -698,9 +743,74 @@ mod tests {
             .collect();
         assert_eq!(
             leases.len(),
-            2,
-            "only `second`'s own lease remains: {leases:?}"
+            3,
+            "only `second`'s own lease and the cache guard remain: {leases:?}"
         );
+    }
+
+    /// A record cannot land inside a prune that has already read the leases: it waits for that
+    /// prune to finish. So either the record comes first and the prune spares the bundle, or the
+    /// prune comes first and the recording runtime finds the bundle gone and stages it again.
+    /// Never a recorded bundle deleted by a prune that read the leases before it was recorded.
+    #[test]
+    fn a_record_racing_a_prune_waits_for_it_and_then_sees_what_it_did() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("bundles");
+        let pruner = BundleStore::open(root.clone()).unwrap();
+        let recorder = BundleStore::open(root.clone()).unwrap();
+        let oldest = sample();
+        pruner.stage(&oldest).unwrap();
+        for index in 0..(RETAINED_BUNDLES + 2) {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            pruner
+                .stage(
+                    &Bundle::from_files(vec![BundleFile {
+                        path: "n".to_string(),
+                        executable: false,
+                        contents: index.to_string().into_bytes(),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let mut lease = recorder.lease("recorder").unwrap();
+
+        let (snapshotted, wait_snapshot) = std::sync::mpsc::channel();
+        let (resume, wait_resume) = std::sync::mpsc::channel::<()>();
+        let pruning = std::thread::spawn(move || {
+            pruner.prune_pausing(&HashSet::new(), || {
+                snapshotted.send(()).unwrap();
+                wait_resume.recv().unwrap();
+            });
+        });
+        wait_snapshot.recv().unwrap();
+
+        let (recorded, wait_recorded) = std::sync::mpsc::channel();
+        let digest = oldest.digest().to_string();
+        let recording = std::thread::spawn(move || {
+            lease.record(&digest).unwrap();
+            recorded.send(()).unwrap();
+            lease
+        });
+        assert!(
+            wait_recorded
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "the record completed inside a prune that had already read the leases"
+        );
+        resume.send(()).unwrap();
+        pruning.join().unwrap();
+        wait_recorded.recv().unwrap();
+        let lease = recording.join().unwrap();
+
+        // The prune ran first, so the bundle is gone - and the recorder sees that, rather than
+        // running from a directory that is about to vanish.
+        assert_eq!(recorder.verified(oldest.digest()), Err(StoreError::Missing));
+        recorder.stage(&oldest).unwrap();
+        // Now recorded before any prune reads the leases, it stays.
+        recorder.prune(&HashSet::new());
+        assert!(root.join(oldest.digest()).exists());
+        drop(lease);
     }
 
     /// A runtime that died without dropping its lease leaves its lock unheld; the next prune treats
@@ -761,7 +871,8 @@ mod tests {
         let keep: std::collections::HashSet<_> = [digests[0].clone()].into_iter().collect();
         store.prune(&keep);
         let remaining = std::fs::read_dir(store.root()).unwrap().count();
-        assert_eq!(remaining, RETAINED_BUNDLES + 2);
+        // The retained bundles, the kept one, the busy staging, and the lease directory.
+        assert_eq!(remaining, RETAINED_BUNDLES + 3);
         assert!(store.root().join(&digests[0]).exists());
         assert!(!leftover.exists());
         assert!(busy.exists());

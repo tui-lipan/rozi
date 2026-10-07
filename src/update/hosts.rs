@@ -161,18 +161,27 @@ pub(crate) fn apply(
         &[],
     );
     crate::ops::session::discovery::sort_session_rows(&mut ctx.state.sidebar.sessions);
-    if let Some(picker) = ctx.state.remote_picker.as_mut()
-        && matches!(&picker.mode, crate::state::RemotePickerMode::HostSessions { target: current } if current == &target)
+    if ctx.state.show_session_picker
+        && let Some(picker) = ctx.state.session_picker.as_ref()
     {
-        let rows = ctx
-            .state
-            .sidebar
-            .sessions
+        // Local discovery belongs to the asynchronous picker watcher. A host push only
+        // replaces that host's rows, preserving the last good local and other-host snapshots.
+        let mut rows: Vec<_> = picker
+            .entries
             .iter()
-            .filter(|row| row.remote_target.as_ref() == Some(&target))
+            .filter(|row| row.remote_target.as_ref() != Some(&target))
             .cloned()
             .collect();
-        picker.replace_sessions(rows);
+        rows.extend(
+            ctx.state
+                .sidebar
+                .sessions
+                .iter()
+                .filter(|row| row.remote_target.as_ref() == Some(&target))
+                .cloned(),
+        );
+        crate::ops::session::discovery::sort_session_rows(&mut rows);
+        crate::ops::session::discovery::replace_picker_rows(ctx, rows);
     }
     Update::full()
 }
@@ -324,6 +333,116 @@ mod tests {
                     backend.state().remote.hosts.get(&target).unwrap().probe,
                     crate::state::HostProbe::Idle
                 );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn host_push_refreshes_shared_sessions_and_disarms_changed_rows() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                crate::test_support::isolate_user_dirs();
+                let _persist = crate::test_support::lock_persisted_state();
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                let target = RemoteTarget::Alias("push-test.invalid".into());
+                let row = |name: &str| DiscoveredSession {
+                    name: name.into(),
+                    origin: Default::default(),
+                    host: Some(target.display_label()),
+                    remote_target: Some(target.clone()),
+                    ephemeral: false,
+                    status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        panes: 2,
+                        clients: 0,
+                        has_layout: true,
+                    },
+                };
+                let selected = row("dev");
+                // These snapshots exist only in the picker, not in discovery or host caches.
+                let mut local = row("local-snapshot");
+                local.remote_target = None;
+                local.host = None;
+                let mut other = row("other-host-snapshot");
+                let other_target = RemoteTarget::Alias("untouched.invalid".into());
+                other.host = Some(other_target.display_label());
+                other.remote_target = Some(other_target);
+                {
+                    let state = backend.state_mut();
+                    state.command_link = None;
+                    state.remote.added_hosts.push(target.clone());
+                    state.remote.hosts.seed(
+                        &state.config.remote,
+                        std::slice::from_ref(&target),
+                        &[],
+                        &[],
+                    );
+                    state
+                        .remote
+                        .monitors
+                        .push(Monitor::dormant(target.clone(), 7));
+                    state.show_session_picker = true;
+                    let mut picker = crate::state::SessionPickerState::new(vec![
+                        selected.clone(),
+                        local.clone(),
+                        other.clone(),
+                    ])
+                    .on_tab(Some(target.clone()));
+                    picker.input.set_text("dev");
+                    picker.pending_kill = Some(0);
+                    picker.pending_restart = Some(0);
+                    state.session_picker = Some(picker);
+                }
+                backend
+                    .update_level(Msg::HostMetadata {
+                        target: target.clone(),
+                        generation: 7,
+                        rows: Ok(vec![row("aaa"), selected]),
+                        agents: Vec::new(),
+                    })
+                    .unwrap();
+                let picker = backend.state().session_picker.as_ref().unwrap();
+                assert_eq!(picker.entries[picker.selected].name, "dev");
+                assert_eq!(picker.input.text(), "dev");
+                assert_eq!(picker.tab.remote_target(), Some(&target));
+                assert!(picker.pending_kill.is_none() && picker.pending_restart.is_none());
+                assert!(picker.entries.iter().any(|row| row.name == "aaa"));
+                assert!(picker.entries.contains(&local));
+                assert!(picker.entries.contains(&other));
+                backend
+                    .update_level(Msg::HostMetadata {
+                        target: target.clone(),
+                        generation: 7,
+                        rows: Err("offline".into()),
+                        agents: Vec::new(),
+                    })
+                    .unwrap();
+                let picker = backend.state().session_picker.as_ref().unwrap();
+                let selected = &picker.entries[picker.selected];
+                assert_eq!(selected.name, "dev");
+                assert!(
+                    crate::ops::session::session_row_is_last_seen(selected),
+                    "{selected:?}; monitors {}",
+                    backend.state().remote.monitors.len()
+                );
+                assert!(picker.entries.contains(&local));
+                assert!(picker.entries.contains(&other));
+                backend
+                    .update_level(Msg::HostMetadata {
+                        target: target.clone(),
+                        generation: 7,
+                        rows: Ok(Vec::new()),
+                        agents: Vec::new(),
+                    })
+                    .unwrap();
+                let picker = backend.state().session_picker.as_ref().unwrap();
+                assert_eq!(picker.entries.len(), 2);
+                assert!(picker.entries.contains(&local));
+                assert!(picker.entries.contains(&other));
+                assert_eq!(picker.input.text(), "dev");
+                assert_eq!(picker.tab.remote_target(), Some(&target));
             })
             .unwrap()
             .join()

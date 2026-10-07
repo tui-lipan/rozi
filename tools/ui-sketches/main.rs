@@ -734,6 +734,15 @@ fn agent_picker() {
     backend.render();
     write_png(&mut backend, "agent-picker-overflow");
     backend.state_mut().local_agent_snapshot = None;
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("agent-picker-single-session-{width}x{height}"),
+        );
+    }
     backend.state_mut().current_mut().workspaces[0]
         .panes
         .clear();
@@ -812,4 +821,45 @@ fn session_picker() {
     backend.set_viewport(viewport(120, 30));
     backend.render();
     write_png(&mut backend, "session-picker-colliding-targets");
+    let picker = backend.state_mut().session_picker.as_mut().unwrap();
+    picker.entries.retain(|entry| entry.remote_target.is_none());
+    picker.tab = SessionPickerTab::Host(None);
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-local-{width}x{height}"),
+        );
+    }
+    // Exercise the actual host-management route into the shared tabbed picker.
+    let target = RemoteTarget::Alias("workbox".into());
+    let mut remote = backend.state().session_picker.as_ref().unwrap().entries[0].clone();
+    remote.remote_target = Some(target.clone());
+    remote.host = Some(target.display_label());
+    backend.state_mut().remote.added_hosts.push(target.clone());
+    backend.dispatch(Msg::SessionPickerRemoteHosts).unwrap();
+    backend.state_mut().command_link = None;
+    let picker = backend.state_mut().remote_picker.as_mut().unwrap();
+    picker.probe_epoch = 1;
+    picker.host_probe = rozi::state::HostProbe::InFlight;
+    picker.probe_target = Some(target.clone());
+    backend
+        .update_level(Msg::RemoteHostSessionsDiscovered {
+            epoch: 1,
+            target: target.clone(),
+            rows: Ok(vec![remote]),
+        })
+        .unwrap();
+    backend
+        .update_level(Msg::RemotePickerHostActivate(target))
+        .unwrap();
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-from-host-{width}x{height}"),
+        );
+    }
 }

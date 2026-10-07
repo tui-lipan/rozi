@@ -531,7 +531,7 @@ fn push_session_management_actions(
         ));
     }
     if picker
-        .effective_tab()
+        .tab
         .remote_target()
         .is_some_and(|target| crate::ops::session::host_can_disconnect(&ctx.state, target))
     {
@@ -715,14 +715,14 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
     }
-    // All remains available beside Local; a nonempty query temporarily highlights All.
+    // A nonempty query temporarily highlights All when host navigation is visible.
     if tabs.len() > 1 {
         let active = tabs
             .iter()
             .position(|tab| *tab == picker.effective_tab())
             .unwrap_or(0);
         let labels = tabs.iter().map(|tab| tab.label(&ctx.state)).collect();
-        overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab));
+        overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab).with_all());
     }
     if let Some(target) = picker.effective_tab().remote_target() {
         overlay = overlay.header_right(remote_tab_status(ctx, target));
@@ -751,7 +751,7 @@ fn remote_tab_status(
 /// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's
 /// agents, already rendered by [`crate::view::session_status::host_agent_label`]; it goes last,
 /// after the facts about the session itself.
-pub(super) fn session_description(
+fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
     agents: Option<String>,

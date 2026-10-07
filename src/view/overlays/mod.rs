@@ -7,8 +7,8 @@ pub(in crate::view::overlays) use tui_lipan::utils::color_contrast::readable_tex
 
 pub(in crate::view::overlays) use crate::input::Action;
 pub(in crate::view::overlays) use crate::state::{
-    MAX_MATCHES, ProfilePickerState, RemoteSessionIdentity, ScrollbackSearchState,
-    SessionPickerState, SettingsAction, cap_style_label,
+    MAX_MATCHES, ProfilePickerState, ScrollbackSearchState, SessionPickerState, SettingsAction,
+    cap_style_label,
 };
 pub(in crate::view::overlays) use crate::{AppRoot, Msg};
 
@@ -81,5 +81,4 @@ pub(in crate::view::overlays) use prompts::{
     BACKDROP_RECESSION, PromptCaption, PromptChrome, action_palette, prompt_caption_accent,
     prompt_detail_row, prompt_highlight_row, prompt_overlay,
 };
-pub(in crate::view::overlays) use sessions::session_description;
 pub(in crate::view::overlays) use settings::action_search_palette;

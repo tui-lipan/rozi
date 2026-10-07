@@ -226,6 +226,7 @@ pub(crate) struct OverlayTabs {
     labels: Vec<String>,
     active: usize,
     select: fn(usize) -> Msg,
+    has_all: bool,
 }
 
 impl OverlayTabs {
@@ -234,7 +235,15 @@ impl OverlayTabs {
             labels,
             active,
             select,
+            has_all: false,
         }
+    }
+
+    /// One page aggregates all other pages. Hide redundant navigation until at least two
+    /// category pages exist, without relying on their labels.
+    pub(crate) fn with_all(mut self) -> Self {
+        self.has_all = true;
+        self
     }
 
     /// Tab and Shift+Tab, or Left and Right, step through the pages, wrapping, as they do on every
@@ -318,7 +327,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
     /// Show `tabs` below the query. `entries`, `selected`, and `initial_query` then describe the
     /// active page only.
     pub(crate) fn tabs(mut self, tabs: OverlayTabs) -> Self {
-        self.tabs = Some(tabs);
+        self.tabs = (!tabs.has_all || tabs.labels.len() > 2).then_some(tabs);
         self
     }
 

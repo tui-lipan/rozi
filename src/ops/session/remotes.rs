@@ -2,52 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::session::remote::RemoteTarget;
-use crate::state::{RemotePickerMode, RemotePickerState, RemoteSessionIdentity};
-
-fn cached_rows_for_target(
-    cache: &crate::session::HostSessionCache,
-    target: &RemoteTarget,
-) -> Vec<crate::session::discovery::DiscoveredSession> {
-    let label = target.display_label();
-    crate::session::host_sessions_for(cache, target)
-        .unwrap_or_default()
-        .iter()
-        .filter(|session| !session.ephemeral)
-        .map(|session| crate::session::discovery::DiscoveredSession {
-            name: session.name.clone(),
-            origin: session.origin.clone(),
-            ephemeral: session.ephemeral,
-            host: Some(label.clone()),
-            remote_target: Some(target.clone()),
-            status: crate::session::discovery::DiscoveredSessionStatus::LastSeen {
-                panes: session.panes,
-            },
-        })
-        .collect()
-}
-
-fn immediate_rows_for_target(
-    state: &crate::state::State,
-    target: &RemoteTarget,
-) -> Vec<crate::session::discovery::DiscoveredSession> {
-    let mut rows = state
-        .remote
-        .live_sessions
-        .iter()
-        .filter(|row| row.remote_target.as_ref() == Some(target))
-        .cloned()
-        .collect::<Vec<_>>();
-    for cached in cached_rows_for_target(&state.remote.session_cache, target) {
-        crate::ops::session::discovery::merge_current_session_row(&mut rows, cached);
-    }
-    for attached in crate::ops::session::attached_session_rows(state)
-        .into_iter()
-        .filter(|session| session.remote_target.as_ref() == Some(target))
-    {
-        crate::ops::session::discovery::merge_current_session_row(&mut rows, attached);
-    }
-    rows
-}
+use crate::state::{RemotePickerState, SessionPickerTab};
 
 fn host_discovery_command(
     epoch: u64,
@@ -163,61 +118,17 @@ pub(crate) fn restore_remote_hosts(
     Update::full()
 }
 
-pub(crate) fn restore_remote_host_sessions(
-    ctx: &mut Context<AppRoot>,
-    target: RemoteTarget,
-    query: String,
-    selected: Option<RemoteSessionIdentity>,
-) -> Update {
-    install_remote_hosts(ctx, String::new(), Some(target.clone()));
-    let rows = immediate_rows_for_target(&ctx.state, &target);
-    scope_launcher_to(ctx, &target);
-    if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
-        entry.probe = crate::state::HostProbe::Reached;
-    }
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        picker.enter_host_sessions(target);
-        let cursor = query.len();
-        picker.session_input.set_text(query);
-        picker.session_input.set_cursor(cursor);
-        picker.session_input.set_anchor(None);
-        picker.selected_session = selected;
-        picker.host_probe = crate::state::HostProbe::Reached;
-        picker.replace_sessions(rows);
-    }
-    Update::full()
-}
-
 pub(crate) fn close_remote_picker(ctx: &mut Context<AppRoot>) -> Update {
-    let mode = ctx
-        .state
-        .remote_picker
-        .as_ref()
-        .map(|picker| picker.mode.clone());
-    match mode {
-        Some(RemotePickerMode::HostSessions { .. }) => {
-            abandon_remote_probe(&mut ctx.state);
-            // The scope survives backing out. It belongs to the launcher, not to this overlay:
-            // opening a host was the explicit request to work there, and stepping back to the host
-            // list to look at the others does not withdraw it. Leaving a host is `Ctrl+X`, and
-            // forgetting or attaching elsewhere moves the scope on its own.
-            if let Some(picker) = ctx.state.remote_picker.as_mut() {
-                picker.return_to_hosts();
-            }
-            crate::ops::focus::request_remote_picker_focus(ctx);
-            Update::full()
-        }
-        Some(RemotePickerMode::Hosts) => {
-            if cancel_host_probe(ctx) {
-                crate::ops::focus::request_remote_picker_focus(ctx);
-                return Update::full();
-            }
-            ctx.state.remote_picker = None;
-            ctx.state.commands_dirty = true;
-            crate::ops::overlay_return::finish(ctx)
-        }
-        None => Update::none(),
+    if ctx.state.remote_picker.is_none() {
+        return Update::none();
     }
+    if cancel_host_probe(ctx) {
+        crate::ops::focus::request_remote_picker_focus(ctx);
+        return Update::full();
+    }
+    dismiss_remote_picker(&mut ctx.state);
+    ctx.state.commands_dirty = true;
+    crate::ops::overlay_return::finish(ctx)
 }
 
 /// Give up on the host probe in flight, if there is one, and report whether there was.
@@ -243,7 +154,7 @@ pub(crate) fn cancel_host_probe(ctx: &mut Context<AppRoot>) -> bool {
     true
 }
 
-/// Point a *sessionless* client's launcher at `target`, so dismissing `Sessions · <host>` leaves it
+/// Point a *sessionless* client's launcher at `target`, so dismissing Sessions on the host tab leaves it
 /// reading `REMOTE · <host>` with no active session — a real resting state, and the thing that makes
 /// the launcher's `Enter` start its shell there.
 ///
@@ -371,17 +282,18 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-/// Step into `Sessions · <host>` for a host already reached, listing what the last probe found.
+/// Open the shared Sessions picker on a reached host, replacing the host-management flow.
 fn open_host_sessions(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
-    let rows = immediate_rows_for_target(&ctx.state, &target);
     scope_launcher_to(ctx, &target);
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        picker.enter_host_sessions(target);
-        picker.host_probe = crate::state::HostProbe::Reached;
-        picker.replace_sessions(rows);
+    dismiss_remote_picker(&mut ctx.state);
+    crate::ops::overlay_return::leave(ctx);
+    let update = crate::ops::session::open_session_picker(ctx);
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.tab = SessionPickerTab::Host(Some(target));
+        picker.keep_selection_in_tab();
     }
-    crate::ops::focus::request_remote_picker_focus(ctx);
-    Update::full()
+    ctx.state.commands_dirty = true;
+    update
 }
 
 /// Whether a probe this picker started is still outstanding, on any host.
@@ -473,7 +385,6 @@ pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .remote_picker
         .as_ref()
-        .filter(|picker| matches!(picker.mode, RemotePickerMode::Hosts))
         .and_then(|picker| picker.selected_host.clone())
         .filter(|target| host_is_connected(&ctx.state, target))
     else {
@@ -488,11 +399,11 @@ pub(crate) fn apply_host_discovery(
     target: RemoteTarget,
     rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
 ) -> Update {
-    let current = ctx.state.remote_picker.as_ref().is_some_and(|picker| {
-        picker.probe_epoch == epoch
-            && matches!(picker.mode, RemotePickerMode::Hosts)
-            && picker.is_connecting(&target)
-    });
+    let current = ctx
+        .state
+        .remote_picker
+        .as_ref()
+        .is_some_and(|picker| picker.probe_epoch == epoch && picker.is_connecting(&target));
     if !current {
         return Update::none();
     }
@@ -517,6 +428,13 @@ pub(crate) fn apply_host_discovery(
             if let Some(entry) = ctx.state.remote.hosts.get_mut(&target) {
                 entry.probe = crate::state::HostProbe::Reached;
             }
+            // Keep the fresh probe result live in the shared picker, including an empty snapshot
+            // that replaces stale rows. Host monitors will update it from here.
+            ctx.state
+                .remote
+                .live_sessions
+                .retain(|row| row.remote_target.as_ref() != Some(&target));
+            ctx.state.remote.live_sessions.extend(rows);
             let mut auto_open = false;
             if let Some(picker) = ctx.state.remote_picker.as_mut() {
                 picker.host_probe = crate::state::HostProbe::Reached;
@@ -536,20 +454,27 @@ pub(crate) fn apply_host_discovery(
                 crate::pane::pty_events::notify_info(ctx, format!("Connected to {label}"));
                 return Update::full();
             }
-            let update = open_host_sessions(ctx, target);
-            // Spent on this probe whatever it finds: a `last` the host no longer lists is a
-            // session that stayed dead, and the user is already looking at what it does have.
-            let resume = ctx.state.remote_picker.as_mut().and_then(|picker| {
-                picker.startup_resume.take().and_then(|name| {
-                    picker
-                        .sessions
-                        .iter()
-                        .find(|session| session.name == name)
-                        .and_then(RemoteSessionIdentity::of)
-                })
+            let resume = ctx
+                .state
+                .remote_picker
+                .as_mut()
+                .and_then(|picker| picker.startup_resume.take());
+            let update = open_host_sessions(ctx, target.clone());
+            // Resume only a session the successful probe still lists. Never recreate a remembered
+            // name that disappeared from this host.
+            let session = resume.and_then(|name| {
+                ctx.state
+                    .session_picker
+                    .as_ref()?
+                    .entries
+                    .iter()
+                    .find(|session| {
+                        session.name == name && session.remote_target.as_ref() == Some(&target)
+                    })
+                    .cloned()
             });
-            match resume {
-                Some(identity) => activate_session(ctx, identity),
+            match session {
+                Some(session) => crate::ops::session::activate_discovered_session(ctx, session),
                 None => update,
             }
         }
@@ -583,9 +508,6 @@ pub(crate) fn open_add_host_form(ctx: &mut Context<AppRoot>) -> Update {
     let Some(picker) = ctx.state.remote_picker.as_mut() else {
         return Update::none();
     };
-    if !matches!(picker.mode, RemotePickerMode::Hosts) {
-        return Update::none();
-    }
     let initial = picker.host_input.text().trim().to_string();
     picker.host_form = Some(crate::state::HostFormState::add(initial));
     picker.pending_forget = None;
@@ -603,7 +525,6 @@ pub(crate) fn open_edit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         .state
         .remote_picker
         .as_ref()
-        .filter(|picker| matches!(picker.mode, RemotePickerMode::Hosts))
         .and_then(|picker| picker.selected_host.clone())
     else {
         return Update::none();
@@ -772,180 +693,6 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
     connect_host(ctx, target)
 }
 
-pub(crate) fn session_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        picker.session_input.set_text(query);
-        picker.pending_kill = None;
-        picker.pending_restart = None;
-    }
-    Update::full()
-}
-
-pub(crate) fn session_selected(
-    ctx: &mut Context<AppRoot>,
-    identity: RemoteSessionIdentity,
-) -> Update {
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        if picker.selected_session.as_ref() != Some(&identity) {
-            picker.pending_kill = None;
-            picker.pending_restart = None;
-        }
-        picker.selected_session = Some(identity);
-    }
-    Update::full()
-}
-
-fn selected_session(
-    state: &crate::state::State,
-) -> Option<crate::session::discovery::DiscoveredSession> {
-    let picker = state.remote_picker.as_ref()?;
-    let selected = picker.selected_session.as_ref()?;
-    picker
-        .sessions
-        .iter()
-        .find(|session| RemoteSessionIdentity::of(session).as_ref() == Some(selected))
-        .cloned()
-}
-
-fn selected_target(state: &crate::state::State) -> Option<RemoteTarget> {
-    match &state.remote_picker.as_ref()?.mode {
-        RemotePickerMode::HostSessions { target } => Some(target.clone()),
-        RemotePickerMode::Hosts => None,
-    }
-}
-
-pub(crate) fn activate_session(
-    ctx: &mut Context<AppRoot>,
-    identity: RemoteSessionIdentity,
-) -> Update {
-    let Some(session) = ctx
-        .state
-        .remote_picker
-        .as_ref()
-        .and_then(|picker| {
-            picker
-                .sessions
-                .iter()
-                .find(|session| RemoteSessionIdentity::of(session).as_ref() == Some(&identity))
-        })
-        .cloned()
-    else {
-        return Update::none();
-    };
-    crate::ops::session::activate_discovered_session(ctx, session)
-}
-
-pub(crate) fn create_session(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = selected_target(&ctx.state) else {
-        return Update::none();
-    };
-    crate::ops::session::open_create_session_on_host(ctx, target)
-}
-
-pub(crate) fn open_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = selected_target(&ctx.state) else {
-        return Update::none();
-    };
-    crate::ops::session::open_ephemeral_session_on_host(ctx, target)
-}
-
-pub(crate) fn kill_session(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(session) = selected_session(&ctx.state) else {
-        return Update::none();
-    };
-    let Some(identity) = RemoteSessionIdentity::of(&session) else {
-        return Update::none();
-    };
-    let armed = ctx
-        .state
-        .remote_picker
-        .as_ref()
-        .is_some_and(|picker| picker.pending_kill.as_ref() == Some(&identity));
-    if !armed {
-        if let Some(picker) = ctx.state.remote_picker.as_mut() {
-            picker.pending_kill = Some(identity);
-            picker.pending_restart = None;
-        }
-        return crate::ops::confirm::arm(ctx);
-    }
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        picker.pending_kill = None;
-        picker.pending_restart = None;
-    }
-    let update = if crate::ops::session::session_row_is_last_seen(&session) {
-        crate::ops::session::forget_last_seen_session(ctx, &session);
-        Update::full()
-    } else {
-        if crate::ops::session::session_row_is_current(&ctx.state, &session) {
-            dismiss_remote_picker(&mut ctx.state);
-        }
-        crate::ops::session::kill_discovered_session(ctx, session.clone())
-    };
-    let removed = session.remote_target.as_ref().is_some_and(|target| {
-        crate::session::host_sessions_for(&ctx.state.remote.session_cache, target)
-            .is_none_or(|sessions| sessions.iter().all(|cached| cached.name != session.name))
-    });
-    if removed && let Some(picker) = ctx.state.remote_picker.as_mut() {
-        let rows = picker
-            .sessions
-            .iter()
-            .filter(|listed| RemoteSessionIdentity::of(listed).as_ref() != Some(&identity))
-            .cloned()
-            .collect();
-        picker.replace_sessions(rows);
-    }
-    update
-}
-
-pub(crate) fn restart_session(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(session) = selected_session(&ctx.state) else {
-        return Update::none();
-    };
-    if !crate::ops::session::session_row_can_restart(&session) {
-        return Update::none();
-    }
-    let Some(identity) = RemoteSessionIdentity::of(&session) else {
-        return Update::none();
-    };
-    let armed = ctx
-        .state
-        .remote_picker
-        .as_ref()
-        .is_some_and(|picker| picker.pending_restart.as_ref() == Some(&identity));
-    if !armed {
-        if let Some(picker) = ctx.state.remote_picker.as_mut() {
-            picker.pending_restart = Some(identity);
-            picker.pending_kill = None;
-        }
-        return crate::ops::confirm::arm(ctx);
-    }
-    if let Some(picker) = ctx.state.remote_picker.as_mut() {
-        picker.pending_restart = None;
-        picker.pending_kill = None;
-    }
-    super::lifecycle::restart_discovered_session(ctx, session)
-}
-
-pub(crate) fn disconnect_session(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(session) = selected_session(&ctx.state) else {
-        return Update::none();
-    };
-    if crate::ops::session::session_row_is_current(&ctx.state, &session) {
-        dismiss_remote_picker(&mut ctx.state);
-    }
-    crate::ops::session::disconnect_discovered_attachment(ctx, session)
-}
-
-pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(target) = selected_target(&ctx.state) else {
-        return Update::none();
-    };
-    if ctx.state.current().remote_target.as_ref() == Some(&target) {
-        dismiss_remote_picker(&mut ctx.state);
-    }
-    crate::ops::session::disconnect_host(ctx, &target)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1046,7 +793,20 @@ mod tests {
                 panes: 3,
             }],
         );
-        let rows = cached_rows_for_target(&cache, &target);
+        let mut hosts = crate::state::HostRegistry::default();
+        hosts.seed(
+            &crate::config::RemoteConfig::default(),
+            std::slice::from_ref(&target),
+            &[],
+            &[],
+        );
+        let mut rows = Vec::new();
+        crate::ops::session::discovery::push_cached_known_remote_rows(
+            &mut rows,
+            &hosts,
+            &cache,
+            &[],
+        );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].host.as_deref(), Some("adam@workbox:2222"));
         assert_eq!(rows[0].remote_target.as_ref(), Some(&target));
@@ -1054,63 +814,55 @@ mod tests {
     }
 
     #[test]
-    fn immediate_rows_restore_owned_ephemeral_without_persisting_it() {
-        let target = RemoteTarget::Alias("workbox".into());
-        let mut state = state();
-        state.current_mut().session_name = Some("eph-owned".into());
-        state.current_mut().session_attached = true;
-        state.current_mut().remote_target = Some(target.clone());
-        state.current_mut().remote_host = Some("workbox".into());
-        crate::session::set_cached_host_sessions(
-            &mut state.remote.session_cache,
-            &target,
-            vec![
-                crate::session::CachedHostSession {
+    fn shared_host_tab_restores_owned_ephemeral_without_persisting_it() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("eph-owned".into());
+            state.current_mut().session_attached = true;
+            state.current_mut().remote_target = Some(target.clone());
+            state.current_mut().remote_host = Some("workbox".into());
+            crate::session::set_cached_host_sessions(
+                &mut state.remote.session_cache,
+                &target,
+                vec![
+                    crate::session::CachedHostSession {
+                        name: "dev".into(),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        panes: 2,
+                    },
+                    crate::session::CachedHostSession {
+                        name: "eph-stale".into(),
+                        origin: Default::default(),
+                        ephemeral: true,
+                        panes: 1,
+                    },
+                ],
+            );
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::OpenSessionPicker))
+                .unwrap();
+            let rows = &backend.state().session_picker.as_ref().unwrap().entries;
+            assert!(
+                rows.iter()
+                    .any(|row| row.name == "dev" && row.remote_target.as_ref() == Some(&target))
+            );
+            assert!(rows.iter().all(|row| row.name != "eph-stale"));
+            assert!(
+                rows.iter()
+                    .any(|row| row.name == "eph-owned" && row.ephemeral)
+            );
+            assert_eq!(
+                crate::ops::session::discovery::cached_sessions_for_target(rows, &target),
+                vec![crate::session::CachedHostSession {
                     name: "dev".into(),
                     origin: Default::default(),
                     ephemeral: false,
-                    panes: 2,
-                },
-                crate::session::CachedHostSession {
-                    name: "eph-stale".into(),
-                    origin: Default::default(),
-                    ephemeral: true,
-                    panes: 1,
-                },
-            ],
-        );
-
-        let rows = immediate_rows_for_target(&state, &target);
-        assert!(rows.iter().any(|row| row.name == "dev"));
-        assert!(rows.iter().all(|row| row.name != "eph-stale"));
-        assert!(
-            rows.iter()
-                .any(|row| row.name == "eph-owned" && row.ephemeral)
-        );
-        assert_eq!(
-            crate::ops::session::discovery::cached_sessions_for_target(&rows, &target),
-            vec![crate::session::CachedHostSession {
-                name: "dev".into(),
-                origin: Default::default(),
-                ephemeral: false,
-                panes: 2,
-            }]
-        );
-    }
-
-    #[test]
-    fn picker_target_wins_over_the_current_attachment_target() {
-        let current = RemoteTarget::Alias("current".into());
-        let selected = RemoteTarget::Alias("selected".into());
-        let mut state = crate::state::State::new(
-            crate::config::Config::default(),
-            tui_lipan::prelude::Theme::default(),
-        );
-        state.current_mut().remote_target = Some(current);
-        let mut picker = RemotePickerState::new(Some(selected.clone()));
-        picker.enter_host_sessions(selected.clone());
-        state.remote_picker = Some(picker);
-        assert_eq!(selected_target(&state), Some(selected));
+                    panes: 2
+                }]
+            );
+        });
     }
 
     #[test]
@@ -1209,10 +961,6 @@ mod tests {
         abandon_remote_probe(&mut state);
 
         assert!(state.remote_picker.is_some());
-        assert!(matches!(
-            state.remote_picker.as_ref().map(|picker| &picker.mode),
-            Some(RemotePickerMode::Hosts)
-        ));
         assert_eq!(
             state
                 .remote_picker
@@ -1244,7 +992,6 @@ mod tests {
 
             let state = backend.state();
             let picker = state.remote_picker.as_ref().expect("remote picker");
-            assert!(matches!(picker.mode, RemotePickerMode::Hosts));
             assert_eq!(picker.host_probe, crate::state::HostProbe::Reached);
             assert_eq!(picker.selected_host.as_ref(), Some(&target));
             assert_eq!(
@@ -1265,39 +1012,133 @@ mod tests {
         with_backend(|backend| {
             let target = RemoteTarget::Alias("workbox".into());
             primed_connecting_picker(backend, &target, 9);
+            backend.state_mut().command_link = None;
+            backend.state_mut().config.animations.enabled = false;
+            let fresh = crate::session::discovery::DiscoveredSession {
+                name: "api".into(),
+                origin: Default::default(),
+                ephemeral: false,
+                host: Some(target.display_label()),
+                remote_target: Some(target.clone()),
+                status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    panes: 2,
+                    clients: 0,
+                    has_layout: true,
+                },
+            };
             backend
-                .dispatch(Msg::RemoteHostSessionsDiscovered {
+                .update_level(Msg::RemoteHostSessionsDiscovered {
                     epoch: 9,
                     target: target.clone(),
-                    rows: Ok(Vec::new()),
+                    rows: Ok(vec![fresh.clone()]),
                 })
                 .expect("apply successful probe");
 
             backend
-                .dispatch(Msg::RemotePickerHostActivate(target.clone()))
+                .update_level(Msg::RemotePickerHostActivate(target.clone()))
                 .expect("open the reached host");
 
-            let picker = backend
-                .state()
-                .remote_picker
-                .as_ref()
-                .expect("remote picker");
-            assert!(matches!(
-                &picker.mode,
-                RemotePickerMode::HostSessions { target: active } if active == &target
-            ));
-            assert!(
-                picker.probe_target.is_none()
-                    && !matches!(picker.host_probe, crate::state::HostProbe::InFlight),
-                "opening a host already reached contacts nothing"
+            let state = backend.state();
+            assert!(state.remote_picker.is_none());
+            assert!(state.show_session_picker);
+            assert_eq!(
+                state.session_picker.as_ref().unwrap().tab.remote_target(),
+                Some(&target)
             );
+            let picker = state.session_picker.as_ref().unwrap();
+            assert!(
+                picker.entries.contains(&fresh),
+                "fresh rows must not become last-seen on opening: {:?}",
+                picker.entries
+            );
+            backend.render();
+            let frame = backend.capture_frame().plain_text();
+            assert!(
+                frame.lines().any(|line| line.contains("Local")
+                    && line.contains("workbox")
+                    && line.contains("All")),
+                "{frame}"
+            );
+            assert!(
+                !frame.contains("Sessions ·"),
+                "the duplicate host picker is gone"
+            );
+            backend.update_level(Msg::SessionPickerTab(0)).unwrap();
+            assert!(
+                crate::ops::session::session_picker_tabs(backend.state())
+                    .iter()
+                    .any(|tab| tab.remote_target() == Some(&target))
+            );
+            backend.update_level(Msg::SessionPickerTab(1)).unwrap();
+            backend
+                .update_level(Msg::SessionPickerCreateFromQuery)
+                .unwrap();
+            assert_eq!(
+                backend
+                    .state()
+                    .rename_session
+                    .as_ref()
+                    .unwrap()
+                    .host_target
+                    .as_ref(),
+                Some(&target)
+            );
+            backend.update_level(Msg::CloseRenameSession).unwrap();
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .unwrap()
+                    .tab
+                    .remote_target(),
+                Some(&target)
+            );
+            let state = backend.state();
+            assert!(state.overlay_return.is_none());
+            assert_eq!(
+                state.remote.hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::Reached
+            );
+        });
+    }
+
+    #[test]
+    fn an_empty_connected_host_keeps_its_tab_after_switching_to_local() {
+        with_backend(|backend| {
+            let target = RemoteTarget::Alias("workbox".into());
+            *backend.state_mut().current_mut() = crate::state::Attachment::new();
+            primed_connecting_picker(backend, &target, 10);
+            backend.state_mut().command_link = None;
+            backend
+                .update_level(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 10,
+                    target: target.clone(),
+                    rows: Ok(Vec::new()),
+                })
+                .unwrap();
+            backend
+                .update_level(Msg::RemotePickerHostActivate(target.clone()))
+                .unwrap();
+            assert_eq!(backend.state().active_launcher_scope(), Some(&target));
+            backend.update_level(Msg::SessionPickerTab(0)).unwrap();
+            assert!(backend.state().active_launcher_scope().is_none());
+            assert_eq!(
+                crate::ops::session::session_picker_tabs(backend.state()).len(),
+                3
+            );
+            backend.update_level(Msg::SessionPickerTab(1)).unwrap();
+            assert_eq!(backend.state().active_launcher_scope(), Some(&target));
+            backend.update_level(Msg::CloseSessionPicker).unwrap();
+            assert!(backend.state().remote_picker.is_none());
+            assert_eq!(backend.state().active_launcher_scope(), Some(&target));
         });
     }
 
     /// `startup = "last"` under `--remote` resumes a session, it never revives one. The host's own
     /// discovery is the authority — the launch never blocks on an SSH probe before the first frame —
     /// so a session still listed is attached, and one killed while rozi was away stays dead with the
-    /// user on `Sessions · <host>`.
+    /// user on the host tab of Sessions.
     #[test]
     fn a_remembered_session_is_resumed_only_when_the_host_still_lists_it() {
         with_backend(|backend| {
@@ -1341,18 +1182,18 @@ mod tests {
                 .expect("apply a probe that does not list the remembered session");
 
             let state = backend.state();
-            let picker = state.remote_picker.as_ref().expect("remote picker");
             assert!(
-                matches!(&picker.mode, RemotePickerMode::HostSessions { target: active } if active == &target),
-                "a session the host no longer has leaves the user on that host's picker"
+                state.remote_picker.is_none(),
+                "host management gave way to Sessions"
             );
+            let picker = state
+                .session_picker
+                .as_ref()
+                .expect("shared Sessions picker");
+            assert_eq!(picker.tab.remote_target(), Some(&target));
             assert!(
                 state.current().pending_session_attach.is_none(),
                 "and nothing is recreated under the remembered name"
-            );
-            assert!(
-                picker.startup_resume.is_none(),
-                "the resume is spent on the first probe, whatever it found"
             );
         });
 
@@ -1422,7 +1263,6 @@ mod tests {
 
             let state = backend.state();
             let picker = state.remote_picker.as_ref().expect("remote picker");
-            assert!(matches!(picker.mode, RemotePickerMode::Hosts));
             assert!(matches!(
                 &picker.host_probe,
                 crate::state::HostProbe::Failed(_)
@@ -1735,28 +1575,34 @@ mod tests {
                         panes: 1,
                     }],
                 );
-                let mut picker = RemotePickerState::new(Some(target.clone()));
-                picker.enter_host_sessions(target.clone());
-                picker.replace_sessions(vec![session]);
-                state.remote_picker = Some(picker);
+                state.session_picker = Some(
+                    crate::state::SessionPickerState::new(vec![session])
+                        .on_tab(Some(target.clone())),
+                );
+                state.show_session_picker = true;
             }
 
             backend
-                .dispatch(Msg::RemotePickerKillSession)
+                .dispatch(Msg::SessionPickerKillSelected)
                 .expect("arm forget");
             backend
-                .dispatch(Msg::RemotePickerKillSession)
+                .dispatch(Msg::SessionPickerKillSelected)
                 .expect("confirm forget");
 
             let cache =
                 crate::session::host_sessions_for(&backend.state().remote.session_cache, &target)
                     .unwrap_or_default();
             assert!(cache.is_empty(), "cache dropped the observation: {cache:?}");
-            let picker = backend.state().remote_picker.as_ref().expect("picker");
             assert!(
-                picker.sessions.is_empty(),
-                "the row left the host list: {:?}",
-                picker.sessions
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .is_none_or(|picker| picker
+                        .entries
+                        .iter()
+                        .all(|row| row.remote_target.as_ref() != Some(&target))),
+                "the forgotten row is no longer offered"
             );
         });
     }

@@ -1760,7 +1760,7 @@ fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scrat
     use crate::Msg;
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
-    use crate::state::{RemotePickerMode, RemotePickerState};
+    use crate::state::SessionPickerState;
     use tui_lipan::TestBackend;
 
     std::thread::Builder::new()
@@ -1795,16 +1795,13 @@ fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scrat
                 scratch.session_client = Some(scratch_client);
                 state.background.insert(12, scratch);
 
-                // The surface `Ctrl+X` is pressed on: `Sessions · workbox`.
-                let mut picker = RemotePickerState::new(Some(workbox.clone()));
-                picker.mode = RemotePickerMode::HostSessions {
-                    target: workbox.clone(),
-                };
-                state.remote_picker = Some(picker);
+                // The surface `Ctrl+X` is pressed on: the workbox Sessions tab.
+                state.session_picker = Some(SessionPickerState::new(Vec::new()).on_tab(Some(workbox.clone())));
+                state.show_session_picker = true;
             }
 
             backend
-                .update_level(Msg::RemotePickerDisconnectHost)
+                .update_level(Msg::SessionPickerDisconnectHost)
                 .expect("disconnect the host from its own picker");
 
             let named_sent: Vec<ClientOutbound> = named_rx.try_iter().collect();
@@ -1848,14 +1845,13 @@ fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scrat
         .expect("disconnect-host test completes");
 }
 
-/// The launcher scope is the launcher's, not the overlay's. Backing out of `Sessions · workbox` to
-/// look at the host list is not a withdrawal of the request to work on `workbox`, so the client
+/// The launcher scope is the launcher's, not the overlay's. Dismissing the workbox Sessions tab is not a withdrawal of the request to work on `workbox`, so the client
 /// that dismisses the picker is still standing on the machine it opened.
 #[test]
 fn backing_out_of_a_host_keeps_the_launcher_scoped_to_it() {
     use crate::AppRoot;
     use crate::Msg;
-    use crate::state::{RemotePickerMode, RemotePickerState};
+    use crate::state::SessionPickerState;
     use tui_lipan::TestBackend;
 
     std::thread::Builder::new()
@@ -1869,25 +1865,20 @@ fn backing_out_of_a_host_keeps_the_launcher_scoped_to_it() {
                 // front of it.
                 *state.current_mut() = crate::state::Attachment::new();
                 state.launcher_scope = Some(workbox.clone());
-                let mut picker = RemotePickerState::new(Some(workbox.clone()));
-                picker.mode = RemotePickerMode::HostSessions {
-                    target: workbox.clone(),
-                };
-                state.remote_picker = Some(picker);
+                state.session_picker =
+                    Some(SessionPickerState::new(Vec::new()).on_tab(Some(workbox.clone())));
+                state.show_session_picker = true;
             }
             assert!(backend.state().is_launcher());
 
             backend
-                .update_level(Msg::CloseRemotePicker)
-                .expect("step back to the host list");
+                .update_level(Msg::CloseSessionPicker)
+                .expect("dismiss host sessions");
 
             let state = backend.state();
             assert!(
-                matches!(
-                    state.remote_picker.as_ref().map(|picker| &picker.mode),
-                    Some(RemotePickerMode::Hosts)
-                ),
-                "Esc on a host's sessions returns to Remote hosts"
+                state.remote_picker.is_none() && !state.show_session_picker,
+                "Esc closes the shared Sessions picker"
             );
             assert_eq!(
                 state.active_launcher_scope(),
@@ -1958,41 +1949,51 @@ fn disconnecting_the_launcher_picker_host_moves_to_local_before_starting_a_shell
 fn a_host_held_only_by_the_launcher_scope_can_still_be_disconnected() {
     use crate::AppRoot;
     use crate::Msg;
-    use crate::state::{RemotePickerMode, RemotePickerState};
+    use crate::state::SessionPickerState;
     use tui_lipan::TestBackend;
 
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
-            {
-                let state = backend.state_mut();
-                *state.current_mut() = crate::state::Attachment::new();
-                state.launcher_scope = Some(workbox.clone());
-                let mut picker = RemotePickerState::new(Some(workbox.clone()));
-                picker.mode = RemotePickerMode::HostSessions {
-                    target: workbox.clone(),
-                };
-                state.remote_picker = Some(picker);
+            crate::test_support::isolate_user_dirs();
+            for query in ["", "missing"] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+                {
+                    let state = backend.state_mut();
+                    *state.current_mut() = crate::state::Attachment::new();
+                    state.launcher_scope = Some(workbox.clone());
+                    state.session_picker =
+                        Some(SessionPickerState::new(Vec::new()).on_tab(Some(workbox.clone())));
+                    state.session_picker.as_mut().unwrap().input.set_text(query);
+                    state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                    state.show_session_picker = true;
+                }
+                assert!(
+                    crate::ops::session::host_can_disconnect(backend.state(), &workbox),
+                    "the scope alone is enough to have something to disconnect"
+                );
+
+                backend.render();
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(
+                    rendered.contains("disconnect host"),
+                    "query {query:?}: {rendered}"
+                );
+
+                backend
+                    .update_level(Msg::SessionPickerDisconnectHost)
+                    .expect("disconnect a host we only point at");
+
+                assert!(
+                    backend.state().launcher_scope.is_none(),
+                    "the launcher stops naming a host we just walked away from"
+                );
+                assert!(
+                    !crate::ops::session::host_can_disconnect(backend.state(), &workbox),
+                    "with the scope gone there is nothing left to disconnect"
+                );
             }
-            assert!(
-                crate::ops::session::host_can_disconnect(backend.state(), &workbox),
-                "the scope alone is enough to have something to disconnect"
-            );
-
-            backend
-                .update_level(Msg::RemotePickerDisconnectHost)
-                .expect("disconnect a host we only point at");
-
-            assert!(
-                backend.state().launcher_scope.is_none(),
-                "the launcher stops naming a host we just walked away from"
-            );
-            assert!(
-                !crate::ops::session::host_can_disconnect(backend.state(), &workbox),
-                "with the scope gone there is nothing left to disconnect"
-            );
         })
         .expect("spawn scope-only disconnect test")
         .join()

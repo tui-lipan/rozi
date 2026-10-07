@@ -242,6 +242,9 @@ pub(crate) enum ExtensionsCommand {
         id: String,
         config_path: Option<String>,
     },
+    /// Serve a client's extension runtime over stdio. Started by Rozi itself over SSH; not listed
+    /// in help.
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

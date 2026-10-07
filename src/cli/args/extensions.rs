@@ -169,6 +169,12 @@ pub(super) fn parse(
         Some("remove") => parse_remove(iter, config_path),
         Some("new") => parse_new(iter),
         Some("check") => parse_check(iter),
+        Some("runtime") => {
+            if iter.next().is_some() {
+                return Err("extensions runtime accepts no arguments".to_string());
+            }
+            Ok(ParsedCli::Extensions(ExtensionsCommand::Runtime))
+        }
         Some(other) => Err(format!(
             "unknown extensions command `{other}` (expected list, install, update, remove, new, or check)"
         )),

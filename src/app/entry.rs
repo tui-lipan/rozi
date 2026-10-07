@@ -83,6 +83,13 @@ pub fn run() -> Result<()> {
             cli::ExtensionsCommand::New { id } => {
                 return cli::run_new_extension_cli(&id);
             }
+            cli::ExtensionsCommand::Runtime => {
+                return crate::extension_runtime::server::serve(
+                    std::io::stdin(),
+                    std::io::stdout(),
+                )
+                .map_err(Into::into);
+            }
             cli::ExtensionsCommand::Check { path, json } => {
                 if !cli::run_check_extension_cli(&path, json)? {
                     std::process::exit(1);

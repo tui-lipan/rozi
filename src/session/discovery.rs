@@ -7,6 +7,11 @@ use crate::session::protocol::{
 };
 
 const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
+/// How long a pane looking for its own server waits for each one to answer. Discovery can afford
+/// to miss a busy server for one sweep; this cannot, because the server that misses the window may
+/// be the pane's own, and its report is then lost. Every server is asked at once, so this bounds
+/// the whole lookup, which has to leave room in a hook's budget for the report itself.
+const INSTANCE_QUERY_TIMEOUT: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiscoveredSessionStatus {
@@ -289,8 +294,17 @@ fn query_status(
     stream: &mut IpcConnection,
     capabilities: Option<&crate::session::protocol::Capabilities>,
 ) -> std::io::Result<QueryAnswer> {
-    let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
+    query_status_within(name, stream, capabilities, QUERY_TIMEOUT)
+}
+
+fn query_status_within(
+    name: &str,
+    stream: &mut IpcConnection,
+    capabilities: Option<&crate::session::protocol::Capabilities>,
+    timeout: Duration,
+) -> std::io::Result<QueryAnswer> {
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
     crate::session::protocol::write_frame(
         stream,
         &ClientMessage::Query {
@@ -348,7 +362,8 @@ pub fn session_with_instance(
         .map(|(name, endpoint)| {
             std::thread::spawn(move || {
                 let mut stream = endpoint.connect().ok()?;
-                let answer = query_status(&name, &mut stream, None).ok()?;
+                let answer =
+                    query_status_within(&name, &mut stream, None, INSTANCE_QUERY_TIMEOUT).ok()?;
                 matches!(answer.status, DiscoveredSessionStatus::Running { .. })
                     .then_some((name, answer.instance))
             })

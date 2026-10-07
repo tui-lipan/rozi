@@ -949,6 +949,11 @@ fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
 
 /// Open a pane in `session` and read back the pane id and server instance it was told, exactly as
 /// a hook running inside it would see them.
+///
+/// Unix-only: the pane prints its environment with a POSIX shell line, which the cmd or PowerShell
+/// launch shell on Windows does not run. Which instance a pane is told is covered on every platform
+/// by the server's unit tests.
+#[cfg(unix)]
 fn pane_identity(session: &str) -> (u32, rozi::session::protocol::SessionInstanceId) {
     let pane = expect_ok(
         session,
@@ -986,6 +991,7 @@ fn pane_identity(session: &str) -> (u32, rozi::session::protocol::SessionInstanc
 /// server it runs in. It knows that server only by the `ROZI_SESSION_INSTANCE` it was given, so
 /// this proves the whole chain: the pane is told its instance and id, discovery finds the server
 /// that answers to that instance, and the server judges the report only for its own pane.
+#[cfg(unix)]
 #[test]
 fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
     let server = spawn_listener(headless_settings());
@@ -1030,30 +1036,46 @@ fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
     );
 }
 
-/// Several sessions run at once, each with a pane of the same id. Every pane's instance must lead
-/// to its own server, never to whichever answered first.
+/// The instance a server names in its discovery reply: what a pane of it is told.
+fn server_instance(
+    server: &crate::common::ListenerGuard,
+) -> rozi::session::protocol::SessionInstanceId {
+    let mut stream =
+        rozi::platform::ipc::IpcConnection::connect(server.endpoint()).expect("connect");
+    stream
+        .set_read_timeout(Some(io_timeout()))
+        .expect("read timeout");
+    rozi::session::protocol::write_frame(
+        &mut stream,
+        &rozi::session::protocol::ClientMessage::Query {
+            capabilities: None,
+            session: server.session().to_string(),
+            protocol_version: rozi::session::protocol::PROTOCOL_VERSION,
+            min_protocol_version: rozi::session::protocol::MIN_SUPPORTED_PROTOCOL,
+        },
+    )
+    .expect("send query");
+    match rozi::session::protocol::read_frame::<_, ServerMessage>(&mut stream).expect("answer") {
+        ServerMessage::SessionInfo {
+            instance: Some(instance),
+            ..
+        } => instance,
+        other => panic!("expected a session info naming its instance, got {other:?}"),
+    }
+}
+
+/// Several sessions run at once. Each instance must lead to its own server, never to whichever
+/// answered first - a pane id alone is the same in every one of them.
 #[test]
-fn each_pane_finds_its_own_server_among_several() {
+fn each_instance_finds_its_own_server_among_several() {
     let servers: Vec<_> = (0..3)
         .map(|_| spawn_listener(headless_settings()))
         .collect();
-    let panes: Vec<_> = servers
-        .iter()
-        .map(|server| {
-            (
-                server.session().to_string(),
-                pane_identity(server.session()),
-            )
-        })
-        .collect();
-    assert!(
-        panes.windows(2).all(|pair| pair[0].1.0 == pair[1].1.0),
-        "every session's first pane shares an id, which is what makes a wrong match dangerous"
-    );
-    for (session, (_, instance)) in &panes {
+    for server in &servers {
         assert_eq!(
-            rozi::session::discovery::session_with_instance(instance).expect("discovery ran"),
-            InstanceLookup::Found(session.clone())
+            rozi::session::discovery::session_with_instance(&server_instance(server))
+                .expect("discovery ran"),
+            InstanceLookup::Found(server.session().to_string())
         );
     }
 }

@@ -842,6 +842,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn sleeper(name: &str) -> ServiceConfig {
         ServiceConfig {
             name: name.to_string(),

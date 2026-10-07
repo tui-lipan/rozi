@@ -119,6 +119,9 @@ pub struct ExtensionInfo {
     pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
     pub service_paths: BTreeMap<String, String>,
+    /// Content digest of the files placed contributions run from, for an extension that has any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<String>,
     pub errors: Vec<String>,
 }
 
@@ -404,6 +407,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         service_details: Vec::new(),
         command_paths: BTreeMap::new(),
         service_paths: BTreeMap::new(),
+        bundle: None,
         errors: Vec::new(),
     };
     if directory.to_str().is_none() {
@@ -656,7 +660,10 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     let mut bundle = None;
     if api_error.is_none() && info.errors.is_empty() && !placed.is_empty() {
         match crate::extension_runtime::bundle::snapshot(&directory) {
-            Ok(snapshot) => bundle = Some(std::sync::Arc::new(snapshot)),
+            Ok(snapshot) => {
+                info.bundle = Some(snapshot.digest().to_string());
+                bundle = Some(std::sync::Arc::new(snapshot));
+            }
             Err(error) => info.errors.push(format!(
                 "cannot snapshot the extension for a session host: {error}"
             )),

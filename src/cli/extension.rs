@@ -390,20 +390,29 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
         &mut entries,
         &loaded.config.suggested_keybinding_resolutions,
     );
+    let runtime = (json || verbose)
+        .then(super::control::live_extension_runtime)
+        .flatten();
     if json {
-        let document = crate::config::ExtensionListDocument::new(entries);
+        let document = crate::config::ExtensionListDocument::new(entries, runtime);
         super::output::print_or_stop(&format!(
             "{}\n",
             serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
         ));
         return Ok(());
     }
-    super::output::print_or_stop(&format_extensions_text(
-        &entries,
-        &root,
-        verbose,
-        OutputStyles::detect(),
-    ));
+    let styles = OutputStyles::detect();
+    let mut text = format_extensions_text(&entries, &root, verbose, styles);
+    if let Some(runtime) = runtime
+        && !(runtime.runtimes.is_empty() && runtime.instances.is_empty())
+    {
+        text.push('\n');
+        text.push_str(&super::output::format_extension_runtime_text(
+            serde_json::to_value(&runtime).ok().as_ref(),
+            styles,
+        ));
+    }
+    super::output::print_or_stop(&text);
     Ok(())
 }
 

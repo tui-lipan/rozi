@@ -88,6 +88,38 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
     });
 }
 
+/// A command tab polls on the client. Moving from a local session to a `--remote` one must not keep
+/// the last local directory - that project is no longer in front of the user - and must never adopt
+/// the remote pane's path, which names a directory on another machine.
+#[test]
+fn a_command_tab_never_carries_a_directory_into_a_remote_session() {
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        let focused = backend.state().current().workspaces[0].panes[0].id;
+        backend.state_mut().current_mut().focused_pane = Some(focused);
+        backend.state_mut().current_mut().workspaces[0].focused_pane = Some(focused);
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .terminal
+            .cwd = Some("/home/x/project".to_string());
+        backend
+            .dispatch(crate::Msg::SidebarTreeFocused)
+            .expect("any message runs the per-message sidebar sync");
+        assert_eq!(
+            backend.state().sidebar.command_cwd.as_deref(),
+            Some("/home/x/project")
+        );
+
+        backend.state_mut().current_mut().remote_host = Some("pc".to_string());
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .terminal
+            .cwd = Some("/home/remote/project".to_string());
+        backend
+            .dispatch(crate::Msg::SidebarTreeFocused)
+            .expect("any message runs the per-message sidebar sync");
+        assert_eq!(backend.state().sidebar.command_cwd, None);
+    });
+}
+
 /// A tab that is off screen stops polling, so its cache outlives the directory it was collected in.
 /// Showing it again must not answer for the project you left, even for the frame before the next
 /// poll lands.

@@ -359,7 +359,10 @@ Prefer `exec`: it preserves argument boundaries and avoids shell interpretation.
 Set `hidden = true` to leave a command out of the command palette until the extension shows it;
 see [Show a command only when it applies](#show-a-command-only-when-it-applies).
 
-- Commands run in the focused pane's working directory.
+- Commands run in the focused pane's working directory when that pane is on the machine running
+  the command. A command runs on the client, so in a session attached with `--remote` it starts in
+  Rozi's own directory: the pane's path belongs to the remote host, even when the same path exists
+  locally.
 - An executable path starting with `./` or `../` resolves from the extension directory when the
   manifest loads.
 - `{extension_dir}` is replaced inside `exec` arguments. `$VAR`, `${VAR}`, and `%VAR%` are not
@@ -584,7 +587,8 @@ on_click = { send = "{line}" }
 - `{extension_dir}` is replaced in `command` and in action strings, and the processes they start
   receive the same [`ROZI_EXTENSION*` environment](#runtime-environment) as a command.
 - A command tab runs in the focused pane's working directory and re-lists when that directory
-  changes.
+  changes. Like a command, it runs on the client, so it uses no pane directory in a `--remote`
+  session.
 - Every line a command tab prints is a clickable row unless it starts with `group_prefix`, which
   makes it a section header. Print status and empty-state lines with the prefix.
 - `on_click` with `send` may use `{line}`. With `run`, `popup`, or `exec`, the clicked row arrives in

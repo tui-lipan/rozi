@@ -162,9 +162,9 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
     let group_prefix = command_group_prefix(ctx, &tab_id);
     let env = command_tab_env(ctx, &tab_id);
     // A command tab describes the project in front of you, so it runs where the focused pane is —
-    // the same rule extension commands follow. Under `--remote` the pane's path belongs to the
-    // server and this poll runs on the client, so nothing is set and the client's own directory
-    // stands.
+    // the same rule client-run extension commands follow. Under `--remote` the pane's path belongs
+    // to the session host and this poll runs on the client, so `sync_command_cwd` left nothing set
+    // and the client's own directory stands.
     let cwd = ctx
         .state
         .sidebar
@@ -242,10 +242,11 @@ pub(crate) fn command_output(
 /// Runs after every message like the tree's own root sync, so the unchanged case is one borrowed
 /// string comparison. A change invalidates any poll already in flight — its output describes the
 /// old directory — and starts a new one straight away rather than waiting out the interval.
+///
+/// The poll runs on the client, so it follows the focused pane only while that pane is local. Under
+/// `--remote` this resolves to no directory at all rather than keeping the last local one: a stale
+/// path would describe a project the user has left, and a remote one names no directory here.
 pub(crate) fn sync_command_cwd(ctx: &mut Context<AppRoot>) {
-    if ctx.state.current().remote_host.is_some() {
-        return;
-    }
     let cwd = crate::pane::lifecycle::focused_local_cwd_ref(&ctx.state);
     if cwd == ctx.state.sidebar.command_cwd.as_deref() {
         return;

@@ -244,7 +244,7 @@ fn body() {
         })
         .expect("cancel capture");
     let editor = frame(&mut backend);
-    assert!(!backend.modifier_key_reporting_enabled());
+    assert!(backend.modifier_key_reporting_enabled());
     assert!(editor.contains("╭Keybindings─"), "{editor}");
     assert!(!editor.contains("● REC"), "{editor}");
 
@@ -433,4 +433,84 @@ fn send_ctrl(backend: &mut TestBackend<AppRoot>, ch: char) {
         })
         .expect("send ctrl key");
     backend.render();
+}
+
+#[test]
+fn left_alt_navigates_picker_rows_and_tabs_without_filtering() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use tui_lipan::AltSide;
+            let mut backend = backend();
+            frame(&mut backend);
+            assert!(backend.modifier_key_reporting_enabled());
+            let alt = |letter, side| KeyEvent {
+                code: KeyCode::Char(letter),
+                mods: KeyMods {
+                    alt_side: side,
+                    ..KeyMods::ALT
+                },
+            };
+            backend.send_key(alt('j', AltSide::Left)).expect("next row");
+            let second = selected(&backend).expect("selected row");
+            assert!(second.contains("Mod"));
+            backend
+                .send_key(alt('k', AltSide::Left))
+                .expect("previous row");
+            assert!(selected(&backend).unwrap().contains("Prefix"));
+            let tab = backend.state().keybindings.as_ref().unwrap().tab;
+            backend.send_key(alt('l', AltSide::Left)).expect("next tab");
+            assert_ne!(backend.state().keybindings.as_ref().unwrap().tab, tab);
+            backend
+                .send_key(alt('h', AltSide::Left))
+                .expect("previous tab");
+            assert_eq!(backend.state().keybindings.as_ref().unwrap().tab, tab);
+            assert!(
+                backend
+                    .state()
+                    .keybindings
+                    .as_ref()
+                    .unwrap()
+                    .query
+                    .text()
+                    .is_empty()
+            );
+            send(&mut backend, KeyCode::Char('j'));
+            assert_eq!(
+                backend.state().keybindings.as_ref().unwrap().query.text(),
+                "j"
+            );
+            send(&mut backend, KeyCode::Esc);
+            assert!(!backend.modifier_key_reporting_enabled());
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenSettings))
+                .expect("open settings");
+            frame(&mut backend);
+            let tab = backend.state().settings_navigation.tab;
+            backend
+                .send_key(alt('l', AltSide::Left))
+                .expect("next settings category");
+            assert_ne!(backend.state().settings_navigation.tab, tab);
+            backend
+                .send_key(alt('h', AltSide::Left))
+                .expect("previous settings category");
+            assert_eq!(backend.state().settings_navigation.tab, tab);
+            let first = backend.state().settings_selected;
+            backend
+                .send_key(alt('j', AltSide::Left))
+                .expect("next setting");
+            assert_ne!(backend.state().settings_selected, first);
+            assert!(backend.state().settings_navigation.query.text().is_empty());
+            send(&mut backend, KeyCode::Esc);
+            assert!(!backend.modifier_key_reporting_enabled());
+            for side in [AltSide::Right, AltSide::Unknown, AltSide::Both] {
+                let mut other = self::backend();
+                frame(&mut other);
+                other.send_key(alt('j', side)).expect("non-left Alt");
+                assert_eq!(selected(&other), None);
+            }
+        })
+        .expect("spawn picker navigation test")
+        .join()
+        .expect("picker navigation completes");
 }

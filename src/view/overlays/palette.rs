@@ -244,11 +244,13 @@ impl OverlayTabs {
         let active = self.active;
         let select = self.select;
         ctx.link().key_handler(move |key| {
-            let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
+            let direction = key.left_alt_arrow();
+            let plain =
+                direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
             if count < 2 || !plain {
                 return None;
             }
-            match key.code {
+            match direction.unwrap_or(key.code) {
                 KeyCode::Tab if !key.mods.shift => Some(select((active + 1) % count)),
                 KeyCode::BackTab | KeyCode::Tab => Some(select((active + count - 1) % count)),
                 KeyCode::Right if !key.mods.shift => Some(select((active + 1) % count)),

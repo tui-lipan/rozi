@@ -375,8 +375,9 @@ fn key_handler(
         .collect::<Vec<_>>();
     let switch = move |steps: isize| Msg::ExtensionsTabSelected(tab.stepped(steps).index());
     ctx.link().key_handler(move |key| {
-        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key;
-        let navigation = match key.code {
+        let direction = key.left_alt_arrow();
+        let plain = direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
+        let navigation = match direction.unwrap_or(key.code) {
             KeyCode::Tab if plain && !key.mods.shift => Some(switch(1)),
             KeyCode::BackTab | KeyCode::Tab if plain => Some(switch(-1)),
             KeyCode::Left if plain && !key.mods.shift => Some(switch(-1)),

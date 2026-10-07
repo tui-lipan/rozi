@@ -975,15 +975,39 @@ fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel 
     }
 }
 
-/// Standalone modifier reports are scoped to the keybinding recorder, so normal composed text input
-/// never sees them. Derived from state after every message and key so no close path can leak it.
+/// Physical modifier reports enable left-Alt picker navigation and shortcut recording.
+/// Derived after every message and key so closing an overlay always restores normal reporting.
 pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
     let capturing = ctx
         .state
         .keybindings
         .as_ref()
         .is_some_and(crate::state::KeybindingsState::is_capturing);
-    ctx.set_modifier_key_reporting(capturing);
+    let picker = matches!(
+        ctx.state.modal_overlay(),
+        Some(
+            "collaboration"
+                | "agent-picker"
+                | "remote-picker"
+                | "session-picker"
+                | "worktree-picker"
+                | "profile-picker"
+                | "search"
+                | "pick"
+                | "layout-picker"
+                | "theme-picker"
+                | "help"
+                | "extensions"
+                | "settings"
+                | "palette"
+        )
+    );
+    let editing_binding = ctx
+        .state
+        .keybindings
+        .as_ref()
+        .is_some_and(|state| !matches!(state.stage, crate::state::KeybindingEditorStage::List));
+    ctx.set_modifier_key_reporting(capturing || (picker && !editing_binding));
 }
 
 fn post_update_sync(

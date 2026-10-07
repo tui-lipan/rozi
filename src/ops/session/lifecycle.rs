@@ -116,13 +116,14 @@ fn initial_session_picker_tab(state: &State) -> SessionPickerTab {
 }
 
 /// The Sessions picker's tabs: **Local**, remote hosts by name, then **All**. Hosts come from the
-/// open tab, foreground session, launcher scope, connected hosts, parked sessions, and listed rows, so the strip
-/// keeps its order while the user moves through it.
+/// open tab, explicitly opened host, foreground session, launcher scope, connected hosts, and
+/// parked sessions. Cached rows remain discoverable in All without creating historical host tabs.
 pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
     let picker = state.session_picker.as_ref();
     let candidates = picker
         .and_then(|picker| picker.tab.remote_target())
         .into_iter()
+        .chain(picker.and_then(|picker| picker.opened_host.as_ref()))
         .chain(
             (!state.is_launcher())
                 .then(|| state.current().remote_target.as_ref())
@@ -142,13 +143,7 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
                 .background
                 .values()
                 .filter_map(|attachment| attachment.remote_target.as_ref()),
-        )
-        .chain(picker.into_iter().flat_map(|picker| {
-            picker
-                .entries
-                .iter()
-                .filter_map(|entry| entry.remote_target.as_ref())
-        }));
+        );
     let mut hosts: Vec<crate::session::remote::RemoteTarget> = Vec::new();
     for target in candidates {
         if !hosts.contains(target) {
@@ -292,7 +287,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // snapping back to the top; it also keeps our `selected` in step with the persistent
     // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
     // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
-    let (query, selected, tab, browse_selected) = ctx
+    let (query, selected, tab, opened_host, browse_selected) = ctx
         .state
         .session_picker
         .as_ref()
@@ -301,6 +296,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
                 p.input.text().to_string(),
                 p.selected,
                 p.tab.clone(),
+                p.opened_host.clone(),
                 p.browse_selected.clone(),
             )
         })
@@ -309,6 +305,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     let mut picker = SessionPickerState::new(rows);
     picker.input.set_text(query);
     picker.tab = tab;
+    picker.opened_host = opened_host;
     picker.browse_selected = browse_selected;
     picker.selected = selected.min(picker.entries.len().saturating_sub(1));
     picker.keep_selection_in_tab();

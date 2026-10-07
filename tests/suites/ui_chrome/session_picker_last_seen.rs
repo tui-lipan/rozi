@@ -77,6 +77,94 @@ fn screen(backend: &mut TestBackend<AppRoot>) -> String {
     backend.capture_frame().plain_text()
 }
 
+#[test]
+fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
+    on_a_big_stack(|| {
+        let target = RemoteTarget::Alias("laptop".into());
+        let mut backend = picker_showing(vec![last_seen("backend", 3, &target)]);
+        backend.state_mut().session_picker = Some(SessionPickerState::new(vec![last_seen(
+            "backend", 3, &target,
+        )]));
+        let local = screen(&mut backend);
+        let tabs = local
+            .lines()
+            .find(|line| line.contains("Local") && line.contains("All"))
+            .expect("All is distinct from Local even without an active remote host");
+        assert!(!tabs.contains("laptop"), "{local}");
+        assert!(
+            !local.contains("backend@laptop"),
+            "Local excludes cached remote sessions: {local}"
+        );
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Tab,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        let all = screen(&mut backend);
+        assert_eq!(
+            backend.state().session_picker.as_ref().unwrap().tab,
+            rozi::state::SessionPickerTab::All
+        );
+        assert!(
+            all.contains("backend@laptop") && all.contains("last seen"),
+            "{all}"
+        );
+        backend
+            .send_key(KeyEvent {
+                code: KeyCode::Tab,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        assert_eq!(
+            backend.state().session_picker.as_ref().unwrap().tab,
+            rozi::state::SessionPickerTab::Host(None),
+            "no hidden historical host tab in keyboard navigation"
+        );
+        backend
+            .state_mut()
+            .session_picker
+            .as_mut()
+            .unwrap()
+            .entries
+            .clear();
+        let empty = screen(&mut backend);
+        assert!(
+            !empty
+                .lines()
+                .any(|line| line.contains("Local") && line.contains("All")),
+            "redundant Local/All navigation hides again: {empty}"
+        );
+    });
+}
+
+#[test]
+fn an_explicit_host_tab_survives_local_browsing_and_nested_prompt_cancellation() {
+    on_a_big_stack(|| {
+        let target = RemoteTarget::Alias("laptop".into());
+        let mut backend = picker_showing(vec![last_seen("backend", 3, &target)]);
+        // An attached local session keeps tab changes independent of launcher scope.
+        backend.state_mut().current_mut().session_name = Some("local".into());
+        backend.state_mut().command_link = None;
+        backend.update_level(Msg::SessionPickerTab(0)).unwrap();
+        backend
+            .update_level(Msg::SessionPickerCreateFromQuery)
+            .unwrap();
+        assert!(backend.state().rename_session.is_some());
+        backend.update_level(Msg::CloseRenameSession).unwrap();
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.opened_host.as_ref(), Some(&target));
+        assert_eq!(picker.tab, rozi::state::SessionPickerTab::Host(None));
+        let rendered = screen(&mut backend);
+        assert!(
+            rendered.lines().any(|line| line.contains("Local")
+                && line.contains("laptop")
+                && line.contains("All")),
+            "{rendered}"
+        );
+    });
+}
+
 /// The row itself has to carry the news. A bare pane count is the same thing a live session says,
 /// and the user cannot tell from it that nothing has answered on that host this sweep.
 #[test]

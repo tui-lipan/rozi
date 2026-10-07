@@ -1782,6 +1782,16 @@ mod tests {
                             },
                         },
                     ]));
+                let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
+                let state = backend.state_mut();
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
+                );
+                state.remote.hosts.get_mut(&target).unwrap().probe =
+                    crate::state::HostProbe::Reached;
                 backend.render();
 
                 let selection_bg = backend.state().theme.border_active;

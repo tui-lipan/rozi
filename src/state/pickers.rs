@@ -393,6 +393,8 @@ pub struct SessionPickerState {
     pub pending_restart: Option<usize>,
     /// The selected host scope, used for both browsing and search.
     pub tab: SessionPickerTab,
+    /// A host explicitly opened in this picker, retained while browsing other tabs.
+    pub opened_host: Option<crate::session::remote::RemoteTarget>,
     pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
 }
 
@@ -916,6 +918,7 @@ pub enum OverlayOrigin {
         query: String,
         selected_session: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
         tab: SessionPickerTab,
+        opened_host: Option<Box<crate::session::remote::RemoteTarget>>,
         browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
     },
     RemoteHosts {
@@ -963,12 +966,14 @@ impl SessionPickerState {
             pending_kill: None,
             pending_restart: None,
             tab: SessionPickerTab::default(),
+            opened_host: None,
             browse_selected: None,
         }
     }
 
-    /// Open on `tab`, highlighting its first row.
+    /// Explicitly open on `tab`, retaining its host tab and highlighting its first row.
     pub fn on_tab(mut self, tab: Option<crate::session::remote::RemoteTarget>) -> Self {
+        self.opened_host = tab.clone();
         self.tab = SessionPickerTab::Host(tab);
         self.keep_selection_in_tab();
         self

@@ -716,7 +716,16 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if tabs.len() > 1 {
         let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
         let labels = tabs.iter().map(|tab| tab.label(&ctx.state)).collect();
-        overlay = overlay.tabs(OverlayTabs::new(labels, active, Msg::SessionPickerTab).with_all());
+        let mut overlay_tabs = OverlayTabs::new(labels, active, Msg::SessionPickerTab);
+        // All can contain cached remote sessions even when Local is the only host tab.
+        if picker
+            .entries
+            .iter()
+            .all(|entry| entry.remote_target.is_none())
+        {
+            overlay_tabs = overlay_tabs.with_all();
+        }
+        overlay = overlay.tabs(overlay_tabs);
     }
     if let Some(target) = picker.tab.remote_target() {
         overlay = overlay.header_right(remote_tab_status(ctx, target));

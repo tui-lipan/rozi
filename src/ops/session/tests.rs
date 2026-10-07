@@ -23,6 +23,58 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
 }
 
 #[test]
+fn session_host_tabs_require_a_current_destination_not_cached_rows() {
+    use crate::session::remote::RemoteTarget;
+    use crate::state::{Attachment, HostProbe, SessionPickerTab};
+    let mut state = State::new(Config::default(), Theme::default());
+    *state.current_mut() = Attachment::new();
+    let target = RemoteTarget::Alias("workbox".into());
+    let mut row = session_row("dev", Some("workbox"));
+    row.status = crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 };
+    state.session_picker = Some(SessionPickerState::new(vec![row]));
+    let local_all = vec![SessionPickerTab::Host(None), SessionPickerTab::All];
+    assert_eq!(session_picker_tabs(&state), local_all);
+
+    // Known/configured hosts alone are not active destinations either.
+    state.remote.hosts.seed(
+        &state.config.remote,
+        std::slice::from_ref(&target),
+        &[],
+        &[],
+    );
+    assert_eq!(session_picker_tabs(&state), local_all);
+    let host_tabs = vec![
+        SessionPickerTab::Host(None),
+        SessionPickerTab::Host(Some(target.clone())),
+        SessionPickerTab::All,
+    ];
+    state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Reached;
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Idle;
+
+    state.launcher_scope = Some(target.clone());
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.launcher_scope = None;
+    state.current_mut().session_name = Some("dev".into());
+    state.current_mut().remote_target = Some(target.clone());
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.current_mut().remote_target = None;
+    let mut parked = Attachment::new();
+    parked.remote_target = Some(target.clone());
+    state.background.insert(1, parked);
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.background.clear();
+
+    state.session_picker = Some(SessionPickerState::new(Vec::new()).on_tab(Some(target)));
+    state.session_picker.as_mut().unwrap().tab = SessionPickerTab::Host(None);
+    assert_eq!(
+        session_picker_tabs(&state),
+        host_tabs,
+        "an explicitly opened destination survives browsing other tabs"
+    );
+}
+
+#[test]
 fn session_picker_opening_preference_uses_context_or_all_without_changing_creation() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -997,6 +1049,7 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                     query: String::new(),
                     selected_session: None,
                     tab: crate::state::SessionPickerTab::Host(None),
+                    opened_host: None,
                     browse_selected: None,
                 });
                 state.rename_session =

@@ -471,10 +471,22 @@ fn search_filters_only_the_selected_host_or_all() {
     on_a_big_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.state_mut().command_link = None;
         {
             let state = backend.state_mut();
             state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
             state.show_session_picker = true;
+            let hosts = ["workbox", "buildbox"]
+                .map(|host| rozi::session::remote::RemoteTarget::Alias(host.into()));
+            state.remote.added_hosts = hosts.to_vec();
+            state
+                .remote
+                .hosts
+                .seed(&state.config.remote, &hosts, &[], &[]);
+            for target in &hosts {
+                state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
+            }
             state.session_picker = Some(SessionPickerState::new(vec![
                 session_row("dev"),
                 remote_row("dev", "workbox"),
@@ -636,6 +648,8 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
             w: 180,
             h: 30,
         });
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.state_mut().command_link = None;
         let alias = RemoteTarget::Alias("workbox".into());
         let url = RemoteTarget::Url {
             user: None,
@@ -649,6 +663,16 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
             let state = backend.state_mut();
             state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
             state.show_session_picker = true;
+            state.remote.added_hosts = vec![alias.clone(), url.clone()];
+            state.remote.hosts.seed(
+                &state.config.remote,
+                &[alias.clone(), url.clone()],
+                &[],
+                &[],
+            );
+            for target in [&alias, &url] {
+                state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
+            }
             let mut picker = SessionPickerState::new(vec![alias_row, url_row]);
             picker.tab = SessionPickerTab::All;
             state.session_picker = Some(picker);

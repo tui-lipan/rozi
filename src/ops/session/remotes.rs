@@ -292,6 +292,7 @@ fn open_host_sessions(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Updat
     crate::ops::overlay_return::leave(ctx);
     let update = crate::ops::session::open_session_picker(ctx);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.opened_host = Some(target.clone());
         picker.tab = SessionPickerTab::Host(Some(target));
         picker.keep_selection_in_tab();
     }

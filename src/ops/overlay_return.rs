@@ -45,6 +45,7 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
                 .filter(|entry| picker.in_tab(entry))
                 .map(|entry| (entry.name.clone(), entry.remote_target.clone())),
             tab: picker.tab.clone(),
+            opened_host: picker.opened_host.clone().map(Box::new),
             browse_selected: picker.browse_selected.clone(),
         })
 }
@@ -92,6 +93,7 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
             query,
             selected_session,
             tab,
+            opened_host,
             browse_selected,
         } => {
             let update = crate::ops::session::open_session_picker(ctx);
@@ -106,6 +108,7 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
                 picker.input.set_cursor(cursor);
                 picker.input.set_anchor(None);
                 picker.tab = tab;
+                picker.opened_host = opened_host.map(|target| *target);
                 picker.browse_selected = browse_selected;
                 picker.selected = selected_session
                     .and_then(|(name, target)| {

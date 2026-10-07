@@ -134,7 +134,7 @@ impl Drop for DetachedServer {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(mut child) = self.0.take()
-            && matches!(child.try_wait(), Ok(None))
+            && reaper::still_running(&mut child)
         {
             reaper::adopt(child);
         }
@@ -178,6 +178,21 @@ mod reaper {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Whether `child` has yet to exit, reaping it if it has.
+    ///
+    /// A non-blocking wait can still be interrupted by a signal, and treating that as an exit
+    /// would drop the only handle to a live server, which then becomes a zombie when it exits.
+    /// Any other error is permanent (the child is already reaped), so the child is let go.
+    pub(super) fn still_running(child: &mut Child) -> bool {
+        loop {
+            match child.try_wait() {
+                Ok(None) => return true,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Ok(Some(_)) | Err(_) => return false,
+            }
+        }
+    }
+
     pub(super) fn adopt(child: Child) {
         let mut adopted = adopted();
         adopted.children.push(child);
@@ -197,9 +212,7 @@ mod reaper {
         loop {
             std::thread::sleep(POLL_INTERVAL);
             let mut adopted = adopted();
-            adopted
-                .children
-                .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+            adopted.children.retain_mut(still_running);
             if adopted.children.is_empty() {
                 adopted.polling = false;
                 return;

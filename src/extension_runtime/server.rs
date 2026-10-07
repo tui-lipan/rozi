@@ -326,6 +326,7 @@ impl Runtime {
                     command.current_dir(path);
                 }
             }
+            SpawnCwd::Inherit => {}
         }
         for key in INHERITED_ENV_REMOVED {
             command.env_remove(key);

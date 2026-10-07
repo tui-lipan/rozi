@@ -532,6 +532,15 @@ pub enum Msg {
     ExtensionSubscriptionClosed {
         id: u64,
     },
+    /// Something an extension runtime connection learned: it is ready, it failed, it ended, or the
+    /// runtime sent a message. Ignored unless `epoch` is that host's current connection.
+    ExtensionRuntime {
+        host: crate::state::HostKey,
+        epoch: u64,
+        event: crate::extension_runtime::client::RuntimeEvent,
+    },
+    /// A placed service's restart or a runtime's reconnect is due.
+    PlacementTick,
     /// A pane's program opened a `publish` stream. The sender carries activations back to it.
     PublishStreamOpen {
         stream_id: u64,

@@ -12,6 +12,7 @@ mod appearance;
 mod attachment;
 mod capture;
 mod drag;
+mod extension_runtime;
 mod extension_workers;
 mod identity;
 mod keybindings;
@@ -33,6 +34,7 @@ pub use appearance::*;
 pub use attachment::*;
 pub use capture::*;
 pub use drag::*;
+pub use extension_runtime::*;
 pub use extension_workers::*;
 pub use identity::*;
 pub use keybindings::*;
@@ -123,6 +125,8 @@ pub struct State {
     pub extension_generations: HashMap<String, String>,
     /// Credentials of the placed extension processes this client has launched.
     pub extension_workers: WorkerRegistry,
+    /// Extension runtimes, per host, and the placed processes running through them.
+    pub extension_runtime: ExtensionRuntimeState,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
@@ -553,6 +557,7 @@ impl State {
             config,
             extension_generations,
             extension_workers: WorkerRegistry::default(),
+            extension_runtime: ExtensionRuntimeState::default(),
             window_focused: true,
             runtime_epoch: 0,
             session_view_revision: 0,

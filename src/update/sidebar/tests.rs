@@ -116,7 +116,13 @@ fn a_command_tab_never_carries_a_directory_into_a_remote_session() {
         backend
             .dispatch(crate::Msg::SidebarTreeFocused)
             .expect("any message runs the per-message sidebar sync");
-        assert_eq!(backend.state().sidebar.command_cwd, None);
+        // The tab re-lists for the new directory, keyed by its host so the same path elsewhere is
+        // never the same directory, and a client-run poll still starts in no pane directory.
+        assert_ne!(
+            backend.state().sidebar.command_cwd.as_deref(),
+            Some("/home/x/project")
+        );
+        assert_eq!(super::polling::client_poll_cwd(backend.state()), None);
     });
 }
 

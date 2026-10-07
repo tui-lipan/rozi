@@ -531,6 +531,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => {
             crate::ops::extensions::subscription_opened(ctx, id, provenance, worker, cancel, reply)
         }
+        Msg::ExtensionRuntime { host, epoch, event } => {
+            crate::ops::placement::runtime_event(ctx, host, epoch, event)
+        }
+        Msg::PlacementTick => crate::ops::placement::tick(ctx),
         Msg::ExtensionSubscriptionClosed { id } => {
             crate::ops::extensions::subscription_closed(ctx, id)
         }
@@ -1082,6 +1086,7 @@ fn post_update_sync(
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);
     hosts::sync(ctx);
+    crate::ops::placement::sync(ctx);
     if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);

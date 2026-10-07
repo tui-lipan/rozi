@@ -143,6 +143,7 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
     let Some((command_line, _)) = command_tab(ctx, &tab_id) else {
         return Update::none();
     };
+    let placed = crate::ops::placement::placed_tab(&ctx.state, &tab_id);
     if ctx.state.sidebar.command_in_flight.contains_key(&tab_id) {
         return Update::command_only(Command::after(
             COMMAND_BUSY_RETRY,
@@ -155,22 +156,28 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
         .sidebar
         .command_in_flight
         .insert(tab_id.clone(), epoch);
+    // A tab placed on the active session lists on that session's host, in the focused pane's
+    // directory there; its rows arrive when the listing exits.
+    if let Some((placements, placed)) = placed {
+        let group_prefix = command_group_prefix(ctx, &tab_id);
+        let env = command_tab_env(ctx, &tab_id);
+        return crate::ops::placement::poll_tab(
+            ctx,
+            tab_id,
+            epoch,
+            placements,
+            &placed,
+            env,
+            group_prefix,
+        );
+    }
     let shell = crate::platform::command::resolve_command_shell(
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
     let group_prefix = command_group_prefix(ctx, &tab_id);
     let env = command_tab_env(ctx, &tab_id);
-    // A command tab describes the project in front of you, so it runs where the focused pane is —
-    // the same rule client-run extension commands follow. Under `--remote` the pane's path belongs
-    // to the session host and this poll runs on the client, so `sync_command_cwd` left nothing set
-    // and the client's own directory stands.
-    let cwd = ctx
-        .state
-        .sidebar
-        .command_cwd
-        .clone()
-        .map(std::path::PathBuf::from);
+    let cwd = client_poll_cwd(&ctx.state);
     Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
         let rows = command_rows(
             crate::platform::command::run_bounded_shell_command_with_env(
@@ -243,18 +250,37 @@ pub(crate) fn command_output(
 /// string comparison. A change invalidates any poll already in flight — its output describes the
 /// old directory — and starts a new one straight away rather than waiting out the interval.
 ///
-/// The poll runs on the client, so it follows the focused pane only while that pane is local. Under
-/// `--remote` this resolves to no directory at all rather than keeping the last local one: a stale
-/// path would describe a project the user has left, and a remote one names no directory here.
+/// The directory is tracked as the session sees it, qualified by its host under `--remote`, so the
+/// same path on two machines never reads as one directory. Where a poll runs is decided per tab:
+/// see [`client_poll_cwd`] and the placed tabs in [`crate::ops::placement`].
 pub(crate) fn sync_command_cwd(ctx: &mut Context<AppRoot>) {
-    let cwd = crate::pane::lifecycle::focused_local_cwd_ref(&ctx.state);
-    if cwd == ctx.state.sidebar.command_cwd.as_deref() {
+    let cwd = crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state);
+    let key = match (&ctx.state.current().remote_target, cwd) {
+        (Some(target), Some(cwd)) => Some(format!("{}:{cwd}", target.to_spec())),
+        (None, Some(cwd)) => Some(cwd.to_string()),
+        (_, None) => None,
+    };
+    if key == ctx.state.sidebar.command_cwd {
         return;
     }
-    ctx.state.sidebar.command_cwd = cwd.map(str::to_string);
+    ctx.state.sidebar.command_cwd = key;
     ctx.state.sidebar.command_epoch = ctx.state.sidebar.command_epoch.wrapping_add(1);
     ctx.state.sidebar.command_in_flight.clear();
     request_command_poll(ctx);
+}
+
+/// Where a client-run tab's poll starts. The cwd belongs to the machine running the process: a
+/// local pane's directory is one here, a remote pane's is not, so under `--remote` the client's own
+/// directory stands, whatever path the pane reports and even if that path also exists here.
+pub(crate) fn client_poll_cwd(state: &crate::state::State) -> Option<std::path::PathBuf> {
+    if state.current().remote_host.is_some() {
+        return None;
+    }
+    state
+        .sidebar
+        .command_cwd
+        .clone()
+        .map(std::path::PathBuf::from)
 }
 
 pub(crate) fn refresh_active_tabs(ctx: &mut Context<AppRoot>) -> Update {

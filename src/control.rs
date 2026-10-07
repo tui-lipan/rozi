@@ -115,6 +115,7 @@ impl ApiDescription {
                 RECORD_PANE_CAPABILITY,
                 RECORD_UI_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
+                crate::extension_runtime::protocol::CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,
             ],

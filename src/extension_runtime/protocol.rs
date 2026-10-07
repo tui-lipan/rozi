@@ -109,6 +109,8 @@ pub enum SpawnCwd {
     /// starts in the runtime's own directory instead: the cwd belongs to the machine running the
     /// process, and never to another one.
     Host { path: String },
+    /// No particular directory: the runtime's own, which is the host user's home over SSH.
+    Inherit,
 }
 
 /// Collect a one-shot process's standard output, as a sidebar tab listing does.

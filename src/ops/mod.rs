@@ -16,6 +16,7 @@ pub(crate) mod last_output;
 pub(crate) mod layout_picker;
 pub(crate) mod overlay_return;
 pub(crate) mod pick;
+pub(crate) mod placement;
 pub(crate) mod popup;
 pub(crate) mod preferences;
 pub(crate) mod profile;

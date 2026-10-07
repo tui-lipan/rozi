@@ -68,15 +68,13 @@ impl WorkerBinding {
     }
 }
 
-/// Which runtime started a worker. A credential is honored only over the runtime it was issued
-/// for, so one host's runtime can never present a worker of another host, or a local one.
+/// Which runtime connection started a worker, by the epoch the client gave it. A credential is
+/// honored only over the runtime it was issued for, so one host's runtime can never present a
+/// worker of another host. A reconnect is a new epoch, so every credential issued before it dies
+/// with the old connection. This machine's placed processes run through a runtime too, so there is
+/// no credential a process can present outside a runtime's bridge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum WorkerRuntime {
-    Local,
-    /// A remote runtime connection, by the epoch the client gave it. A reconnect is a new epoch,
-    /// so every credential issued before it dies with the old connection.
-    Remote(u64),
-}
+pub struct WorkerRuntime(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkerKind {
@@ -222,7 +220,7 @@ mod tests {
                     host: remote("pc"),
                     session: None,
                 },
-                WorkerRuntime::Remote(7),
+                WorkerRuntime(7),
                 WorkerKind::Service {
                     name: "sessions.watch".to_string(),
                 },
@@ -231,22 +229,17 @@ mod tests {
             .to_string();
         assert!(
             registry
-                .authenticate(&credential, WorkerRuntime::Remote(7))
+                .authenticate(&credential, WorkerRuntime(7))
                 .is_some()
         );
         assert!(
             registry
-                .authenticate(&credential, WorkerRuntime::Remote(8))
+                .authenticate(&credential, WorkerRuntime(8))
                 .is_none()
         );
         assert!(
             registry
-                .authenticate(&credential, WorkerRuntime::Local)
-                .is_none()
-        );
-        assert!(
-            registry
-                .authenticate("not-a-credential", WorkerRuntime::Remote(7))
+                .authenticate("not-a-credential", WorkerRuntime(7))
                 .is_none()
         );
     }
@@ -261,7 +254,7 @@ mod tests {
                 host: HostKey::Local,
                 session: None,
             },
-            WorkerRuntime::Local,
+            WorkerRuntime(1),
             WorkerKind::Command {
                 id: "sessions.open".to_string(),
             },
@@ -271,7 +264,7 @@ mod tests {
         registry.revoke(id);
         assert!(
             registry
-                .authenticate(&credential, WorkerRuntime::Local)
+                .authenticate(&credential, WorkerRuntime(1))
                 .is_none()
         );
         assert!(registry.is_empty());

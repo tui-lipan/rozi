@@ -189,6 +189,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);
+    crate::ops::placement::retire(ctx, &stale_extensions);
     // A reload cannot change visibility, but it can change the tab set and panel split, so the
     // caches and active-tab refresh still run. Refresh work is kicked explicitly below, so only
     // the synchronous focus/cache effects are needed here.

@@ -33,11 +33,11 @@ pub(crate) fn authorize(
     origin: RequestOrigin,
 ) -> Result<Option<ExtensionGrant>, ControlResponse> {
     let runtime = match origin {
-        RequestOrigin::Local => WorkerRuntime::Local,
-        RequestOrigin::Bridged { runtime } => WorkerRuntime::Remote(runtime),
+        RequestOrigin::Local => None,
+        RequestOrigin::Bridged { runtime } => Some(WorkerRuntime(runtime)),
     };
     let Some(credential) = credential else {
-        if runtime != WorkerRuntime::Local {
+        if runtime.is_some() {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::NotPermitted,
                 "a request over the extension bridge must carry its worker credential",
@@ -60,8 +60,11 @@ pub(crate) fn authorize(
         };
     };
     // Identity comes from the credential alone. Whatever extension and generation the request
-    // names are discarded: a process on another machine may write anything there.
-    let Some(worker) = state.extension_workers.authenticate(&credential, runtime) else {
+    // names are discarded: a process on another machine may write anything there. A credential is
+    // only ever valid over the bridge of the runtime it was issued for.
+    let Some(worker) =
+        runtime.and_then(|runtime| state.extension_workers.authenticate(&credential, runtime))
+    else {
         return Err(ControlResponse::error_with(
             ControlErrorCode::ExtensionInactive,
             "worker credential is not valid: it was revoked, or never issued for this connection",
@@ -445,7 +448,7 @@ mod tests {
                 .state_mut()
                 .extension_generations
                 .insert("other".to_string(), "g9".to_string());
-            let (worker, credential) = issue(&mut backend, pc(), WorkerRuntime::Remote(3));
+            let (worker, credential) = issue(&mut backend, pc(), WorkerRuntime(3));
             let grant = authorize(
                 backend.state(),
                 Some(ExtensionProvenance {
@@ -495,7 +498,7 @@ mod tests {
         on_test_thread(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             assert!(ask(&mut backend, worker, request(ControlCommand::ListPanes)).ok);
 
             backend
@@ -505,7 +508,7 @@ mod tests {
             let retired = ask(&mut backend, worker, request(ControlCommand::ListPanes));
             assert_eq!(retired.code, Some(ControlErrorCode::ExtensionInactive));
 
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             backend
                 .state_mut()
                 .extension_generations
@@ -523,7 +526,7 @@ mod tests {
         on_test_thread(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &HostKey::Local);
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             let pane = backend.state().current().workspaces[0].panes[0].id;
             let send = || {
                 request(ControlCommand::SendText {
@@ -572,7 +575,7 @@ mod tests {
         on_test_thread(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             let id = backend.state().current().workspaces[0].panes[0].id;
             let shadow = crate::state::Pane::new(
                 id,
@@ -631,7 +634,7 @@ mod tests {
         on_test_thread(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             backend
                 .state_mut()
                 .config
@@ -715,7 +718,7 @@ mod tests {
                 .config
                 .extension_placements
                 .insert(EXTENSION.to_string(), std::sync::Arc::new(placements));
-            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime::Remote(1));
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
             let run = request(ControlCommand::RunAction {
                 action: "sessions.open".to_string(),
             });
@@ -753,7 +756,7 @@ mod tests {
                     host: pc(),
                     session: None,
                 },
-                WorkerRuntime::Remote(1),
+                WorkerRuntime(1),
                 WorkerKind::Service {
                     name: "s".to_string(),
                 },

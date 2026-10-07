@@ -394,6 +394,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     CycleStartupMode,
                 ),
                 (
+                    "Open Sessions on",
+                    ctx.state.config.session.picker_open_on.label().to_string(),
+                    CycleSessionPickerOpenOn,
+                ),
+                (
                     "Keep awake while agents work",
                     enabled_status(ctx.state.config.session.keep_awake_while_agents_work),
                     ToggleKeepAwakeWhileAgentsWork,

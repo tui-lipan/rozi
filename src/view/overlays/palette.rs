@@ -239,7 +239,7 @@ impl OverlayTabs {
         }
     }
 
-    /// One page aggregates all other pages. Hide redundant navigation until at least two
+    /// One page contains exactly the union of all other pages. Hide redundant navigation until two
     /// category pages exist, without relying on their labels.
     pub(crate) fn with_all(mut self) -> Self {
         self.has_all = true;

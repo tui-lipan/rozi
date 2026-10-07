@@ -391,8 +391,10 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
     pub pending_restart: Option<usize>,
-    /// The browsing page. A nonempty query temporarily shows All without changing this choice.
+    /// The selected host scope, used for both browsing and search.
     pub tab: SessionPickerTab,
+    /// A host explicitly opened in this picker, retained while browsing other tabs.
+    pub opened_host: Option<crate::session::remote::RemoteTarget>,
     pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
 }
 
@@ -688,9 +690,8 @@ pub struct RemotePickerState {
     /// Whether the next successful probe should open Sessions on the host tab instead of
     /// staying on the host list.
     ///
-    /// Set only by a launch that named a machine (`--remote <host>`). Reaching a host and opening it
-    /// are two different acts, and an ordinary `Enter` does the first one and stops so the user can
-    /// see it worked; a launch already said which machine it wants to work on, so it does both.
+    /// Set by opening a host with Enter or `--remote`. Reconnecting or adding a host stays
+    /// on the management list.
     pub auto_open: bool,
 }
 
@@ -917,6 +918,7 @@ pub enum OverlayOrigin {
         query: String,
         selected_session: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
         tab: SessionPickerTab,
+        opened_host: Option<Box<crate::session::remote::RemoteTarget>>,
         browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
     },
     RemoteHosts {
@@ -964,30 +966,24 @@ impl SessionPickerState {
             pending_kill: None,
             pending_restart: None,
             tab: SessionPickerTab::default(),
+            opened_host: None,
             browse_selected: None,
         }
     }
 
-    /// Open on `tab`, highlighting its first row.
+    /// Explicitly open on `tab`, retaining its host tab and highlighting its first row.
     pub fn on_tab(mut self, tab: Option<crate::session::remote::RemoteTarget>) -> Self {
+        self.opened_host = tab.clone();
         self.tab = SessionPickerTab::Host(tab);
         self.keep_selection_in_tab();
         self
     }
 
-    pub fn effective_tab(&self) -> SessionPickerTab {
-        if self.input.text().trim().is_empty() {
-            self.tab.clone()
-        } else {
-            SessionPickerTab::All
-        }
-    }
-
     /// Whether `entry` is listed under the active tab.
     pub fn in_tab(&self, entry: &DiscoveredSession) -> bool {
-        match self.effective_tab() {
+        match &self.tab {
             SessionPickerTab::All => true,
-            SessionPickerTab::Host(target) => entry.remote_target == target,
+            SessionPickerTab::Host(target) => &entry.remote_target == target,
         }
     }
 

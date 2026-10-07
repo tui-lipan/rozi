@@ -105,8 +105,8 @@ exec /bin/sh -c "$*"
         assert!(!frame.contains("Install Rozi on remote"), "{frame}");
         if installed {
             assert!(
-                frame.contains("label: `open`"),
-                "host discovery finished: {frame}"
+                frame.contains("title: `Sessions`") && !frame.contains("title: `Remote hosts`"),
+                "host discovery opens the shared Sessions picker: {frame}"
             );
         }
         if case == "tui_always" {

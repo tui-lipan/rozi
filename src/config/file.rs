@@ -416,6 +416,7 @@ struct SessionFileConfig {
     keep_awake_while_agents_work: Option<bool>,
     path: Option<String>,
     startup: Option<String>,
+    picker_open_on: Option<String>,
     resurrect: Option<bool>,
     resurrect_foreground: Option<String>,
     resurrect_agents: Option<bool>,
@@ -932,6 +933,14 @@ fn load_config_from_text_with_extensions(
             Some(value) => config.session.startup = value,
             None => warnings.push(format!(
                 "Ignored unknown session.startup \"{startup}\" (expected `picker`, `ephemeral`, `last`, or `profile`)"
+            )),
+        }
+    }
+    if let Some(value) = non_empty(parsed.session.picker_open_on) {
+        match SessionPickerOpenOn::parse(&value) {
+            Some(value) => config.session.picker_open_on = value,
+            None => warnings.push(format!(
+                "Ignored unknown session.picker_open_on \"{value}\" (expected `current-host` or `all`)"
             )),
         }
     }
@@ -1732,6 +1741,31 @@ mod file_tests {
                 .expect("config parses");
         assert_eq!(parsed.session.startup.as_deref(), Some("picker"));
         assert_eq!(parsed.session.allow_takeover, Some(false));
+    }
+
+    #[test]
+    fn session_picker_open_on_loads_and_rejects_unknown_modes() {
+        for (value, expected) in [
+            ("current-host", SessionPickerOpenOn::CurrentHost),
+            ("all", SessionPickerOpenOn::All),
+            ("last-tab", SessionPickerOpenOn::CurrentHost),
+        ] {
+            let loaded = load_config_from_text(
+                &format!("[session]\npicker_open_on = \"{value}\""),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.session.picker_open_on, expected);
+            assert_eq!(
+                loaded.warnings.is_empty(),
+                value != "last-tab",
+                "{:?}",
+                loaded.warnings
+            );
+        }
+        assert_eq!(
+            Config::default().session.picker_open_on,
+            SessionPickerOpenOn::CurrentHost
+        );
     }
 
     /// An unreadable value must leave the default standing rather than resolve to something that

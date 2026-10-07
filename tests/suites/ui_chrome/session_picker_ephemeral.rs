@@ -100,28 +100,105 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
 }
 
 #[test]
-fn a_query_that_matches_nothing_frees_enter_the_same_way() {
+fn unmatched_queries_offer_recovery_actions_and_leave_enter_inactive() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(VIEWPORT);
-        {
-            let state = backend.state_mut();
-            *state.current_mut() = rozi::state::Attachment::new();
-            state.show_session_picker = true;
-            let mut picker = SessionPickerState::new(vec![session_row("dev")]);
-            picker.input.set_text("zzz".to_string());
-            state.session_picker = Some(picker);
-        }
+        for target in [
+            None,
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into())),
+        ] {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = rozi::state::Attachment::new();
+                state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+                state.current_mut().session_attached = true;
+                state.show_session_picker = true;
+                let mut picker =
+                    SessionPickerState::new(vec![session_row("dev")]).on_tab(target.clone());
+                picker.input.set_text("Efefef");
+                state.session_picker = Some(picker);
+            }
+            let rendered = screen(&mut backend);
+            assert!(
+                rendered.contains("No sessions match `Efefef`"),
+                "{rendered}"
+            );
+            let host = target.as_ref().map_or("Local", |_| "workbox");
+            for hint in [
+                format!("new on {host} Ctrl+N"),
+                format!("ephemeral shell on {host} Ctrl+T"),
+                "name current Ctrl+S".into(),
+                "remote hosts Ctrl+R".into(),
+            ] {
+                assert!(rendered.contains(&hint), "missing {hint}: {rendered}");
+            }
+            assert!(!rendered.contains("shell Enter"), "{rendered}");
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Enter,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            assert!(backend.state().show_session_picker);
+            assert!(backend.state().current().pending_session_attach.is_none());
+            assert!(backend.state().rename_session.is_none());
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                "Efefef"
+            );
 
-        let rendered = screen(&mut backend);
-        assert!(
-            rendered.contains("│ No sessions match"),
-            "a filter empty-state keeps the same 1-cell left inset:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("ephemeral shell on Local Enter"),
-            "a filter that hides every row leaves the list as empty as an empty one:\n{rendered}"
-        );
+            for (key, mode) in [
+                ('n', rozi::state::NamingMode::CreateSession),
+                ('s', rozi::state::NamingMode::NameEphemeralSession),
+            ] {
+                screen(&mut backend);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char(key),
+                        mods: KeyMods::CTRL,
+                    })
+                    .unwrap();
+                let prompt = backend.state().rename_session.as_ref().unwrap();
+                assert_eq!(prompt.input.text(), "Efefef");
+                assert_eq!(prompt.mode, mode);
+                if key == 'n' {
+                    assert_eq!(prompt.host_target, target);
+                }
+                backend.dispatch(Msg::CloseRenameSession).unwrap();
+                let picker = backend.state().session_picker.as_ref().unwrap();
+                assert_eq!(picker.input.text(), "Efefef");
+                assert_eq!(picker.tab.remote_target(), target.as_ref());
+            }
+            screen(&mut backend);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('r'),
+                    mods: KeyMods::CTRL,
+                })
+                .unwrap();
+            assert!(backend.state().remote_picker.is_some());
+            backend.dispatch(Msg::CloseRemotePicker).unwrap();
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "Efefef");
+            assert_eq!(picker.tab.remote_target(), target.as_ref());
+            if target.is_none() {
+                screen(&mut backend);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('t'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .unwrap();
+                assert!(!backend.state().show_session_picker);
+            }
+        }
     });
 }
 
@@ -389,15 +466,27 @@ fn a_scoped_launcher_names_its_host_and_says_where_its_shell_lands() {
 }
 
 #[test]
-fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
+fn search_filters_only_the_selected_host_or_all() {
     use rozi::state::SessionPickerTab;
     on_a_big_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.state_mut().command_link = None;
         {
             let state = backend.state_mut();
             state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
             state.show_session_picker = true;
+            let hosts = ["workbox", "buildbox"]
+                .map(|host| rozi::session::remote::RemoteTarget::Alias(host.into()));
+            state.remote.added_hosts = hosts.to_vec();
+            state
+                .remote
+                .hosts
+                .seed(&state.config.remote, &hosts, &[], &[]);
+            for target in &hosts {
+                state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
+            }
             state.session_picker = Some(SessionPickerState::new(vec![
                 session_row("dev"),
                 remote_row("dev", "workbox"),
@@ -438,13 +527,7 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
         let found = screen(&mut backend);
         let picker = backend.state().session_picker.as_ref().unwrap();
         assert_eq!(picker.tab, SessionPickerTab::Host(None));
-        assert_eq!(picker.effective_tab(), SessionPickerTab::All);
-        assert_eq!(
-            picker.entries[picker.selected].host.as_deref(),
-            Some("workbox")
-        );
-        assert!(found.contains("dev@workbox"), "{found}");
-        assert!(found.contains("new on Local"), "{found}");
+        assert!(found.contains("No sessions match"), "{found}");
         for _ in "dev@workbox".chars() {
             backend
                 .send_key(KeyEvent {
@@ -455,9 +538,42 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
         }
         let cleared = screen(&mut backend);
         let picker = backend.state().session_picker.as_ref().unwrap();
-        assert_eq!(picker.effective_tab(), SessionPickerTab::Host(None));
+        assert_eq!(picker.tab, SessionPickerTab::Host(None));
         assert_eq!(picker.selected, 0);
         assert!(!cleared.contains("dev@workbox"), "{cleared}");
+        // Search on a remote tab must not reveal a matching row on another host.
+        backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
+        screen(&mut backend);
+        backend
+            .dispatch(Msg::SessionPickerQueryChanged("api".into()))
+            .unwrap();
+        let scoped = screen(&mut backend);
+        assert!(!scoped.contains("api@buildbox"), "{scoped}");
+        assert!(scoped.contains("No sessions match"), "{scoped}");
+        assert_eq!(
+            backend
+                .state()
+                .session_picker
+                .as_ref()
+                .unwrap()
+                .tab
+                .remote_target(),
+            Some(&rozi::session::remote::RemoteTarget::Alias(
+                "workbox".into()
+            ))
+        );
+        backend.dispatch(Msg::SessionPickerTab(3)).unwrap();
+        screen(&mut backend);
+        backend
+            .dispatch(Msg::SessionPickerQueryChanged("api".into()))
+            .unwrap();
+        let global = screen(&mut backend);
+        assert!(global.contains("api@buildbox"), "{global}");
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        assert_eq!(picker.tab, SessionPickerTab::All);
+        assert_eq!(picker.entries[picker.selected].name, "api");
+        backend.dispatch(Msg::SessionPickerTab(0)).unwrap();
+        screen(&mut backend);
         backend
             .send_key(KeyEvent {
                 code: KeyCode::Char('x'),
@@ -478,7 +594,7 @@ fn all_lists_every_host_and_search_temporarily_leaves_the_browsing_tab() {
 }
 
 #[test]
-fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
+fn choosing_a_host_tab_clears_search_and_keeps_creation_on_that_host() {
     use rozi::session::remote::RemoteTarget;
     use rozi::state::SessionPickerTab;
     on_a_big_stack(|| {
@@ -498,8 +614,8 @@ fn choosing_a_host_tab_clears_global_search_and_keeps_creation_on_that_host() {
         backend
             .dispatch(Msg::SessionPickerQueryChanged("dev".into()))
             .unwrap();
-        let global = screen(&mut backend);
-        assert!(global.contains("new on workbox"), "{global}");
+        let scoped_search = screen(&mut backend);
+        assert!(!scoped_search.contains("dev@"), "{scoped_search}");
         assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
         backend.dispatch(Msg::SessionPickerTab(2)).unwrap();
         assert_eq!(backend.state().launcher_scope, Some(workbox.clone()));
@@ -532,6 +648,8 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
             w: 180,
             h: 30,
         });
+        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+        backend.state_mut().command_link = None;
         let alias = RemoteTarget::Alias("workbox".into());
         let url = RemoteTarget::Url {
             user: None,
@@ -545,6 +663,16 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
             let state = backend.state_mut();
             state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
             state.show_session_picker = true;
+            state.remote.added_hosts = vec![alias.clone(), url.clone()];
+            state.remote.hosts.seed(
+                &state.config.remote,
+                &[alias.clone(), url.clone()],
+                &[],
+                &[],
+            );
+            for target in [&alias, &url] {
+                state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
+            }
             let mut picker = SessionPickerState::new(vec![alias_row, url_row]);
             picker.tab = SessionPickerTab::All;
             state.session_picker = Some(picker);
@@ -593,7 +721,8 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
                 .unwrap();
         }
         let found = screen(&mut backend);
-        assert!(found.contains("new on workbox (ssh://workbox)"), "{found}");
+        assert!(found.contains("new Ctrl+N"), "{found}");
+        assert!(found.contains("dev@ssh://workbox"), "{found}");
         let picker = backend.state().session_picker.as_ref().unwrap();
         assert_eq!(
             picker.entries[picker.selected].remote_target,

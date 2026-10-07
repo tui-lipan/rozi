@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 8] = [
+const SCENARIOS: [(&str, &str, fn()); 11] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -33,8 +33,23 @@ const SCENARIOS: [(&str, &str, fn()); 8] = [
     ),
     (
         "session-picker",
-        "All, host browsing, and global session search",
+        "All, host browsing, and tab-scoped session search",
         session_picker,
+    ),
+    (
+        "session-picker-cached-hosts",
+        "cached hosts in All without historical host tabs",
+        session_picker_cached_hosts,
+    ),
+    (
+        "session-picker-no-results",
+        "unmatched local and remote search with contextual recovery actions",
+        session_picker_no_results,
+    ),
+    (
+        "session-picker-settings",
+        "Sessions opening preference and its choice editor",
+        session_picker_settings,
     ),
     (
         "agent-picker",
@@ -751,6 +766,81 @@ fn agent_picker() {
     write_png(&mut backend, "agent-picker-empty");
 }
 
+fn session_picker_cached_hosts() {
+    use rozi::session::remote::RemoteTarget;
+    use rozi::state::{Attachment, HostProbe, SessionPickerState, SessionPickerTab};
+    let mut backend = TestBackend::new(AppRoot::default());
+    let workbox = RemoteTarget::Alias("workbox".into());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        *state.current_mut() = Attachment::new();
+        state.show_session_picker = true;
+        state.remote.hosts.seed(
+            &state.config.remote,
+            std::slice::from_ref(&workbox),
+            &[],
+            &[],
+        );
+        state.session_picker = Some(SessionPickerState::new(
+            [
+                ("api", None),
+                ("docs", Some("workbox")),
+                ("backend", Some("laptop")),
+            ]
+            .into_iter()
+            .map(|(name, host)| DiscoveredSession {
+                name: name.into(),
+                host: host.map(str::to_string),
+                remote_target: host.map(|host| RemoteTarget::Alias(host.into())),
+                origin: Default::default(),
+                ephemeral: false,
+                status: DiscoveredSessionStatus::LastSeen { panes: 3 },
+            })
+            .collect(),
+        ));
+        state.session_picker.as_mut().unwrap().entries[0].status =
+            DiscoveredSessionStatus::Running {
+                panes: 1,
+                clients: 0,
+                has_layout: false,
+            };
+    }
+    for connected in [false, true] {
+        let state = backend.state_mut();
+        state.remote.hosts.get_mut(&workbox).unwrap().probe = if connected {
+            HostProbe::Reached
+        } else {
+            HostProbe::Idle
+        };
+        state.session_picker.as_mut().unwrap().entries[1].status = if connected {
+            DiscoveredSessionStatus::Running {
+                panes: 2,
+                clients: 0,
+                has_layout: true,
+            }
+        } else {
+            DiscoveredSessionStatus::LastSeen { panes: 2 }
+        };
+        for (name, tab) in [
+            ("local", SessionPickerTab::Host(None)),
+            ("all", SessionPickerTab::All),
+        ] {
+            let picker = backend.state_mut().session_picker.as_mut().unwrap();
+            picker.tab = tab;
+            picker.keep_selection_in_tab();
+            for (width, height) in [(64, 22), (100, 30)] {
+                backend.set_viewport(viewport(width, height));
+                backend.render();
+                write_png(
+                    &mut backend,
+                    &format!("session-picker-cached-hosts-{connected}-{name}-{width}x{height}"),
+                );
+            }
+        }
+    }
+}
+
 fn session_picker() {
     use rozi::session::remote::RemoteTarget;
     use rozi::state::{SessionPickerState, SessionPickerTab};
@@ -759,6 +849,14 @@ fn session_picker() {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
         state.show_session_picker = true;
+        let hosts = ["workbox", "buildbox"].map(|host| RemoteTarget::Alias(host.into()));
+        state
+            .remote
+            .hosts
+            .seed(&state.config.remote, &hosts, &[], &[]);
+        for target in &hosts {
+            state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
+        }
         state.session_picker = Some(SessionPickerState::new(
             [
                 ("dev", None),
@@ -788,12 +886,26 @@ fn session_picker() {
             SessionPickerTab::Host(Some(RemoteTarget::Alias("workbox".into()))),
             "",
         ),
-        ("search", SessionPickerTab::Host(None), "dev@workbox"),
+        ("local-search", SessionPickerTab::Host(None), "dev"),
+        ("all-search", SessionPickerTab::All, "dev@workbox"),
+        (
+            "host-search",
+            SessionPickerTab::Host(Some(RemoteTarget::Alias("workbox".into()))),
+            "dev",
+        ),
+        (
+            "local-search-empty",
+            SessionPickerTab::Host(None),
+            "dev@workbox",
+        ),
     ] {
         let picker = backend.state_mut().session_picker.as_mut().unwrap();
         picker.tab = tab;
-        picker.input.set_text(query);
+        picker.input.set_text("");
         picker.keep_selection_in_tab();
+        backend
+            .update_level(Msg::SessionPickerQueryChanged(query.into()))
+            .unwrap();
         for (width, height) in [(64, 22), (100, 30)] {
             backend.set_viewport(viewport(width, height));
             backend.render();
@@ -801,6 +913,22 @@ fn session_picker() {
                 &mut backend,
                 &format!("session-picker-{name}-{width}x{height}"),
             );
+        }
+    }
+    let url_target = RemoteTarget::Url {
+        user: None,
+        host: "workbox".into(),
+        port: None,
+    };
+    {
+        let state = backend.state_mut();
+        let hosts = [RemoteTarget::Alias("workbox".into()), url_target.clone()];
+        state
+            .remote
+            .hosts
+            .seed(&state.config.remote, &hosts, &[], &[]);
+        for target in &hosts {
+            state.remote.hosts.get_mut(target).unwrap().probe = rozi::state::HostProbe::Reached;
         }
     }
     let picker = backend.state_mut().session_picker.as_mut().unwrap();
@@ -821,6 +949,7 @@ fn session_picker() {
     backend.set_viewport(viewport(120, 30));
     backend.render();
     write_png(&mut backend, "session-picker-colliding-targets");
+    backend.state_mut().remote.hosts = Default::default();
     let picker = backend.state_mut().session_picker.as_mut().unwrap();
     picker.entries.retain(|entry| entry.remote_target.is_none());
     picker.tab = SessionPickerTab::Host(None);
@@ -861,5 +990,68 @@ fn session_picker() {
             &mut backend,
             &format!("session-picker-from-host-{width}x{height}"),
         );
+    }
+}
+
+fn session_picker_settings() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.enabled = false;
+    backend.state_mut().show_session_picker = false;
+    backend.state_mut().session_picker = None;
+    backend.state_mut().show_settings = true;
+    backend.state_mut().settings_navigation.tab = rozi::state::SettingsTab::Sessions;
+    backend.state_mut().settings_selected =
+        Some(rozi::state::SettingsAction::CycleSessionPickerOpenOn);
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-settings-{width}x{height}"),
+        );
+    }
+    backend
+        .update_level(Msg::SettingsActivate(
+            rozi::state::SettingsAction::CycleSessionPickerOpenOn,
+        ))
+        .unwrap();
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-opening-choice-{width}x{height}"),
+        );
+    }
+}
+
+fn session_picker_no_results() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        *state.current_mut() = rozi::state::Attachment::new();
+        state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+        state.current_mut().session_attached = true;
+        state.show_session_picker = true;
+    }
+    for (name, target) in [
+        ("local", None),
+        (
+            "host",
+            Some(rozi::session::remote::RemoteTarget::Alias("workbox".into())),
+        ),
+    ] {
+        let mut picker = rozi::state::SessionPickerState::new(Vec::new()).on_tab(target);
+        picker.input.set_text("Efefef");
+        backend.state_mut().session_picker = Some(picker);
+        for (width, height) in [(64, 22), (100, 30)] {
+            backend.set_viewport(viewport(width, height));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!("session-picker-no-results-{name}-{width}x{height}"),
+            );
+        }
     }
 }

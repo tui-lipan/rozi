@@ -22,6 +22,113 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
     }
 }
 
+#[test]
+fn session_host_tabs_require_a_current_destination_not_cached_rows() {
+    use crate::session::remote::RemoteTarget;
+    use crate::state::{Attachment, HostProbe, SessionPickerTab};
+    let mut state = State::new(Config::default(), Theme::default());
+    *state.current_mut() = Attachment::new();
+    let target = RemoteTarget::Alias("workbox".into());
+    let mut row = session_row("dev", Some("workbox"));
+    row.status = crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 };
+    state.session_picker = Some(SessionPickerState::new(vec![row]));
+    let local_all = vec![SessionPickerTab::Host(None), SessionPickerTab::All];
+    assert_eq!(session_picker_tabs(&state), local_all);
+
+    // Known/configured hosts alone are not active destinations either.
+    state.remote.hosts.seed(
+        &state.config.remote,
+        std::slice::from_ref(&target),
+        &[],
+        &[],
+    );
+    assert_eq!(session_picker_tabs(&state), local_all);
+    let host_tabs = vec![
+        SessionPickerTab::Host(None),
+        SessionPickerTab::Host(Some(target.clone())),
+        SessionPickerTab::All,
+    ];
+    state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Reached;
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Idle;
+
+    state.launcher_scope = Some(target.clone());
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.launcher_scope = None;
+    state.current_mut().session_name = Some("dev".into());
+    state.current_mut().remote_target = Some(target.clone());
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.current_mut().remote_target = None;
+    let mut parked = Attachment::new();
+    parked.remote_target = Some(target.clone());
+    state.background.insert(1, parked);
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    state.background.clear();
+
+    state.session_picker = Some(SessionPickerState::new(Vec::new()).on_tab(Some(target)));
+    state.session_picker.as_mut().unwrap().tab = SessionPickerTab::Host(None);
+    assert_eq!(
+        session_picker_tabs(&state),
+        host_tabs,
+        "an explicitly opened destination survives browsing other tabs"
+    );
+}
+
+#[test]
+fn session_picker_opening_preference_uses_context_or_all_without_changing_creation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().command_link = None;
+            let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            let other = crate::session::remote::RemoteTarget::Alias("other".into());
+            for (attached, current_host, launcher_host, contextual_host) in [
+                (false, None, None, None),
+                (false, None, Some(workbox.clone()), Some(workbox.clone())),
+                (true, None, Some(other.clone()), None),
+                (true, Some(workbox.clone()), Some(other), Some(workbox)),
+            ] {
+                for preference in crate::config::SessionPickerOpenOn::all() {
+                    let state = backend.state_mut();
+                    *state.current_mut() = crate::state::Attachment::new();
+                    if attached {
+                        state.current_mut().session_name = Some("dev".into());
+                        state.current_mut().remote_target = current_host.clone();
+                    }
+                    state.launcher_scope = launcher_host.clone();
+                    state.config.session.picker_open_on = *preference;
+                    backend
+                        .update_level(crate::Msg::RunAction(
+                            crate::input::Action::OpenSessionPicker,
+                        ))
+                        .unwrap();
+                    let state = backend.state();
+                    let picker = state.session_picker.as_ref().unwrap();
+                    let expected = match preference {
+                        crate::config::SessionPickerOpenOn::CurrentHost => {
+                            crate::state::SessionPickerTab::Host(contextual_host.clone())
+                        }
+                        crate::config::SessionPickerOpenOn::All => {
+                            crate::state::SessionPickerTab::All
+                        }
+                    };
+                    assert_eq!(picker.tab, expected);
+                    assert_eq!(session_picker_creation_target(state), contextual_host);
+                    assert_eq!(state.launcher_scope, launcher_host);
+                    backend
+                        .update_level(crate::Msg::CloseSessionPicker)
+                        .unwrap();
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 /// Under `--remote` the discovery scan already returns the attached session, so merging the
 /// current-session row must not add a second copy — otherwise the picker shows two
 /// `name@host • current` entries. A same-name row on a *different* host is a real distinct
@@ -942,6 +1049,7 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                     query: String::new(),
                     selected_session: None,
                     tab: crate::state::SessionPickerTab::Host(None),
+                    opened_host: None,
                     browse_selected: None,
                 });
                 state.rename_session =

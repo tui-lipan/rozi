@@ -124,11 +124,7 @@ fn remote_hosts_overlay(
     let actions = vec![
         OverlayAction::new(
             "enter",
-            if selected_connected {
-                "open"
-            } else {
-                "connect"
-            },
+            "open",
             selected_target
                 .clone()
                 .map(Msg::RemotePickerHostActivate)

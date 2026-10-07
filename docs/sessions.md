@@ -64,24 +64,36 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 </CaptureGallery>
 
 Sessions shows **Local**, a tab for each remote host, then **All** below the search field.
-The tab strip is hidden when only local sessions are available. Remote hosts are sorted by name.
+The tab strip is hidden when there are no remote host tabs and All contains nothing beyond Local.
+Remote hosts are sorted by name.
 A host gets a tab while a session there is on screen or in the background, while the launcher is
-scoped to it, while it is explicitly connected, or while Sessions lists sessions on it. Sessions
-opens on the host of the session you are in, or the host the launcher is scoped to.
+scoped to it, while it is connected, or after you explicitly open it in this picker. Cached
+`last seen` sessions alone do not create a host tab; they remain listed in **All**. Use **Remote hosts**
+to discover and connect hosts. Sessions opens on the host of the session you are in, the host the
+launcher is scoped to, or Local.
+To open on **All** every time, choose **Settings → Sessions → Open Sessions on → All sessions**
+or set `session.picker_open_on = "all"`. **Current host** is the default. Opening a host from
+Remote hosts always selects that host's tab.
 
 **All** lists sessions across hosts and labels remote rows `name@host`. A host tab lists only that
-host's sessions with bare names. Typing searches all known hosts and highlights **All**, like
-Settings searches all categories. Clear the query to return to the previous browsing tab and
-highlight. Choosing a tab clears the query and browses that host. Search uses known sessions;
-it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
+host's sessions with bare names. Search filters the selected tab: Local searches local sessions,
+a remote host searches its sessions, and All searches every known host. Clearing the query
+restores the previous highlight within that tab. Choosing a tab clears the query and browses that
+host. Search uses known sessions; it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
 global rows append the exact target, such as **workbox (ssh://workbox)**. The exact target is
 searchable in Sessions and Agents.
 
-Creation stays on the browsing host while searching. On **All**, it uses the foreground session's
-host, or the launcher's host when no session is attached. The footer names the destination with
-**new on Local** or **new on workbox**. `Ctrl+N`, `Ctrl+T`, and `Enter` with no matching rows use
-that destination. `Ctrl+X` disconnects the browsing tab's host even while searching All.
+Creation uses the selected host tab. On **All**, it uses the foreground session's
+host, or the launcher's host when no session is attached. On All and when a search has no results,
+the footer names the destination with **new on Local** or **new on workbox**. `Ctrl+N` and `Ctrl+T`
+use that destination. `Ctrl+X` disconnects the selected host tab's host.
 Row actions always apply to the selected session, including remote search results.
+
+When a non-empty query matches no sessions, `Enter` does nothing. `Ctrl+N` opens a new-session
+prompt with the query as its proposed name. If the current session is temporary, `Ctrl+S` names
+it using the same proposed name. `Ctrl+T` remains available to open a temporary shell explicitly.
+`Ctrl+R` opens Remote hosts without losing the query; opening a host carries it into that host's
+Sessions tab. With an empty query and no sessions listed, `Enter` opens a temporary shell.
 
 Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
 highlighted session you were browsing. If that session is gone, Sessions highlights the first row
@@ -92,6 +104,7 @@ Sessions and the launcher to **Local**.
 | --- | --- |
 | `Enter` | Connect, switch to a background session, or restore a snapshot |
 | Type a name, then `Ctrl+N` | Create and switch to a named session at the footer's destination |
+| `Ctrl+S` | Name the current temporary session, prefilling the search query |
 | `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a `last seen` entry |
 | `Ctrl+E` twice | Restart a live session with fresh panes |
 | `Ctrl+W` | Disconnect this client from a background session |

@@ -261,6 +261,42 @@ pub struct ProfileEntry {
     pub path: PathBuf,
 }
 
+/// The initial Sessions tab when opened without an explicit host destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionPickerOpenOn {
+    #[default]
+    CurrentHost,
+    All,
+}
+
+impl SessionPickerOpenOn {
+    pub fn all() -> &'static [Self] {
+        &[Self::CurrentHost, Self::All]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "current-host" => Some(Self::CurrentHost),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::CurrentHost => "current-host",
+            Self::All => "all",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CurrentHost => "Current host",
+            Self::All => "All sessions",
+        }
+    }
+}
+
 /// What a bare launch (no target/`--session`) does before opening the UI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SessionStartup {
@@ -430,6 +466,8 @@ pub struct SessionConfig {
     /// Whether a bare launch opens the session picker (the default), attaches to an ephemeral
     /// session, or reopens the last named session.
     pub startup: SessionStartup,
+    /// Open Sessions on the contextual host or on All.
+    pub picker_open_on: SessionPickerOpenOn,
     /// Persist and restart named sessions after their server disappears.
     pub resurrect: bool,
     /// What resurrection does with a command a pane was observed running at its prompt, rather
@@ -456,6 +494,7 @@ impl Default for SessionConfig {
             keep_awake_while_agents_work: false,
             path: None,
             startup: SessionStartup::default(),
+            picker_open_on: SessionPickerOpenOn::default(),
             resurrect: true,
             resurrect_foreground: ForegroundRestore::default(),
             resurrect_agents: true,

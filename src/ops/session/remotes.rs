@@ -103,9 +103,6 @@ pub(crate) fn open_startup_remote_picker(
     install_remote_hosts(ctx, String::new(), Some(target));
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
         picker.startup_resume = resume;
-        // A launch that named a machine has already said where it wants to work, so its probe goes
-        // on into that host's sessions. An `Enter` typed on this list has said no such thing.
-        picker.auto_open = true;
     }
 }
 
@@ -149,6 +146,8 @@ pub(crate) fn cancel_host_probe(ctx: &mut Context<AppRoot>) -> bool {
     abandon_remote_probe(&mut ctx.state);
     let epoch = ctx.state.mint_remote_probe_epoch();
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.auto_open = false;
+        picker.startup_resume = None;
         picker.probe_epoch = epoch;
     }
     true
@@ -284,13 +283,21 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Open the shared Sessions picker on a reached host, replacing the host-management flow.
 fn open_host_sessions(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
+    let query = match ctx.state.overlay_return.as_ref() {
+        Some(crate::state::OverlayOrigin::SessionPicker { query, .. }) => Some(query.clone()),
+        _ => None,
+    };
     scope_launcher_to(ctx, &target);
     dismiss_remote_picker(&mut ctx.state);
     crate::ops::overlay_return::leave(ctx);
     let update = crate::ops::session::open_session_picker(ctx);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.opened_host = Some(target.clone());
         picker.tab = SessionPickerTab::Host(Some(target));
         picker.keep_selection_in_tab();
+    }
+    if let Some(query) = query {
+        crate::ops::session::set_session_picker_query(ctx, query);
     }
     ctx.state.commands_dirty = true;
     update
@@ -315,7 +322,7 @@ fn probe_in_flight(state: &crate::state::State) -> bool {
 /// A no-op while another host is being reached: the caller has already done its own persisting, and
 /// the row it added stays exactly where it is, ready for an `Enter` once the outstanding probe
 /// settles.
-fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
+fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget, auto_open: bool) -> Update {
     if probe_in_flight(&ctx.state) {
         return Update::full();
     }
@@ -326,6 +333,7 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     let epoch = ctx.state.mint_remote_probe_epoch();
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
         picker.selected_host = Some(target.clone());
+        picker.auto_open = auto_open;
         picker.probe_epoch = epoch;
         picker.host_probe = crate::state::HostProbe::InFlight;
         picker.probe_target = Some(target.clone());
@@ -344,13 +352,7 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     ))
 }
 
-/// `Enter` on a host row. Connecting a host and opening it are two acts, and this key does whichever
-/// one is next.
-///
-/// A disconnected — or previously failed — host is contacted, and the user stays on **Remote hosts**
-/// watching that row go from `○` to `●`. That is the confirmation: a list that silently replaced
-/// itself with a session list gave the user nothing to see, and made `Enter` mean two things at
-/// once. A host already reached opens, because there is nothing left to confirm.
+/// Open the host's Sessions tab, connecting first if needed.
 pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
     if probe_in_flight(&ctx.state) {
         return Update::none();
@@ -358,7 +360,7 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
     if host_is_connected(&ctx.state, &target) {
         open_host_sessions(ctx, target)
     } else {
-        connect_host(ctx, target)
+        connect_host(ctx, target, true)
     }
 }
 
@@ -390,7 +392,7 @@ pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
     else {
         return Update::none();
     };
-    connect_host(ctx, target)
+    connect_host(ctx, target, false)
 }
 
 pub(crate) fn apply_host_discovery(
@@ -443,10 +445,6 @@ pub(crate) fn apply_host_discovery(
                 picker.pending_forget = None;
                 auto_open = std::mem::take(&mut picker.auto_open);
                 if !auto_open {
-                    // `Enter` reached the host and stops there. The row now reads connected with
-                    // its session count, which is the whole confirmation, and a second `Enter`
-                    // opens it. Nothing is attached and no shell is started: connecting to a
-                    // machine says nothing about wanting to work on it yet.
                     picker.startup_resume = None;
                 }
             }
@@ -509,6 +507,9 @@ pub(crate) fn open_add_host_form(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     let initial = picker.host_input.text().trim().to_string();
+    // Editing takes precedence over the pending navigation; the connection can still finish.
+    picker.auto_open = false;
+    picker.startup_resume = None;
     picker.host_form = Some(crate::state::HostFormState::add(initial));
     picker.pending_forget = None;
     crate::ops::focus::request_host_form_focus(ctx);
@@ -533,6 +534,8 @@ pub(crate) fn open_edit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     }
     if let Some(picker) = ctx.state.remote_picker.as_mut() {
+        picker.auto_open = false;
+        picker.startup_resume = None;
         picker.host_form = Some(crate::state::HostFormState::edit(&target));
         picker.pending_forget = None;
     }
@@ -685,12 +688,12 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         let label = target.display_label();
         crate::pane::pty_events::notify_info(
             ctx,
-            format!("Added {label} — press Enter to connect once the current host answers"),
+            format!("Added {label} — press Enter to open once the current host answers"),
         );
         crate::ops::focus::request_remote_picker_focus(ctx);
         return Update::full();
     }
-    connect_host(ctx, target)
+    connect_host(ctx, target, false)
 }
 
 #[cfg(test)]
@@ -974,17 +977,41 @@ mod tests {
         );
     }
 
-    /// Reaching a host and opening it are two acts. The first one ends on **Remote hosts** with the
-    /// row now reading connected — that visible change is the whole confirmation, and it is what
-    /// the old behaviour (silently swapping the list for a session list) denied the user.
+    /// A refresh from host management updates the row without navigating away.
     #[test]
-    fn a_successful_host_probe_stays_on_remote_hosts() {
+    fn a_successful_reconnect_stays_on_remote_hosts() {
         with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
             let target = RemoteTarget::Alias("workbox".into());
             primed_connecting_picker(backend, &target, 4);
+            backend.state_mut().command_link = None;
             backend
-                .dispatch(Msg::RemoteHostSessionsDiscovered {
-                    epoch: 4,
+                .state_mut()
+                .remote
+                .hosts
+                .get_mut(&target)
+                .unwrap()
+                .probe = crate::state::HostProbe::Reached;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .unwrap()
+                .host_probe = crate::state::HostProbe::Reached;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .unwrap()
+                .auto_open = true;
+            backend
+                .update_level(Msg::RemotePickerReconnectHost)
+                .unwrap();
+            let epoch = backend.state().remote_picker.as_ref().unwrap().probe_epoch;
+            assert!(!backend.state().remote_picker.as_ref().unwrap().auto_open);
+            backend
+                .update_level(Msg::RemoteHostSessionsDiscovered {
+                    epoch,
                     target: target.clone(),
                     rows: Ok(Vec::new()),
                 })
@@ -1006,14 +1033,223 @@ mod tests {
         });
     }
 
-    /// And the second `Enter` opens it, without contacting the host again.
     #[test]
-    fn a_second_activation_opens_a_reached_host() {
+    fn cancelling_host_open_ignores_the_late_success() {
         with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
             let target = RemoteTarget::Alias("workbox".into());
             primed_connecting_picker(backend, &target, 9);
             backend.state_mut().command_link = None;
+            backend.state_mut().show_session_picker = false;
+            backend.state_mut().session_picker = None;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .unwrap()
+                .auto_open = true;
+            backend.update_level(Msg::CloseRemotePicker).unwrap();
+            let picker = backend.state().remote_picker.as_ref().unwrap();
+            assert!(!picker.auto_open);
+            assert_eq!(picker.host_probe, crate::state::HostProbe::Idle);
+            backend
+                .update_level(Msg::RemoteHostSessionsDiscovered {
+                    epoch: 9,
+                    target,
+                    rows: Ok(Vec::new()),
+                })
+                .unwrap();
+            assert!(backend.state().remote_picker.is_some());
+            assert!(!backend.state().show_session_picker);
+            assert_eq!(
+                backend.state().remote_picker.as_ref().unwrap().host_probe,
+                crate::state::HostProbe::Idle
+            );
+        });
+    }
+
+    #[test]
+    fn opening_a_host_form_cancels_navigation_but_preserves_the_connection() {
+        for edit in [false, true] {
+            with_backend(move |backend| {
+                let _persist = crate::test_support::lock_persisted_state();
+                let target = RemoteTarget::Alias("workbox".into());
+                let other = RemoteTarget::Alias("other".into());
+                primed_connecting_picker(backend, &target, 9);
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.show_session_picker = false;
+                state.session_picker = None;
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&other),
+                    &[],
+                    &[],
+                );
+                let picker = state.remote_picker.as_mut().unwrap();
+                picker.auto_open = true;
+                picker.startup_resume = Some("dev".into());
+                backend
+                    .update_level(Msg::RemotePickerHostSelect(other.clone()))
+                    .unwrap();
+                backend
+                    .update_level(if edit {
+                        Msg::RemotePickerEditHost
+                    } else {
+                        Msg::RemotePickerNewHost
+                    })
+                    .unwrap();
+                let picker = backend.state_mut().remote_picker.as_mut().unwrap();
+                assert!(!picker.auto_open);
+                assert!(picker.startup_resume.is_none());
+                assert!(picker.is_connecting(&target));
+                assert_eq!(picker.probe_epoch, 9);
+                let form = picker.host_form.as_mut().expect("host form opened");
+                form.host.set_text("unsaved-host");
+                form.user.set_text("alice");
+                form.port.set_text("2222");
+
+                backend
+                    .update_level(Msg::RemoteHostSessionsDiscovered {
+                        epoch: 9,
+                        target: target.clone(),
+                        rows: Ok(Vec::new()),
+                    })
+                    .unwrap();
+
+                let state = backend.state();
+                let picker = state
+                    .remote_picker
+                    .as_ref()
+                    .expect("host management stays open");
+                assert!(matches!(
+                    picker.host_probe,
+                    crate::state::HostProbe::Reached
+                ));
+                let form = picker
+                    .host_form
+                    .as_ref()
+                    .expect("unsaved form survives success");
+                if edit {
+                    assert!(
+                        matches!(&form.mode, crate::state::HostFormMode::Edit(original) if original == &other)
+                    );
+                } else {
+                    assert!(matches!(form.mode, crate::state::HostFormMode::Add));
+                }
+                assert_eq!(form.host.text(), "unsaved-host");
+                assert_eq!(form.user.text(), "alice");
+                assert_eq!(form.port.text(), "2222");
+                assert!(!state.show_session_picker);
+                assert!(state.session_picker.is_none());
+                assert!(matches!(
+                    state.remote.hosts.get(&target).unwrap().probe,
+                    crate::state::HostProbe::Reached
+                ));
+            });
+        }
+    }
+
+    #[test]
+    fn cancelling_startup_resume_does_not_attach_on_another_host() {
+        with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
+            let target = RemoteTarget::Alias("workbox".into());
+            let other = RemoteTarget::Alias("buildbox".into());
+            primed_connecting_picker(backend, &target, 9);
+            let state = backend.state_mut();
+            state.command_link = None;
+            *state.current_mut() = crate::state::Attachment::new();
+            state.show_session_picker = false;
+            state.session_picker = None;
+            state.remote.added_hosts.push(other.clone());
+            state
+                .remote
+                .hosts
+                .seed(&state.config.remote, &state.remote.added_hosts, &[], &[]);
+            let picker = state.remote_picker.as_mut().unwrap();
+            picker.auto_open = true;
+            picker.startup_resume = Some("dev".into());
+
+            backend.update_level(Msg::CloseRemotePicker).unwrap();
+            let picker = backend.state().remote_picker.as_ref().unwrap();
+            assert!(!picker.auto_open);
+            assert!(picker.startup_resume.is_none());
+            backend
+                .update_level(Msg::RemotePickerHostActivate(other.clone()))
+                .unwrap();
+            let picker = backend.state().remote_picker.as_ref().unwrap();
+            assert!(picker.auto_open);
+            assert!(picker.is_connecting(&other));
+            let epoch = picker.probe_epoch;
+            backend
+                .update_level(Msg::RemoteHostSessionsDiscovered {
+                    epoch,
+                    target: other.clone(),
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "dev".into(),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        host: Some("buildbox".into()),
+                        remote_target: Some(other.clone()),
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                        },
+                    }]),
+                })
+                .unwrap();
+
+            let state = backend.state();
+            assert!(state.remote_picker.is_none());
+            assert!(state.show_session_picker);
+            let picker = state
+                .session_picker
+                .as_ref()
+                .expect("buildbox Sessions opens");
+            assert_eq!(picker.tab.remote_target(), Some(&other));
+            assert!(picker.entries.iter().any(|row| row.name == "dev"));
+            assert!(state.current().pending_session_attach.is_none());
+            crate::session::forget_recent_remote(&other);
+            crate::session::forget_host_sessions(&other);
+        });
+    }
+
+    /// One Enter connects and opens the requested host with fresh rows.
+    #[test]
+    fn activating_a_disconnected_host_connects_and_opens_its_sessions() {
+        with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
+            let target = RemoteTarget::Alias("workbox".into());
+            backend.state_mut().remote.added_hosts.push(target.clone());
+            let mut sessions = crate::state::SessionPickerState::new(Vec::new());
+            sessions.input.set_text("API");
+            backend.state_mut().session_picker = Some(sessions);
+            backend.state_mut().show_session_picker = true;
+            backend.update_level(Msg::SessionPickerRemoteHosts).unwrap();
+            backend.state_mut().command_link = None;
             backend.state_mut().config.animations.enabled = false;
+            backend.state_mut().config.session.picker_open_on =
+                crate::config::SessionPickerOpenOn::All;
+            backend
+                .state_mut()
+                .remote
+                .hosts
+                .get_mut(&target)
+                .unwrap()
+                .probe = crate::state::HostProbe::Idle;
+            backend
+                .state_mut()
+                .remote_picker
+                .as_mut()
+                .unwrap()
+                .host_probe = crate::state::HostProbe::Idle;
+            backend
+                .update_level(Msg::RemotePickerHostActivate(target.clone()))
+                .unwrap();
+            let epoch = backend.state().remote_picker.as_ref().unwrap().probe_epoch;
+            assert!(backend.state().remote_picker.as_ref().unwrap().auto_open);
             let fresh = crate::session::discovery::DiscoveredSession {
                 name: "api".into(),
                 origin: Default::default(),
@@ -1028,15 +1264,11 @@ mod tests {
             };
             backend
                 .update_level(Msg::RemoteHostSessionsDiscovered {
-                    epoch: 9,
+                    epoch,
                     target: target.clone(),
                     rows: Ok(vec![fresh.clone()]),
                 })
                 .expect("apply successful probe");
-
-            backend
-                .update_level(Msg::RemotePickerHostActivate(target.clone()))
-                .expect("open the reached host");
 
             let state = backend.state();
             assert!(state.remote_picker.is_none());
@@ -1046,6 +1278,8 @@ mod tests {
                 Some(&target)
             );
             let picker = state.session_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "API");
+            assert_eq!(picker.entries[picker.selected], fresh);
             assert!(
                 picker.entries.contains(&fresh),
                 "fresh rows must not become last-seen on opening: {:?}",

@@ -37,6 +37,7 @@ pub(crate) use lifecycle::{
     select_session_picker_tab, session_picker_creation_target, session_picker_tabs,
     session_row_can_disconnect, session_row_can_kill, session_row_can_restart,
     session_row_is_current, session_row_is_last_seen, session_row_is_restorable,
+    set_session_picker_query,
 };
 pub(crate) use remotes::{open_new_host_flow, open_remote_hosts, open_startup_remote_picker};
 

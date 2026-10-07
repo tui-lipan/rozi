@@ -96,11 +96,9 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
     clear_pending_kill(ctx);
 }
 
-/// The tab the Sessions picker opens on: the host of the session on screen, or in the launcher the
-/// host it is scoped to, so the picker starts out agreeing with the badge behind it.
-pub(crate) fn default_session_picker_tab(
-    state: &State,
-) -> Option<crate::session::remote::RemoteTarget> {
+/// The contextual destination: the foreground session's host, the launcher's selected host,
+/// or Local when neither supplies a remote host.
+fn contextual_session_host(state: &State) -> Option<crate::session::remote::RemoteTarget> {
     if state.is_launcher() {
         state.active_launcher_scope().cloned()
     } else {
@@ -108,14 +106,24 @@ pub(crate) fn default_session_picker_tab(
     }
 }
 
+fn initial_session_picker_tab(state: &State) -> SessionPickerTab {
+    match state.config.session.picker_open_on {
+        crate::config::SessionPickerOpenOn::CurrentHost => {
+            SessionPickerTab::Host(contextual_session_host(state))
+        }
+        crate::config::SessionPickerOpenOn::All => SessionPickerTab::All,
+    }
+}
+
 /// The Sessions picker's tabs: **Local**, remote hosts by name, then **All**. Hosts come from the
-/// open tab, foreground session, launcher scope, connected hosts, parked sessions, and listed rows, so the strip
-/// keeps its order while the user moves through it.
+/// open tab, explicitly opened host, foreground session, launcher scope, connected hosts, and
+/// parked sessions. Cached rows remain discoverable in All without creating historical host tabs.
 pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
     let picker = state.session_picker.as_ref();
     let candidates = picker
         .and_then(|picker| picker.tab.remote_target())
         .into_iter()
+        .chain(picker.and_then(|picker| picker.opened_host.as_ref()))
         .chain(
             (!state.is_launcher())
                 .then(|| state.current().remote_target.as_ref())
@@ -135,13 +143,7 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
                 .background
                 .values()
                 .filter_map(|attachment| attachment.remote_target.as_ref()),
-        )
-        .chain(picker.into_iter().flat_map(|picker| {
-            picker
-                .entries
-                .iter()
-                .filter_map(|entry| entry.remote_target.as_ref())
-        }));
+        );
     let mut hosts: Vec<crate::session::remote::RemoteTarget> = Vec::new();
     for target in candidates {
         if !hosts.contains(target) {
@@ -186,7 +188,9 @@ pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Open instantly from local discovery and the last successful remote-host snapshots. The
     // recurring watcher refreshes local state only; remote discovery is explicit in Remote hosts.
     let rows = immediate_picker_rows(ctx);
-    let mut picker = SessionPickerState::new(rows).on_tab(default_session_picker_tab(&ctx.state));
+    let mut picker = SessionPickerState::new(rows);
+    picker.tab = initial_session_picker_tab(&ctx.state);
+    picker.keep_selection_in_tab();
     if let Some(pos) = picker
         .entries
         .iter()
@@ -216,7 +220,9 @@ pub(crate) fn open_startup_session_picker(
     highlight: Option<String>,
 ) -> u64 {
     let rows = immediate_picker_rows(ctx);
-    let mut picker = SessionPickerState::new(rows).on_tab(default_session_picker_tab(&ctx.state));
+    let mut picker = SessionPickerState::new(rows);
+    picker.tab = initial_session_picker_tab(&ctx.state);
+    picker.keep_selection_in_tab();
     if let Some(highlight) = highlight
         && let Some(index) = picker
             .entries
@@ -233,13 +239,55 @@ pub(crate) fn open_startup_session_picker(
     ctx.state.session_picker_epoch
 }
 
+/// Apply a query and keep selection and row actions on a visible match. Shared by typing and
+/// returning from host management with the original search text.
+pub(crate) fn set_session_picker_query(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        let was_empty = picker.input.text().trim().is_empty();
+        let is_empty = query.trim().is_empty();
+        if was_empty && !is_empty {
+            picker.browse_selected = picker
+                .entries
+                .get(picker.selected)
+                .map(|entry| (entry.name.clone(), entry.remote_target.clone()));
+        }
+        picker.input.set_text(query);
+        if is_empty {
+            if let Some((name, target)) = picker.browse_selected.take()
+                && let Some(index) = picker
+                    .entries
+                    .iter()
+                    .position(|entry| entry.name == name && entry.remote_target == target)
+            {
+                picker.selected = index;
+            }
+            picker.keep_selection_in_tab();
+        }
+    }
+    // Keep row actions on the visible result even when filtering replaces the first row
+    // without moving the palette's numeric cursor.
+    if let Some(picker) = ctx.state.session_picker.as_ref() {
+        let query = picker.input.text().trim().to_ascii_lowercase();
+        let matches = |entry: &crate::session::discovery::DiscoveredSession| {
+            picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
+        };
+        if !picker.entries.get(picker.selected).is_some_and(matches)
+            && let Some(index) = picker.entries.iter().position(matches)
+        {
+            ctx.state.session_picker.as_mut().unwrap().selected = index;
+        }
+    }
+    clear_pending_session_arms(ctx);
+    Update::full()
+}
+
 pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Carry the typed query and the highlighted row across the rebuild. After a kill the killed row
     // is gone, so clamping keeps the highlight on the row that slid into its place instead of
     // snapping back to the top; it also keeps our `selected` in step with the persistent
     // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
     // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
-    let (query, selected, tab, browse_selected) = ctx
+    let (query, selected, tab, opened_host, browse_selected) = ctx
         .state
         .session_picker
         .as_ref()
@@ -248,6 +296,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
                 p.input.text().to_string(),
                 p.selected,
                 p.tab.clone(),
+                p.opened_host.clone(),
                 p.browse_selected.clone(),
             )
         })
@@ -256,6 +305,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     let mut picker = SessionPickerState::new(rows);
     picker.input.set_text(query);
     picker.tab = tab;
+    picker.opened_host = opened_host;
     picker.browse_selected = browse_selected;
     picker.selected = selected.min(picker.entries.len().saturating_sub(1));
     picker.keep_selection_in_tab();
@@ -326,19 +376,19 @@ pub(crate) fn session_picker_creation_target(
 ) -> Option<crate::session::remote::RemoteTarget> {
     match state.session_picker.as_ref().map(|picker| &picker.tab) {
         Some(SessionPickerTab::Host(target)) => target.clone(),
-        _ => default_session_picker_tab(state),
+        _ => contextual_session_host(state),
     }
 }
 
 /// Go to this client's scratch session on the Sessions picker's active tab: its `Ctrl+T`, and its
-/// `Enter` when there is nothing on the list to activate.
+/// `Enter` when both the query and the list are empty.
 ///
 /// One key covers both directions — start the ephemeral when there is none, switch to it when there
 /// already is — because from the keyboard they are the same request. Already being on it is a
 /// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
 ///
-/// A browsing host fixes the creation destination even during global search. All uses the
-/// foreground or launcher host; the footer names that destination.
+/// A host tab fixes the creation destination. All uses the foreground or launcher host;
+/// the footer names that destination.
 pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     let scope = session_picker_creation_target(&ctx.state);
@@ -494,11 +544,21 @@ pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     let ephemeral = ctx.state.is_ephemeral_session();
-    let initial = if ephemeral {
-        String::new()
-    } else {
-        ctx.state.current().session_name.clone().unwrap_or_default()
-    };
+    let initial = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .filter(|_| ctx.state.show_session_picker)
+        .map(|picker| picker.input.text().trim())
+        .filter(|query| !query.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if ephemeral {
+                String::new()
+            } else {
+                ctx.state.current().session_name.clone().unwrap_or_default()
+            }
+        });
     let mode = if ephemeral {
         NamingMode::NameEphemeralSession
     } else {

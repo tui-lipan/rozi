@@ -533,6 +533,22 @@ fn worktree_picker() {
         backend.set_viewport(viewport(width, height));
         backend.render();
         write_png(&mut backend, &format!("worktree-picker-{width}x{height}"));
+        let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+        picker.pending_remove = Some(rozi::state::PendingWorktreeRemove {
+            path: picker.entries[picker.selected].path.clone(),
+            kind: rozi::state::PendingWorktreeRemoveKind::Clean,
+        });
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("worktree-picker-armed-{width}x{height}"),
+        );
+        backend
+            .state_mut()
+            .worktree_picker
+            .as_mut()
+            .unwrap()
+            .pending_remove = None;
     }
 
     let (entries, statuses) = {

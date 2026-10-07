@@ -103,6 +103,17 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         })
         .collect::<Vec<_>>();
     let rows = Arc::new(rows);
+    // Keep the marker column outside the label, which confirmation rendering replaces.
+    let marker_rows = Arc::clone(&rows);
+    let render_gutter = Arc::new(move |item: &SearchItem<usize>, _: &SearchHighlight| {
+        let row = marker_rows.get(item.value)?;
+        Some(ListItemGutter::from_spans([Span::new(if row.current {
+            "● "
+        } else {
+            "  "
+        })
+        .style(marker_style)]))
+    });
     let render_item: OverlayItemRenderer<usize> =
         Arc::new(move |item: &SearchItem<usize>, _highlight| {
             let row = rows.get(item.value)?;
@@ -118,12 +129,9 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                 description.push(Span::new(row.state.clone()).style(muted));
             }
             Some(
-                ListItem::from_spans([
-                    Span::new(if row.current { "● " } else { "  " }).style(marker_style),
-                    Span::new(row.branch.clone()).style(branch_style),
-                ])
-                .description_spans(description)
-                .primary_truncate_description_first(false),
+                ListItem::from_spans([Span::new(row.branch.clone()).style(branch_style)])
+                    .description_spans(description)
+                    .primary_truncate_description_first(false),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {
@@ -146,6 +154,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         picker_width(widest_row),
     )
     .entries(entries)
+    .item_gutter(render_gutter)
     .render_item(render_item)
     .actions(actions)
     .armed_row(armed.then_some(picker.selected))

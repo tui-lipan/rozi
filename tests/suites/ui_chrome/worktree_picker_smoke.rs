@@ -84,6 +84,69 @@ fn picker_hides_remote_paths_and_keeps_the_association_for_opening() {
     });
 }
 
+#[test]
+fn removal_confirmation_preserves_branch_padding_and_current_marker() {
+    on_large_stack(|| {
+        use rozi::state::{PendingWorktreeRemove, PendingWorktreeRemoveKind};
+
+        for current in [false, true] {
+            let mut backend = picker();
+            if current {
+                let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                picker.cwd = picker.entries[0].path.clone();
+            }
+            backend.render();
+            let before = backend.capture_frame().plain_text();
+            let before = before
+                .lines()
+                .find(|line| line.contains("feat/worktrees"))
+                .unwrap();
+            let prefix = before.split_once("feat/worktrees").unwrap().0;
+            assert_eq!(prefix.contains('●'), current);
+
+            for kind in [
+                PendingWorktreeRemoveKind::Clean,
+                PendingWorktreeRemoveKind::Dirty,
+                PendingWorktreeRemoveKind::StaleLock,
+            ] {
+                let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                picker.pending_remove = Some(PendingWorktreeRemove {
+                    path: picker.entries[0].path.clone(),
+                    kind,
+                });
+                backend.render();
+                let armed = backend.capture_frame().plain_text();
+                let row = armed
+                    .lines()
+                    .find(|line| line.contains("feat/worktrees"))
+                    .unwrap();
+                assert_eq!(
+                    row.split_once("feat/worktrees").unwrap().0,
+                    prefix,
+                    "{armed}"
+                );
+                assert!(row.contains("again to"), "{armed}");
+            }
+
+            backend
+                .state_mut()
+                .worktree_picker
+                .as_mut()
+                .unwrap()
+                .pending_remove = None;
+            backend.render();
+            let after = backend.capture_frame().plain_text();
+            assert_eq!(
+                after
+                    .lines()
+                    .find(|line| line.contains("feat/worktrees"))
+                    .unwrap(),
+                before
+            );
+        }
+    });
+}
+
 /// Paths do not consume row width, and the picker is clamped on a narrow terminal.
 #[test]
 fn picker_hides_long_paths_at_wide_and_narrow_viewports() {

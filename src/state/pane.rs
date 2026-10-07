@@ -1,7 +1,7 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
-use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus};
+use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus, Span, Text, TextSource};
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
@@ -41,6 +41,7 @@ pub struct Pane {
     pub activity: PaneActivity,
     pub agent_refs: Vec<crate::session::protocol::AgentRef>,
     pub terminal: TerminalPane,
+    pub(crate) live_title: LivePaneTitle,
     /// This pane's element keys, built once here rather than formatted in every `view()`.
     ///
     /// Both are functions of [`id`](Self::id) alone, which never changes for a live pane, so a
@@ -48,6 +49,35 @@ pub struct Pane {
     /// `pty_generation`, which is a public field written from many places, and a cache behind a
     /// field that anything may assign is a correctness trap rather than a saving.
     pub keys: PaneKeys,
+}
+
+/// The title label's live content and the fixed presentation prefix chosen by the view.
+#[derive(Default)]
+pub(crate) struct LivePaneTitle {
+    source: TextSource,
+    prefix: RefCell<String>,
+    marker: RefCell<Option<String>>,
+    pub bound: Cell<bool>,
+}
+
+impl LivePaneTitle {
+    pub fn bind(&self, prefix: &str, title: &str, marker: Option<&str>) -> Text {
+        *self.prefix.borrow_mut() = prefix.to_string();
+        *self.marker.borrow_mut() = marker.map(str::to_string);
+        self.source
+            .set([Span::new(prefix.to_string()), Span::new(title.to_string())]);
+        self.bound.set(true);
+        Text::from_source(self.source.clone())
+    }
+
+    pub fn refresh(&self, title: String) {
+        let title = match self.marker.borrow().as_deref() {
+            Some(marker) => format!("{marker} · {title}"),
+            None => title,
+        };
+        self.source
+            .set([Span::new(self.prefix.borrow().clone()), Span::new(title)]);
+    }
 }
 
 /// A chrome colour a pane animates independently.
@@ -185,6 +215,7 @@ impl Pane {
             fade_stage: Cell::new(crate::layout::anim::FadeStage::Running),
             logging: false,
             activity: PaneActivity::default(),
+            live_title: LivePaneTitle::default(),
             agent_refs: Vec::new(),
             keys: PaneKeys::new(id),
             terminal: {
@@ -193,6 +224,21 @@ impl Pane {
                 terminal
             },
         }
+    }
+
+    /// The titlebar's display title including local exit/log markers.
+    pub(crate) fn status_title(&self, remote_attached: bool) -> String {
+        let mut title = self.titlebar_title(remote_attached);
+        if self.closing {
+            return title;
+        }
+        if let ManagedTerminalStatus::Exited(code) = self.terminal.status {
+            title.push_str(&format!(" [exited {code}]"));
+        }
+        if self.logging {
+            title.push_str(" [log]");
+        }
+        title
     }
 
     pub fn agent_runtimes(&self) -> Vec<crate::session::protocol::AgentRuntime> {

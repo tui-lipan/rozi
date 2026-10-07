@@ -5,7 +5,7 @@
 //! `Update::terminal_paint()`: one agent streaming into one pane must not re-run `view()` and layout
 //! for every other pane, workbar segment and sidebar row in the window on every chunk.
 //!
-//! `terminal_paint` claims more than `paint` - that live terminal content is the *only* thing that
+//! `terminal_paint` claims more than `paint` - that live terminal and label content is all that
 //! looks different - and the framework spends that claim on repainting only the rows the emulator
 //! reports as damaged. So the level asserted here is a contract, not a detail: widening it back to
 //! `paint` silently restores the full-window frame per changed character, and narrowing it in a
@@ -28,6 +28,7 @@ const PANE: PaneId = 10;
 const OTHER_PANE: PaneId = 11;
 
 fn backend() -> TestBackend<AppRoot> {
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(VIEWPORT);
     {
@@ -107,19 +108,31 @@ fn output_to_a_visible_pane_asks_for_a_repaint() {
 }
 
 #[test]
-fn an_osc_title_change_still_asks_for_a_full_frame() {
+fn an_osc_title_change_repaints_a_live_label_and_rebuilds_a_border_title() {
     on_large_stack(|| {
         let mut backend = backend();
         let _ = backend.update_level(output("ready\r\n")).expect("settle");
         backend.render();
 
-        // The titlebar renders the pane title, which lives outside the screen the widget reads.
+        // The ordinary titlebar binds a live label, so title updates need no view/layout pass.
         assert_eq!(
             backend
                 .update_level(output("\x1b]0;renamed\x07"))
                 .expect("title chunk"),
+            UpdateLevel::TerminalPaint,
+            "live title labels participate in damage painting"
+        );
+        assert!(backend.refresh_live_terminals(), "the title label moved");
+        assert!(backend.capture_frame().plain_text().contains("renamed"));
+
+        backend.state_mut().config.pane.titlebar = rozi::state::PaneTitlebarMode::Border;
+        backend.render();
+        assert_eq!(
+            backend
+                .update_level(output("\x1b]0;border renamed\x07"))
+                .expect("border title"),
             UpdateLevel::Full,
-            "chrome outside the screen has to be rebuilt"
+            "titles embedded in a frame border still need composition"
         );
     });
 }

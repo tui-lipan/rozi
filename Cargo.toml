@@ -55,7 +55,9 @@ exclude = [
 # switch crossfades.
 # 0.17.4: list descriptions choose their truncation side and keep a gap from the label, for the
 # sidebar's project branches and worktree status rail.
-tui-lipan = { version = "0.20.0", features = [
+# Temporary review dependency for https://github.com/tui-lipan/tui-lipan/pull/322.
+# Replace with its released minor version before merging; the new TextSource API is unreleased.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "b4ed6e379e7bf6d15cb8b5833274d6c102d5cf59", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -21,6 +21,12 @@ fn apply_current_pane_output(
     bytes: &[u8],
 ) -> Option<PaneOutputEffects> {
     let attended = state.is_pane_attended(pane_id);
+    // Sidebar rows and modal pickers can derive labels from the raw terminal title too. Their
+    // composition stays on the full refresh path until they also bind live sources.
+    let title_is_local =
+        !state.sidebar_visible && state.sidebar_slide.get() == 0.0 && !state.has_modal_overlay();
+    let remote_attached = state.current().remote_target.is_some();
+    let show_titles = state.config.pane.show_titles;
     let bell_notifications = state.config.notifications.bell;
     // Reassert media policy on every path that can create or feed a pane.
     let policy = if local && crate::scratchpad::contains(state, pane_id) {
@@ -33,8 +39,17 @@ fn apply_current_pane_output(
         return None;
     }
     pane.terminal.set_media_policy(policy);
+    let was_ready = pane.terminal.is_ready();
     let output = pane.terminal.process_server_output(bytes);
-    let chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
+    let mut chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
+    if chrome_changed
+        && was_ready
+        && title_is_local
+        && (pane.live_title.bound.get() || !show_titles)
+    {
+        pane.live_title.refresh(pane.status_title(remote_attached));
+        chrome_changed = false;
+    }
     let bell_fired = pane.terminal.take_bell();
     pane.activity.last_activity = Some(std::time::Instant::now());
 

@@ -1586,6 +1586,60 @@ fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
         .expect("global scratch scope test completes");
 }
 
+/// A scratch session started from inside another session opens with a shell, the same as one
+/// started from the launcher or a fresh named session. The session it leaves takes its panes with
+/// it, and the new server is seeded from the panes installed in its place, so an empty install
+/// would open an empty session.
+#[test]
+fn a_scratch_session_started_from_an_attached_session_opens_with_a_pane() {
+    use crate::AppRoot;
+    use crate::Msg;
+    use tui_lipan::TestBackend;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                let mut dev = crate::state::fresh_default_attachment(&state.config);
+                dev.session_name = Some("dev".into());
+                dev.session_attached = true;
+                dev.session_client = Some(client);
+                *state.current_mut() = dev;
+                state.session_picker =
+                    Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                state.show_session_picker = true;
+            }
+
+            backend
+                .update_level(Msg::SessionPickerEphemeral)
+                .expect("start the scratch session from inside `dev`");
+
+            let state = backend.state();
+            let pending = state
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("an attach is in flight");
+            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert_eq!(
+                state
+                    .current()
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.panes.len())
+                    .sum::<usize>(),
+                1,
+                "the new scratch session is seeded with one pane"
+            );
+        })
+        .expect("spawn attached scratch seed test")
+        .join()
+        .expect("attached scratch seed test completes");
+}
+
 /// A remote scratch session on screen is a different session from the local one, so the key that
 /// reaches the local one must still act rather than reading "you are already there".
 #[test]

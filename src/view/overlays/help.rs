@@ -151,70 +151,67 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         HelpRow::direct(SIDEBAR, "Enter", "Activate", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "x", "Close the selected row", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Tab / Shift+Tab", "Cycle tabs", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "← / h", "Collapse directory", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "→ / l", "Expand directory", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "Space", "Toggle directory", SIDEBAR_EXTRA),
         HelpRow::direct(
             SIDEBAR,
-            "← / h, → / l, Space",
-            "Collapse / expand / toggle dirs",
+            "Ctrl+Shift+← / Ctrl+Shift+h",
+            "Reorder tab left",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+← / Ctrl+Shift+→",
-            "Reorder the active tab",
+            "Ctrl+Shift+→ / Ctrl+Shift+l",
+            "Reorder tab right",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+h / Ctrl+Shift+l",
-            "Reorder the active tab",
+            "Ctrl+↑ / Ctrl+k",
+            "Focus upper panel",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+↑ / Ctrl+↓",
-            "Focus the other panel",
+            "Ctrl+↓ / Ctrl+j",
+            "Focus lower panel",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+k / Ctrl+j",
-            "Focus the other panel",
+            "Ctrl+Shift+↑ / Ctrl+Shift+k",
+            "Move tab to upper panel",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+↑ / Ctrl+Shift+↓",
-            "Move tab to the other panel",
+            "Ctrl+Shift+↓ / Ctrl+Shift+j",
+            "Move tab to lower panel",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+k / Ctrl+Shift+j",
-            "Move tab to the other panel",
+            "Shift+← / Shift+h",
+            "Move sidebar edge left",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Shift+← / Shift+→",
-            "Resize sidebar",
+            "Shift+→ / Shift+l",
+            "Move sidebar edge right",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Shift+h / Shift+l",
-            "Resize sidebar",
+            "Shift+↑ / Shift+k",
+            "Move panel split up",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Shift+↑ / Shift+↓",
-            "Resize panel split",
-            SIDEBAR_EXTRA,
-        ),
-        HelpRow::direct(
-            SIDEBAR,
-            "Shift+k / Shift+j",
-            "Resize panel split",
+            "Shift+↓ / Shift+j",
+            "Move panel split down",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(SIDEBAR, "s", "Toggle panels", SIDEBAR_EXTRA),
@@ -540,7 +537,7 @@ impl RowEdit {
 fn help_row_id(row: &HelpRow) -> String {
     row.config_id
         .clone()
-        .unwrap_or_else(|| format!("{}\u{1f}{}", row.category, row.label))
+        .unwrap_or_else(|| format!("{}\u{1f}{}\u{1f}{}", row.category, row.label, row.keys))
 }
 
 fn help_group_row_count(groups: &[(String, Vec<HelpRow>)]) -> usize {
@@ -1398,7 +1395,18 @@ fn help_key_spans(row: &HelpRow, theme: &Theme) -> Vec<Span> {
             Style::new().fg(theme.border_active).bold(),
         )
     };
-    let mut spans = vec![Span::new(current).style(current_style)];
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for (index, _) in current.match_indices('/') {
+        // A slash key (such as `/` or `Ctrl+/`) keeps the binding style.
+        if index == 0 || index + 1 == current.len() || current[..index].ends_with('+') {
+            continue;
+        }
+        spans.push(Span::new(&current[start..index]).style(current_style));
+        spans.push(Span::new("/").style(fg_only(&theme.muted)));
+        start = index + 1;
+    }
+    spans.push(Span::new(&current[start..]).style(current_style));
     if row.overridden {
         let default = if row.default_keys.is_empty() {
             "—".to_string()
@@ -1644,6 +1652,34 @@ mod palette_alias_tests {
         assert_eq!(sidebar[0].1[0].label, "Reorder the active tab");
         let unbound = filtered_help_groups(rows, HelpTab::Unbound, "unbound");
         assert_eq!(unbound[0].1[0].label, "Open config file");
+    }
+
+    #[test]
+    fn direct_mode_actions_have_unique_labels_and_spaced_separators() {
+        let rows = super::direct_mode_rows();
+        let mut actions = std::collections::HashSet::new();
+        for row in &rows {
+            assert!(actions.insert((&row.category, &row.label)), "{}", row.label);
+            for (index, _) in row.keys.match_indices('/') {
+                assert!(
+                    row.keys[..index].ends_with(' ') && row.keys[index + 1..].starts_with(' '),
+                    "{}",
+                    row.keys
+                );
+            }
+        }
+        let reorder = rows
+            .iter()
+            .find(|row| row.label == "Reorder tab left")
+            .unwrap();
+        assert_eq!(reorder.keys, "Ctrl+Shift+← / Ctrl+Shift+h");
+    }
+
+    #[test]
+    fn reference_rows_with_the_same_label_have_distinct_selection_ids() {
+        let arrow = HelpRow::direct("Sidebar", "Ctrl+↑", "Focus panel", "");
+        let vim = HelpRow::direct("Sidebar", "Ctrl+k", "Focus panel", "");
+        assert_ne!(super::help_row_id(&arrow), super::help_row_id(&vim));
     }
 
     #[test]

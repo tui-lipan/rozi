@@ -1591,6 +1591,61 @@ mod tests {
     }
 
     #[test]
+    fn keybindings_navigation_visits_every_row_in_both_directions() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleHelp))
+                .unwrap();
+            for tab in crate::state::HelpTab::ORDER {
+                backend.dispatch(Msg::HelpTabSelected(tab.index())).unwrap();
+                backend.render();
+                press(&mut backend, KeyCode::End);
+                let last = help_state(&mut backend).selected.clone().unwrap();
+                press(&mut backend, KeyCode::Home);
+                let first = help_state(&mut backend).selected.clone().unwrap();
+                let mut visited = std::collections::HashSet::new();
+                loop {
+                    let id = help_state(&mut backend).selected.clone().unwrap();
+                    assert!(
+                        visited.insert(id.clone()),
+                        "navigation stuck in {tab:?} at {id}"
+                    );
+                    if id == last {
+                        break;
+                    }
+                    press(&mut backend, KeyCode::Down);
+                }
+                assert!(visited.len() > 1);
+                press(&mut backend, KeyCode::Down);
+                assert_eq!(help_state(&mut backend).selected.as_ref(), Some(&first));
+                press(&mut backend, KeyCode::Up);
+                assert_eq!(help_state(&mut backend).selected.as_ref(), Some(&last));
+                loop {
+                    let id = help_state(&mut backend).selected.clone().unwrap();
+                    assert!(
+                        visited.remove(&id),
+                        "reverse navigation stuck in {tab:?} at {id}"
+                    );
+                    if id == first {
+                        break;
+                    }
+                    press(&mut backend, KeyCode::Up);
+                }
+                assert!(visited.is_empty());
+            }
+        });
+    }
+
+    #[test]
     fn keybindings_search_owns_every_key_and_escape_closes() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());

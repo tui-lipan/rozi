@@ -676,9 +676,9 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::SidebarTabs,
         label: "Sidebar tabs…",
-        category: "Sidebar",
+        category: "Settings",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::SidebarOtherDock,

@@ -145,7 +145,8 @@ fn tabs_picker_toggles_visibility_without_moving_tabs_or_closing() {
             .layout
             .hidden
             .push("missing.extension".into());
-        b.dispatch(Msg::RunAction(Action::SidebarTabs)).unwrap();
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarTabs))
+            .unwrap();
         b.render();
         for hidden in [true, false] {
             b.send_key(KeyEvent {

@@ -214,7 +214,7 @@ settings.
 <img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar tabs picker with symbols and dimmed disabled tabs" data-caption="Enter enables or disables a tab while preserving its placement.">
 </CaptureGallery>
 
-Open **Sidebar tabs…** from Settings or the command palette. Search by name and press Enter to
+Open **Settings… → Bars → Sidebar tabs…**. Search by name and press Enter to
 change visibility. Enabled tabs use a filled dot; disabled tabs use a hollow dot and dimmed text.
 Unavailable extension tabs stay listed with a dash and retain their preferences. The picker stays
 open so several tabs can be toggled. It remains available when every tab is disabled.
@@ -230,7 +230,7 @@ are starting configurations, so later edits remain yours.
 
 Individual dock toggles and dock navigation remain bindable through `toggle-left-sidebar`,
 `toggle-right-sidebar`, `sidebar-other-dock`, and `sidebar-move-to-other-dock`. The command palette
-lists the global and individual sidebar toggles, **Focus sidebar**, and **Sidebar tabs…**.
+lists the global and individual sidebar toggles and **Focus sidebar**.
 
 ```toml
 [sidebar]

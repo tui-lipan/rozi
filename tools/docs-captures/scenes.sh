@@ -86,8 +86,8 @@ layout = { left = { width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs 
 session = "off"'
 PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
 sidebar_visibility=${sidebar_docks/left =/hidden = [\"sessions\", \"git\", \"worktrees\"], left =}
-PROFILE=web scene sidebar-manager "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
-PROFILE=web scene sidebar-manager-compact 80x24 4500 "key:ctrl+a; type:p; wait:300; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-manager "$focus" 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-manager-compact 80x24 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-panels "$focus" 4500 "$open_settings; type:left panels; key:enter; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-startup "$focus" 4500 "$open_settings; type:sidebars at startup; key:enter; wait:400" "$sidebar_visibility"

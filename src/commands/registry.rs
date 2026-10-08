@@ -1300,7 +1300,7 @@ mod tests {
         assert!(!is_palette_eligible("toggle-workbar"));
         assert!(is_palette_eligible("toggle-left-sidebar"));
         assert!(is_palette_eligible("toggle-right-sidebar"));
-        assert!(is_palette_eligible("sidebar-tabs"));
+        assert!(!is_palette_eligible("sidebar-tabs"));
         assert!(!is_palette_eligible("toggle-animations"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));

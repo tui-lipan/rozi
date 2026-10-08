@@ -170,6 +170,10 @@ fn tabs_picker_toggles_visibility_without_moving_tabs_or_closing() {
             assert!(!snapshot.contains("Locate tab"));
             assert!(!snapshot.contains("layout presets"));
             assert!(snapshot.contains(if hidden { "Disabled" } else { "Enabled" }));
+            let grid = b.capture_frame().to_fixed_grid_lines().join("\n");
+            let marker = if hidden { "○" } else { "●" };
+            assert!(grid.contains(&format!("│ {marker} Left1")), "{grid}");
+            assert!(grid.contains("│ – missing.extension"), "{grid}");
         }
         let saved = b.state().config.sidebar.layout.clone();
         b.dispatch(Msg::SidebarManagerActivate("missing.extension".into()))

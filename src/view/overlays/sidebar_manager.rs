@@ -57,41 +57,41 @@ pub(crate) fn sidebar_manager_overlay(ctx: &Context<AppRoot>) -> Element {
     let gutter_statuses = Arc::clone(&statuses);
     let accent = fg_only(&ctx.state.theme.accent);
     let muted = fg_only(&ctx.state.theme.muted);
-    let palette =
-        shared_search_palette::<String>(ctx, Length::Auto, true)
-            .entries(entries)
-            .placeholder("Search tabs…")
-            .item_gutter(Arc::new(move |item, _| {
-                let &(enabled, available) = gutter_statuses.get(&item.value)?;
-                Some(ListItemGutter::from_spans([Span::new(if !available {
-                    "– "
-                } else if enabled {
-                    "● "
-                } else {
-                    "○ "
-                })
-                .style(if available && enabled { accent } else { muted })]))
-            }))
-            .render_item(Arc::new(move |item, _| {
-                let &(enabled, available) = statuses.get(&item.value)?;
-                if enabled && available {
-                    return None;
-                }
-                Some(picker_row(
-                    [Span::new(item.label.clone()).style(muted)],
-                    if available { "Disabled" } else { "Unavailable" },
-                    muted,
-                ))
-            }))
-            .on_activate(ctx.link().callback(|event: SearchEvent<String>| {
-                Msg::SidebarManagerActivate(event.item.value)
-            }));
-    action_palette(
-        ctx,
+    OverlayPalette::new(
         "Sidebar tabs",
         "sidebar-manager",
         Msg::SidebarManagerBack,
-        palette,
         65,
     )
+    .entries(entries)
+    .placeholder("Search tabs…")
+    .item_gutter(Arc::new(move |item, _| {
+        let &(enabled, available) = gutter_statuses.get(&item.value)?;
+        Some(crate::view::session_status::picker_marker_gutter(
+            if !available {
+                "–"
+            } else if enabled {
+                "●"
+            } else {
+                "○"
+            },
+            if available && enabled { accent } else { muted },
+        ))
+    }))
+    .render_item(Arc::new(move |item, _| {
+        let &(enabled, available) = statuses.get(&item.value)?;
+        if enabled && available {
+            return None;
+        }
+        Some(picker_row(
+            [Span::new(item.label.clone()).style(muted)],
+            if available { "Disabled" } else { "Unavailable" },
+            muted,
+        ))
+    }))
+    .on_activate(
+        ctx.link()
+            .callback(|event: SearchEvent<String>| Msg::SidebarManagerActivate(event.item.value)),
+    )
+    .render(ctx)
 }

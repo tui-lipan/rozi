@@ -18,8 +18,7 @@ pub(crate) fn worktrees_active(ctx: &Context<AppRoot>) -> bool {
     ctx.state.sidebar_visible
         && ctx
             .state
-            .sidebar
-            .active_tabs()
+            .visible_sidebar_tabs()
             .any(|id| id.as_str() == TAB_ID)
 }
 

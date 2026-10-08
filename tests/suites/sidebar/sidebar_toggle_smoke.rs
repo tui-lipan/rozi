@@ -32,7 +32,15 @@ fn rendered_sidebar(position: SidebarPosition) -> Vec<String> {
     {
         let state = backend.state_mut();
         state.sidebar_visible = true;
-        state.config.sidebar.position = position;
+        state.sidebar.dock_visible = [
+            position == SidebarPosition::Left,
+            position == SidebarPosition::Right,
+        ];
+        state.sidebar.panels.truncate(2);
+        state.config.sidebar.layout.dock_mut(position).panel_count = 2;
+        for panel in &mut state.sidebar.panels {
+            panel.dock = position;
+        }
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
     }
@@ -78,8 +86,22 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.config.sidebar.width = 30;
-                state.config.sidebar.position = SidebarPosition::Left;
+                state.config.sidebar.layout.left.width = 30;
+                state.config.sidebar.layout.right.width = 30;
+                state.sidebar.dock_visible = [
+                    SidebarPosition::Left == SidebarPosition::Left,
+                    SidebarPosition::Left == SidebarPosition::Right,
+                ];
+                state.sidebar.panels.truncate(2);
+                state
+                    .config
+                    .sidebar
+                    .layout
+                    .dock_mut(SidebarPosition::Left)
+                    .panel_count = 2;
+                for panel in &mut state.sidebar.panels {
+                    panel.dock = SidebarPosition::Left;
+                }
                 state.config.sidebar.tabs = vec![SidebarTab::Panes];
                 state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
             }
@@ -96,7 +118,21 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
                     .any(|line| line.chars().take(30).collect::<String>().contains("Panes"))
             );
 
-            backend.state_mut().config.sidebar.position = SidebarPosition::Right;
+            backend.state_mut().sidebar.dock_visible = [
+                SidebarPosition::Right == SidebarPosition::Left,
+                SidebarPosition::Right == SidebarPosition::Right,
+            ];
+            backend.state_mut().sidebar.panels.truncate(2);
+            backend
+                .state_mut()
+                .config
+                .sidebar
+                .layout
+                .dock_mut(SidebarPosition::Right)
+                .panel_count = 2;
+            for panel in &mut backend.state_mut().sidebar.panels {
+                panel.dock = SidebarPosition::Right;
+            }
             backend.render();
             assert_eq!(
                 backend.state().effective_sidebar_width(backend.viewport()),
@@ -128,7 +164,7 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
 }
 
 #[test]
-fn narrow_sidebar_yields_to_a_one_column_canvas() {
+fn narrow_sidebar_retains_half_the_canvas() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -139,9 +175,9 @@ fn narrow_sidebar_yields_to_a_one_column_canvas() {
             backend.render();
             assert_eq!(
                 backend.state().effective_sidebar_width(backend.viewport()),
-                9
+                5
             );
-            assert_eq!(backend.state().content_viewport(backend.viewport()).w, 1);
+            assert_eq!(backend.state().content_viewport(backend.viewport()).w, 5);
         })
         .expect("spawn narrow sidebar test")
         .join()
@@ -165,6 +201,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
                         ..Default::default()
                     },
                     SidebarPanelState {
+                        home: 1,
                         tabs: vec![SidebarTabId::new("panes")],
                         active_tab: Some(SidebarTabId::new("panes")),
                         ..Default::default()
@@ -202,7 +239,10 @@ fn an_empty_panel_puts_its_drop_hint_on_the_tab_bar() {
                         active_tab: Some(SidebarTabId::new("panes")),
                         ..Default::default()
                     },
-                    SidebarPanelState::default(),
+                    SidebarPanelState {
+                        home: 1,
+                        ..Default::default()
+                    },
                 ];
             }
             backend.render();
@@ -252,31 +292,43 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
         .spawn(|| {
             let mut backend = sidebar_backend(100, 30);
             let configured_panels = vec![
-                vec![SidebarTabId::new("activity")],
-                vec![SidebarTabId::new("panes")],
+                rozi::config::SidebarDockPanel {
+                    tabs: vec!["activity".into()],
+                    weight: 0.4,
+                },
+                rozi::config::SidebarDockPanel {
+                    tabs: vec!["panes".into()],
+                    weight: 0.6,
+                },
             ];
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
-                state.config.sidebar.panels = configured_panels.clone();
-                state.config.sidebar.split = false;
+                state.config.sidebar.layout.left.panels = configured_panels.clone();
+                state.config.sidebar.layout.left.panel_count = 1;
                 state.sidebar.reconcile(&state.config.sidebar.clone());
             }
             backend.render();
             let snapshot = backend.capture_ui_snapshot().to_markdown();
             assert_eq!(snapshot.matches("DraggableTabBar").count(), 1, "{snapshot}");
-            assert_eq!(backend.state().config.sidebar.panels, configured_panels);
+            assert_eq!(
+                backend.state().config.sidebar.layout.left.panels,
+                configured_panels
+            );
 
             {
                 let state = backend.state_mut();
-                state.config.sidebar.split = true;
+                state.config.sidebar.layout.left.panel_count = 2;
                 state.sidebar.reconcile(&state.config.sidebar.clone());
             }
             backend.render();
             let snapshot = backend.capture_ui_snapshot().to_markdown();
             assert_eq!(snapshot.matches("DraggableTabBar").count(), 2, "{snapshot}");
-            assert_eq!(backend.state().config.sidebar.panels, configured_panels);
+            assert_eq!(
+                backend.state().config.sidebar.layout.left.panels,
+                configured_panels
+            );
         })
         .expect("spawn split presentation thread")
         .join()
@@ -300,6 +352,7 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
                         ..Default::default()
                     },
                     SidebarPanelState {
+                        home: 1,
                         tabs: vec![SidebarTabId::new("panes")],
                         active_tab: Some(SidebarTabId::new("panes")),
                         ..Default::default()
@@ -355,8 +408,8 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
                 ))
                 .expect("release sidebar splitter junction");
             backend.render();
-            assert_eq!(backend.state().config.sidebar.width, 36);
-            assert!(backend.state().config.sidebar.split_ratio > 0.5);
+            assert_eq!(backend.state().config.sidebar.layout.left.width, 36);
+            assert!(backend.state().config.sidebar.layout.left.panels[0].weight > 0.5);
         })
         .expect("spawn sidebar junction thread")
         .join()
@@ -411,7 +464,7 @@ fn sidebar_splitter_drag_stops_at_the_configured_width_bounds() {
                 .expect("release sidebar splitter");
             backend.render();
             assert_eq!(
-                backend.state().config.sidebar.width,
+                backend.state().config.sidebar.layout.left.width,
                 rozi::config::SIDEBAR_MAX_WIDTH
             );
 
@@ -427,7 +480,7 @@ fn sidebar_splitter_drag_stops_at_the_configured_width_bounds() {
                 .expect("release sidebar splitter");
             backend.render();
             assert_eq!(
-                backend.state().config.sidebar.width,
+                backend.state().config.sidebar.layout.left.width,
                 rozi::config::SIDEBAR_MIN_WIDTH
             );
         })
@@ -474,7 +527,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
             );
             backend.render();
 
-            assert_eq!(backend.state().config.sidebar.width, 32);
+            assert_eq!(backend.state().config.sidebar.layout.left.width, 32);
             assert_eq!(backend.state().sidebar.width_preview, Some(40));
             assert_eq!(backend.state().content_viewport(backend.viewport()).w, 60);
             let frame = backend.capture_frame();
@@ -492,7 +545,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
                 .expect("release sidebar splitter");
             backend.render();
             assert_eq!(backend.state().sidebar.width_preview, None);
-            assert_eq!(backend.state().config.sidebar.width, 40);
+            assert_eq!(backend.state().config.sidebar.layout.left.width, 40);
         })
         .expect("spawn splitter drag thread")
         .join()

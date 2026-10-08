@@ -21,7 +21,20 @@ fn backend() -> TestBackend<AppRoot> {
     {
         let state = backend.state_mut();
         state.sidebar_visible = true;
-        state.config.sidebar.position = SidebarPosition::Left;
+        state.sidebar.dock_visible = [
+            SidebarPosition::Left == SidebarPosition::Left,
+            SidebarPosition::Left == SidebarPosition::Right,
+        ];
+        state.sidebar.panels.truncate(2);
+        state
+            .config
+            .sidebar
+            .layout
+            .dock_mut(SidebarPosition::Left)
+            .panel_count = 2;
+        for panel in &mut state.sidebar.panels {
+            panel.dock = SidebarPosition::Left;
+        }
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
         // The dim eases in with the dialog; disabling animations settles it in one frame.

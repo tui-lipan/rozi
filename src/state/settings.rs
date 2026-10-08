@@ -132,7 +132,11 @@ pub enum SettingsAction {
     CyclePaneOpenAnimation,
     CyclePaneCloseAnimation,
     ToggleSidebarBackgroundFollowsCanvas,
-    ToggleSidebarPosition,
+    ToggleLeftSidebar,
+    ToggleRightSidebar,
+    LeftSidebarPanels,
+    RightSidebarPanels,
+    ManageSidebarTabs,
     ToggleSidebarGap,
     ToggleSidebarBackground,
     CycleSidebarTabStyle,
@@ -217,7 +221,11 @@ impl SettingsAction {
             Self::CycleWorkbarTabStyle,
             Self::ToggleWorkbarPowerline,
             // Sidebar
-            Self::ToggleSidebarPosition,
+            Self::ToggleLeftSidebar,
+            Self::ToggleRightSidebar,
+            Self::LeftSidebarPanels,
+            Self::RightSidebarPanels,
+            Self::ManageSidebarTabs,
             Self::ToggleSidebarBackgroundFollowsCanvas,
             Self::ToggleSidebarGap,
             Self::ToggleSidebarBackground,
@@ -382,6 +390,26 @@ impl SettingsAction {
                 PaneAnimationStyle::all(),
                 config.animations.pane_close_style,
                 PaneAnimationStyle::label,
+            )),
+            Self::LeftSidebarPanels => Some(choice_ring(
+                "Left sidebar panels",
+                &[1_usize, 2, 3],
+                config.sidebar.layout.left.panel_count,
+                |n| match n {
+                    1 => "1",
+                    2 => "2",
+                    _ => "3",
+                },
+            )),
+            Self::RightSidebarPanels => Some(choice_ring(
+                "Right sidebar panels",
+                &[1_usize, 2, 3],
+                config.sidebar.layout.right.panel_count,
+                |n| match n {
+                    1 => "1",
+                    2 => "2",
+                    _ => "3",
+                },
             )),
             Self::CycleSidebarTabStyle => Some(choice_ring(
                 "Sidebar tab style",
@@ -554,6 +582,16 @@ impl SettingsAction {
                 PaneAnimationStyle::all(),
                 index,
                 &mut config.animations.pane_close_style,
+            ),
+            Self::LeftSidebarPanels => assign_choice(
+                &[1_usize, 2, 3],
+                index,
+                &mut config.sidebar.layout.left.panel_count,
+            ),
+            Self::RightSidebarPanels => assign_choice(
+                &[1_usize, 2, 3],
+                index,
+                &mut config.sidebar.layout.right.panel_count,
             ),
             Self::CycleSidebarTabStyle => {
                 assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)

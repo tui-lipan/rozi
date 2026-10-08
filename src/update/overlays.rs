@@ -90,7 +90,10 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenAppearance
         | Action::OpenAlerts
         | Action::OpenThemePicker
-        | Action::OpenLayoutPicker => {}
+        | Action::OpenLayoutPicker
+        | Action::ManageSidebarTabs
+        | Action::SidebarOtherDock
+        | Action::SidebarMoveToOtherDock => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
         | Action::OpenWorktrees
@@ -379,6 +382,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | ChooseWorkbar
         | CycleTitleStyle
         | CycleSidebarTabStyle
+        | LeftSidebarPanels
+        | RightSidebarPanels
         | CycleWorkbarStyle
         | CycleWorkbarBadgeStyle
         | CycleWorkbarTabStyle
@@ -418,8 +423,14 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ToggleSidebarGap => {
             execute_action(ctx, Action::ToggleSidebarGap);
         }
-        ToggleSidebarPosition => {
-            execute_action(ctx, Action::ToggleSidebarPosition);
+        ManageSidebarTabs => {
+            return crate::update::sidebar::open_manager(ctx);
+        }
+        ToggleRightSidebar => {
+            execute_action(ctx, Action::ToggleRightSidebar);
+        }
+        ToggleLeftSidebar => {
+            execute_action(ctx, Action::ToggleLeftSidebar);
         }
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);
@@ -725,6 +736,21 @@ fn apply_settings_choice(
             | crate::state::SettingsAction::CycleRightClickClipboard
     ) {
         ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
+    }
+    if persist
+        && matches!(
+            action,
+            crate::state::SettingsAction::LeftSidebarPanels
+                | crate::state::SettingsAction::RightSidebarPanels
+        )
+    {
+        let side = if action == crate::state::SettingsAction::LeftSidebarPanels {
+            crate::config::SidebarPosition::Left
+        } else {
+            crate::config::SidebarPosition::Right
+        };
+        crate::update::sidebar::set_panel_count(ctx, side, index + 1);
+        let _ = crate::update::sidebar::visibility_changed(ctx);
     }
     if persist {
         persist_applied_settings_choice(ctx, action);

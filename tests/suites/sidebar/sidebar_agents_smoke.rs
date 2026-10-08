@@ -95,7 +95,7 @@ fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
     // slide. These tests assert on the settled column, not on a frame part-way through it.
     state.config.animations.sidebar = false;
     state.config.sidebar.tabs = vec![SidebarTab::Activity];
-    state.config.sidebar.split = false;
+    state.config.sidebar.layout.left.panel_count = 1;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
     state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
 }

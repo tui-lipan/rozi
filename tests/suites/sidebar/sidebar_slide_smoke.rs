@@ -42,7 +42,15 @@ fn backend(position: SidebarPosition) -> TestBackend<AppRoot> {
         state.config.pane.show_workbar = false;
         state.config.pane.show_titles = false;
         state.config.pane.border_mode = PaneBorderMode::Separate;
-        state.config.sidebar.position = position;
+        state.sidebar.dock_visible = [
+            position == SidebarPosition::Left,
+            position == SidebarPosition::Right,
+        ];
+        state.sidebar.panels.truncate(2);
+        state.config.sidebar.layout.dock_mut(position).panel_count = 2;
+        for panel in &mut state.sidebar.panels {
+            panel.dock = position;
+        }
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
         let workspace = &mut state.current_mut().workspaces[0];

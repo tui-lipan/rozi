@@ -175,6 +175,7 @@ const CONFIRM_KEYS: &[&str] = &[
 ];
 
 const SIDEBAR_KEYS: &[&str] = &[
+    "layout",
     "visible",
     "width",
     "position",

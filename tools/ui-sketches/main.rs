@@ -409,7 +409,7 @@ fn sidebar_worktrees_fixture() -> TestBackend<AppRoot> {
         let state = backend.state_mut();
         state.sidebar_visible = true;
         state.config.animations.sidebar = false;
-        state.config.sidebar.split = false;
+        state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.panels.truncate(1);
         state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
         state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];

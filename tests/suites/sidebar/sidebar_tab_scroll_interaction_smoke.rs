@@ -143,7 +143,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                 ];
                 // One panel holding exactly these two tabs, so nothing the default split would
                 // put in a second panel can render its own rows into the assertions below.
-                state.config.sidebar.split = false;
+                state.config.sidebar.layout.left.panel_count = 1;
                 state.sidebar.apply_configured_panels(&state.config.sidebar);
                 state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
                 state.sidebar.command_output.insert(
@@ -277,7 +277,10 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
                         active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()
                     },
-                    rozi::state::SidebarPanelState::default(),
+                    rozi::state::SidebarPanelState {
+                        home: 1,
+                        ..Default::default()
+                    },
                 ];
                 assert!(state.sidebar.transfer_tab(0, 1, 0, 0));
             }

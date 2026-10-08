@@ -12,18 +12,6 @@ fn row(text: &str) -> SidebarCommandRow {
     }
 }
 
-#[test]
-fn unsplit_reorder_keeps_the_saved_panel_boundary() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let configured = vec![vec![id("agents")], vec![id("panes"), id("sessions")]];
-    let displayed = vec![vec![id("panes"), id("agents"), id("sessions")]];
-
-    assert_eq!(
-        persisted_panel_ids(displayed, &configured, false),
-        vec![vec![id("panes")], vec![id("agents"), id("sessions")]]
-    );
-}
-
 /// A command tab describes the project in front of you, so it has to notice a `cd`. Waiting out the
 /// poll interval would leave it describing the previous directory for up to half a minute, and a
 /// poll already running was launched against the old one.
@@ -164,65 +152,6 @@ fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
         assert!(backend.state().fresh_command_output(&id).is_none());
         assert!(backend.state().sidebar_item_projections(&tab).is_empty());
     });
-}
-
-/// A tab whose extension is still installed keeps its spot even though this load has no such tab:
-/// disabling an extension, or shipping a broken update, must not quietly rewrite the arrangement
-/// the user dragged into place.
-#[test]
-fn persisting_keeps_placements_for_installed_extensions_and_drops_removed_ones() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
-    let configured = vec![
-        vec![id("panes")],
-        vec![
-            id("git-tools.agents"),
-            id("sessions"),
-            id("gone-tools.tasks"),
-        ],
-    ];
-    // What is on screen this run: neither extension tab exists, one because it is disabled and one
-    // because the extension was deleted.
-    let displayed = vec![vec![id("panes")], vec![id("sessions")]];
-
-    assert_eq!(
-        retain_absent_extension_tabs(displayed, &configured, &installed),
-        vec![
-            vec![id("panes")],
-            // Reinserted at the index it held, so re-enabling puts the tab back where it was.
-            vec![id("git-tools.agents"), id("sessions")]
-        ]
-    );
-}
-
-/// Collapsing the split leaves fewer panels than the saved layout had; a retained tab folds into the
-/// last one rather than being dropped with the panel that used to hold it.
-#[test]
-fn retained_placements_survive_a_panel_disappearing() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
-    let configured = vec![vec![id("panes")], vec![id("git-tools.agents")]];
-
-    assert_eq!(
-        retain_absent_extension_tabs(vec![vec![id("panes")]], &configured, &installed),
-        vec![vec![id("panes"), id("git-tools.agents")]]
-    );
-}
-
-/// Only namespaced ids are retained. A bare name that no longer resolves is a user's own stale tab,
-/// and rearranging the sidebar is the right moment to let it go.
-#[test]
-fn a_bare_unknown_tab_is_not_retained() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let configured = vec![vec![id("panes"), id("removed")]];
-    assert_eq!(
-        retain_absent_extension_tabs(
-            vec![vec![id("panes")]],
-            &configured,
-            &std::collections::HashSet::new()
-        ),
-        vec![vec![id("panes")]]
-    );
 }
 
 fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
@@ -2090,6 +2019,7 @@ fn sessions_and_command_panels_refresh_together() {
                     ..Default::default()
                 },
                 crate::state::SidebarPanelState {
+                    home: 1,
                     tabs: vec![SidebarTabId::new("panes"), command_id.clone()],
                     active_tab: Some(SidebarTabId::new("panes")),
                     ..Default::default()
@@ -2192,36 +2122,40 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
     on_test_thread(|| {
         let _config = crate::test_support::lock_config_file();
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Activity, SidebarTab::Panes]);
-        assert_eq!(backend.state().sidebar.panels.len(), 2, "two panels");
+        assert_eq!(
+            backend.state().config.sidebar.layout.left.panel_count,
+            2,
+            "two panels"
+        );
         let ctrl_shift = KeyMods {
             ctrl: true,
             shift: true,
             ..KeyMods::NONE
         };
 
-        let width = backend.state().config.sidebar.width;
+        let width = backend.state().config.sidebar.layout.left.width;
         send_sidebar_key(&mut backend, KeyCode::Char('L'), KeyMods::SHIFT);
         assert_eq!(
-            backend.state().config.sidebar.width,
+            backend.state().config.sidebar.layout.left.width,
             width + 2,
             "Shift+l widens"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('H'), KeyMods::SHIFT);
         assert_eq!(
-            backend.state().config.sidebar.width,
+            backend.state().config.sidebar.layout.left.width,
             width,
             "Shift+h narrows"
         );
 
-        let ratio = backend.state().config.sidebar.split_ratio;
+        let ratio = backend.state().config.sidebar.layout.left.panels[0].weight;
         send_sidebar_key(&mut backend, KeyCode::Char('J'), KeyMods::SHIFT);
         assert!(
-            backend.state().config.sidebar.split_ratio > ratio,
+            backend.state().config.sidebar.layout.left.panels[0].weight > ratio,
             "Shift+j moves the split down"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('K'), KeyMods::SHIFT);
         assert!(
-            (backend.state().config.sidebar.split_ratio - ratio).abs() < 0.001,
+            (backend.state().config.sidebar.layout.left.panels[0].weight - ratio).abs() < 0.001,
             "Shift+k moves it back"
         );
 

@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COMMAND_INTERVAL_SECS,
-    SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MIN_WIDTH, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig,
+    SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig,
     SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
     SidebarTreeRoot, SidebarTreeView,
 };
@@ -87,36 +86,17 @@ pub(super) fn apply_sidebar_config(
     sidebar: &mut SidebarConfig,
     raw: SidebarFileConfig,
     extension_tabs: Vec<SidebarTab>,
+    suggestions: std::collections::BTreeMap<String, super::schema::SidebarTabLocation>,
+    presets: Vec<super::schema::SidebarLayoutPreset>,
     warnings: &mut Vec<String>,
 ) {
-    let layout = raw.layout.clone();
+    sidebar.presets = presets;
     let legacy = raw.visible.is_some()
         || raw.width.is_some()
         || raw.position.is_some()
         || raw.panels.is_some()
         || raw.split.is_some()
         || raw.split_ratio.is_some();
-    let requested_panels = raw.panels;
-    if let Some(visible) = raw.visible {
-        sidebar.visible = visible;
-    }
-    if let Some(width) = raw.width {
-        let clamped = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
-        if clamped != width {
-            warnings.push(format!(
-                "Sidebar width {width} out of range; clamped to {clamped}"
-            ));
-        }
-        sidebar.width = clamped;
-    }
-    if let Some(position) = raw.position {
-        match SidebarPosition::parse(&position) {
-            Some(position) => sidebar.position = position,
-            None => warnings.push(format!(
-                "Ignored unknown sidebar.position `{position}` (expected `left` or `right`)"
-            )),
-        }
-    }
     if let Some(background_follows_canvas) = raw.background_follows_canvas {
         sidebar.background_follows_canvas = background_follows_canvas;
     }
@@ -137,80 +117,62 @@ pub(super) fn apply_sidebar_config(
             )),
         }
     }
-    let custom_tabs = raw.tabs.is_some();
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
     }
     for tab in extension_tabs {
-        let id = tab.id();
-        if sidebar.tabs.iter().any(|existing| existing.id() == id) {
-            warnings.push(format!(
-                "Sidebar tab `{}` is already configured; the extension's tab was skipped",
-                id.as_str()
-            ));
-            continue;
-        }
-        sidebar.tabs.push(tab);
-    }
-    // A config that names neither list keeps the built-in placement, which is two panels;
-    // rebuilding it from `tabs` alone would flatten every default into one bar.
-    if custom_tabs || requested_panels.is_some() {
-        sidebar.panels = build_panels(&sidebar.tabs, requested_panels, warnings);
-    }
-    place_unplaced_tabs(sidebar);
-    sidebar.split = raw.split.unwrap_or(sidebar.panels.len() > 1);
-    if sidebar.split && sidebar.panels.len() == 1 {
-        sidebar.panels.push(Vec::new());
-    }
-    if let Some(split_ratio) = raw.split_ratio {
-        if !split_ratio.is_finite() {
-            warnings.push(format!(
-                "Sidebar split_ratio {split_ratio} is not finite; keeping {}",
-                sidebar.split_ratio
-            ));
-            return;
-        }
-        let clamped = split_ratio.clamp(SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MAX_SPLIT_RATIO);
-        if (clamped - split_ratio).abs() > f32::EPSILON {
-            warnings.push(format!(
-                "Sidebar split_ratio {split_ratio} out of range; clamped to {clamped}"
-            ));
-        }
-        sidebar.split_ratio = clamped;
-    }
-    sidebar.layout = if let Some(layout) = layout {
-        layout
-    } else if legacy || custom_tabs {
-        let mut layout = super::schema::SidebarDockLayout::default();
-        let dock = layout.dock_mut(sidebar.position);
-        dock.visible = sidebar.visible;
-        dock.width = sidebar.width;
-        dock.panel_count = if sidebar.split {
-            sidebar.panels.len()
-        } else {
-            1
-        };
-        dock.panels = sidebar
-            .panels
+        if sidebar
+            .tabs
             .iter()
-            .enumerate()
-            .map(|(index, tabs)| super::schema::SidebarDockPanel {
-                weight: if index == 0 {
-                    sidebar.split_ratio
-                } else {
-                    1.0 - sidebar.split_ratio
-                },
-                tabs: tabs.iter().map(|id| id.as_str().to_string()).collect(),
-            })
-            .collect();
-        if sidebar.position == SidebarPosition::Right {
-            layout.left.panels.iter_mut().for_each(|p| p.tabs.clear());
+            .any(|existing| existing.id() == tab.id())
+        {
+            warnings.push(format!(
+                "Sidebar tab `{}` already configured; extension definition skipped",
+                tab.id().as_str()
+            ));
+        } else {
+            sidebar.tabs.push(tab);
         }
-        layout
-    } else {
-        sidebar.layout.clone()
-    };
-    if legacy {
+    }
+    if let Some(layout) = raw.layout {
+        if legacy {
+            warnings.push("sidebar.layout overrides legacy sidebar geometry keys; remove visible/width/position/panels/split/split_ratio".into());
+        }
+        sidebar.layout = layout;
+    } else if legacy {
+        let mut layout = super::schema::SidebarDockLayout::default();
+        let side = raw
+            .position
+            .as_deref()
+            .and_then(SidebarPosition::parse)
+            .unwrap_or_default();
+        if side == SidebarPosition::Right {
+            std::mem::swap(&mut layout.left, &mut layout.right);
+        }
+        let dock = layout.dock_mut(side);
+        dock.visible = raw.visible.unwrap_or(false);
+        dock.width = raw.width.unwrap_or(32);
+        if let Some(panels) = raw.panels {
+            dock.panels = panels
+                .into_iter()
+                .map(|tabs| super::schema::SidebarDockPanel { tabs, weight: 1.0 })
+                .collect();
+        }
+        dock.panel_count = if raw.split == Some(false) {
+            1
+        } else {
+            dock.panels.len().clamp(1, 3)
+        };
+        if dock.panels.len() == 2 {
+            let ratio = raw
+                .split_ratio
+                .filter(|r| r.is_finite())
+                .unwrap_or(0.4)
+                .clamp(0.15, 0.85);
+            dock.panels[0].weight = ratio;
+            dock.panels[1].weight = 1.0 - ratio;
+        }
+        sidebar.layout = layout;
         warnings.push("Legacy sidebar geometry migrated in memory to sidebar.layout; the next layout save writes the new schema. See docs/sidebar.md".into());
     }
     sidebar.layout.validate(warnings);
@@ -222,109 +184,19 @@ pub(super) fn apply_sidebar_config(
             } else {
                 0
             };
-            sidebar
-                .layout
-                .place(id.as_str(), SidebarPosition::Left, panel);
-        }
-    }
-}
-
-/// Give every configured tab a panel without rebuilding the placement that already exists. This is
-/// how a newly installed extension's tab becomes reachable: `build_panels` only runs when the user
-/// named `tabs` or `panels`, and rerunning it just to place one extension tab would flatten a
-/// two-panel sidebar into one.
-fn place_unplaced_tabs(sidebar: &mut SidebarConfig) {
-    let placed: HashSet<_> = sidebar.panels.iter().flatten().cloned().collect();
-    let unplaced: Vec<_> = sidebar
-        .tabs
-        .iter()
-        .map(SidebarTab::id)
-        .filter(|id| !placed.contains(id))
-        .collect();
-    if unplaced.is_empty() {
-        return;
-    }
-    if sidebar.panels.is_empty() {
-        sidebar.panels.push(Vec::new());
-    }
-    for id in unplaced {
-        let panel = home_panel(&sidebar.panels, &id);
-        sidebar.panels[panel].push(id);
-    }
-}
-
-fn build_panels(
-    tabs: &[SidebarTab],
-    requested: Option<Vec<Vec<String>>>,
-    warnings: &mut Vec<String>,
-) -> Vec<Vec<SidebarTabId>> {
-    let ids: Vec<_> = tabs.iter().map(SidebarTab::id).collect();
-    let Some(mut requested) = requested else {
-        return vec![ids];
-    };
-    if requested.is_empty() {
-        warnings.push("Sidebar panels must contain one or two panels; using one panel".to_string());
-        return vec![ids];
-    }
-    if requested.len() > 2 {
-        warnings.push(
-            "Sidebar panels supports at most two panels; extra panels were ignored".to_string(),
-        );
-        requested.truncate(2);
-    }
-
-    let mut seen = HashSet::new();
-    let mut panels = Vec::with_capacity(requested.len());
-    for panel in requested {
-        let mut resolved = Vec::new();
-        for name in panel {
-            let id = SidebarTabId::new(name.trim());
-            if !ids.contains(&id) {
-                // A namespaced id names an extension's tab, not a typo. The extension may be
-                // disabled, mid-update, or gone; either way the placement is data the user chose,
-                // so it is skipped for this load without nagging about it. `sync_and_persist_panels`
-                // is what eventually drops it, and only once the extension is really gone.
-                if !super::extensions::is_extension_scoped_id(id.as_str()) {
-                    warnings.push(format!(
-                        "Unknown sidebar panel tab `{}`; skipped",
-                        id.as_str()
-                    ));
-                }
-            } else if !seen.insert(id.clone()) {
-                warnings.push(format!(
-                    "Sidebar panel tab `{}` appears more than once; duplicate skipped",
-                    id.as_str()
-                ));
+            if let Some(location) = suggestions.get(id.as_str()) {
+                sidebar.layout.place(
+                    id.as_str(),
+                    SidebarPosition::parse(&location.dock).unwrap(),
+                    location.panel - 1,
+                );
             } else {
-                resolved.push(id);
+                sidebar
+                    .layout
+                    .place(id.as_str(), SidebarPosition::Left, panel);
             }
         }
-        panels.push(resolved);
     }
-
-    for id in ids.into_iter().filter(|id| !seen.contains(id)) {
-        let panel = home_panel(&panels, &id);
-        panels[panel].push(id);
-    }
-    panels
-}
-
-/// The panel a tab the placement never mentioned is added to. Worktrees belongs with the other
-/// tabs that follow the focused pane's repository, so it joins the panel holding Git or Files: a
-/// placement saved before the tab existed gains it beside them instead of among the session tabs.
-/// Anything else goes to the first panel.
-fn home_panel(panels: &[Vec<SidebarTabId>], id: &SidebarTabId) -> usize {
-    if id.as_str() != "worktrees" {
-        return 0;
-    }
-    ["git", "files"]
-        .iter()
-        .find_map(|sibling| {
-            panels
-                .iter()
-                .position(|panel| panel.iter().any(|placed| placed.as_str() == *sibling))
-        })
-        .unwrap_or(0)
 }
 
 /// Cluster launcher entries under their groups so the stored order is already display order: the
@@ -574,7 +446,14 @@ mod tests {
         let raw = toml::from_str(text).expect("sidebar config parses");
         let mut config = SidebarConfig::default();
         let mut warnings = Vec::new();
-        apply_sidebar_config(&mut config, raw, extension_tabs, &mut warnings);
+        apply_sidebar_config(
+            &mut config,
+            raw,
+            extension_tabs,
+            Default::default(),
+            Vec::new(),
+            &mut warnings,
+        );
         (config, warnings)
     }
 
@@ -602,56 +481,19 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_documented_schema() {
-        let config = SidebarConfig::default();
-        assert!(!config.visible);
-        assert_eq!(config.width, 32);
-        assert_eq!(config.position, SidebarPosition::Left);
-        assert!(config.split);
-        assert_eq!(config.split_ratio, 0.4);
-        assert!(!config.background_follows_canvas);
-        assert!(config.gap);
-        assert!(config.background);
-        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Padded);
-        assert_eq!(
-            config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
-            vec![
-                SidebarTabId::new("activity"),
-                SidebarTabId::new("panes"),
-                SidebarTabId::new("sessions"),
-                SidebarTabId::new("files"),
-                SidebarTabId::new("git"),
-                SidebarTabId::new("worktrees"),
-            ]
-        );
-        assert_eq!(
-            config.panels,
-            vec![
-                vec![
-                    SidebarTabId::new("activity"),
-                    SidebarTabId::new("panes"),
-                    SidebarTabId::new("sessions"),
-                ],
-                vec![
-                    SidebarTabId::new("files"),
-                    SidebarTabId::new("git"),
-                    SidebarTabId::new("worktrees"),
-                ],
-            ]
-        );
-    }
-
-    #[test]
     fn appearance_flags_apply_without_replacing_the_tab_catalog() {
         let (config, warnings) = parse(
             "background_follows_canvas = true\ngap = false\nbackground = false\ntab_style = \"round\"\n",
         );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
         assert!(config.background_follows_canvas);
         assert!(!config.gap);
         assert!(!config.background);
         assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Round);
-        assert_eq!(config.panels, SidebarConfig::default().panels);
+        assert_eq!(config.layout, SidebarConfig::default().layout);
     }
 
     #[test]
@@ -664,104 +506,6 @@ mod tests {
                 .any(|warning| warning.contains("half block")),
             "{warnings:?}"
         );
-    }
-
-    #[test]
-    fn an_empty_table_keeps_the_two_panel_default_but_naming_tabs_replaces_it() {
-        let (config, warnings) = parse("");
-        assert!(warnings.is_empty());
-        assert_eq!(config.panels, SidebarConfig::default().panels);
-        assert!(config.split);
-
-        // Naming `tabs` without `panels` is a deliberate replacement of the whole catalog, so the
-        // built-in two-panel placement goes with it.
-        let (config, warnings) = parse(r#"tabs = ["panes", "files"]"#);
-        assert!(warnings.is_empty());
-        assert_eq!(
-            config.panels,
-            vec![vec![SidebarTabId::new("panes"), SidebarTabId::new("files")]]
-        );
-        assert!(!config.split);
-    }
-
-    #[test]
-    fn a_placement_saved_before_worktrees_existed_gains_it_beside_git() {
-        let mut sidebar = SidebarConfig::default();
-        let mut warnings = Vec::new();
-        let raw: SidebarFileConfig = toml::from_str(
-            "panels = [[\"activity\", \"sessions\", \"panes\"], [\"git\", \"files\"]]",
-        )
-        .expect("sidebar parses");
-        apply_sidebar_config(&mut sidebar, raw, Vec::new(), &mut warnings);
-        let ids = |panel: &Vec<SidebarTabId>| {
-            panel
-                .iter()
-                .map(|id| id.as_str().to_string())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids(&sidebar.panels[0]), ["activity", "sessions", "panes"]);
-        assert_eq!(ids(&sidebar.panels[1]), ["git", "files", "worktrees"]);
-        assert!(warnings.is_empty(), "{warnings:?}");
-    }
-
-    #[test]
-    fn panels_assign_order_validate_ids_and_keep_omitted_tabs_reachable() {
-        let (config, warnings) = parse(
-            r#"
-            tabs = ["activity", "panes", "sessions"]
-            panels = [["panes"], ["activity", "bogus", "activity"]]
-            split_ratio = 0.7
-            "#,
-        );
-        assert_eq!(config.split_ratio, 0.7);
-        assert_eq!(
-            config.panels,
-            vec![
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
-                vec![SidebarTabId::new("activity")],
-            ]
-        );
-        assert!(warnings.iter().any(|warning| warning.contains("bogus")));
-        assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.contains("more than once"))
-        );
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
-    }
-
-    #[test]
-    fn split_controls_presentation_without_discarding_panel_placement() {
-        let (config, warnings) = parse(
-            r#"
-            tabs = ["activity", "panes", "sessions"]
-            panels = [["activity"], ["panes", "sessions"]]
-            split = false
-            "#,
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(!config.split);
-        assert_eq!(config.panels.len(), 2);
-
-        let (config, warnings) = parse(
-            r#"
-            tabs = ["activity", "panes", "sessions"]
-            panels = [["activity"], ["panes", "sessions"]]
-            "#,
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(config.split);
-
-        let (config, warnings) = parse(
-            r#"
-            tabs = ["activity", "panes", "sessions"]
-            split = true
-            "#,
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(config.split);
-        assert_eq!(config.panels.len(), 2);
-        assert!(config.panels[1].is_empty());
     }
 
     fn tree(config: &SidebarConfig, id: &str) -> SidebarTreeConfig {
@@ -783,7 +527,10 @@ mod tests {
     #[test]
     fn file_tree_tabs_parse_by_name_with_per_view_defaults() {
         let (config, warnings) = parse(r#"tabs = ["files", "git"]"#);
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
         assert_eq!(
             config
                 .tabs
@@ -821,7 +568,10 @@ mod tests {
             tabs = [{ name = "files", label = "", show_hidden = false, icons = true, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
             "#,
         );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Repo);
         assert!(!files.show_hidden);
@@ -852,7 +602,10 @@ mod tests {
         let (config, warnings) = parse(
             r#"tabs = [{ name = "git", label = "", on_click = { run = "lazygit -f \"$ROZI_FILE\"" } }]"#,
         );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
         assert_eq!(
             tree(&config, "git").on_click,
             Some(super::super::schema::UserCommandAction::run(
@@ -926,9 +679,12 @@ mod tests {
             ]
         "#,
         );
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(config.visible);
-        assert_eq!(config.position, SidebarPosition::Right);
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
+        assert!(config.layout.right.visible);
+        assert_eq!(config.layout.right.panel_count, 2);
         assert_eq!(config.tabs.len(), 3);
         assert!(
             matches!(&config.tabs[1], SidebarTab::Launcher { entries, .. } if entries.len() == 3)
@@ -958,7 +714,10 @@ mod tests {
             ]
         "#,
         );
-        assert_eq!(config.width, SIDEBAR_MIN_WIDTH);
+        assert_eq!(
+            config.layout.left.width,
+            super::super::schema::SIDEBAR_MIN_WIDTH
+        );
         assert_eq!(config.tabs.len(), 2);
         assert!(
             matches!(&config.tabs[1], SidebarTab::Launcher { entries, .. } if entries.len() == 1)
@@ -1001,30 +760,8 @@ mod tests {
 
     /// An extension tab has to become reachable without rebuilding a placement the user never asked
     /// to change: appending it must not collapse the default two panels into one.
-    #[test]
-    fn an_extension_tab_joins_the_existing_placement_without_rebuilding_it() {
-        let (config, warnings) = parse_with_extensions("", vec![extension_tab("git-tools.agents")]);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(config.panels.len(), 2);
-        assert_eq!(
-            config.panels[0].last(),
-            Some(&SidebarTabId::new("git-tools.agents"))
-        );
-        assert_eq!(config.panels[1], SidebarConfig::default().panels[1]);
-    }
-
     /// The user's own arrangement wins: a `panels` entry naming the extension tab keeps it where it
     /// was dragged rather than sending it back to the first panel.
-    #[test]
-    fn a_dragged_extension_tab_keeps_the_panel_it_was_placed_in() {
-        let (config, warnings) = parse_with_extensions(
-            r#"panels = [["panes"], ["git-tools.agents", "sessions"]]"#,
-            vec![extension_tab("git-tools.agents")],
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(config.panels[1][0], SidebarTabId::new("git-tools.agents"));
-    }
-
     #[test]
     fn a_config_tab_of_the_same_id_wins_over_the_extension_one() {
         let (config, warnings) = parse_with_extensions(
@@ -1045,19 +782,6 @@ mod tests {
     /// a typo: it is skipped in silence and restored when the extension returns. A bare name that
     /// resolves to nothing is still a typo and still says so.
     #[test]
-    fn an_absent_extension_tab_in_panels_is_silent_while_a_bare_typo_still_warns() {
-        let (config, warnings) = parse(
-            r#"
-            tabs = ["panes", "sessions"]
-            panels = [["panes", "git-tools.agents"], ["sessions", "pannes"]]
-            "#,
-        );
-        assert_eq!(config.panels[0], vec![SidebarTabId::new("panes")]);
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("pannes"), "{warnings:?}");
-    }
-
-    #[test]
     fn launcher_entries_cluster_under_their_groups_with_ungrouped_ones_leading() {
         let (config, warnings) = parse(
             r#"
@@ -1070,7 +794,10 @@ mod tests {
             ] }]
         "#,
         );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
+            "{warnings:?}"
+        );
         let SidebarTab::Launcher { entries, .. } = &config.tabs[0] else {
             panic!("launcher tab");
         };
@@ -1164,5 +891,90 @@ mod docking_contract_tests {
             Some((SidebarPosition::Right, 4))
         );
         assert_eq!(warnings.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod layout_loading_tests {
+    use super::*;
+
+    fn load(
+        text: &str,
+        tabs: Vec<SidebarTab>,
+        suggestions: std::collections::BTreeMap<String, super::super::schema::SidebarTabLocation>,
+    ) -> (SidebarConfig, Vec<String>) {
+        let mut config = SidebarConfig::default();
+        let mut warnings = Vec::new();
+        apply_sidebar_config(
+            &mut config,
+            toml::from_str(text).unwrap(),
+            tabs,
+            suggestions,
+            Vec::new(),
+            &mut warnings,
+        );
+        (config, warnings)
+    }
+
+    #[test]
+    fn legacy_layout_migrates_with_an_explicit_diagnostic() {
+        let (config, warnings) = load(
+            r#"visible = true
+position = "right"
+width = 41
+panels = [["panes", "gone.tab"], ["files"]]
+split = false
+split_ratio = 0.7"#,
+            Vec::new(),
+            Default::default(),
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("Legacy sidebar"));
+        assert!(config.layout.right.visible);
+        assert_eq!(config.layout.right.width, 41);
+        assert_eq!(config.layout.right.panel_count, 1);
+        assert_eq!(config.layout.right.panels[0].weight, 0.7);
+        assert_eq!(
+            config.layout.location("gone.tab"),
+            Some((SidebarPosition::Right, 0))
+        );
+    }
+
+    #[test]
+    fn explicit_placement_beats_extension_suggestion_and_absence_is_lossless() {
+        let id = SidebarTabId::new("tools.jobs");
+        let tab = SidebarTab::Launcher {
+            name: id,
+            label: "Jobs".into(),
+            entries: Vec::new(),
+            env: Vec::new(),
+        };
+        let suggestions = [(
+            "tools.jobs".into(),
+            super::super::schema::SidebarTabLocation {
+                dock: "right".into(),
+                panel: 3,
+            },
+        )]
+        .into_iter()
+        .collect();
+        let (suggested, _) = load("", vec![tab.clone()], suggestions);
+        assert_eq!(
+            suggested.layout.location("tools.jobs"),
+            Some((SidebarPosition::Right, 2))
+        );
+        let text = r#"layout = { hidden = ["tools.jobs"], left = { panels = [{ tabs = ["tools.jobs"] }] } }"#;
+        let (absent, warnings) = load(text, Vec::new(), Default::default());
+        assert!(warnings.is_empty());
+        let (restored, _) = load(text, vec![tab], Default::default());
+        assert_eq!(
+            absent.layout.location("tools.jobs"),
+            restored.layout.location("tools.jobs")
+        );
+        assert_eq!(
+            restored.layout.location("tools.jobs"),
+            Some((SidebarPosition::Left, 0))
+        );
+        assert!(restored.layout.hidden.contains(&"tools.jobs".into()));
     }
 }

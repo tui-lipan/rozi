@@ -18,18 +18,17 @@ pub(crate) fn sessions_active(ctx: &Context<AppRoot>) -> bool {
     ctx.state.sidebar_visible
         && ctx
             .state
-            .sidebar
-            .active_tabs()
+            .visible_sidebar_tabs()
             .any(|id| id.as_str() == "sessions")
 }
 
 pub(crate) fn command_active(ctx: &Context<AppRoot>, id: &SidebarTabId) -> bool {
-    ctx.state.sidebar_visible && ctx.state.sidebar.active_tabs().any(|active| active == id)
+    ctx.state.sidebar_visible && ctx.state.visible_sidebar_tabs().any(|active| active == id)
 }
 
 pub(crate) fn tree_active(ctx: &Context<AppRoot>) -> bool {
     ctx.state.sidebar_visible
-        && ctx.state.sidebar.active_tabs().any(|id| {
+        && ctx.state.visible_sidebar_tabs().any(|id| {
             ctx.state
                 .config
                 .sidebar
@@ -84,19 +83,25 @@ pub(crate) fn command_group_prefix(ctx: &Context<AppRoot>, id: &SidebarTabId) ->
         })
 }
 
-pub(crate) fn request_command_poll(ctx: &Context<AppRoot>) {
+pub(crate) fn request_command_poll(ctx: &mut Context<AppRoot>) {
     if !ctx.state.sidebar_visible {
         return;
     }
-    let Some(link) = ctx.state.command_link.as_ref() else {
+    let Some(link) = ctx.state.command_link.clone() else {
         return;
     };
-    for tab_id in ctx.state.sidebar.active_tabs().cloned() {
-        if command_tab(ctx, &tab_id).is_some() {
-            link.send(crate::Msg::SidebarCommandPoll {
-                epoch: ctx.state.sidebar.command_epoch,
-                tab_id,
-            });
+    let epoch = ctx.state.sidebar.command_epoch;
+    let ids: Vec<_> = ctx.state.visible_sidebar_tabs().cloned().collect();
+    for tab_id in ids {
+        if command_tab(ctx, &tab_id).is_some()
+            && ctx.state.sidebar.command_poll_scheduled.get(&tab_id) != Some(&epoch)
+            && ctx.state.sidebar.command_in_flight.get(&tab_id) != Some(&epoch)
+        {
+            ctx.state
+                .sidebar
+                .command_poll_scheduled
+                .insert(tab_id.clone(), epoch);
+            link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
         }
     }
 }
@@ -137,6 +142,9 @@ pub(crate) fn agent_tick(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: SidebarTabId) -> Update {
+    if ctx.state.sidebar.command_poll_scheduled.get(&tab_id) == Some(&epoch) {
+        ctx.state.sidebar.command_poll_scheduled.remove(&tab_id);
+    }
     if epoch != ctx.state.sidebar.command_epoch || !command_active(ctx, &tab_id) {
         return Update::none();
     }
@@ -144,7 +152,14 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
         return Update::none();
     };
     let placed = crate::ops::placement::placed_tab(&ctx.state, &tab_id);
+    if ctx.state.sidebar.command_in_flight.get(&tab_id) == Some(&epoch) {
+        return Update::none();
+    }
     if ctx.state.sidebar.command_in_flight.contains_key(&tab_id) {
+        ctx.state
+            .sidebar
+            .command_poll_scheduled
+            .insert(tab_id.clone(), epoch);
         return Update::command_only(Command::after(
             COMMAND_BUSY_RETRY,
             move |link: CommandLink<crate::Msg>| {
@@ -230,6 +245,10 @@ pub(crate) fn command_output(
             },
         );
     }
+    ctx.state
+        .sidebar
+        .command_poll_scheduled
+        .insert(tab_id.clone(), epoch);
     let command = Command::after(
         std::time::Duration::from_secs(interval_secs),
         move |link: CommandLink<crate::Msg>| {

@@ -454,7 +454,15 @@ fn execute_action_inner(
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
-        Action::ToggleSidebarPosition => crate::ops::preferences::toggle_sidebar_position(ctx),
+        Action::ToggleLeftSidebar => {
+            crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Left)
+        }
+        Action::ToggleRightSidebar => {
+            crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Right)
+        }
+        Action::ManageSidebarTabs => crate::update::sidebar::open_manager(ctx),
+        Action::SidebarOtherDock => crate::update::sidebar::other_dock(ctx, false),
+        Action::SidebarMoveToOtherDock => crate::update::sidebar::other_dock(ctx, true),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsCanvas => {
@@ -834,7 +842,7 @@ mod tests {
                     .expect("toggle controller sidebar");
                 assert!(backend.state().sidebar_visible);
                 // Toggling is client-local: it must not write the config default back.
-                assert!(!backend.state().config.sidebar.visible);
+                assert!(!backend.state().config.sidebar.layout.left.visible);
                 assert_eq!(
                     backend
                         .state()

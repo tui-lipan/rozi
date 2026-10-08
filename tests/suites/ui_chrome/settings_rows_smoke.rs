@@ -323,7 +323,15 @@ fn settings_all_keeps_every_control_available() {
         setting_row(workbar, "Style");
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
-        setting_row(sidebar, "Position");
+        for label in [
+            "Left dock",
+            "Right dock",
+            "Left panels",
+            "Right panels",
+            "Manage Sidebar Tabs",
+        ] {
+            setting_row(sidebar, label);
+        }
         setting_row(sidebar, "Background follows canvas");
         setting_row(sidebar, "Gap");
         setting_row(sidebar, "Tab style");
@@ -496,7 +504,8 @@ fn settings_reports_sidebar_values() {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
-            state.config.sidebar.position = rozi::config::SidebarPosition::Right;
+            state.sidebar.dock_visible = [false, true];
+            state.sidebar_visible = true;
             state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
@@ -510,7 +519,7 @@ fn settings_reports_sidebar_values() {
         );
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         assert!(
-            setting_row(sidebar, "Position").contains("Right"),
+            setting_row(sidebar, "Right dock").contains("Enabled"),
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(
@@ -1134,7 +1143,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
         for (tab, count, expected) in [
             (SettingsTab::General, 19, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
-            (SettingsTab::Bars, 12, "Position"),
+            (SettingsTab::Bars, 16, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
             (SettingsTab::Sessions, 6, "Open Sessions on"),
         ] {

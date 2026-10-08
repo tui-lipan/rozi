@@ -554,18 +554,45 @@ fn s_toggles_sidebar_split_while_focused() {
             settle(&mut backend);
 
             // The default sidebar is already split, so the first press collapses it.
-            assert!(backend.state().config.sidebar.split);
-            assert_eq!(backend.state().sidebar.panels.len(), 2);
+            assert!((backend.state().config.sidebar.layout.left.panel_count > 1));
+            assert_eq!(
+                backend
+                    .state()
+                    .sidebar
+                    .panels
+                    .iter()
+                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
+                    .count(),
+                2
+            );
 
             let _ = backend.send_key(key(KeyCode::Char('s')));
             settle(&mut backend);
-            assert!(!backend.state().config.sidebar.split);
-            assert_eq!(backend.state().sidebar.panels.len(), 1);
+            assert!(!(backend.state().config.sidebar.layout.left.panel_count > 1));
+            assert_eq!(
+                backend
+                    .state()
+                    .sidebar
+                    .panels
+                    .iter()
+                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
+                    .count(),
+                1
+            );
 
             let _ = backend.send_key(key(KeyCode::Char('s')));
             settle(&mut backend);
-            assert!(backend.state().config.sidebar.split);
-            assert_eq!(backend.state().sidebar.panels.len(), 2);
+            assert!((backend.state().config.sidebar.layout.left.panel_count > 1));
+            assert_eq!(
+                backend
+                    .state()
+                    .sidebar
+                    .panels
+                    .iter()
+                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
+                    .count(),
+                2
+            );
         })
         .expect("spawn focused split thread")
         .join()
@@ -587,6 +614,7 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
                         ..Default::default()
                     },
                     rozi::state::SidebarPanelState {
+                        home: 1,
                         tabs: vec![SidebarTabId::new("activity")],
                         active_tab: Some(SidebarTabId::new("activity")),
                         ..Default::default()

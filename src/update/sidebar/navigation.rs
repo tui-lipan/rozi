@@ -14,14 +14,27 @@ pub(crate) fn refocus_body(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
+    ctx.state.sidebar.width_drag_side = None;
     // Hiding the sidebar unmounts the body, so hand the keyboard back before it disappears rather
     // than leaving focus on a widget that is about to stop existing.
-    if !ctx.state.sidebar_visible && ctx.state.sidebar.focused {
-        ctx.state.sidebar.focused = false;
-        release_focus(ctx);
+    if !ctx
+        .state
+        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
+    {
+        if let Some(index) =
+            (0..ctx.state.sidebar.panels.len()).find(|i| ctx.state.sidebar_panel_visible(*i))
+        {
+            ctx.state.sidebar.active_panel = index;
+            refocus_body(ctx);
+        } else if ctx.state.sidebar.focused {
+            ctx.state.sidebar.focused = false;
+            release_focus(ctx);
+        }
     }
     if !ctx.state.sidebar_visible {
         ctx.state.sidebar.width_preview = None;
+        ctx.state.sidebar.right_width_preview = None;
     }
     ctx.state.sidebar.invalidate_sessions();
     ctx.state.sidebar.invalidate_commands();
@@ -37,6 +50,9 @@ pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
         None
     } else {
         ctx.state.sidebar_visible = true;
+        if !ctx.state.sidebar.dock_visible.iter().any(|v| *v) {
+            ctx.state.sidebar.dock_visible[0] = true;
+        }
         visibility_changed(ctx).command
     };
     // Resolves after reconciliation, so requesting it in the same pass that reveals the sidebar is
@@ -100,6 +116,7 @@ pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
         return Update::none();
     }
     let panel = ctx.state.sidebar.active_panel;
+    ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
     ctx.state.sidebar.cycle(panel, forward);
     if let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) {
         panel.cursor = 0;
@@ -156,10 +173,26 @@ pub(crate) fn move_cursor_page(ctx: &mut Context<AppRoot>, down: bool) -> Update
 }
 
 pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
-    if ctx.state.sidebar.panels.len() < 2 {
+    let current = ctx.state.sidebar.active_panel;
+    let Some(panel) = ctx.state.sidebar.panels.get(current) else {
         return Update::none();
-    }
-    let next = if down { 1 } else { 0 };
+    };
+    let side = panel.dock;
+    let indices: Vec<_> = ctx
+        .state
+        .sidebar
+        .panels
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.dock == side)
+        .map(|(i, _)| i)
+        .collect();
+    let at = indices.iter().position(|i| *i == current).unwrap_or(0);
+    let next = indices[if down {
+        (at + 1).min(indices.len() - 1)
+    } else {
+        at.saturating_sub(1)
+    }];
     if ctx.state.sidebar.active_panel == next {
         return Update::none();
     }
@@ -195,14 +228,26 @@ pub(crate) fn reorder_active_tab(ctx: &mut Context<AppRoot>, right: bool) -> Upd
 }
 
 pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
-    if ctx.state.sidebar.panels.len() == 1 {
-        if !down {
-            return Update::none();
-        }
-        crate::update::sidebar::set_split_enabled(ctx, true);
-    }
     let from_panel = ctx.state.sidebar.active_panel;
-    let to_panel = if down { 1 } else { 0 };
+    let Some(panel) = ctx.state.sidebar.panels.get(from_panel) else {
+        return Update::none();
+    };
+    let side = panel.dock;
+    let home = panel.home;
+    let next_home = if down {
+        home + 1
+    } else {
+        home.saturating_sub(1)
+    };
+    let Some(to_panel) = ctx
+        .state
+        .sidebar
+        .panels
+        .iter()
+        .position(|p| p.dock == side && p.home == next_home)
+    else {
+        return Update::none();
+    };
     if from_panel == to_panel {
         return Update::none();
     }
@@ -224,6 +269,7 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -
     {
         return Update::none();
     }
+    ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
     ctx.state.sidebar.active_panel = to_panel;
     crate::update::sidebar::sync_and_persist_panels(ctx);
     let update = visibility_changed(ctx);
@@ -313,4 +359,31 @@ pub(crate) fn row_hover(
     // the row list is described the same way either side of the transition, one glyph aside, so
     // re-running the view and reconciling is enough without rebuilding the whole element tree.
     Update::layout()
+}
+
+pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
+    let side = super::active_side(ctx).toggled();
+    let index = usize::from(side == crate::config::SidebarPosition::Right);
+    ctx.state.sidebar.dock_visible[index] = true;
+    ctx.state.sidebar_visible = true;
+    let Some(target) = ctx.state.sidebar.panels.iter().position(|p| p.dock == side) else {
+        return Update::none();
+    };
+    if transfer {
+        if let Some(id) = ctx.state.sidebar.active_tab().cloned() {
+            ctx.state.config.sidebar.layout.place(id.as_str(), side, 0);
+            ctx.state
+                .sidebar
+                .apply_configured_panels(&ctx.state.config.sidebar);
+            ctx.state.sidebar.panels[target].active_tab = Some(id);
+            super::save_layout(ctx);
+        }
+    }
+    ctx.state.sidebar.active_panel = target;
+    let update = visibility_changed(ctx);
+    if !ctx.state.sidebar.focused {
+        ctx.state.sidebar.focused = true;
+    }
+    refocus_body(ctx);
+    update
 }

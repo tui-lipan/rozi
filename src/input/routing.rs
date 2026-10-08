@@ -144,9 +144,9 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     }
     if key.mods.ctrl {
         return match direction? {
+            Direction::Left | Direction::Right => Some(sidebar::other_dock(ctx, false)),
             Direction::Up => Some(sidebar::focus_panel(ctx, false)),
             Direction::Down => Some(sidebar::focus_panel(ctx, true)),
-            Direction::Left | Direction::Right => None,
         };
     }
     // `G` is Shift+g, so it falls through to the unmodified keys below rather than being taken here.

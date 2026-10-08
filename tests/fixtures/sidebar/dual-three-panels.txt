@@ -1,0 +1,24 @@
+ Left1                         │                                    │ Right1                        
+                               │                                    │                               
+ No launcher entries           │                                    │ No launcher entries           
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+───────────────────────────────┤                                    ├───────────────────────────────
+ Left2                         │                                    │ Right2                        
+                               │                                    │                               
+ No launcher entries           │                                    │ No launcher entries           
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+───────────────────────────────┤                                    ├───────────────────────────────
+ Left3                         │                                    │ Right3                        
+                               │                                    │                               
+ No launcher entries           │                                    │ No launcher entries           
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               
+                               │                                    │                               

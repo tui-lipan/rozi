@@ -1484,7 +1484,7 @@ mod tests {
             h: 12,
         });
         let state = backend.state_mut();
-        state.config.sidebar.visible = false;
+        state.config.sidebar.layout.left.visible = false;
         state.sidebar_visible = false;
         state.config.workbar.right = vec![
             crate::config::WorkbarItem {

@@ -345,7 +345,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.animations.sidebar = false;
-                state.config.sidebar.width = 34;
+                state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Changes,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Changes),
@@ -425,7 +425,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                     let state = backend.state_mut();
                     state.sidebar_visible = true;
                     state.config.animations.sidebar = false;
-                    state.config.sidebar.width = 34;
+                    state.config.sidebar.layout.left.width = 34;
                     state.sidebar.panels[0].tabs = vec![tab.id()];
                     state.sidebar.panels[0].active_tab = Some(tab.id());
                     state.config.sidebar.tabs = vec![tab];
@@ -557,7 +557,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.animations.sidebar = false;
-                state.config.sidebar.width = 34;
+                state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
@@ -720,7 +720,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.animations.sidebar = false;
-                state.config.sidebar.width = 34;
+                state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
@@ -883,7 +883,7 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.animations.sidebar = false;
-                state.config.sidebar.width = 34;
+                state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Files),

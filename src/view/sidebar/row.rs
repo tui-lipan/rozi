@@ -394,14 +394,12 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
     let index = close.index;
     let style = super::super::fg_only(&ctx.state.theme.muted);
     let region: Element = MouseRegion::new()
-        .on_click(
-            ctx.link()
-                .callback(move |_| Msg::SidebarRowClose { panel, index }),
-        )
-        .on_mouse_move(
-            ctx.link()
-                .callback(move |_| Msg::SidebarPointerMoved(panel)),
-        )
+        .on_click(crate::view::sidebar::callback(ctx, move |_| {
+            Msg::SidebarRowClose { panel, index }
+        }))
+        .on_mouse_move(crate::view::sidebar::callback(ctx, move |_| {
+            Msg::SidebarPointerMoved(panel)
+        }))
         .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
             ctx.state.theme.status.error,
             1.0,

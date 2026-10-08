@@ -27,8 +27,8 @@ pub(super) fn tree_tab(
     let tab_id = crate::config::SidebarTabId::new(view.id());
     let toggle_tab_id = tab_id.clone();
     let config_epoch = ctx.state.sidebar.config_epoch;
-    let tree_focus_key = tree_focus_key(panel, view, &root);
-    let explorer_focus_key = format!("{}-explorer", tree_key(panel, view, &root));
+    let tree_focus_key = tree_focus_key(ctx, panel, view, &root);
+    let explorer_focus_key = format!("{}-explorer", tree_key(ctx, panel, view, &root));
 
     // The same highlight the composed row lists use, so the cursor means one thing across every tab.
     let selection = super::cursor_highlight(theme, fill);
@@ -73,7 +73,9 @@ pub(super) fn tree_tab(
         // acquiring focus, so `focus-sidebar` remains the deliberate way in.
         .focusable(true)
         .tab_stop(false)
-        .on_focus(ctx.link().callback(|_| Msg::SidebarTreeFocused))
+        .on_focus(crate::view::sidebar::callback(ctx, |_| {
+            Msg::SidebarTreeFocused
+        }))
         // Bare arrows and h/l expand or collapse; modified arrows remain available to the sidebar
         // for tab movement and resizing.
         .keymap(TreeKeymap::ARROWS | TreeKeymap::VIM | TreeKeymap::TOGGLE)
@@ -121,29 +123,30 @@ pub(super) fn tree_tab(
         // expands directories on its own, so filtering them here costs no expand behavior. The
         // widget stack has no double-click, so single-click-on-file is the activation gesture — safe
         // because the default action types the path without a newline and nothing runs on its own.
-        .on_activate(
-            ctx.link()
-                .callback(move |event: FileTreeEvent| Msg::SidebarTreeActivate {
-                    config_epoch,
-                    tab_id: tab_id.clone(),
-                    path: event.path.to_string(),
-                    is_dir: event.kind == FileKind::Directory,
-                }),
-        );
+        .on_activate(crate::view::sidebar::callback(
+            ctx,
+            move |event: FileTreeEvent| Msg::SidebarTreeActivate {
+                config_epoch,
+                tab_id: tab_id.clone(),
+                path: event.path.to_string(),
+                is_dir: event.kind == FileKind::Directory,
+            },
+        ));
 
     // Expansion is the app's to remember, because the widget's own cannot survive: the tab keys on
     // its root, so every pane in another directory remounts the tree from nothing. Recording each
     // toggle and seeding the next mount from it is what makes a re-rooted or reopened tab come back
     // the shape it was left in. The seed is only read on mount and on a root change, so writing to
     // it here never fights the expansion on screen.
-    tree =
-        tree.on_toggle(ctx.link().callback(move |event: FileTreeToggleEvent| {
-            Msg::SidebarTreeToggle {
+    tree = tree
+        .on_toggle(crate::view::sidebar::callback(
+            ctx,
+            move |event: FileTreeToggleEvent| Msg::SidebarTreeToggle {
                 tab_id: toggle_tab_id.clone(),
                 path: event.path.to_string(),
                 expanded: event.expanded,
-            }
-        }))
+            },
+        ))
         .initial_expanded_paths(remembered_expanded(ctx, view));
 
     if config.icons && ctx.state.config.nerd_icons {
@@ -158,11 +161,12 @@ pub(super) fn tree_tab(
             .entry_source(FileTreeEntrySource::provided(
                 ctx.state.sidebar.tree_listings.clone(),
             ))
-            .on_entry_request(ctx.link().callback(|request: FileTreeEntryRequest| {
-                Msg::SidebarTreeEntryRequest {
+            .on_entry_request(crate::view::sidebar::callback(
+                ctx,
+                |request: FileTreeEntryRequest| Msg::SidebarTreeEntryRequest {
                     path: request.path.to_string(),
-                }
-            }))
+                },
+            ))
             // Local git discovery would walk this client's filesystem using the *server's* paths,
             // so the Changes projection has to come from the server's own scan too.
             .change_source(FileTreeChangeSource::Provided(
@@ -180,15 +184,16 @@ pub(super) fn tree_tab(
             })
             .explorer_placeholder("Find files…")
             .explorer_match_style(super::super::fg_only(&theme.accent).bold())
-            .on_explorer_focus(
-                ctx.link()
-                    .callback(|origin| Msg::SidebarExplorerFocus(Some(origin))),
-            )
-            .on_explorer_blur(ctx.link().callback(|_| Msg::SidebarExplorerFocus(None)))
-            .on_explorer_escape(ctx.link().callback(|_| Msg::SidebarBlur));
+            .on_explorer_focus(crate::view::sidebar::callback(ctx, |origin| {
+                Msg::SidebarExplorerFocus(Some(origin))
+            }))
+            .on_explorer_blur(crate::view::sidebar::callback(ctx, |_| {
+                Msg::SidebarExplorerFocus(None)
+            }))
+            .on_explorer_escape(crate::view::sidebar::callback(ctx, |_| Msg::SidebarBlur));
     }
 
-    tree.key(tree_key(panel, view, &root))
+    tree.key(tree_key(ctx, panel, view, &root))
 }
 
 /// What the Changes tab says when it is showing nothing. A repo-less directory is worth naming —
@@ -228,16 +233,22 @@ fn remembered_expanded(ctx: &Context<AppRoot>, view: SidebarTreeView) -> Vec<Str
 /// directory's selection state. Expansion is not lost with it: the tab remembers what was open and
 /// seeds the new tree with it. Built here rather than inline so `focus-sidebar` can aim at the same
 /// key the view is about to render.
-pub(super) fn tree_key(panel: usize, view: SidebarTreeView, root: &str) -> String {
-    format!(
-        "{}-{panel}-{}-{root}",
-        crate::view::sidebar_body_key(),
-        view.id()
-    )
+pub(super) fn tree_key(
+    ctx: &Context<AppRoot>,
+    panel: usize,
+    view: SidebarTreeView,
+    root: &str,
+) -> String {
+    format!("{}-{}-{root}", super::body_key(ctx, panel), view.id())
 }
 
-pub(super) fn tree_focus_key(panel: usize, view: SidebarTreeView, root: &str) -> String {
-    format!("{}-tree", tree_key(panel, view, root))
+pub(super) fn tree_focus_key(
+    ctx: &Context<AppRoot>,
+    panel: usize,
+    view: SidebarTreeView,
+    root: &str,
+) -> String {
+    format!("{}-tree", tree_key(ctx, panel, view, root))
 }
 
 /// The directory a tab is rooted at, exposed so the focus key can be derived without rendering.

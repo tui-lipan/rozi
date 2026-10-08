@@ -238,6 +238,23 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SidebarTabSelected { panel, index } => sidebar::tab_selected(ctx, panel, index),
         Msg::SidebarTabReordered { panel, event } => sidebar::tab_reordered(ctx, panel, event),
         Msg::SidebarTabTransferred(event) => sidebar::tab_transferred(ctx, event),
+        Msg::SidebarUiEvent { epoch, event } => {
+            if epoch != ctx.state.sidebar.layout_epoch {
+                Update::none()
+            } else {
+                handle_msg_inner(_app, *event, ctx)
+            }
+        }
+        Msg::SidebarManagerPresets => {
+            ctx.state.sidebar_manager_presets = true;
+            ctx.request_focus("sidebar-manager-presets");
+            Update::full()
+        }
+        Msg::SidebarManagerBack => sidebar::manager_back(ctx),
+        Msg::SidebarManagerActivate(value) => sidebar::manager_activate(ctx, value),
+        Msg::SidebarDockPanelsResized { side, event } => {
+            sidebar::dock_panels_resized(ctx, side, event)
+        }
         Msg::SidebarPanelsResized(event) => sidebar::panels_resized(ctx, event),
         Msg::SidebarViewportChanged {
             panel,

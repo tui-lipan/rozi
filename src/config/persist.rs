@@ -588,8 +588,7 @@ pub fn persist_sidebar_layout(
         Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
     };
     // A malformed manual edit must never be overwritten by a preference save.
-    text.parse::<toml::Value>()
-        .map_err(|err| format!("Config is invalid: {err}"))?;
+    toml::from_str::<toml::Value>(&text).map_err(|err| format!("Config is invalid: {err}"))?;
     for key in [
         "visible",
         "width",
@@ -600,6 +599,7 @@ pub fn persist_sidebar_layout(
     ] {
         text = remove_value_in_section(&text, "sidebar", key);
     }
+    text = remove_layout_sections(&text);
     let value = toml::Value::try_from(layout)
         .map_err(|err| err.to_string())?
         .to_string();
@@ -608,16 +608,23 @@ pub fn persist_sidebar_layout(
     Ok(path)
 }
 
-pub fn persist_sidebar_width(width: u16) -> std::result::Result<PathBuf, String> {
-    persist_sidebar_value("width", &width.to_string())
-}
-
-pub fn persist_sidebar_split_ratio(ratio: f32) -> std::result::Result<PathBuf, String> {
-    persist_sidebar_value("split_ratio", &format!("{ratio:.3}"))
-}
-
-pub fn persist_sidebar_split(split: bool) -> std::result::Result<PathBuf, String> {
-    persist_sidebar_value("split", if split { "true" } else { "false" })
+fn remove_layout_sections(text: &str) -> String {
+    let mut skip = false;
+    let mut multiline = None;
+    let mut output = String::new();
+    for line in text.lines() {
+        if multiline.is_none()
+            && let Some(path) = table_header_path(line)
+        {
+            skip = path.starts_with(&["sidebar".into(), "layout".into()]);
+        }
+        let _ = toml_comment_with_multiline_state(line, &mut multiline);
+        if !skip {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    output
 }
 
 pub fn persist_sidebar_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
@@ -626,24 +633,6 @@ pub fn persist_sidebar_flag(key: &str, value: bool) -> std::result::Result<PathB
 
 pub fn persist_sidebar_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
     persist_sidebar_value(key, &format!("\"{value}\""))
-}
-
-pub fn persist_sidebar_panels(
-    panels: &[Vec<super::schema::SidebarTabId>],
-) -> std::result::Result<PathBuf, String> {
-    let value = panels
-        .iter()
-        .map(|panel| {
-            let tabs = panel
-                .iter()
-                .map(|id| toml::Value::String(id.as_str().to_string()).to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("[{tabs}]")
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    persist_sidebar_value("panels", &format!("[{value}]"))
 }
 
 fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
@@ -800,8 +789,15 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
     let mut saw_section = false;
     let mut wrote_key = false;
     let mut lines = text.lines().peekable();
+    let mut multiline = None;
 
     while let Some(line) = lines.next() {
+        if multiline.is_some() {
+            output.push_str(line);
+            output.push('\n');
+            let _ = toml_comment_with_multiline_state(line, &mut multiline);
+            continue;
+        }
         let trimmed = line.trim();
         if let Some(current) = table_header_path(trimmed) {
             if !saw_section && current.starts_with(&target) && current.len() > target.len() {
@@ -846,6 +842,7 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
             continue;
         }
 
+        let _ = toml_comment_with_multiline_state(line, &mut multiline);
         output.push_str(line);
         output.push('\n');
     }
@@ -876,8 +873,15 @@ fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
     let mut output = String::new();
     let mut in_section = false;
     let mut lines = text.lines().peekable();
+    let mut multiline = None;
 
     while let Some(line) = lines.next() {
+        if multiline.is_some() {
+            output.push_str(line);
+            output.push('\n');
+            let _ = toml_comment_with_multiline_state(line, &mut multiline);
+            continue;
+        }
         let trimmed = line.trim();
         if let Some(current) = table_header_path(trimmed) {
             in_section = current == target;
@@ -898,6 +902,7 @@ fn remove_value_in_section(text: &str, section: &str, key: &str) -> String {
             continue;
         }
 
+        let _ = toml_comment_with_multiline_state(line, &mut multiline);
         output.push_str(line);
         output.push('\n');
     }
@@ -1129,20 +1134,16 @@ mod sidebar_persistence_tests {
 
     #[test]
     fn panel_layout_replaces_the_complete_multiline_value() {
-        let source = format!(
-            "{}\n[workbar]\nright = [\"session\"]\n",
-            include_str!("../../examples/sidebar.toml")
-        );
+        let source = "[sidebar]\npanels = [\n [\"panes\"],\n [\"sessions\"],\n]\nsplit_ratio = 0.62\n[workbar]\nright = [\"session\"]\n";
         let updated = upsert_value_in_section(
-            &source,
+            source,
             "sidebar",
             "panels",
-            r#"[["agents", "panes", "files", "git"], ["dev", "branches", "sessions"]]"#,
+            r#"[["activity"], ["sessions"]]"#,
         );
-
         assert_eq!(updated.matches("panels =").count(), 1, "{updated}");
-        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
-        assert_eq!(parsed["sidebar"]["panels"][1][2].as_str(), Some("sessions"));
+        let parsed: toml::Value = toml::from_str(&updated).unwrap();
+        assert_eq!(parsed["sidebar"]["panels"][0][0].as_str(), Some("activity"));
         assert_eq!(parsed["sidebar"]["split_ratio"].as_float(), Some(0.62));
         assert_eq!(parsed["workbar"]["right"][0].as_str(), Some("session"));
     }
@@ -1910,5 +1911,69 @@ name = \"rozi\"
             updated,
             "[theme]\nname = \"my-nord\"\n\n[session]\nautosave = true\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod docking_persistence_tests {
+    use super::*;
+    use crate::config::{SidebarDockLayout, SidebarPosition};
+
+    #[test]
+    fn layout_round_trip_preserves_definitions_unrelated_tables_and_unavailable_ids() {
+        let _config = crate::test_support::lock_config_file();
+        let path = config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let source = r#"# custom definitions remain owned by the user
+[sidebar]
+tabs = [{ name = "jobs", label = "Jobs", command = '''printf '%s' '
+[sidebar.layout.right]
+' ''' }]
+width = 40
+split = false
+[sidebar.layout.left]
+visible = true
+panel_count = 1
+[[sidebar.layout.left.panels]]
+weight = 0.8
+tabs = ["jobs", "missing.tasks"]
+[keys]
+help = "?"
+[theme]
+name = "nord"
+"#;
+        let original: toml::Value = toml::from_str(source).unwrap();
+        fs::write(&path, source).unwrap();
+        let mut layout = SidebarDockLayout::default();
+        layout.place("missing.tasks", SidebarPosition::Right, 2);
+        layout.hidden = vec!["missing.tasks".into()];
+        persist_sidebar_layout(&layout).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let saved: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
+        assert_eq!(saved["keys"], original["keys"]);
+        assert_eq!(saved["theme"], original["theme"]);
+        assert!(saved["sidebar"].get("width").is_none());
+        assert!(saved["sidebar"].get("split").is_none());
+        let loaded: SidebarDockLayout = saved["sidebar"]["layout"].clone().try_into().unwrap();
+        assert_eq!(loaded, layout);
+        persist_sidebar_layout(&loaded).unwrap();
+        assert_eq!(text, fs::read_to_string(&path).unwrap());
+    }
+
+    #[test]
+    fn invalid_manual_edit_survives_failed_save_and_a_later_save_recovers() {
+        let _config = crate::test_support::lock_config_file();
+        let path = config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let invalid = "[sidebar]\nlayout = { broken";
+        fs::write(&path, invalid).unwrap();
+        assert!(persist_sidebar_layout(&SidebarDockLayout::default()).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), invalid);
+        fs::write(&path, "[sidebar]\ngap = false\n").unwrap();
+        persist_sidebar_layout(&SidebarDockLayout::default()).unwrap();
+        let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["sidebar"]["gap"].as_bool(), Some(false));
+        assert!(saved["sidebar"].get("layout").is_some());
     }
 }

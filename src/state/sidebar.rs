@@ -572,6 +572,8 @@ impl State {
 
 #[derive(Clone, Debug)]
 pub struct SidebarPanelState {
+    pub dock: crate::config::SidebarPosition,
+    pub home: usize,
     pub tabs: Vec<SidebarTabId>,
     pub active_tab: Option<SidebarTabId>,
     pub cursor: usize,
@@ -584,6 +586,8 @@ pub struct SidebarPanelState {
 impl Default for SidebarPanelState {
     fn default() -> Self {
         Self {
+            dock: crate::config::SidebarPosition::Left,
+            home: 0,
             tabs: Vec::new(),
             active_tab: None,
             cursor: 0,
@@ -595,14 +599,6 @@ impl Default for SidebarPanelState {
 }
 
 impl SidebarPanelState {
-    fn new(tabs: Vec<SidebarTabId>) -> Self {
-        Self {
-            active_tab: tabs.first().cloned(),
-            tabs,
-            ..Self::default()
-        }
-    }
-
     fn reconcile_active(&mut self) {
         if self
             .active_tab
@@ -749,10 +745,17 @@ pub struct SidebarWorktrees {
 
 #[derive(Default)]
 pub struct SidebarState {
+    pub layout_epoch: u64,
+    selection_memory: HashMap<(crate::config::SidebarPosition, usize), SidebarTabId>,
+    pub dock_visible: [bool; 2],
+    pub right_slide: Cell<f32>,
+    pub right_width_preview: Option<u16>,
+    pub width_drag_side: Option<crate::config::SidebarPosition>,
     pub panels: Vec<SidebarPanelState>,
     /// Panel keyboard operations target. It also remembers the last panel selected by mouse.
     pub active_panel: usize,
     pub command_output: HashMap<SidebarTabId, SidebarCommandOutput>,
+    pub command_poll_scheduled: HashMap<SidebarTabId, u64>,
     pub command_in_flight: HashMap<SidebarTabId, u64>,
     pub command_epoch: u64,
     pub next_output_epoch: u64,
@@ -843,23 +846,23 @@ pub struct SidebarState {
     /// Requested sidebar width while its outer splitter is being dragged. This drives live layout
     /// and PTY resizing without persisting the preference until release.
     pub width_preview: Option<u16>,
-    /// `(viewport_w, sidebar_w, docked_right)` — dock side is part of the signature so a live
-    /// `position` flip re-applies explicit weights instead of keeping the previous index-ordered
-    /// sizes (which would swap the sidebar and pane column after the children swap).
-    outer_splitter_signature: Cell<Option<(u16, u16, bool)>>,
-    outer_splitter_nonce: Cell<u32>,
-    panel_splitter_signature: Cell<Option<(usize, u32)>>,
-    panel_splitter_nonce: Cell<u32>,
+    splitter_revisions: std::cell::RefCell<HashMap<String, (Vec<u32>, u32)>>,
 }
 
 impl SidebarState {
     pub fn new(config: &SidebarConfig) -> Self {
         Self {
-            panels: displayed_panel_ids(config)
-                .iter()
-                .cloned()
-                .map(SidebarPanelState::new)
-                .collect(),
+            panels: resolved_panels(config),
+            dock_visible: if config.layout.left.visible || config.layout.right.visible {
+                [config.layout.left.visible, config.layout.right.visible]
+            } else {
+                [true, false]
+            },
+            right_slide: Cell::new(if config.layout.right.visible {
+                1.0
+            } else {
+                0.0
+            }),
             ..Self::default()
         }
     }
@@ -880,6 +883,17 @@ impl SidebarState {
     }
 
     fn apply_panel_layout(&mut self, config: &SidebarConfig, ids: &[SidebarTabId]) {
+        self.layout_epoch = self.layout_epoch.wrapping_add(1);
+        let old_address = self.active_panel().map(|p| (p.dock, p.home));
+        let old_panels = self.panels.clone();
+        for panel in &old_panels {
+            if let Some(id) = &panel.active_tab
+                && config.layout.location(id.as_str()) == Some((panel.dock, panel.home))
+            {
+                self.selection_memory
+                    .insert((panel.dock, panel.home), id.clone());
+            }
+        }
         let selected = self.active_tab().cloned();
         let old_active: Vec<_> = selected
             .iter()
@@ -891,23 +905,54 @@ impl SidebarState {
                     .filter(|active| Some(active) != selected.as_ref()),
             )
             .collect();
-        self.panels = displayed_panel_ids(config)
-            .iter()
-            .map(|tabs| {
-                let tabs: Vec<_> = tabs.iter().filter(|id| ids.contains(id)).cloned().collect();
-                let active_tab = old_active.iter().find(|id| tabs.contains(id)).cloned();
-                let mut panel = SidebarPanelState {
-                    tabs,
-                    active_tab,
-                    ..SidebarPanelState::default()
-                };
+        self.panels = resolved_panels(config)
+            .into_iter()
+            .map(|mut panel| {
+                panel.tabs.retain(|id| ids.contains(id));
+                panel.active_tab = selected
+                    .as_ref()
+                    .filter(|id| panel.tabs.contains(id))
+                    .cloned()
+                    .or_else(|| {
+                        self.selection_memory
+                            .get(&(panel.dock, panel.home))
+                            .filter(|id| panel.tabs.contains(id))
+                            .cloned()
+                    })
+                    .or_else(|| {
+                        old_active
+                            .iter()
+                            .find(|id| panel.tabs.contains(id))
+                            .cloned()
+                    });
+                if let Some(old) = old_panels.iter().find(|old| {
+                    old.dock == panel.dock
+                        && old.home == panel.home
+                        && old.active_tab == panel.active_tab
+                }) {
+                    panel.cursor = old.cursor;
+                    panel.page_rows = old.page_rows;
+                    panel.suppress_row_hover = old.suppress_row_hover;
+                }
                 panel.reconcile_active();
                 panel
             })
             .collect();
-        if self.panels.is_empty() {
-            self.panels.push(SidebarPanelState::new(ids.to_vec()));
+        if let Some(index) = selected
+            .as_ref()
+            .and_then(|id| self.panels.iter().position(|p| p.tabs.contains(id)))
+            .or_else(|| {
+                old_address.and_then(|(side, home)| {
+                    self.panels.iter().position(|p| {
+                        p.dock == side
+                            && p.home == home.min(config.layout.dock(side).panel_count - 1)
+                    })
+                })
+            })
+        {
+            self.active_panel = index;
         }
+
         self.active_panel = self.active_panel.min(self.panels.len() - 1);
     }
 
@@ -995,58 +1040,21 @@ impl SidebarState {
         true
     }
 
-    pub fn set_split(&mut self, split: bool) {
-        match (split, self.panels.len()) {
-            (true, 1) => self.panels.push(SidebarPanelState::default()),
-            (false, 2..) => {
-                let selected = self.active_tab().cloned();
-                let trailing = self.panels.split_off(1);
-                self.panels[0]
-                    .tabs
-                    .extend(trailing.into_iter().flat_map(|panel| panel.tabs));
-                self.active_panel = 0;
-                self.panels[0].active_tab =
-                    selected.or_else(|| self.panels[0].tabs.first().cloned());
-            }
-            _ => {}
-        }
-    }
-
     pub fn panel_ids(&self) -> Vec<Vec<SidebarTabId>> {
         self.panels.iter().map(|panel| panel.tabs.clone()).collect()
     }
 
-    pub fn outer_splitter_nonce(
-        &self,
-        viewport_width: u16,
-        sidebar_width: u16,
-        docked_right: bool,
-    ) -> u32 {
-        let signature = (viewport_width, sidebar_width, docked_right);
-        if self.outer_splitter_signature.get() != Some(signature) {
-            self.outer_splitter_signature.set(Some(signature));
-            self.outer_splitter_nonce
-                .set(self.outer_splitter_nonce.get().wrapping_add(1));
+    /// tui-lipan requires monotonically increasing weight revisions, rather than a signature hash.
+    pub fn splitter_nonce(&self, id: &str, signature: Vec<u32>) -> u32 {
+        let mut revisions = self.splitter_revisions.borrow_mut();
+        let entry = revisions
+            .entry(id.to_string())
+            .or_insert_with(|| (signature.clone(), 0));
+        if entry.0 != signature {
+            entry.0 = signature;
+            entry.1 = entry.1.wrapping_add(1);
         }
-        self.outer_splitter_nonce.get()
-    }
-
-    pub fn invalidate_outer_splitter(&self) {
-        self.outer_splitter_signature.set(None);
-    }
-
-    pub fn panel_splitter_nonce(&self, panel_count: usize, split_ratio: f32) -> u32 {
-        let signature = (panel_count, split_ratio.to_bits());
-        if self.panel_splitter_signature.get() != Some(signature) {
-            self.panel_splitter_signature.set(Some(signature));
-            self.panel_splitter_nonce
-                .set(self.panel_splitter_nonce.get().wrapping_add(1));
-        }
-        self.panel_splitter_nonce.get()
-    }
-
-    pub fn invalidate_panel_splitter(&self) {
-        self.panel_splitter_signature.set(None);
+        entry.1
     }
 
     pub fn invalidate_sessions(&mut self) {
@@ -1059,223 +1067,142 @@ impl SidebarState {
     }
 }
 
-fn displayed_panel_ids(config: &SidebarConfig) -> Vec<Vec<SidebarTabId>> {
-    if config.split {
-        config.panels.clone()
-    } else {
-        vec![config.panels.iter().flatten().cloned().collect()]
-    }
+fn resolved_panels(config: &SidebarConfig) -> Vec<SidebarPanelState> {
+    [
+        crate::config::SidebarPosition::Left,
+        crate::config::SidebarPosition::Right,
+    ]
+    .into_iter()
+    .flat_map(|side| {
+        let dock = config.layout.dock(side);
+        let mut panels: Vec<_> = (0..dock.panel_count)
+            .map(|home| SidebarPanelState {
+                dock: side,
+                home,
+                ..SidebarPanelState::default()
+            })
+            .collect();
+        for (home, saved) in dock.panels.iter().enumerate() {
+            let target = home.min(panels.len() - 1);
+            panels[target].tabs.extend(
+                saved
+                    .tabs
+                    .iter()
+                    .filter(|id| !config.layout.hidden.contains(id))
+                    .map(|id| SidebarTabId::new(id.clone()))
+                    .filter(|id| config.tabs.iter().any(|tab| tab.id() == *id)),
+            );
+        }
+        for panel in &mut panels {
+            panel.reconcile_active();
+        }
+        panels
+    })
+    .collect()
 }
 
 #[cfg(test)]
-mod tests {
+mod docking_tests {
     use super::*;
-    use crate::config::SidebarTab;
+    use crate::config::{
+        SidebarDockPanel,
+        SidebarPosition::{Left, Right},
+        SidebarTab,
+    };
+    use tui_lipan::prelude::{Rect, Theme};
 
     #[test]
-    fn reload_reconciles_by_stable_id_and_clears_removed_cache() {
-        let old = SidebarConfig {
-            tabs: vec![
-                SidebarTab::Activity,
-                SidebarTab::Panes,
-                SidebarTab::Sessions,
-            ],
-            ..SidebarConfig::default()
-        };
-        let mut state = SidebarState::new(&old);
-        state.panels[0].active_tab = Some(SidebarTabId::new("panes"));
-        state.command_output.insert(
-            SidebarTabId::new("removed"),
-            SidebarCommandOutput {
-                epoch: 1,
-                cwd: None,
-                rows: Vec::new(),
-            },
-        );
-
-        let mut new = SidebarConfig {
-            tabs: vec![SidebarTab::Sessions, SidebarTab::Panes],
-            ..SidebarConfig::default()
-        };
-        state.reconcile(&new);
-        assert_eq!(state.active_tab(), Some(&SidebarTabId::new("panes")));
-        assert!(state.command_output.is_empty());
-
-        new.tabs = vec![SidebarTab::Sessions];
-        state.reconcile(&new);
-        assert_eq!(state.active_tab(), Some(&SidebarTabId::new("sessions")));
-    }
-
-    #[test]
-    fn transfer_keeps_both_panel_selections_valid() {
-        let config = SidebarConfig {
-            split: true,
-            panels: vec![
-                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")],
-                vec![SidebarTabId::new("sessions")],
-            ],
-            ..SidebarConfig::default()
-        };
+    fn resolving_compacted_panels_preserves_preferences_and_filters_hidden_and_absent_tabs() {
+        let mut config = SidebarConfig::default();
+        config.layout.left.panel_count = 1;
+        config.layout.hidden = vec!["panes".into()];
+        config.layout.place("missing.tab", Right, 4);
+        let saved = config.layout.clone();
         let mut state = SidebarState::new(&config);
-        state.panels[0].active_tab = Some(SidebarTabId::new("panes"));
-        assert!(state.transfer_tab(0, 1, 1, 1));
+        assert_eq!(state.panels.len(), 2);
         assert_eq!(
-            state.panels[0].active_tab,
-            Some(SidebarTabId::new("activity"))
+            state.panels[0]
+                .tabs
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            ["activity", "sessions", "files", "git", "worktrees"]
         );
-        assert_eq!(state.panels[1].active_tab, Some(SidebarTabId::new("panes")));
-    }
-
-    #[test]
-    fn reorder_and_merge_preserve_tab_identity_and_selection() {
-        let config = SidebarConfig {
-            split: true,
-            panels: vec![
-                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")],
-                vec![SidebarTabId::new("sessions")],
-            ],
-            ..SidebarConfig::default()
-        };
-        let mut state = SidebarState::new(&config);
-        state.panels[0].active_tab = Some(SidebarTabId::new("activity"));
-        assert!(state.reorder_tab(0, 0, 1));
-        assert_eq!(
-            state.panels[0].tabs,
-            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")]
-        );
-        assert_eq!(
-            state.panels[0].active_tab,
-            Some(SidebarTabId::new("activity"))
-        );
-
-        state.active_panel = 1;
-        state.set_split(false);
-        assert_eq!(state.panels.len(), 1);
-        assert_eq!(
-            state.panels[0].tabs,
-            vec![
-                SidebarTabId::new("panes"),
-                SidebarTabId::new("activity"),
-                SidebarTabId::new("sessions"),
-            ]
-        );
-        assert_eq!(
-            state.panels[0].active_tab,
-            Some(SidebarTabId::new("sessions"))
-        );
-    }
-
-    #[test]
-    fn disabling_split_flattens_display_and_reenabling_restores_saved_panels() {
-        let mut config = SidebarConfig {
-            split: true,
-            panels: vec![
-                vec![SidebarTabId::new("activity")],
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
-            ],
-            ..SidebarConfig::default()
-        };
-        let saved = config.panels.clone();
-        let mut state = SidebarState::new(&config);
-        state.panels[1].active_tab = Some(SidebarTabId::new("sessions"));
-        state.active_panel = 1;
-
-        config.split = false;
+        assert!(state.panels[1].tabs.is_empty());
+        state.panels[0].active_tab = Some(SidebarTabId::new("git"));
+        config.layout.left.panel_count = 3;
+        config.layout.left.panels.push(SidebarDockPanel::default());
         state.apply_configured_panels(&config);
-        assert_eq!(config.panels, saved);
-        assert_eq!(state.panels.len(), 1);
-        assert_eq!(state.panels[0].tabs, saved.concat());
-        assert_eq!(
-            state.panels[0].active_tab,
-            Some(SidebarTabId::new("sessions"))
-        );
-
-        config.split = true;
-        state.apply_configured_panels(&config);
-        assert_eq!(state.panel_ids(), saved);
-        assert_eq!(
-            state.panels[1].active_tab,
-            Some(SidebarTabId::new("sessions"))
-        );
+        assert_eq!(state.active_tab(), Some(&SidebarTabId::new("git")));
+        assert_eq!(state.active_panel, 1);
+        assert_eq!(config.layout.left.panels[..2], saved.left.panels);
+        assert_eq!(config.layout.right, saved.right);
     }
 
     #[test]
-    fn invalidating_controlled_splitters_forces_the_next_weights() {
-        let state = SidebarState::default();
-        let outer = state.outer_splitter_nonce(100, 32, false);
-        assert_eq!(state.outer_splitter_nonce(100, 32, false), outer);
-        assert_ne!(state.outer_splitter_nonce(100, 32, true), outer);
-        state.invalidate_outer_splitter();
-        assert_ne!(state.outer_splitter_nonce(100, 32, true), outer);
-
-        let panels = state.panel_splitter_nonce(2, 0.5);
-        assert_eq!(state.panel_splitter_nonce(2, 0.5), panels);
-        state.invalidate_panel_splitter();
-        assert_ne!(state.panel_splitter_nonce(2, 0.5), panels);
-    }
-
-    #[test]
-    fn dock_position_changes_only_terminal_space_offset() {
-        let viewport = tui_lipan::prelude::Rect {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 30,
-        };
+    fn geometry_uses_one_budget_and_restores_after_resize() {
         let mut config = crate::config::Config::default();
-        config.sidebar.visible = true;
-        let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
-        assert_eq!(state.content_viewport(viewport).w, 68);
-        assert_eq!(state.terminal_content_left_offset(viewport), 32);
-
-        state.config.sidebar.position = crate::config::SidebarPosition::Right;
-        assert_eq!(state.content_viewport(viewport).w, 68);
-        assert_eq!(state.terminal_content_left_offset(viewport), 0);
-    }
-
-    #[test]
-    fn the_reserved_columns_follow_the_slide_so_the_pane_column_resizes_with_it() {
-        let viewport = tui_lipan::prelude::Rect {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 30,
-        };
-        let mut config = crate::config::Config::default();
-        config.sidebar.visible = true;
-        let state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
-        assert_eq!(state.effective_sidebar_width(viewport), 32);
-        assert_eq!(state.sidebar_slide_width(viewport), 32);
-
-        // Part-way in, the layout hands over part of the column and the pane column keeps the rest.
-        // Both together are always the whole viewport, so neither edge of the pane column is ever
-        // off the screen and no gutter can open between them.
-        for (progress, reserved) in [(0.0, 0), (0.25, 8), (0.5, 16), (0.75, 24), (1.0, 32)] {
-            state.sidebar_slide.set(progress);
-            assert_eq!(state.effective_sidebar_width(viewport), reserved);
-            assert_eq!(state.content_viewport(viewport).w, 100 - reserved);
-            assert_eq!(state.terminal_content_left_offset(viewport), reserved);
-            // The panel is drawn at full width and clipped, never squeezed into what it has so far.
-            assert_eq!(state.sidebar_slide_width(viewport), 32);
+        config.sidebar.layout.left.visible = true;
+        config.sidebar.layout.right.visible = true;
+        let state = crate::state::State::new(config, Theme::default());
+        for width in 0..180 {
+            let rect = Rect {
+                x: 0,
+                y: 0,
+                w: width,
+                h: 30,
+            };
+            let docks = state.dock_deployed_widths(rect);
+            let minimum = if width > 20 { 20 } else { width - width / 2 };
+            assert!(
+                state.content_viewport(rect).w >= minimum,
+                "{width}: {docks:?}"
+            );
+            assert_eq!(
+                state.content_viewport(rect).w + state.effective_sidebar_width(rect),
+                width
+            );
+            assert_eq!(
+                state.terminal_content_left_offset(rect),
+                state.dock_reserved_width(rect, Left)
+            );
         }
-
-        // Both clamp the same way on a viewport too narrow for the configured width, so the slide
-        // never travels further than the column actually occupies.
-        let narrow = tui_lipan::prelude::Rect { w: 40, ..viewport };
-        assert_eq!(state.sidebar_slide_width(narrow), 20);
-        assert_eq!(state.effective_sidebar_width(narrow), 20);
-        state.sidebar_slide.set(0.5);
-        assert_eq!(state.effective_sidebar_width(narrow), 10);
+        assert_eq!(
+            state.dock_deployed_widths(Rect {
+                x: 0,
+                y: 0,
+                w: 160,
+                h: 30
+            }),
+            [32, 32]
+        );
+        assert_eq!(state.config.sidebar.layout.left.width, 32);
+        assert_eq!(state.config.sidebar.layout.right.width, 32);
     }
 
     #[test]
-    fn command_invalidation_preserves_running_process_marker() {
+    fn transfer_recovers_source_selection_and_reload_fences_old_events() {
+        let config = SidebarConfig::default();
+        let mut state = SidebarState::new(&config);
+        state.panels[0].active_tab = Some(SidebarTab::Panes.id());
+        assert!(state.transfer_tab(0, 2, 1, 0));
+        assert_eq!(state.panels[0].active_tab, Some(SidebarTab::Sessions.id()));
+        assert_eq!(state.panels[2].active_tab, Some(SidebarTab::Panes.id()));
+        let epoch = state.layout_epoch;
+        state.reconcile(&config);
+        assert_ne!(epoch, state.layout_epoch);
+    }
+
+    #[test]
+    fn command_invalidation_keeps_process_fencing() {
         let mut state = SidebarState::default();
-        let id = SidebarTabId::new("rows");
-        state.command_in_flight.insert(id.clone(), 4);
+        state.command_in_flight.insert(SidebarTabId::new("jobs"), 4);
         state.command_epoch = 4;
         state.invalidate_commands();
         assert_eq!(state.command_epoch, 5);
-        assert_eq!(state.command_in_flight.get(&id), Some(&4));
+        assert_eq!(
+            state.command_in_flight.get(&SidebarTabId::new("jobs")),
+            Some(&4)
+        );
     }
 }

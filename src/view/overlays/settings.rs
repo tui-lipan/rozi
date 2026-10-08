@@ -246,10 +246,32 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             "Sidebar",
             vec![
                 (
-                    "Position",
-                    ctx.state.config.sidebar.position.label().to_string(),
-                    ToggleSidebarPosition,
+                    "Left dock",
+                    enabled_status(ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[0]),
+                    ToggleLeftSidebar,
                 ),
+                (
+                    "Right dock",
+                    enabled_status(ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[1]),
+                    ToggleRightSidebar,
+                ),
+                (
+                    "Left panels",
+                    ctx.state.config.sidebar.layout.left.panel_count.to_string(),
+                    LeftSidebarPanels,
+                ),
+                (
+                    "Right panels",
+                    ctx.state
+                        .config
+                        .sidebar
+                        .layout
+                        .right
+                        .panel_count
+                        .to_string(),
+                    RightSidebarPanels,
+                ),
+                ("Manage Sidebar Tabs", String::new(), ManageSidebarTabs),
                 (
                     "Background follows canvas",
                     enabled_status(ctx.state.config.sidebar.background_follows_canvas),

@@ -166,6 +166,17 @@ pub enum Msg {
         event: DraggableTabReorderEvent,
     },
     SidebarTabTransferred(DraggableTabTransferEvent),
+    SidebarUiEvent {
+        epoch: u64,
+        event: Box<Msg>,
+    },
+    SidebarManagerPresets,
+    SidebarManagerBack,
+    SidebarManagerActivate(String),
+    SidebarDockPanelsResized {
+        side: crate::config::SidebarPosition,
+        event: SplitterResizeEvent,
+    },
     SidebarPanelsResized(SplitterResizeEvent),
     SidebarViewportChanged {
         panel: usize,

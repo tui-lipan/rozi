@@ -38,8 +38,10 @@ show both, hide Right, then hide Left, and `b` brings back only Left. Showing on
 are hidden shows only the requested dock.
 
 On first use, when no combination has been remembered, `b` shows docks with enabled, available
-tabs, or Left if every dock is empty. `B` restores visibility if needed, shows the remembered
-panel's dock, and focuses that panel. Showing an empty dock explicitly exposes its drag target.
+tabs, or Left if every dock is empty. `B` restores the same way only when everything is hidden,
+then focuses the remembered panel if its dock is shown, or the last-used panel on a shown dock.
+It never reopens a hidden dock while another is shown. Showing an empty dock explicitly exposes
+its drag target.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
 <img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, startup visibility, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">

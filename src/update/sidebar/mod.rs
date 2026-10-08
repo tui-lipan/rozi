@@ -43,7 +43,7 @@ pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     {
         if ctx.state.sidebar.active_tab_in(panel) == Some(&id) {
             let changed_panel = ctx.state.sidebar.active_panel != panel;
-            ctx.state.sidebar.active_panel = panel;
+            ctx.state.sidebar.select_panel(panel);
             if changed_panel {
                 refocus_body(ctx);
                 return Update::full();
@@ -59,7 +59,7 @@ pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
         ctx.state.sidebar.invalidate_sessions();
         ctx.state.sidebar.invalidate_commands();
-        ctx.state.sidebar.active_panel = panel;
+        ctx.state.sidebar.select_panel(panel);
         let panel_state = &mut ctx.state.sidebar.panels[panel];
         panel_state.active_tab = Some(id);
         // A different tab is a different row list; carrying the old index over would drop the
@@ -110,7 +110,7 @@ pub(crate) fn tab_transferred(
         return Update::none();
     }
     ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
-    ctx.state.sidebar.active_panel = to_panel;
+    ctx.state.sidebar.select_panel(to_panel);
     sync_and_persist_panels(ctx);
     let update = visibility_changed(ctx);
     refocus_body(ctx);

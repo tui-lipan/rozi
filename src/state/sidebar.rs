@@ -757,6 +757,8 @@ pub struct SidebarState {
     pub panels: Vec<SidebarPanelState>,
     /// Panel keyboard operations target. It also remembers the last panel selected by mouse.
     pub active_panel: usize,
+    /// Last selected home panel in each dock.
+    panel_memory: [usize; 2],
     pub command_output: HashMap<SidebarTabId, SidebarCommandOutput>,
     pub command_poll_scheduled: HashMap<SidebarTabId, u64>,
     pub command_in_flight: HashMap<SidebarTabId, u64>,
@@ -1003,6 +1005,39 @@ impl SidebarState {
         }
 
         self.active_panel = self.active_panel.min(self.panels.len() - 1);
+    }
+
+    pub fn select_panel(&mut self, index: usize) {
+        for selected in [self.active_panel, index] {
+            if let Some(panel) = self.panels.get(selected) {
+                self.panel_memory
+                    [usize::from(panel.dock == crate::config::SidebarPosition::Right)] = panel.home;
+            }
+        }
+        self.active_panel = index;
+    }
+
+    /// Recover a hidden keyboard target without changing which docks are shown.
+    pub fn select_shown_panel(&mut self) {
+        if self.active_panel().is_some_and(|panel| {
+            self.shown[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
+        }) {
+            self.select_panel(self.active_panel);
+            return;
+        }
+        let target = self
+            .panels
+            .iter()
+            .enumerate()
+            .filter(|(_, panel)| {
+                let dock = usize::from(panel.dock == crate::config::SidebarPosition::Right);
+                self.shown[dock] && panel.home <= self.panel_memory[dock]
+            })
+            .max_by_key(|(_, panel)| panel.home)
+            .map(|(index, _)| index);
+        if let Some(index) = target {
+            self.select_panel(index);
+        }
     }
 
     pub fn active_panel(&self) -> Option<&SidebarPanelState> {

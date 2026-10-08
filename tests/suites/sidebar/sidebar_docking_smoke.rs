@@ -464,7 +464,7 @@ layout = { left = { visible = false }, right = { visible = true, width = 41, pan
 }
 
 #[test]
-fn right_only_startup_focuses_a_mounted_panel_and_reveals_a_remembered_dock() {
+fn right_only_startup_focuses_a_mounted_panel_without_revealing_a_hidden_dock() {
     on_stack(|| {
         let mut b = backend(120, 30, [2, 2], [false, true]);
         let mut config = b.state().config.clone();
@@ -484,13 +484,13 @@ fn right_only_startup_focuses_a_mounted_panel_and_reveals_a_remembered_dock() {
         b.state_mut().sidebar.active_panel = 0;
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
         b.render();
-        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Left);
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
         assert!(
-            b.focused_key().unwrap().as_ref().contains("left-0"),
+            b.focused_key().unwrap().as_ref().contains("right-0"),
             "{:?}",
             b.focused_key()
         );
-        assert_eq!(b.state().sidebar.shown, [true, true]);
+        assert_eq!(b.state().sidebar.shown, [false, true]);
     });
 }
 
@@ -611,27 +611,91 @@ fn visibility_actions_round_trip_every_shown_and_restore_combination() {
 }
 
 #[test]
-fn focus_reveals_the_panel_remembered_before_an_individual_hide() {
+fn focus_uses_the_last_panel_on_a_shown_dock_without_reopening_a_hidden_dock() {
     on_stack(|| {
-        let mut b = backend(120, 30, [2, 2], [true, true]);
-        b.state_mut().sidebar.active_panel = 3;
-        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
-        b.dispatch(Msg::SidebarBlur).unwrap();
-        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
-            .unwrap();
-        assert_eq!(b.state().sidebar.shown, [true, false]);
-        assert_eq!(b.state().sidebar.active_panel, 3);
-        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
-        assert_eq!(b.state().sidebar.shown, [true, true]);
-        assert_eq!(b.state().sidebar.active_panel, 3);
-        assert!(b.focused_key().unwrap().as_ref().contains("right-1"));
-        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
-            .unwrap();
-        assert!(b.state().sidebar.focused);
-        assert!(b.focused_key().unwrap().as_ref().contains("left-"));
-        b.dispatch(Msg::RunAction(Action::ToggleLeftSidebar))
-            .unwrap();
-        assert!(!b.state().sidebar.focused);
+        for (hidden, toggle, shown, target, hidden_panel, key) in [
+            (
+                Right,
+                Action::ToggleRightSidebar,
+                [true, false],
+                1,
+                3,
+                "left-1",
+            ),
+            (
+                Left,
+                Action::ToggleLeftSidebar,
+                [false, true],
+                3,
+                1,
+                "right-1",
+            ),
+        ] {
+            let mut b = backend(120, 30, [2, 2], [true, true]);
+            // Real tab-selection callbacks remember the second panel in each dock.
+            for panel in [target, hidden_panel] {
+                b.dispatch(Msg::SidebarTabSelected { panel, index: 0 })
+                    .unwrap();
+            }
+            b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+            b.dispatch(Msg::SidebarBlur).unwrap();
+            b.dispatch(Msg::RunAction(toggle)).unwrap();
+            assert_eq!(b.state().sidebar.shown, shown);
+            assert_eq!(b.state().sidebar.active_panel().unwrap().dock, hidden);
+            b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+            b.render();
+            assert_eq!(b.state().sidebar.shown, shown);
+            assert_eq!(b.state().sidebar.active_panel, target);
+            assert!(b.focused_key().unwrap().as_ref().contains(key));
+            assert!(b.state().sidebar.focused);
+            let last_toggle = if hidden == Left {
+                Action::ToggleRightSidebar
+            } else {
+                Action::ToggleLeftSidebar
+            };
+            b.dispatch(Msg::RunAction(last_toggle)).unwrap();
+            assert!(!b.state().sidebar.focused);
+            b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+            b.render();
+            assert_eq!(b.state().sidebar.shown, shown);
+            assert_eq!(b.state().sidebar.active_panel, target);
+            assert!(b.focused_key().unwrap().as_ref().contains(key));
+        }
+    });
+}
+
+#[test]
+fn focus_restores_exactly_the_docks_the_global_toggle_would_show() {
+    on_stack(|| {
+        for shown in [[false, false], [true, false], [false, true], [true, true]] {
+            for restore in [[false, false], [true, false], [false, true], [true, true]] {
+                for panel in 0..4 {
+                    let mut b = backend(120, 30, [2, 2], shown);
+                    b.state_mut().sidebar.restore = restore;
+                    b.state_mut().sidebar.active_panel = panel;
+                    let expected = if shown == [false, false] {
+                        if restore == [false, false] {
+                            [true, true]
+                        } else {
+                            restore
+                        }
+                    } else {
+                        shown
+                    };
+                    b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+                    b.render();
+                    assert_eq!(
+                        b.state().sidebar.shown,
+                        expected,
+                        "{shown:?} {restore:?} {panel}"
+                    );
+                    let active = b.state().sidebar.active_panel().unwrap();
+                    assert!(expected[usize::from(active.dock == Right)]);
+                    assert!(b.state().sidebar.focused);
+                    assert!(b.focused_key().is_some());
+                }
+            }
+        }
     });
 }
 

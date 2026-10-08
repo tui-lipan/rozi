@@ -93,6 +93,8 @@ PROFILE=web scene sidebar-panels "$focus" 4500 "$open_settings; type:left panels
 PROFILE=web scene sidebar-startup "$focus" 4500 "$open_settings; type:sidebars at startup; key:enter; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-commands "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-keys "$focus" 4500 "key:ctrl+a; key:shift+b; type:?; wait:400" "$sidebar_visibility"
+# Focus Right, return to the pane, hide Right, then focus the still-shown Left dock.
+PROFILE=web scene sidebar-focus-visible "$wide" 4500 "key:ctrl+a; key:shift+b; wait:300; key:ctrl+right; wait:300; click:60,15; wait:300; key:ctrl+a; type:p; wait:300; type:right sidebar; key:enter; wait:300; key:ctrl+a; key:shift+b; wait:600" "$sidebar_visibility"
 # Hide each dock separately, then restore only the one that was visible last.
 PROFILE=web scene sidebar-restore "$wide" 4500 "key:ctrl+a; type:p; type:right sidebar; key:enter; wait:300; key:ctrl+a; type:p; type:left sidebar; key:enter; wait:300; key:ctrl+a; type:b; wait:600" "$sidebar_visibility"
 

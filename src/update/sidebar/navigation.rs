@@ -23,12 +23,10 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
             .state
             .sidebar_panel_visible(ctx.state.sidebar.active_panel)
     {
-        if let Some(index) =
-            (0..ctx.state.sidebar.panels.len()).find(|i| ctx.state.sidebar_panel_visible(*i))
-        {
-            ctx.state.sidebar.active_panel = index;
+        if ctx.state.sidebar.any_shown() {
+            ctx.state.sidebar.select_shown_panel();
             refocus_body(ctx);
-        } else if ctx.state.sidebar.focused {
+        } else {
             ctx.state.sidebar.focused = false;
             release_focus(ctx);
         }
@@ -43,18 +41,15 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
     refresh_active_tabs(ctx)
 }
 
-/// `focus-sidebar`: reveal the sidebar if it is hidden, then move keyboard focus into its row list.
+/// `focus-sidebar`: restore like the global toggle if hidden, then focus a shown panel.
 /// Sidebar targets opt out of Tab and their parent rejects pointer focus, so an explicit keyed
 /// request is the only way in.
 pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
     let previous_shown = ctx.state.sidebar.shown;
-    let remembered_dock = ctx.state.sidebar.active_panel().map(|panel| panel.dock);
     if !ctx.state.sidebar.any_shown() {
         ctx.state.sidebar.show_restored();
     }
-    if let Some(side) = remembered_dock {
-        ctx.state.sidebar.shown[usize::from(side == crate::config::SidebarPosition::Right)] = true;
-    }
+    ctx.state.sidebar.select_shown_panel();
     let command = if previous_shown != ctx.state.sidebar.shown {
         visibility_changed(ctx).command
     } else {
@@ -120,14 +115,7 @@ pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
     if !ctx.state.sidebar_shown() {
         return Update::none();
     }
-    if !ctx
-        .state
-        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
-        && let Some(panel) = (0..ctx.state.sidebar.panels.len())
-            .find(|panel| ctx.state.sidebar_panel_visible(*panel))
-    {
-        ctx.state.sidebar.active_panel = panel;
-    }
+    ctx.state.sidebar.select_shown_panel();
     let panel = ctx.state.sidebar.active_panel;
     ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
     ctx.state.sidebar.cycle(panel, forward);
@@ -209,7 +197,7 @@ pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     if ctx.state.sidebar.active_panel == next {
         return Update::none();
     }
-    ctx.state.sidebar.active_panel = next;
+    ctx.state.sidebar.select_panel(next);
     if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
         panel.suppress_row_hover = true;
     }
@@ -283,7 +271,7 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -
         return Update::none();
     }
     ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
-    ctx.state.sidebar.active_panel = to_panel;
+    ctx.state.sidebar.select_panel(to_panel);
     crate::update::sidebar::sync_and_persist_panels(ctx);
     let update = visibility_changed(ctx);
     refocus_body(ctx);
@@ -377,7 +365,7 @@ pub(crate) fn row_hover(
 pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
     let side = super::active_side(ctx).toggled();
     let index = usize::from(side == crate::config::SidebarPosition::Right);
-    if !ctx.state.sidebar_shown() || !ctx.state.sidebar.shown[index] {
+    if !ctx.state.sidebar.shown[index] {
         return Update::none();
     }
     let home = ctx
@@ -414,7 +402,7 @@ pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
         ctx.state.sidebar.panels[target].active_tab = Some(id);
         super::save_layout(ctx);
     }
-    ctx.state.sidebar.active_panel = target;
+    ctx.state.sidebar.select_panel(target);
     let update = visibility_changed(ctx);
     if !ctx.state.sidebar.focused {
         ctx.state.sidebar.focused = true;

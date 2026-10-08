@@ -2160,13 +2160,13 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
 
         send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::CTRL);
         assert_eq!(
-            backend.state().sidebar.active_panel,
+            backend.state().sidebar.active_panel_index(),
             1,
             "Ctrl+j focuses the lower panel"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('k'), KeyMods::CTRL);
         assert_eq!(
-            backend.state().sidebar.active_panel,
+            backend.state().sidebar.active_panel_index(),
             0,
             "Ctrl+k focuses the upper panel"
         );
@@ -2186,7 +2186,7 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
         );
 
         send_sidebar_key(&mut backend, KeyCode::Char('j'), alt);
-        assert_eq!(backend.state().sidebar.active_panel, 1);
+        assert_eq!(backend.state().sidebar.active_panel_index(), 1);
         assert!(
             backend.state().sidebar.panels[1].tabs.contains(&activity),
             "Alt+j moves the tab to the lower panel"

@@ -21,7 +21,7 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.sidebar.focused
         && !ctx
             .state
-            .sidebar_panel_visible(ctx.state.sidebar.active_panel)
+            .sidebar_panel_visible(ctx.state.sidebar.active_panel_index())
     {
         if ctx.state.sidebar.any_shown() {
             ctx.state.sidebar.select_shown_panel();
@@ -116,7 +116,7 @@ pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
         return Update::none();
     }
     ctx.state.sidebar.select_shown_panel();
-    let panel = ctx.state.sidebar.active_panel;
+    let panel = ctx.state.sidebar.active_panel_index();
     ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
     ctx.state.sidebar.cycle(panel, forward);
     if let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) {
@@ -174,7 +174,7 @@ pub(crate) fn move_cursor_page(ctx: &mut Context<AppRoot>, down: bool) -> Update
 }
 
 pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
-    let current = ctx.state.sidebar.active_panel;
+    let current = ctx.state.sidebar.active_panel_index();
     let Some(panel) = ctx.state.sidebar.panels.get(current) else {
         return Update::none();
     };
@@ -194,7 +194,7 @@ pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     } else {
         at.saturating_sub(1)
     }];
-    if ctx.state.sidebar.active_panel == next {
+    if ctx.state.sidebar.active_panel_index() == next {
         return Update::none();
     }
     ctx.state.sidebar.select_panel(next);
@@ -206,7 +206,7 @@ pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
 }
 
 pub(crate) fn reorder_active_tab(ctx: &mut Context<AppRoot>, right: bool) -> Update {
-    let panel = ctx.state.sidebar.active_panel;
+    let panel = ctx.state.sidebar.active_panel_index();
     let Some(panel_state) = ctx.state.sidebar.panels.get(panel) else {
         return Update::none();
     };
@@ -229,7 +229,7 @@ pub(crate) fn reorder_active_tab(ctx: &mut Context<AppRoot>, right: bool) -> Upd
 }
 
 pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
-    let from_panel = ctx.state.sidebar.active_panel;
+    let from_panel = ctx.state.sidebar.active_panel_index();
     let Some(panel) = ctx.state.sidebar.panels.get(from_panel) else {
         return Update::none();
     };
@@ -282,7 +282,7 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -
 /// the row list is a panel, not a carousel, and wrapping past the last agent back to the first reads
 /// as a glitch. Headers and spacers are stepped over rather than landed on.
 pub(crate) fn move_cursor(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
-    let panel = ctx.state.sidebar.active_panel;
+    let panel = ctx.state.sidebar.active_panel_index();
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };

@@ -292,7 +292,7 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
                 backend.state().sidebar.active_tab(),
                 Some(&SidebarTabId::new("activity"))
             );
-            assert_eq!(backend.state().sidebar.active_panel, 1);
+            assert_eq!(backend.state().sidebar.active_panel_index(), 1);
         })
         .expect("spawn transfer selection thread")
         .join()

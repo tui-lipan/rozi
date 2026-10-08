@@ -360,7 +360,7 @@ fn compacted_reordering_preserves_home_panels_hidden_slots_and_selection() {
         b.state_mut().config.sidebar.layout.left.panel_count = 3;
         let state = b.state_mut();
         state.sidebar.apply_configured_panels(&state.config.sidebar);
-        assert_eq!(state.sidebar.active_panel, 1);
+        assert_eq!(state.sidebar.active_panel_index(), 1);
         assert_eq!(
             state.sidebar.active_tab(),
             Some(&SidebarTabId::new("left3"))
@@ -481,7 +481,7 @@ fn right_only_startup_focuses_a_mounted_panel_without_revealing_a_hidden_dock() 
             b.focused_key()
         );
         b.dispatch(Msg::SidebarBlur).unwrap();
-        b.state_mut().sidebar.active_panel = 0;
+        b.state_mut().sidebar.select_panel(0);
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
         b.render();
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
@@ -645,7 +645,7 @@ fn focus_uses_the_last_panel_on_a_shown_dock_without_reopening_a_hidden_dock() {
             b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
             b.render();
             assert_eq!(b.state().sidebar.shown, shown);
-            assert_eq!(b.state().sidebar.active_panel, target);
+            assert_eq!(b.state().sidebar.active_panel_index(), target);
             assert!(b.focused_key().unwrap().as_ref().contains(key));
             assert!(b.state().sidebar.focused);
             let last_toggle = if hidden == Left {
@@ -658,7 +658,7 @@ fn focus_uses_the_last_panel_on_a_shown_dock_without_reopening_a_hidden_dock() {
             b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
             b.render();
             assert_eq!(b.state().sidebar.shown, shown);
-            assert_eq!(b.state().sidebar.active_panel, target);
+            assert_eq!(b.state().sidebar.active_panel_index(), target);
             assert!(b.focused_key().unwrap().as_ref().contains(key));
         }
     });
@@ -672,7 +672,7 @@ fn focus_restores_exactly_the_docks_the_global_toggle_would_show() {
                 for panel in 0..4 {
                     let mut b = backend(120, 30, [2, 2], shown);
                     b.state_mut().sidebar.restore = restore;
-                    b.state_mut().sidebar.active_panel = panel;
+                    b.state_mut().sidebar.select_panel(panel);
                     let expected = if shown == [false, false] {
                         if restore == [false, false] {
                             [true, true]
@@ -733,7 +733,7 @@ fn first_show_uses_available_tabs_and_explicit_actions_can_reveal_empty_docks() 
                 .join("\n")
                 .contains("Drag tabs here")
         );
-        b.state_mut().sidebar.active_panel = 1;
+        b.state_mut().sidebar.select_panel(1);
         b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
         assert!(b.state().sidebar.focused);
@@ -746,21 +746,21 @@ fn sidebar_mode_uses_directional_focus_and_alt_movement_across_visible_docks() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
         let mut b = backend(140, 36, [3, 3], [true, true]);
-        b.state_mut().sidebar.active_panel = 1;
+        b.state_mut().sidebar.select_panel(1);
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
         let key = |code, mods| KeyEvent { code, mods };
         b.send_key(key(KeyCode::Left, KeyMods::CTRL)).unwrap();
         assert_eq!(
-            b.state().sidebar.active_panel,
+            b.state().sidebar.active_panel_index(),
             1,
             "left from left does not wrap"
         );
         b.send_key(key(KeyCode::Right, KeyMods::CTRL)).unwrap();
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
         assert_eq!(b.state().sidebar.active_panel().unwrap().home, 1);
-        let right = b.state().sidebar.active_panel;
+        let right = b.state().sidebar.active_panel_index();
         b.send_key(key(KeyCode::Right, KeyMods::CTRL)).unwrap();
-        assert_eq!(b.state().sidebar.active_panel, right);
+        assert_eq!(b.state().sidebar.active_panel_index(), right);
         b.send_key(key(KeyCode::Left, KeyMods::ALT)).unwrap();
         assert_eq!(
             b.state().config.sidebar.layout.location("right2"),

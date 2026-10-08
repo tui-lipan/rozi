@@ -42,7 +42,7 @@ pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         .any(|tab| tab.id() == id)
     {
         if ctx.state.sidebar.active_tab_in(panel) == Some(&id) {
-            let changed_panel = ctx.state.sidebar.active_panel != panel;
+            let changed_panel = ctx.state.sidebar.active_panel_index() != panel;
             ctx.state.sidebar.select_panel(panel);
             if changed_panel {
                 refocus_body(ctx);

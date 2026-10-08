@@ -355,7 +355,7 @@ pub(super) fn workspace_heading(state: &crate::state::State, index: usize) -> St
 
 /// The configured tab currently showing, resolved the same way the view resolves it.
 pub(crate) fn active_tab(ctx: &Context<AppRoot>) -> Option<&SidebarTab> {
-    active_tab_in(ctx, ctx.state.sidebar.active_panel)
+    active_tab_in(ctx, ctx.state.sidebar.active_panel_index())
 }
 
 pub(crate) fn active_tab_in(ctx: &Context<AppRoot>, panel: usize) -> Option<&SidebarTab> {
@@ -393,7 +393,7 @@ pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
 /// switching projects does not inherit another directory's expansion state, so the focus target has
 /// to be derived from state rather than assumed constant.
 pub(crate) fn body_focus_key(ctx: &Context<AppRoot>) -> String {
-    body_focus_key_for(ctx, ctx.state.sidebar.active_panel)
+    body_focus_key_for(ctx, ctx.state.sidebar.active_panel_index())
 }
 
 pub(crate) fn body_focus_key_for(ctx: &Context<AppRoot>, panel: usize) -> String {
@@ -499,7 +499,7 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
         return empty_body(ctx, panel, Some(empty_text(ctx, tab)));
     }
     let panel_state = &ctx.state.sidebar.panels[panel];
-    let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel == panel;
+    let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
     let cursor = cursor_index(ctx, panel, tab);
     let tab_id = tab.id();
 

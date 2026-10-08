@@ -756,7 +756,7 @@ pub struct SidebarState {
     pub width_drag_side: Option<crate::config::SidebarPosition>,
     pub panels: Vec<SidebarPanelState>,
     /// Panel keyboard operations target. It also remembers the last panel selected by mouse.
-    pub active_panel: usize,
+    active_panel: usize,
     /// Last selected home panel in each dock.
     panel_memory: [usize; 2],
     pub command_output: HashMap<SidebarTabId, SidebarCommandOutput>,
@@ -1007,6 +1007,10 @@ impl SidebarState {
         self.active_panel = self.active_panel.min(self.panels.len() - 1);
     }
 
+    pub fn active_panel_index(&self) -> usize {
+        self.active_panel
+    }
+
     pub fn select_panel(&mut self, index: usize) {
         for selected in [self.active_panel, index] {
             if let Some(panel) = self.panels.get(selected) {
@@ -1218,7 +1222,7 @@ mod docking_tests {
         config.layout.left.panels.push(SidebarDockPanel::default());
         state.apply_configured_panels(&config);
         assert_eq!(state.active_tab(), Some(&SidebarTabId::new("git")));
-        assert_eq!(state.active_panel, 1);
+        assert_eq!(state.active_panel_index(), 1);
         assert_eq!(config.layout.left.panels[..2], saved.left.panels);
         assert_eq!(config.layout.right, saved.right);
     }

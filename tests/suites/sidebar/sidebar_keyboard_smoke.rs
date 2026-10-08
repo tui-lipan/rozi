@@ -576,7 +576,7 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
                 },
             ));
             settle(&mut backend);
-            assert_eq!(backend.state().sidebar.active_panel, 1);
+            assert_eq!(backend.state().sidebar.active_panel_index(), 1);
             assert!(backend.state().sidebar.focused);
 
             let _ = backend.send_key(modified_key(
@@ -587,7 +587,7 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
                 },
             ));
             settle(&mut backend);
-            assert_eq!(backend.state().sidebar.active_panel, 0);
+            assert_eq!(backend.state().sidebar.active_panel_index(), 0);
         })
         .expect("spawn panel navigation thread")
         .join()

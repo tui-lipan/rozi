@@ -13,6 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-10-08 | `b5996d8d`; selected comparison with `v0.0.29` | 139 timing cases, 109 memory scenarios, allocation/effect probes, replay-memory checks, and saturation recovery passed; no material regression in eight compared cases | [Full benchmark baseline on Ryzen 7 9700X](audits/2026-10-08.md) |
 | 2026-10-08 | `8d7c82a8` plus local framework and rozi changes | 475×116 body + title client CPU drops 2.3% to 0.2% of one core; sparse snapshot time drops 87–96%; framework release pending | [Active TUI improvements](audits/2026-10-08-active-tui-improvements.md) |
 | 2026-10-07 | `8d7c82a8` plus benchmark and documentation additions | investigation: animated titles force full UI rebuilds; sparse snapshots still scale with viewport area; runtime unchanged | [Active TUI panes and animated titles](audits/2026-10-07-active-tui.md) |
 | 2026-09-15 | Alacritty `d692748d` plus archived port `e8e5aee6` | opt-in port halves Alacritty PSS with short-line history and is faster on short lines; other vtebench within 3%; upstream closed the proposal; not adopted | [Compact scrollback in Alacritty](audits/2026-09-15-alacritty-port.md) |

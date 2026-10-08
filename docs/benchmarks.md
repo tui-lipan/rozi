@@ -135,8 +135,11 @@ terminal buffers cannot produce an invalid negative live-byte count.
 ### `server_fairness` probes
 
 The saturation probe is not a Criterion latency statistic. It checks the configured PTY ingress
-high-water behavior under unpaced producers and reports whether the bounded downstream policy
-activates. Keep its result separate from the paced key-acknowledgement benchmark.
+high-water behavior under two unpaced producers, with a continuously draining client and a second
+client that stops reading. It verifies bounded queues and output shedding, acknowledges input on
+the healthy client, then pauses the producers and resumes the slow client to verify replay recovery
+without disconnecting either client. Reported recovery time is one observation, not a latency
+percentile. Keep its result separate from the paced key-acknowledgement benchmark.
 
 The idle-latency probe takes 200 key round trips, allowing 50–66 ms of deterministically
 phase-jittered quiescence before each one, and reports p50, p95, p99, and maximum latency. Run it
@@ -144,7 +147,9 @@ on the same dedicated host before and after a server-wait change.
 
 The resurrection cases report the server's complete durable snapshot attempt. Trigger and polling
 delay stay outside the sample. The benchmark also emits server-loop blocking data, which has a
-different boundary from whole-attempt duration.
+different boundary from whole-attempt duration. The fixture disables foreground-command restoration
+so asynchronous process discovery cannot dirty a second snapshot during a terminal-only sample.
+Use this setting for comparable terminal snapshot measurements.
 
 ### Estimates and percentiles
 

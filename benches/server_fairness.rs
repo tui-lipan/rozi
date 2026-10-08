@@ -2,10 +2,10 @@
 mod bench_support;
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
-use rozi::platform::ipc::EndpointRegistry;
+use rozi::platform::ipc::{EndpointRegistry, IpcConnection};
 use rozi::runtime_metrics::ServerRuntimeMetrics;
 use rozi::session::client::{SessionClient, SpawnPaneRequest};
-use rozi::session::protocol::{Frame, ServerMessage};
+use rozi::session::protocol::{self, ClientMessage, Frame, ServerMessage};
 use rozi::session::server::{ServerSettings, SessionServer};
 use std::collections::HashMap;
 use std::hint::black_box;
@@ -62,7 +62,10 @@ enum DrainEvent {
         error: Option<String>,
     },
     Ready(u32),
-    Ack(String),
+    Ack {
+        pane_id: u32,
+        key: String,
+    },
 }
 
 enum SnapshotDrainEvent {
@@ -164,20 +167,23 @@ struct FairnessFixture {
     events: mpsc::Receiver<DrainEvent>,
     drain_done: mpsc::Receiver<()>,
     drain: Option<JoinHandle<()>>,
-    ingress_started: Instant,
     server: ServerOwner,
 }
 
 impl FairnessFixture {
     fn new(pane_count: u32, pace_millis: u64) -> Self {
-        Self::new_with_helper(
+        let fixture = Self::new_with_helper(
             pane_count,
             vec![HELPER_ARG.to_string(), pace_millis.to_string()],
-        )
+        );
+        fixture.start_ingress(pane_count);
+        fixture
     }
 
     fn idle() -> Self {
-        Self::new_with_helper(1, vec![IDLE_HELPER_ARG.to_string()])
+        let fixture = Self::new_with_helper(1, vec![IDLE_HELPER_ARG.to_string()]);
+        fixture.start_ingress(1);
+        fixture
     }
 
     fn new_with_helper(pane_count: u32, helper_args: Vec<String>) -> Self {
@@ -233,18 +239,21 @@ impl FairnessFixture {
             });
             wait_for_fairness_pane(&events, pane_id);
         }
-        let ingress_started = Instant::now();
-        for pane_id in 1..=pane_count {
-            client.send_input(pane_id, GENERATION, false, b"GO\n".to_vec());
-        }
-
         Self {
             client: Some(client),
             events,
             drain_done,
             drain: Some(drain),
-            ingress_started,
             server,
+        }
+    }
+
+    fn start_ingress(&self, pane_count: u32) {
+        for pane_id in 1..=pane_count {
+            self.client
+                .as_ref()
+                .expect("fairness client available")
+                .send_input(pane_id, GENERATION, false, b"GO\n".to_vec());
         }
     }
 
@@ -285,28 +294,23 @@ impl FairnessFixture {
     }
 
     fn wait_for_ack(&self, expected: &str) {
+        self.wait_for_pane_ack(PANE_ID, expected);
+    }
+
+    fn wait_for_pane_ack(&self, expected_pane: u32, expected: &str) {
         let deadline = Instant::now() + IO_TIMEOUT;
         loop {
             let event = self
                 .events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .expect("timed out waiting for helper acknowledgement");
-            if let DrainEvent::Ack(key) = event
+            if let DrainEvent::Ack { pane_id, key } = event
+                && pane_id == expected_pane
                 && key == expected
             {
                 return;
             }
         }
-    }
-
-    fn expect_disconnect(&mut self) -> Duration {
-        self.drain_done
-            .recv_timeout(IO_TIMEOUT)
-            .expect("saturated client did not reach the bounded disconnect");
-        if let Some(drain) = self.drain.take() {
-            drain.join().expect("join disconnected frame drain");
-        }
-        self.ingress_started.elapsed()
     }
 }
 
@@ -641,21 +645,18 @@ fn spawn_drain(
                                 break;
                             }
                         }
-                        if pane_id == PANE_ID {
-                            while let Some(start) = find_bytes(tail, ACK_PREFIX) {
-                                let value_start = start + ACK_PREFIX.len();
-                                let Some(relative_end) = find_bytes(&tail[value_start..], b"__")
-                                else {
-                                    tail.drain(..start);
-                                    break;
-                                };
-                                let value_end = value_start + relative_end;
-                                let key = String::from_utf8_lossy(&tail[value_start..value_end])
-                                    .into_owned();
-                                tail.drain(..value_end + 2);
-                                if event_tx.send(DrainEvent::Ack(key)).is_err() {
-                                    break;
-                                }
+                        while let Some(start) = find_bytes(tail, ACK_PREFIX) {
+                            let value_start = start + ACK_PREFIX.len();
+                            let Some(relative_end) = find_bytes(&tail[value_start..], b"__") else {
+                                tail.drain(..start);
+                                break;
+                            };
+                            let value_end = value_start + relative_end;
+                            let key =
+                                String::from_utf8_lossy(&tail[value_start..value_end]).into_owned();
+                            tail.drain(..value_end + 2);
+                            if event_tx.send(DrainEvent::Ack { pane_id, key }).is_err() {
+                                break;
                             }
                         }
                         if tail.len() > FAIRNESS_TAIL_CAP {
@@ -727,9 +728,105 @@ fn spawn_snapshot_drain(
 }
 
 fn saturation_probe() {
-    let mut fixture = FairnessFixture::new(SATURATION_PANES, 0);
-    let metrics = fixture.wait_for_saturation();
-    let disconnected_after = fixture.expect_disconnect();
+    // Attach before starting output so the paused peer starts from a small, complete baseline.
+    // SessionClient's channel reader never applies backpressure, even if its channel consumer
+    // pauses, so use the public IPC/protocol helpers for a peer that really stops reading.
+    let mut fixture = FairnessFixture::new_with_helper(
+        SATURATION_PANES,
+        vec![HELPER_ARG.to_string(), "0".to_string()],
+    );
+    let mut slow = fixture
+        .server
+        .endpoint
+        .connect()
+        .expect("connect slow client");
+    slow.set_read_timeout(Some(IO_TIMEOUT))
+        .expect("slow client read timeout");
+    slow.set_write_timeout(Some(IO_TIMEOUT))
+        .expect("slow client write timeout");
+    protocol::write_control_frame(
+        &mut slow,
+        &ClientMessage::Attach {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: fixture.server.session.clone(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            label: "saturation-paused-reader".to_string(),
+            read_only: true,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        },
+    )
+    .expect("attach slow client");
+    let attached: ServerMessage = protocol::read_frame(&mut slow).expect("slow client attached");
+    assert!(matches!(attached, ServerMessage::Attached { .. }));
+    let client = fixture
+        .client
+        .as_ref()
+        .expect("saturation observer available");
+    wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.client_outboxes.clients == 2 && metrics.attach_seed.active_clients == 0
+    });
+    // Consume the entire initial seed before pausing. A later PaneReset must then be a
+    // recovery replay, rather than an unread reset from the initial attach.
+    let mut decoder = protocol::FrameDecoder::default();
+    protocol::write_control_frame(&mut slow, &ClientMessage::RequestRuntimeMetrics)
+        .expect("slow client baseline barrier");
+    let deadline = Instant::now() + IO_TIMEOUT;
+    'baseline: loop {
+        while let Some(frame) = decoder
+            .next_frame::<ServerMessage>()
+            .expect("decode baseline")
+        {
+            if matches!(frame, Frame::Control(ServerMessage::RuntimeMetrics { .. })) {
+                break 'baseline;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "slow client baseline barrier timed out"
+        );
+        assert_ne!(
+            decoder.read_from_status(&mut slow).expect("read baseline"),
+            protocol::FrameReadStatus::Eof,
+            "slow client disconnected during attach"
+        );
+    }
+
+    fixture.start_ingress(SATURATION_PANES);
+    fixture.wait_for_saturation();
+    let client = fixture
+        .client
+        .as_ref()
+        .expect("saturation observer available");
+    let saturated = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.client_resync.shed_bytes > 0
+    });
+    assert_saturation_bounds(&saturated);
+    client.send_input(PANE_ID, GENERATION, false, b"saturation-live\n".to_vec());
+    fixture.wait_for_ack("saturation-live");
+
+    // Stop producing without exiting the panes. Their replay must recover the paused peer,
+    // rather than disappearing because the producers were killed or the peer was disconnected.
+    for pane_id in 1..=SATURATION_PANES {
+        client.send_input(pane_id, GENERATION, false, b"PAUSE\n".to_vec());
+        fixture.wait_for_pane_ack(pane_id, "PAUSE");
+    }
+    let paused = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.pty_ingress.bytes.current_bytes == 0
+    });
+    let resume_started = Instant::now();
+    let (reset_tx, reset_rx) = mpsc::sync_channel(1);
+    let drain = std::thread::spawn(move || drain_saturation_peer(slow, decoder, reset_tx));
+    reset_rx
+        .recv_timeout(IO_TIMEOUT)
+        .expect("slow client did not receive recovery replay");
+    let recovered = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.client_resync.completed > paused.client_resync.completed
+            && metrics.client_resync.active_clients == 0
+            && metrics.pty_ingress.bytes.current_bytes == 0
+    });
+    assert_saturation_bounds(&recovered);
     assert!(
         fixture
             .server
@@ -739,22 +836,74 @@ fn saturation_probe() {
             .try_wait()
             .expect("poll saturation server")
             .is_none(),
-        "saturation probe server exited instead of disconnecting only the bounded client"
-    );
-    assert_eq!(
-        metrics.client_outboxes.bytes.capacity_bytes,
-        8 * 1024 * 1024,
-        "unexpected single-client outbox capacity"
+        "saturation probe server exited"
     );
     eprintln!(
         "saturation_probe pty_high_water={} pty_capacity={} outbox_high_water={} \
-         outbox_capacity={} disconnected_after_ms={}",
-        metrics.pty_ingress.bytes.high_water_bytes,
-        metrics.pty_ingress.bytes.capacity_bytes,
-        metrics.client_outboxes.bytes.high_water_bytes,
-        metrics.client_outboxes.bytes.capacity_bytes,
-        disconnected_after.as_millis()
+         outbox_capacity={} shed_bytes={} resync_completed={} recovery_ms={} clients={}",
+        recovered.pty_ingress.bytes.high_water_bytes,
+        recovered.pty_ingress.bytes.capacity_bytes,
+        recovered.client_outboxes.bytes.high_water_bytes,
+        recovered.client_outboxes.bytes.capacity_bytes,
+        recovered.client_resync.shed_bytes,
+        recovered.client_resync.completed,
+        resume_started.elapsed().as_millis(),
+        recovered.client_outboxes.clients,
     );
+    fixture.server.stop(fixture.client.as_ref());
+    drain
+        .join()
+        .expect("join resumed slow client")
+        .expect("drain resumed slow client");
+}
+
+fn assert_saturation_bounds(metrics: &ServerRuntimeMetrics) {
+    assert_eq!(
+        metrics.client_outboxes.clients, 2,
+        "both clients must stay attached"
+    );
+    assert_eq!(metrics.pty_ingress.bytes.capacity_bytes, 4 * 1024 * 1024);
+    assert_eq!(
+        metrics.client_outboxes.bytes.capacity_bytes,
+        2 * 8 * 1024 * 1024
+    );
+    for bytes in [metrics.pty_ingress.bytes, metrics.client_outboxes.bytes] {
+        assert!(
+            bytes.current_bytes <= bytes.capacity_bytes,
+            "queue exceeds capacity"
+        );
+        assert!(
+            bytes.high_water_bytes <= bytes.capacity_bytes,
+            "queue exceeded capacity"
+        );
+    }
+}
+
+fn drain_saturation_peer(
+    mut stream: IpcConnection,
+    mut decoder: protocol::FrameDecoder,
+    reset: mpsc::SyncSender<()>,
+) -> io::Result<()> {
+    let mut reset_sent = false;
+    loop {
+        while let Some(frame) = decoder.next_frame::<ServerMessage>()? {
+            match frame {
+                Frame::Control(ServerMessage::Ping { seq }) => {
+                    protocol::write_control_frame(&mut stream, &ClientMessage::Pong { seq })?;
+                }
+                Frame::Control(ServerMessage::PaneReset { .. }) if !reset_sent => {
+                    reset_sent = true;
+                    let _ = reset.send(());
+                }
+                _ => {}
+            }
+        }
+        match decoder.read_from_status(&mut stream)? {
+            protocol::FrameReadStatus::Eof => return Ok(()),
+            protocol::FrameReadStatus::WouldBlock => continue,
+            protocol::FrameReadStatus::Read(_) => {}
+        }
+    }
 }
 
 fn idle_latency_probe() {
@@ -901,9 +1050,25 @@ fn run_helper(pace_millis: u64) -> io::Result<()> {
             b"server-fairness-continuous-pty-ingress-0123456789abcdef0123456789abcdef\r\n",
         );
     }
+    let mut paused = false;
     loop {
-        while let Ok(line) = ack_rx.try_recv() {
+        if paused {
+            let Ok(line) = ack_rx.recv() else {
+                return Ok(());
+            };
             stdout.write_all(format!("\r\n__ROZI_ACK_{line}__\r\n").as_bytes())?;
+            stdout.flush()?;
+            continue;
+        }
+        while let Ok(line) = ack_rx.try_recv() {
+            if line == "PAUSE" {
+                paused = true;
+            }
+            stdout.write_all(format!("\r\n__ROZI_ACK_{line}__\r\n").as_bytes())?;
+        }
+        if paused {
+            stdout.flush()?;
+            continue;
         }
         stdout.write_all(&chunk)?;
         if pace_millis > 0 {
@@ -1016,6 +1181,9 @@ fn run_server(
     let listener = endpoint.bind()?.into_listener();
     let settings = ServerSettings {
         resurrect,
+        // The corpus measures terminal snapshots, not asynchronously discovered foreground
+        // commands. A late process-inspector update would create another dirty generation.
+        resurrect_foreground: rozi::config::ForegroundRestore::Never,
         snapshot_dir: resurrect.then(|| root.join("snapshots")),
         snapshot_interval: if resurrect {
             Duration::ZERO

@@ -28,6 +28,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         env: Vec::new(),
         palette: test_palette(),
         pty: None,
+        pty_resize_pending: false,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
         output_seen: false,
@@ -3590,6 +3591,206 @@ fn clients_changed_contains_roster_and_lock_state() {
 }
 
 #[test]
+fn unchanged_resize_preserves_server_content_before_and_after_output() {
+    for local in [false, true] {
+        for output_seen in [false, true] {
+            let mut server = SessionServer::new_named("dev");
+            let (controller, _stream) = attach_client(&mut server);
+            let mut pane = test_pane(2);
+            pane.output_seen = output_seen;
+            if output_seen {
+                pane.terminal.process_bytes(b"kept");
+            }
+            let before = pane.terminal.render_snapshot();
+            let content_generation = pane.content_generation;
+            if local {
+                server.local_panes.insert((controller, 1), pane);
+            } else {
+                server.panes.insert(1, pane);
+            }
+            let responses = server.handle_message(
+                controller,
+                ClientMessage::Resize {
+                    pane_id: 1,
+                    local,
+                    generation: 2,
+                    cols: 20,
+                    rows: 5,
+                    cell_width: 0,
+                    cell_height: 0,
+                },
+            );
+            assert!(
+                responses.is_empty(),
+                "unchanged geometry must not broadcast a resize"
+            );
+            let pane = if local {
+                server.local_panes.get_mut(&(controller, 1)).unwrap()
+            } else {
+                server.panes.get_mut(&1).unwrap()
+            };
+            assert_eq!(pane.content_generation, content_generation);
+            let after = pane.screen_without_change().render_snapshot();
+            assert!(Arc::ptr_eq(&before.color_lines, &after.color_lines));
+            assert_eq!(after.text, before.text);
+        }
+    }
+}
+
+#[test]
+fn failed_pty_resize_retries_without_changing_server_content_or_broadcasting() {
+    for local in [false, true] {
+        for output_seen in [false, true] {
+            for pixel_only in [false, true] {
+                let mut server = SessionServer::new_named("dev");
+                let (controller, _stream) = attach_client(&mut server);
+                let mut pane = test_pane(2);
+                pane.output_seen = output_seen;
+                if output_seen {
+                    pane.terminal.process_bytes(b"kept");
+                }
+                if local {
+                    server.local_panes.insert((controller, 1), pane);
+                } else {
+                    server.panes.insert(1, pane);
+                }
+                let (cols, rows) = if pixel_only { (20, 5) } else { (30, 8) };
+                let cell = tui_lipan::TerminalCellSize::new(9, 18);
+                let request = |legacy| super::connection::PaneResizeRequest {
+                    pane_id: 1,
+                    local,
+                    generation: 2,
+                    cols,
+                    rows,
+                    cell_width: if legacy { 0 } else { 9 },
+                    cell_height: if legacy { 0 } else { 18 },
+                };
+                let mut attempts = 0;
+                let responses = server.handle_resize_with(controller, request(false), |pane| {
+                    attempts += 1;
+                    assert_eq!((pane.cols, pane.rows, pane.cell), (cols, rows, cell));
+                    Err(io::Error::other("transient resize failure"))
+                });
+                assert_eq!(
+                    responses.len(),
+                    1,
+                    "the initial change must be acknowledged"
+                );
+                assert!(
+                    matches!(&responses[0].1, ServerMessage::Resized { cols: c, rows: r, .. } if (*c, *r) == (cols, rows))
+                );
+                let owner = local.then_some(controller);
+                let pane = server.pane_mut(owner, 1).unwrap();
+                assert!(pane.pty_resize_pending);
+                let before = pane.screen_without_change().render_snapshot();
+                let content_generation = pane.content_generation;
+
+                // A failed retry stays pending; a successful retry clears it. A legacy request
+                // must retry the canonical pixel size rather than resetting it to zero.
+                for (legacy, fail) in [(false, true), (true, false)] {
+                    let responses =
+                        server.handle_resize_with(controller, request(legacy), |pane| {
+                            attempts += 1;
+                            assert_eq!((pane.cols, pane.rows, pane.cell), (cols, rows, cell));
+                            if fail {
+                                Err(io::Error::other("still unavailable"))
+                            } else {
+                                Ok(())
+                            }
+                        });
+                    assert!(responses.is_empty(), "a PTY-only retry must not broadcast");
+                    let pane = server.pane_mut(owner, 1).unwrap();
+                    assert_eq!(pane.pty_resize_pending, fail);
+                    assert_eq!(pane.content_generation, content_generation);
+                    let after = pane.screen_without_change().render_snapshot();
+                    assert!(Arc::ptr_eq(&before.color_lines, &after.color_lines));
+                    assert_eq!(before.text, after.text);
+                }
+                assert_eq!(attempts, 3);
+                assert!(
+                    server
+                        .handle_resize_with(controller, request(false), |_| {
+                            panic!("a successful PTY resize must restore the duplicate fast path")
+                        })
+                        .is_empty()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_pty_resize_obeys_authorization_generation_and_latest_geometry() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _stream) = attach_client(&mut server);
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    let mut pane = test_pane(2);
+    pane.pty_resize_pending = true;
+    server.panes.insert(1, pane);
+    let request = |generation, cols| super::connection::PaneResizeRequest {
+        pane_id: 1,
+        local: false,
+        generation,
+        cols,
+        rows: 5,
+        cell_width: 0,
+        cell_height: 0,
+    };
+    for (client, generation) in [(viewer, 2), (controller, 1)] {
+        assert!(
+            server
+                .handle_resize_with(client, request(generation, 20), |_| {
+                    panic!("unauthorized or stale requests must not retry the PTY")
+                })
+                .is_empty()
+        );
+        assert!(server.panes[&1].pty_resize_pending);
+    }
+    let responses = server.handle_resize_with(controller, request(2, 40), |pane| {
+        assert_eq!((pane.cols, pane.rows), (40, 5));
+        Ok(())
+    });
+    assert_eq!(responses.len(), 1);
+    assert!(!server.panes[&1].pty_resize_pending);
+    assert!(
+        server
+            .handle_resize_with(controller, request(2, 40), |_| {
+                panic!("the new geometry was already applied successfully")
+            })
+            .is_empty()
+    );
+}
+
+#[test]
+fn pixel_only_resize_updates_cell_size_without_reflowing_the_grid() {
+    for output_seen in [false, true] {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _stream) = attach_client(&mut server);
+        let mut pane = test_pane(2);
+        pane.output_seen = output_seen;
+        let content_generation = pane.content_generation;
+        server.panes.insert(1, pane);
+        let resize = |width, height| ClientMessage::Resize {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            cols: 20,
+            rows: 5,
+            cell_width: width,
+            cell_height: height,
+        };
+        assert!(!server.handle_message(controller, resize(9, 18)).is_empty());
+        let pane = &server.panes[&1];
+        assert_eq!(pane.cell, tui_lipan::TerminalCellSize::new(9, 18));
+        assert_eq!(pane.screen().cell_size(), pane.cell);
+        assert_eq!(pane.content_generation, content_generation + 1);
+        assert!(server.handle_message(controller, resize(0, 0)).is_empty());
+        assert!(server.handle_message(controller, resize(9, 18)).is_empty());
+        assert_eq!(server.panes[&1].content_generation, content_generation + 1);
+    }
+}
+
+#[test]
 fn resize_updates_screen_and_broadcasts_ack() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _s1) = attach_client(&mut server);
@@ -3608,6 +3809,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
             output_seen: false,
@@ -3759,6 +3961,7 @@ fn duplicate_spawn_is_rejected() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
             output_seen: false,
@@ -3815,6 +4018,7 @@ fn exited_pane_can_be_respawned() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
             output_seen: false,
@@ -3877,6 +4081,7 @@ fn attach_reports_layout_and_panes() {
         env: Vec::new(),
         palette: test_palette(),
         pty: None,
+        pty_resize_pending: false,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
         output_seen: false,
@@ -4072,6 +4277,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
             output_seen: false,
@@ -4153,6 +4359,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 env: Vec::new(),
                 palette: test_palette(),
                 pty: None,
+                pty_resize_pending: false,
                 terminal: screen,
                 content_generation: 0,
                 output_seen: true,

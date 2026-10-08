@@ -2111,6 +2111,7 @@ mod tests {
                 ansi: [tui_lipan::prelude::Color::Black; 16],
             },
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 40, 100),
             content_generation: 0,
             output_seen: false,

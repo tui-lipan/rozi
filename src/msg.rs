@@ -297,6 +297,7 @@ pub enum Msg {
     WorktreeOpenSelected,
     WorktreeOpenPane,
     WorktreeRefresh,
+    WorktreeTick,
     WorktreeCopyPath,
     WorktreeNew,
     WorktreeRemoveSelected,
@@ -305,6 +306,11 @@ pub enum Msg {
     WorktreeFormCycle(bool),
     WorktreeFormClose,
     WorktreeFormSubmit,
+    WorktreeBranchesOpen,
+    WorktreeBranchesClose,
+    WorktreeBranchQuery(String),
+    WorktreeBranchSelect(usize),
+    WorktreeBranchActivate(usize),
     /// Add the directory the new-worktree form warned about to `.git/info/exclude`.
     WorktreeExclude,
     WorktreePreviewTick {

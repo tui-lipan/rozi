@@ -61,8 +61,8 @@ fn picker_hides_remote_paths_and_keeps_the_association_for_opening() {
         backend.render();
         let frame = backend.capture_frame().plain_text();
         assert!(
-            frame.contains("Worktrees · workbox"),
-            "the host titles the picker: {frame}"
+            frame.contains("Worktrees · repo · workbox"),
+            "the repository and remote host title the picker: {frame}"
         );
         assert!(frame.contains("feat/worktrees"), "{frame}");
         assert!(
@@ -363,6 +363,7 @@ fn status_replies_are_scoped_cached_and_shared_with_the_sidebar() {
             )]
             .into(),
             unavailable: false,
+            ..Default::default()
         };
         backend.state_mut().sidebar.worktrees.source = Some((Some(target.clone()), cwd.into()));
         backend
@@ -591,5 +592,43 @@ fn footer_hints_click_through_to_their_key_action() {
             backend.state().worktree_picker.is_none(),
             "Esc closes the picker"
         );
+    });
+}
+
+#[test]
+fn local_repository_title_is_stable_across_worktrees_and_only_shows_a_host_when_needed() {
+    on_large_stack(|| {
+        let mut backend = picker();
+        let state = backend.state_mut();
+        let picker = state.worktree_picker.as_mut().unwrap();
+        picker.target = None;
+        picker.entries.insert(
+            0,
+            rozi::git::worktrees::WorktreeInfo {
+                path: "C:\\code\\repo".into(),
+                branch: Some("main".into()),
+                detached: false,
+                bare: false,
+                prunable: false,
+                linked: false,
+                lock: None,
+            },
+        );
+        picker.cwd = picker.entries[1].path.clone();
+        backend.render();
+        let frame = backend.capture_frame().plain_text();
+        assert!(frame.contains("Worktrees · repo"), "{frame}");
+        assert!(!frame.contains("· local"), "{frame}");
+        assert!(!frame.contains("Worktrees · feature"), "{frame}");
+        let target = RemoteTarget::Alias("workbox".into());
+        let state = backend.state_mut();
+        state
+            .remote
+            .hosts
+            .seed(&Default::default(), std::slice::from_ref(&target), &[], &[]);
+        state.remote.hosts.get_mut(&target).unwrap().probe = rozi::state::HostProbe::Reached;
+        backend.render();
+        let frame = backend.capture_frame().plain_text();
+        assert!(frame.contains("Worktrees · repo · local"), "{frame}");
     });
 }

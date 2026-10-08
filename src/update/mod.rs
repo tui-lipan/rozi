@@ -347,6 +347,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::WorktreeActivate(index) => crate::ops::worktrees::activate(ctx, index),
         Msg::WorktreeOpenSelected => crate::ops::worktrees::open_selected(ctx),
         Msg::WorktreeOpenPane => crate::ops::worktrees::open_pane(ctx),
+        Msg::WorktreeTick => crate::ops::worktrees::tick(ctx),
         Msg::WorktreeRefresh => crate::ops::worktrees::refresh(ctx),
         Msg::WorktreeCopyPath => crate::ops::worktrees::copy_path(ctx),
         Msg::WorktreeNew => crate::ops::worktrees::open_form(ctx),
@@ -357,6 +358,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::WorktreeFormCycle(forward) => crate::ops::worktrees::form_cycle(ctx, forward),
         Msg::WorktreeFormClose => crate::ops::worktrees::close_form(ctx),
+        Msg::WorktreeBranchesOpen => crate::ops::worktrees::branches_open(ctx),
+        Msg::WorktreeBranchesClose => crate::ops::worktrees::branches_close(ctx),
+        Msg::WorktreeBranchQuery(query) => crate::ops::worktrees::branch_query(ctx, query),
+        Msg::WorktreeBranchSelect(index) => crate::ops::worktrees::branch_select(ctx, index),
+        Msg::WorktreeBranchActivate(index) => crate::ops::worktrees::branch_activate(ctx, index),
         Msg::WorktreeFormSubmit => crate::ops::worktrees::submit_form(ctx),
         Msg::WorktreeExclude => crate::ops::worktrees::exclude_from_form(ctx),
         Msg::WorktreePreviewTick { epoch, revision } => {
@@ -1063,6 +1069,7 @@ fn post_update_sync(
         let command = update.command.take();
         update = Update::with_command(command);
     }
+    crate::ops::worktrees::ensure_tick(ctx);
     sidebar::sync_command_cwd(ctx);
     sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,

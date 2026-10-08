@@ -100,6 +100,15 @@ pub(crate) fn repository_scope_ref(
     Ok((cwd, state.current().remote_target.as_ref()))
 }
 
+fn repository_display_root(state: &crate::state::State, cwd: &str) -> String {
+    state
+        .focused_pane()
+        .and_then(|id| crate::pane::lifecycle::find_pane(state, id))
+        .filter(|pane| pane.terminal.project_root.as_deref() == Some(cwd))
+        .and_then(|pane| pane.terminal.repository.clone())
+        .unwrap_or_else(|| cwd.to_string())
+}
+
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let (cwd, target) = match repository_scope(&ctx.state) {
         Ok(scope) => scope,
@@ -113,10 +122,15 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     };
     operation_in_flight(ctx);
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
+    picker.repository = repository_display_root(&ctx.state, &cwd);
     picker.statuses = ctx.state.worktree_statuses.get(target.as_ref(), &cwd);
     // Open with the last list for this repository and refresh it in place: Git answers quickly,
     // but an empty "loading" frame that then grows into the real list reads as a delay.
-    if let Some(cached) = ctx.state.worktree_lists.get(target.as_ref(), &cwd) {
+    if let Some(cached) = ctx
+        .state
+        .worktree_lists
+        .get_repository(target.as_ref(), &cwd)
+    {
         picker.entries = cached.to_vec();
         picker.selected = cached.iter().position(|tree| tree.path == cwd).unwrap_or(0);
     }
@@ -172,8 +186,19 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
     }) else {
         return Update::none();
     };
+    if ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_list.is_some())
+    {
+        request_status(ctx, true);
+        return Update::none();
+    }
     let id = request_id(ctx);
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+        picker.list_refresh = Default::default();
+        picker.status_refresh = Default::default();
         picker.pending_list = Some(id);
         picker.pending_remove = None;
         picker.error = None;
@@ -184,19 +209,96 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 fn request_status(ctx: &mut Context<AppRoot>, refresh: bool) {
-    let Some(picker) = ctx.state.worktree_picker.as_ref() else {
+    let Some(picker) = ctx.state.worktree_picker.as_mut() else {
         return;
     };
-    if picker.standalone_form || (picker.pending_status.is_some() && !refresh) {
+    if picker.standalone_form {
+        return;
+    }
+    if picker.pending_status.is_some() {
+        picker.forced_status_refresh |= refresh;
         return;
     }
     let cwd = picker.cwd.clone();
+    let target = picker.target.clone();
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
-    let id = request_id(ctx);
-    ctx.state.worktree_picker.as_mut().unwrap().pending_status = Some(id);
-    client.worktree(id, WorktreeRequest::Status { cwd, refresh });
+    let shared = &ctx.state.sidebar.worktrees;
+    let pending = shared
+        .source
+        .as_ref()
+        .filter(|(host, root)| {
+            *host == target && (*root == cwd || shared.entries.iter().any(|tree| tree.path == cwd))
+        })
+        .and(shared.pending_status);
+    let id = pending.unwrap_or_else(|| request_id(ctx));
+    let picker = ctx.state.worktree_picker.as_mut().unwrap();
+    picker.pending_status = Some(id);
+    picker.forced_status_refresh = refresh && pending.is_some();
+    if pending.is_none() {
+        client.worktree(id, WorktreeRequest::Status { cwd, refresh });
+    }
+}
+
+fn reads_visible(ctx: &Context<AppRoot>) -> bool {
+    ctx.state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| !picker.standalone_form)
+        || crate::update::sidebar::worktrees::worktrees_active(ctx)
+}
+
+pub(crate) fn ensure_tick(ctx: &mut Context<AppRoot>) {
+    if !ctx.state.worktree_tick_armed
+        && reads_visible(ctx)
+        && let Some(link) = ctx.state.command_link.as_ref()
+    {
+        ctx.state.worktree_tick_armed = true;
+        link.send(Msg::WorktreeTick);
+    }
+}
+
+pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
+    if !reads_visible(ctx) {
+        ctx.state.worktree_tick_armed = false;
+        return Update::none();
+    }
+    if ctx.state.worktree_picker.as_ref().is_some_and(|picker| {
+        !picker.standalone_form && picker.list_refresh.ready() && picker.pending_list.is_none()
+    }) {
+        // Retry only reads: never replay a create, remove, or unlock.
+        if let Some(client) = ctx.state.current().session_client.clone() {
+            let id = request_id(ctx);
+            let picker = ctx.state.worktree_picker.as_mut().unwrap();
+            picker.pending_list = Some(id);
+            client.worktree(
+                id,
+                WorktreeRequest::List {
+                    cwd: picker.cwd.clone(),
+                },
+            );
+        }
+    }
+    if ctx
+        .state
+        .worktree_picker
+        .as_ref()
+        .is_some_and(|picker| picker.status_refresh.ready())
+    {
+        request_status(ctx, false);
+    }
+    if crate::update::sidebar::worktrees::worktrees_active(ctx) {
+        let listing = &ctx.state.sidebar.worktrees;
+        if (listing.list_refresh.ready() && listing.pending.is_none())
+            || (listing.status_refresh.ready() && listing.pending_status.is_none())
+        {
+            crate::update::sidebar::worktrees::request_list(ctx);
+        }
+    }
+    Update::command_only(Command::after(std::time::Duration::from_secs(1), |link| {
+        link.send(Msg::WorktreeTick)
+    }))
 }
 
 pub(crate) fn copy_path(ctx: &mut Context<AppRoot>) -> Update {
@@ -361,7 +463,8 @@ pub(crate) fn open_form_from_sidebar(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     let target = ctx.state.current().remote_target.clone();
-    let mut picker = WorktreePickerState::new(cwd, target);
+    let mut picker = WorktreePickerState::new(cwd.clone(), target);
+    picker.repository = repository_display_root(&ctx.state, &cwd);
     picker.standalone_form = true;
     picker.form = Some(WorktreeFormState::new());
     ctx.state.worktree_picker = Some(picker);
@@ -444,6 +547,108 @@ pub(crate) fn open_form(ctx: &mut Context<AppRoot>) -> Update {
         picker.form = Some(WorktreeFormState::new());
         crate::ops::focus::request_worktree_form_focus(ctx);
     }
+    Update::full()
+}
+
+pub(crate) fn branches_open(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return Update::none();
+    };
+    let id = request_id(ctx);
+    let Some(picker) = ctx.state.worktree_picker.as_mut() else {
+        return Update::none();
+    };
+    let Some(form) = picker.form.as_mut() else {
+        return Update::none();
+    };
+    if form.pending_branches.is_some() {
+        return Update::none();
+    }
+    form.choosing_branch = true;
+    form.pending_branches = Some(id);
+    form.branch_query.set_text(form.branch.text().to_string());
+    form.branch_selected = 0;
+    form.error = None;
+    client.worktree(
+        id,
+        WorktreeRequest::Branches {
+            cwd: picker.cwd.clone(),
+        },
+    );
+    crate::ops::focus::request_worktree_picker_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn branches_close(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(form) = ctx
+        .state
+        .worktree_picker
+        .as_mut()
+        .and_then(|picker| picker.form.as_mut())
+    {
+        form.choosing_branch = false;
+        form.pending_branches = None;
+        form.error = None;
+    }
+    crate::ops::focus::request_worktree_form_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn branch_query(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(form) = ctx
+        .state
+        .worktree_picker
+        .as_mut()
+        .and_then(|picker| picker.form.as_mut())
+    {
+        form.branch_query.set_text(query);
+        form.branch_selected = 0;
+    }
+    Update::full()
+}
+
+pub(crate) fn branch_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    if let Some(form) = ctx
+        .state
+        .worktree_picker
+        .as_mut()
+        .and_then(|picker| picker.form.as_mut())
+    {
+        form.branch_selected = index;
+    }
+    Update::full()
+}
+
+pub(crate) fn branch_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(form) = ctx
+        .state
+        .worktree_picker
+        .as_mut()
+        .and_then(|picker| picker.form.as_mut())
+    else {
+        return Update::none();
+    };
+    let branch = if index == form.branches.len() {
+        let name = form.branch_query.text().trim();
+        if name.is_empty() || form.branches.iter().any(|branch| branch.name == name) {
+            return Update::none();
+        }
+        name.to_string()
+    } else {
+        let Some(branch) = form.branches.get(index) else {
+            return Update::none();
+        };
+        if branch.checkout.is_some() {
+            return Update::none();
+        }
+        branch.name.clone()
+    };
+    form.branch.set_text(branch);
+    form.preview_revision = form.preview_revision.wrapping_add(1);
+    let revision = form.preview_revision;
+    branches_close(ctx);
+    // Selecting an existing branch previews the same default path as typing its name.
+    preview_tick(ctx, ctx.state.runtime_epoch, revision);
     Update::full()
 }
 
@@ -907,14 +1112,31 @@ pub(crate) fn apply_result(
             picker.pending_status = None;
             (picker.target.clone(), picker.cwd.clone())
         };
-        let statuses = match result {
+        let mut statuses = match result {
             WorktreeResult::Statuses { statuses } => statuses,
-            WorktreeResult::Failed { .. } => crate::git::pull_requests::WorktreeStatuses {
+            WorktreeResult::Failed { message } => crate::git::pull_requests::WorktreeStatuses {
                 unavailable: true,
+                retryable: crate::git::pull_requests::transient_error(&message),
+                error: Some(message),
                 ..Default::default()
             },
             _ => return Update::none(),
         };
+        if statuses.unavailable && statuses.checkouts.is_empty() {
+            statuses.checkouts = ctx
+                .state
+                .worktree_statuses
+                .get(target.as_ref(), &cwd)
+                .checkouts;
+        }
+        if let Some(picker) = ctx.state.worktree_picker.as_mut()
+            && picker.pending_status == Some(request_id)
+        {
+            picker.pending_status = None;
+        }
+        if ctx.state.sidebar.worktrees.pending_status == Some(request_id) {
+            ctx.state.sidebar.worktrees.pending_status = None;
+        }
         let same_repository = |entries: &[crate::git::worktrees::WorktreeInfo]| {
             entries.iter().any(|tree| tree.path == cwd)
         };
@@ -923,21 +1145,41 @@ pub(crate) fn apply_result(
             && picker.target == target
             && (picker.cwd == cwd || same_repository(&picker.entries))
             && picker.pending_status.is_none_or(|id| id <= request_id)
-            && picker.statuses != statuses
         {
-            changed = true;
+            picker
+                .status_refresh
+                .completed(statuses.unavailable, statuses.retryable);
+            changed |= picker.statuses != statuses;
             picker.statuses = statuses.clone();
         }
         let sidebar = &mut ctx.state.sidebar.worktrees;
         if sidebar.source.as_ref().is_some_and(|(host, root)| {
             *host == target && (*root == cwd || same_repository(&sidebar.entries))
         }) && sidebar.pending_status.is_none_or(|id| id <= request_id)
-            && sidebar.statuses != statuses
         {
-            changed = true;
+            sidebar
+                .status_refresh
+                .completed(statuses.unavailable, statuses.retryable);
+            changed |= sidebar.statuses != statuses;
             sidebar.statuses = statuses.clone();
         }
+        if changed
+            && statuses.unavailable
+            && !statuses.retryable
+            && let Some(error) = statuses.error.as_deref()
+        {
+            crate::pane::pty_events::notify_error(ctx, "PR status unavailable", error.to_string());
+        }
         ctx.state.worktree_statuses.put(target, cwd, statuses);
+        if picker_status
+            && ctx
+                .state
+                .worktree_picker
+                .as_ref()
+                .is_some_and(|picker| picker.forced_status_refresh)
+        {
+            request_status(ctx, true);
+        }
         return if changed {
             Update::full()
         } else {
@@ -971,6 +1213,7 @@ pub(crate) fn apply_result(
                         }
                     });
                 picker.entries = worktrees;
+                picker.list_refresh.completed(false, false);
                 picker.error = None;
                 let (target, cwd, list) = (
                     picker.target.clone(),
@@ -980,11 +1223,25 @@ pub(crate) fn apply_result(
                 ctx.state.worktree_lists.put(target, cwd, list);
             }
             WorktreeResult::Failed { message } => {
-                picker.entries.clear();
+                picker
+                    .list_refresh
+                    .completed(true, crate::git::pull_requests::transient_error(&message));
                 picker.error = Some(message);
-                let (target, cwd) = (picker.target.clone(), picker.cwd.clone());
-                ctx.state.worktree_lists.forget(target.as_ref(), &cwd);
             }
+            _ => {}
+        }
+        return Update::full();
+    }
+    if let Some(form) = picker.form.as_mut()
+        && form.pending_branches == Some(request_id)
+    {
+        form.pending_branches = None;
+        match result {
+            WorktreeResult::Branches { branches } => {
+                form.branches = branches;
+                form.error = None;
+            }
+            WorktreeResult::Failed { message } => form.error = Some(message),
             _ => {}
         }
         return Update::full();
@@ -1534,6 +1791,465 @@ mod tests {
                     .is_some_and(|picker| picker.form.is_some()),
                 "the new-worktree form opens instead of reporting an operation in progress"
             );
+        });
+    }
+    fn reads_backend() -> (
+        TestBackend<AppRoot>,
+        std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+    ) {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, outbound) = SessionClient::test_channel();
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+        state.current_mut().session_client = Some(client);
+        let pane = state.focused_pane().unwrap();
+        let terminal = &mut crate::pane::lifecycle::find_pane_mut(state, pane)
+            .unwrap()
+            .terminal;
+        terminal.cwd = Some("/src/repo".into());
+        terminal.project_root = Some("/src/repo".into());
+        terminal.runtime_sequence = 1;
+        let mut picker = WorktreePickerState::new("/src/repo".into(), None);
+        picker.entries = vec![crate::git::worktrees::WorktreeInfo {
+            path: "/src/repo-worktrees/feat".into(),
+            branch: Some("feat".into()),
+            linked: true,
+            bare: false,
+            detached: false,
+            prunable: false,
+            lock: None,
+        }];
+        state.worktree_picker = Some(picker);
+        (backend, outbound)
+    }
+
+    fn requests(
+        outbound: &std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+    ) -> Vec<(u64, crate::session::protocol::WorktreeRequest)> {
+        outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                crate::session::client::ClientOutbound::Control(
+                    crate::session::protocol::ClientMessage::Worktree {
+                        request_id,
+                        request,
+                    },
+                ) => Some((request_id, request)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn manual_status_refreshes_coalesce_and_run_after_pending_lookup() {
+        on_large_stack(|| {
+            use crate::session::protocol::WorktreeRequest;
+            for failed in [false, true] {
+                for (list_pending, sidebar_pending) in [(false, false), (true, false), (true, true)]
+                {
+                    let (mut backend, outbound) = reads_backend();
+                    let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                    picker.pending_status = (!sidebar_pending).then_some(100);
+                    picker.pending_list = list_pending.then_some(101);
+                    if sidebar_pending {
+                        let sidebar = &mut backend.state_mut().sidebar.worktrees;
+                        sidebar.source = Some((None, "/src/repo".into()));
+                        sidebar.pending_status = Some(100);
+                    }
+                    for _ in 0..3 {
+                        backend.dispatch(Msg::WorktreeRefresh).unwrap();
+                    }
+                    assert!(requests(&outbound).iter().all(|(_, request)| {
+                        !matches!(request, WorktreeRequest::Status { .. })
+                    }));
+                    let epoch = backend.state().runtime_epoch;
+                    backend
+                        .dispatch(Msg::SessionWorktreeResult {
+                            epoch,
+                            request_id: 100,
+                            result: if failed {
+                                WorktreeResult::Failed {
+                                    message: "HTTP 500: Internal Server Error".into(),
+                                }
+                            } else {
+                                WorktreeResult::Statuses {
+                                    statuses: Default::default(),
+                                }
+                            },
+                        })
+                        .unwrap();
+                    let followup = requests(&outbound);
+                    assert_eq!(followup.len(), 1);
+                    assert!(matches!(
+                        &followup[0].1,
+                        WorktreeRequest::Status { cwd, refresh: true } if cwd == "/src/repo"
+                    ));
+                    backend
+                        .dispatch(Msg::SessionWorktreeResult {
+                            epoch,
+                            request_id: followup[0].0,
+                            result: WorktreeResult::Statuses {
+                                statuses: Default::default(),
+                            },
+                        })
+                        .unwrap();
+                    assert!(requests(&outbound).is_empty());
+                    let picker = backend.state().worktree_picker.as_ref().unwrap();
+                    assert!(picker.pending_status.is_none());
+                    assert!(!picker.forced_status_refresh);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn status_failures_schedule_retries_only_for_transient_errors() {
+        on_large_stack(|| {
+            for (message, retryable) in [
+                ("HTTP 500: Internal Server Error", true),
+                ("HTTP 429", true),
+                ("unexpected EOF", true),
+                ("HTTP 401: Bad credentials", false),
+                ("HTTP 403: Resource not accessible by integration", false),
+                ("permission denied", false),
+            ] {
+                let (mut backend, outbound) = reads_backend();
+                backend.dispatch(Msg::WorktreeRefresh).unwrap();
+                requests(&outbound);
+                let epoch = backend.state().runtime_epoch;
+                let id = backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_status
+                    .unwrap();
+                backend
+                    .dispatch(Msg::SessionWorktreeResult {
+                        epoch,
+                        request_id: id,
+                        result: WorktreeResult::Failed {
+                            message: message.into(),
+                        },
+                    })
+                    .unwrap();
+                let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                assert_eq!(picker.status_refresh.due.is_some(), retryable, "{message}");
+                assert_eq!(picker.statuses.retryable, retryable, "{message}");
+                if retryable {
+                    picker.status_refresh.due = Some(std::time::Instant::now());
+                }
+                backend.dispatch(Msg::WorktreeTick).unwrap();
+                assert_eq!(
+                    requests(&outbound).len(),
+                    usize::from(retryable),
+                    "{message}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn failed_reads_preserve_rows_and_status_and_retry_until_recovered() {
+        on_large_stack(|| {
+            use crate::git::pull_requests::{PullRequestStatus, WorkStatus};
+            use crate::session::protocol::WorktreeRequest;
+            let (mut backend, outbound) = reads_backend();
+            backend.dispatch(Msg::WorktreeRefresh).unwrap();
+            let initial = requests(&outbound);
+            assert_eq!(initial.len(), 2);
+            let status_id = initial
+                .iter()
+                .find(|(_, request)| matches!(request, WorktreeRequest::Status { .. }))
+                .unwrap()
+                .0;
+            let list_id = initial
+                .iter()
+                .find(|(_, request)| matches!(request, WorktreeRequest::List { .. }))
+                .unwrap()
+                .0;
+            let epoch = backend.state().runtime_epoch;
+            let mut statuses = crate::git::pull_requests::WorktreeStatuses::default();
+            statuses.checkouts.insert(
+                "/src/repo-worktrees/feat".into(),
+                PullRequestStatus {
+                    number: 42,
+                    status: WorkStatus::Passed,
+                },
+            );
+            backend
+                .state_mut()
+                .worktree_statuses
+                .put(None, "/src/repo".into(), statuses);
+            for request_id in [list_id, status_id] {
+                backend
+                    .dispatch(Msg::SessionWorktreeResult {
+                        epoch,
+                        request_id,
+                        result: WorktreeResult::Failed {
+                            message: "git timed out".into(),
+                        },
+                    })
+                    .unwrap();
+            }
+            let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+            assert_eq!(picker.entries.len(), 1);
+            assert_eq!(picker.statuses.checkouts.len(), 1);
+            assert!(picker.statuses.unavailable && picker.statuses.retryable);
+            picker.list_refresh.due = Some(std::time::Instant::now());
+            picker.status_refresh.due = Some(std::time::Instant::now());
+            backend.dispatch(Msg::WorktreeTick).unwrap();
+            let retry = requests(&outbound);
+            assert_eq!(retry.len(), 2);
+            let request_id = retry
+                .iter()
+                .find(|(_, request)| matches!(request, WorktreeRequest::Status { .. }))
+                .unwrap()
+                .0;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id,
+                    result: WorktreeResult::Statuses {
+                        statuses: Default::default(),
+                    },
+                })
+                .unwrap();
+            let picker = backend.state().worktree_picker.as_ref().unwrap();
+            assert!(!picker.statuses.unavailable);
+            assert!(
+                picker.statuses.checkouts.is_empty(),
+                "successful empty results clear old associations"
+            );
+            assert_eq!(picker.status_refresh.failures, 0);
+            backend.dispatch(Msg::CloseWorktrees).unwrap();
+            backend.dispatch(Msg::WorktreeTick).unwrap();
+            assert!(
+                requests(&outbound).is_empty(),
+                "closed pickers do not retry"
+            );
+        });
+    }
+
+    #[test]
+    fn picker_and_sidebar_share_one_status_request_and_both_finish() {
+        on_large_stack(|| {
+            use crate::config::{SidebarTab, SidebarTabId};
+            use crate::session::protocol::WorktreeRequest;
+            let (mut backend, outbound) = reads_backend();
+            let state = backend.state_mut();
+            state.sidebar_visible = true;
+            state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
+            state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("worktrees"));
+            backend.dispatch(Msg::WorktreeRefresh).unwrap();
+            let initial = requests(&outbound);
+            assert_eq!(
+                initial
+                    .iter()
+                    .filter(|(_, request)| matches!(request, WorktreeRequest::Status { .. }))
+                    .count(),
+                1
+            );
+            let id = backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .unwrap()
+                .pending_status
+                .unwrap();
+            assert_eq!(backend.state().sidebar.worktrees.pending_status, Some(id));
+            backend.dispatch(Msg::WorktreeRefresh).unwrap();
+            assert!(requests(&outbound).is_empty());
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: id,
+                    result: WorktreeResult::Statuses {
+                        statuses: Default::default(),
+                    },
+                })
+                .unwrap();
+            let followup = requests(&outbound);
+            assert_eq!(followup.len(), 1);
+            assert!(matches!(
+                followup[0].1,
+                WorktreeRequest::Status { refresh: true, .. }
+            ));
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: followup[0].0,
+                    result: WorktreeResult::Statuses {
+                        statuses: Default::default(),
+                    },
+                })
+                .unwrap();
+            assert!(requests(&outbound).is_empty());
+            assert!(backend.state().sidebar.worktrees.pending_status.is_none());
+            assert!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_status
+                    .is_none()
+            );
+        });
+    }
+
+    #[test]
+    fn branch_chooser_rejects_checked_out_branches_and_previews_available_ones() {
+        on_large_stack(|| {
+            use crate::git::worktrees::WorktreeBranch;
+            let (mut backend, outbound) = reads_backend();
+            backend.dispatch(Msg::WorktreeNew).unwrap();
+            backend.dispatch(Msg::WorktreeBranchesOpen).unwrap();
+            let id = backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .unwrap()
+                .form
+                .as_ref()
+                .unwrap()
+                .pending_branches
+                .unwrap();
+            requests(&outbound);
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: id,
+                    result: WorktreeResult::Branches {
+                        branches: vec![
+                            WorktreeBranch {
+                                name: "main".into(),
+                                checkout: Some("/src/repo".into()),
+                            },
+                            WorktreeBranch {
+                                name: "available".into(),
+                                checkout: None,
+                            },
+                        ],
+                    },
+                })
+                .unwrap();
+            backend.dispatch(Msg::WorktreeBranchActivate(0)).unwrap();
+            assert!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .choosing_branch
+            );
+            backend.dispatch(Msg::WorktreeBranchActivate(1)).unwrap();
+            let form = backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .unwrap()
+                .form
+                .as_ref()
+                .unwrap();
+            assert_eq!(form.branch.text(), "available");
+            assert!(!form.choosing_branch);
+            assert!(form.pending_preview.is_some());
+            backend.dispatch(Msg::WorktreeBranchesOpen).unwrap();
+            backend
+                .dispatch(Msg::WorktreeBranchQuery("feat/new".into()))
+                .unwrap();
+            backend.dispatch(Msg::WorktreeBranchActivate(2)).unwrap();
+            assert_eq!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .branch
+                    .text(),
+                "feat/new"
+            );
+        });
+    }
+
+    #[test]
+    fn worktree_removal_shows_progress_until_the_server_finishes() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = reads_backend();
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            assert_eq!(requests(&outbound).len(), 1);
+            backend.render();
+            let frame = backend.capture_frame().plain_text();
+            assert!(frame.contains("removing…"), "{frame}");
+            assert!(!frame.contains("again to remove"), "{frame}");
+            let operation = backend.state().worktree_operation.as_ref().unwrap();
+            let (epoch, request_id) = (operation.epoch, operation.request_id);
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id,
+                    result: WorktreeResult::Failed {
+                        message: "permission denied".into(),
+                    },
+                })
+                .unwrap();
+            backend.render();
+            assert!(!backend.capture_frame().plain_text().contains("removing…"));
+            assert!(backend.state().worktree_operation.is_none());
+        });
+    }
+    #[test]
+    fn authentication_failures_wait_for_manual_refresh_instead_of_retrying() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = reads_backend();
+            backend.dispatch(Msg::WorktreeRefresh).unwrap();
+            requests(&outbound);
+            let epoch = backend.state().runtime_epoch;
+            let id = backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .unwrap()
+                .pending_status
+                .unwrap();
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: id,
+                    result: WorktreeResult::Statuses {
+                        statuses: crate::git::pull_requests::WorktreeStatuses {
+                            unavailable: true,
+                            error: Some("Run gh auth login on the session host".into()),
+                            ..Default::default()
+                        },
+                    },
+                })
+                .unwrap();
+            assert!(
+                backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .status_refresh
+                    .due
+                    .is_none()
+            );
+            backend.dispatch(Msg::WorktreeTick).unwrap();
+            assert!(requests(&outbound).is_empty());
         });
     }
 }

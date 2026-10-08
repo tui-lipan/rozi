@@ -51,6 +51,8 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
         listing.pending = None;
         listing.pending_status = None;
         listing.requested_token = None;
+        listing.list_refresh = Default::default();
+        listing.status_refresh = Default::default();
     }
     // A session that has just opened has no focused-pane repository for a moment. Keep showing
     // the last list through that rather than clearing it and filling it back in.
@@ -105,6 +107,7 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
         && listing.source.is_some()
         && listing.pending.is_none()
         && listing.requested_token != Some(ctx.state.sidebar.git_refresh_token)
+        && (listing.list_refresh.failures == 0 || listing.list_refresh.ready())
     {
         request_list(ctx);
     }
@@ -119,21 +122,46 @@ pub(crate) fn request_list(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
+    if ctx.state.sidebar.worktrees.pending.is_some() {
+        return;
+    }
     let id = crate::ops::worktrees::request_id(ctx);
     let listing = &mut ctx.state.sidebar.worktrees;
     listing.pending = Some(id);
     listing.requested_token = Some(ctx.state.sidebar.git_refresh_token);
     client.worktree(id, WorktreeRequest::List { cwd: cwd.clone() });
-    if ctx.state.sidebar.worktrees.pending_status.is_none() {
-        let id = crate::ops::worktrees::request_id(ctx);
+    if ctx.state.sidebar.worktrees.pending_status.is_none()
+        && (ctx.state.sidebar.worktrees.status_refresh.failures == 0
+            || ctx.state.sidebar.worktrees.status_refresh.ready())
+    {
+        let pending = ctx
+            .state
+            .worktree_picker
+            .as_ref()
+            .filter(|picker| {
+                ctx.state
+                    .sidebar
+                    .worktrees
+                    .source
+                    .as_ref()
+                    .is_some_and(|(host, root)| {
+                        picker.target == *host
+                            && (picker.cwd == *root
+                                || picker.entries.iter().any(|tree| tree.path == *root))
+                    })
+            })
+            .and_then(|picker| picker.pending_status);
+        let id = pending.unwrap_or_else(|| crate::ops::worktrees::request_id(ctx));
         ctx.state.sidebar.worktrees.pending_status = Some(id);
-        client.worktree(
-            id,
-            WorktreeRequest::Status {
-                cwd,
-                refresh: false,
-            },
-        );
+        if pending.is_none() {
+            client.worktree(
+                id,
+                WorktreeRequest::Status {
+                    cwd,
+                    refresh: false,
+                },
+            );
+        }
     }
 }
 
@@ -163,6 +191,7 @@ pub(crate) fn listed(ctx: &mut Context<AppRoot>, result: WorktreeResult) -> Upda
             listing.entries = worktrees.clone();
             listing.sessions = sessions;
             listing.loaded = true;
+            listing.list_refresh.completed(false, false);
             listing.error = None;
             ctx.state.worktree_lists.put(target, cwd, worktrees);
             if unchanged {
@@ -171,11 +200,11 @@ pub(crate) fn listed(ctx: &mut Context<AppRoot>, result: WorktreeResult) -> Upda
             }
         }
         WorktreeResult::Failed { message } => {
-            listing.entries.clear();
-            listing.sessions.clear();
+            listing
+                .list_refresh
+                .completed(true, crate::git::pull_requests::transient_error(&message));
             listing.loaded = true;
             listing.error = Some(message);
-            ctx.state.worktree_lists.forget(target.as_ref(), &cwd);
         }
         _ => return Update::none(),
     }
@@ -617,6 +646,36 @@ mod tests {
                     _ => None,
                 });
             assert_eq!(forced, Some(true));
+        });
+    }
+    #[test]
+    fn a_failed_sidebar_refresh_keeps_checkouts_visible_and_schedules_a_retry() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            backend.state_mut().sidebar.worktrees.pending = Some(99);
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: 99,
+                    result: WorktreeResult::Failed {
+                        message: "git timed out".into(),
+                    },
+                })
+                .unwrap();
+            let listing = &backend.state().sidebar.worktrees;
+            assert_eq!(listing.entries.len(), 2);
+            assert!(listing.list_refresh.due.is_some());
+            assert!(
+                backend
+                    .state()
+                    .worktree_tab_items()
+                    .iter()
+                    .any(|item| matches!(item, crate::state::WorktreeTabItem::Checkout(_)))
+            );
         });
     }
 }

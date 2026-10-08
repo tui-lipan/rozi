@@ -682,16 +682,15 @@ impl crate::state::State {
             items.push(WorktreeTabItem::Message("Loading…".to_string()));
         } else if let Some(error) = listing.error.as_ref() {
             items.push(WorktreeTabItem::Message(format!("Git: {error}")));
-        } else {
+        }
+        if listing.loaded {
             for tree in &listing.entries {
                 let sessions = listing
                     .sessions
                     .get(&tree.path)
                     .cloned()
                     .unwrap_or_default();
-                let removing = operation.is_some_and(|op| {
-                    matches!(&op.kind, crate::state::WorktreeOperationKind::Remove { path, .. } if *path == tree.path)
-                });
+                let removing = self.worktree_removing(&tree.path, target.as_ref());
                 items.push(WorktreeTabItem::Checkout(WorktreeTabRow {
                     current: &tree.path == cwd,
                     closable: tree.linked
@@ -727,6 +726,8 @@ pub struct SidebarWorktrees {
     pub source_epoch: Option<u64>,
     pub statuses: crate::git::pull_requests::WorktreeStatuses,
     pub pending_status: Option<u64>,
+    pub list_refresh: super::WorktreeReadRefresh,
+    pub status_refresh: super::WorktreeReadRefresh,
     /// The repository listed, as the host and project root of the pane it follows. `None` when the
     /// focused pane is not in a Git repository the session host can reach.
     pub source: Option<(Option<crate::session::remote::RemoteTarget>, String)>,

@@ -158,7 +158,9 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
         (text, style)
     });
     item = match (row.removing, state, marker) {
-        (true, _, _) => item.badge_text("removing…", muted),
+        (true, _, _) => {
+            item.badge(crate::view::session_status::picker_circle_spinner(muted).label("removing…"))
+        }
         (false, Some((state, state_style)), Some((marker, marker_style))) => {
             item.badge_parts([(state.to_string(), state_style), (marker, marker_style)])
         }
@@ -185,7 +187,16 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     let detail_style = |style: Style| style.transform_fg(ColorTransform::dim(detail_dim));
     if let Some(pr) = statuses.checkouts.get(&tree.path) {
         item = item.detail(
-            format!("#{} · {}", pr.number, pr.status.label()),
+            format!(
+                "#{} · {}{}",
+                pr.number,
+                pr.status.label(),
+                if statuses.unavailable {
+                    " · stale"
+                } else {
+                    ""
+                }
+            ),
             detail_style(crate::view::worktree_status_style(theme, pr.status)),
         );
     } else if tree.linked && tree.branch.is_some() && statuses.unavailable {

@@ -63,6 +63,32 @@ pub fn list(cwd: &Path) -> Result<Vec<WorktreeInfo>, String> {
     parse_porcelain_z(&output)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorktreeBranch {
+    pub name: String,
+    pub checkout: Option<String>,
+}
+
+/// Local branches and their existing checkout, if any. No network access is needed.
+pub fn branches(cwd: &Path) -> Result<Vec<WorktreeBranch>, String> {
+    let trees = list(cwd)?;
+    let refs = command::checked(
+        cwd,
+        &argv(&["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"]),
+        WORKTREE_LIST_TIMEOUT,
+    )?;
+    Ok(String::from_utf8_lossy(&refs)
+        .lines()
+        .map(|name| WorktreeBranch {
+            name: name.to_string(),
+            checkout: trees
+                .iter()
+                .find(|tree| tree.branch.as_deref() == Some(name))
+                .map(|tree| tree.path.clone()),
+        })
+        .collect())
+}
+
 /// Where a new checkout goes when no path is given, calculated only with the server host's path
 /// rules. Without a configured `directory` it is the visible sibling `<repo>-worktrees/<branch>`
 /// beside the primary checkout. An absolute `directory` holds every repository's checkouts as
@@ -559,6 +585,21 @@ mod tests {
         let tree = create(&repo, "existing", "HEAD", &existing).unwrap();
         assert_eq!(tree.branch.as_deref(), Some("existing"));
         assert!(tree.linked);
+
+        git(&repo, &["branch", "available"]);
+        let choices = branches(&repo).unwrap();
+        assert!(choices.iter().any(|branch| {
+            branch.name == "existing"
+                && branch
+                    .checkout
+                    .as_deref()
+                    .is_some_and(|checkout| same_path(Path::new(checkout), &existing))
+        }));
+        assert!(
+            choices
+                .iter()
+                .any(|branch| branch.name == "available" && branch.checkout.is_none())
+        );
 
         let fresh = temp.path().join("fresh checkout");
         let tree = create(&repo, "feat/new", "HEAD", &fresh).unwrap();

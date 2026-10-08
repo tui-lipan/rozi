@@ -30,6 +30,8 @@ pub struct ProfilePickerState {
 /// A repository picker scoped to the host and project root of the pane that opened it.
 pub struct WorktreePickerState {
     pub cwd: String,
+    /// Primary checkout supplied by the pane before the first Git list returns.
+    pub repository: String,
     pub target: Option<crate::session::remote::RemoteTarget>,
     pub entries: Vec<crate::git::worktrees::WorktreeInfo>,
     pub sessions: Vec<DiscoveredSession>,
@@ -37,6 +39,8 @@ pub struct WorktreePickerState {
     pub selected: usize,
     pub pending_list: Option<u64>,
     pub pending_status: Option<u64>,
+    pub list_refresh: WorktreeReadRefresh,
+    pub status_refresh: WorktreeReadRefresh,
     pub statuses: crate::git::pull_requests::WorktreeStatuses,
     /// A checkout whose removal waits for a second Ctrl+K.
     pub pending_remove: Option<PendingWorktreeRemove>,
@@ -68,7 +72,16 @@ impl WorktreePickerState {
             ""
         };
         let work_status = match self.statuses.checkouts.get(&tree.path) {
-            Some(pr) => format!("#{} {}", pr.number, pr.status.picker_label()),
+            Some(pr) => format!(
+                "#{} {}{}",
+                pr.number,
+                pr.status.picker_label(),
+                if self.statuses.unavailable {
+                    " · stale"
+                } else {
+                    ""
+                }
+            ),
             None if tree.linked && tree.branch.is_some() && self.statuses.unavailable => {
                 "PR unavailable".into()
             }
@@ -100,6 +113,7 @@ impl WorktreePickerState {
 
     pub fn new(cwd: String, target: Option<crate::session::remote::RemoteTarget>) -> Self {
         Self {
+            repository: cwd.clone(),
             cwd,
             target,
             entries: Vec::new(),
@@ -108,12 +122,39 @@ impl WorktreePickerState {
             selected: 0,
             pending_list: None,
             pending_status: None,
+            list_refresh: Default::default(),
+            status_refresh: Default::default(),
             statuses: Default::default(),
             pending_remove: None,
             form: None,
             error: None,
             standalone_form: false,
         }
+    }
+}
+
+/// Retry deadlines belong to a visible repository, so closing or changing scope retires them.
+#[derive(Clone, Debug, Default)]
+pub struct WorktreeReadRefresh {
+    pub due: Option<Instant>,
+    pub failures: usize,
+}
+
+impl WorktreeReadRefresh {
+    pub fn completed(&mut self, failed: bool, retryable: bool) {
+        use std::time::Duration;
+        let delay = if failed {
+            self.failures = self.failures.saturating_add(1);
+            retryable.then(|| [1, 3, 10, 60][self.failures.saturating_sub(1).min(3)])
+        } else {
+            self.failures = 0;
+            Some(60)
+        };
+        self.due = delay.map(|seconds| Instant::now() + Duration::from_secs(seconds));
+    }
+
+    pub fn ready(&self) -> bool {
+        self.due.is_some_and(|due| due <= Instant::now())
     }
 }
 
@@ -189,6 +230,33 @@ impl WorktreeListCache {
         self.lists.truncate(Self::CAPACITY);
     }
 
+    pub fn repository_label(
+        &self,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        cwd: &str,
+        entries: &[crate::git::worktrees::WorktreeInfo],
+    ) -> String {
+        use crate::platform::paths::{path_leaf, path_segments};
+        let root = entries
+            .iter()
+            .find(|tree| !tree.linked)
+            .map_or(cwd, |tree| tree.path.as_str());
+        let name = path_leaf(root).unwrap_or(root);
+        let collision = self.lists.iter().any(|(host, _, trees)| {
+            host.as_ref() == target
+                && trees
+                    .iter()
+                    .find(|tree| !tree.linked)
+                    .is_some_and(|tree| tree.path != root && path_leaf(&tree.path) == Some(name))
+        });
+        if collision {
+            let parts = path_segments(root);
+            parts[parts.len().saturating_sub(2)..].join("/")
+        } else {
+            name.to_string()
+        }
+    }
+
     pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
         self.lists
             .retain(|(host, repo, _)| !(host.as_ref() == target && repo == cwd));
@@ -262,6 +330,11 @@ impl WorktreeFormField {
 }
 
 pub struct WorktreeFormState {
+    pub choosing_branch: bool,
+    pub branches: Vec<crate::git::worktrees::WorktreeBranch>,
+    pub branch_query: TextInput,
+    pub branch_selected: usize,
+    pub pending_branches: Option<u64>,
     pub branch: TextInput,
     pub base: TextInput,
     pub path: TextInput,
@@ -279,6 +352,11 @@ pub struct WorktreeFormState {
 impl WorktreeFormState {
     pub fn new() -> Self {
         Self {
+            choosing_branch: false,
+            branches: Vec::new(),
+            branch_query: TextInput::new(""),
+            branch_selected: 0,
+            pending_branches: None,
             branch: TextInput::new(""),
             base: TextInput::new("HEAD"),
             path: TextInput::new(""),
@@ -1728,5 +1806,28 @@ mod worktree_cache_tests {
             "another host"
         );
         assert_eq!(cache.get_repository(None, "/elsewhere"), None);
+    }
+    #[test]
+    fn repository_names_use_primary_checkouts_and_qualify_collisions_per_host() {
+        let mut cache = WorktreeListCache::default();
+        let mut primary = tree("/work/rozi");
+        primary.linked = false;
+        let entries = vec![primary, tree("/work/rozi-worktrees/feature")];
+        assert_eq!(
+            cache.repository_label(None, "/work/rozi-worktrees/feature", &entries),
+            "rozi"
+        );
+        let mut other = tree("/personal/rozi");
+        other.linked = false;
+        cache.put(None, other.path.clone(), vec![other]);
+        assert_eq!(
+            cache.repository_label(None, "/work/rozi-worktrees/feature", &entries),
+            "work/rozi"
+        );
+        let host = crate::session::remote::RemoteTarget::Alias("box".into());
+        assert_eq!(
+            cache.repository_label(Some(&host), "/work/rozi-worktrees/feature", &entries),
+            "rozi"
+        );
     }
 }

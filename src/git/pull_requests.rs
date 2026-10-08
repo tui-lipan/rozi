@@ -54,6 +54,8 @@ pub struct PullRequestStatus {
 pub struct WorktreeStatuses {
     pub checkouts: BTreeMap<String, PullRequestStatus>,
     pub unavailable: bool,
+    pub error: Option<String>,
+    pub retryable: bool,
 }
 
 /// Each server's status worker retains at most eight repositories, including failed lookups.
@@ -72,13 +74,28 @@ struct CacheEntry {
 impl StatusCache {
     pub fn get(&mut self, cwd: &Path, refresh: bool) -> WorktreeStatuses {
         self.lookup(cwd, refresh)
-            .unwrap_or_else(|_| WorktreeStatuses {
+            .unwrap_or_else(|error| WorktreeStatuses {
                 unavailable: true,
+                retryable: transient_error(&error),
+                error: Some(error),
                 ..Default::default()
             })
     }
 
     fn lookup(&mut self, cwd: &Path, refresh: bool) -> Result<WorktreeStatuses, String> {
+        self.lookup_with(cwd, refresh, fetch)
+    }
+
+    fn lookup_with(
+        &mut self,
+        cwd: &Path,
+        refresh: bool,
+        fetch: impl FnOnce(
+            &Path,
+            &[worktrees::WorktreeInfo],
+            &BTreeMap<&str, &str>,
+        ) -> Result<WorktreeStatuses, String>,
+    ) -> Result<WorktreeStatuses, String> {
         let trees = worktrees::list(cwd)?;
         let key = trees
             .first()
@@ -95,23 +112,36 @@ impl StatusCache {
         )?;
         let mut local = serde_json::to_vec(&trees).map_err(|e| e.to_string())?;
         local.extend_from_slice(&refs);
-        if !refresh
-            && let Some(entry) = self.entries.iter().find(|entry| {
-                entry.path == key
-                    && entry.local == local
-                    && entry.time.elapsed() < Duration::from_secs(60)
-            })
-        {
-            return Ok(entry.value.clone());
+        let previous = self
+            .entries
+            .iter()
+            .find(|entry| entry.path == key && entry.local == local);
+        if let Some(entry) = previous {
+            let ttl = if entry.value.unavailable && entry.value.retryable {
+                Duration::from_secs(1)
+            } else {
+                Duration::from_secs(60)
+            };
+            // A burst of forced requests from different clients shares the just-finished lookup.
+            if entry.time.elapsed() < ttl
+                && (!refresh || entry.time.elapsed() < Duration::from_millis(500))
+            {
+                return Ok(entry.value.clone());
+            }
         }
         let refs = String::from_utf8_lossy(&refs);
         let heads = refs
             .lines()
             .filter_map(|line| line.split_once('\0'))
             .collect();
-        let value = fetch(cwd, &trees, &heads).unwrap_or_else(|_| WorktreeStatuses {
-            unavailable: true,
-            ..Default::default()
+        let value = fetch(cwd, &trees, &heads).unwrap_or_else(|error| {
+            let mut value = previous
+                .map(|entry| entry.value.clone())
+                .unwrap_or_default();
+            value.unavailable = true;
+            value.retryable = transient_error(&error);
+            value.error = Some(error);
+            value
         });
         self.entries.retain(|entry| entry.path != key);
         self.entries.insert(
@@ -128,15 +158,45 @@ impl StatusCache {
     }
 }
 
-fn query(branches: &[&str]) -> String {
+/// Retry transport failures and busy workers, but do not repeatedly retry missing tools,
+/// authentication, permission errors, or an absent repository.
+pub(crate) fn transient_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "timed out",
+        "timeout",
+        "connection",
+        "network",
+        "temporary",
+        "temporarily",
+        "pending",
+        "resolve host",
+        "tls",
+        "http 502",
+        "http 503",
+        "http 504",
+        "rate limit",
+    ]
+    .iter()
+    .any(|word| error.contains(word))
+}
+
+fn query(branches: &[&str], heads: &BTreeMap<&str, &str>) -> String {
     let mut query =
         String::from("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){");
     for (index, branch) in branches.iter().enumerate() {
         // JSON string escaping is also GraphQL string escaping; branch names are never query code.
+        let head = heads.get(branch).copied();
         let branch = serde_json::to_string(branch).expect("serialize branch");
         query.push_str(&format!(
-            "b{index}:pullRequests(headRefName:{branch},first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number state isDraft isCrossRepository headRefOid commits(last:1){{nodes{{commit{{statusCheckRollup{{state}}}}}}}}}}}}"
+            "b{index}:pullRequests(headRefName:{branch},first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number state isDraft isCrossRepository headRefOid}}}}"
         ));
+        if let Some(head) = head {
+            let head = serde_json::to_string(head).expect("serialize commit");
+            query.push_str(&format!(
+                "c{index}:object(oid:{head}){{... on Commit{{statusCheckRollup{{state}}}}}}"
+            ));
+        }
     }
     query.push_str("}}");
     query
@@ -148,11 +208,13 @@ fn fetch(
     heads: &BTreeMap<&str, &str>,
 ) -> Result<WorktreeStatuses, String> {
     if !crate::platform::command::program_exists("gh") {
-        return Err("gh unavailable".into());
+        return Err("Install gh on the session host to read PR status".into());
     }
     let branches: Vec<&str> = trees
         .iter()
         .filter_map(|tree| tree.branch.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
     if branches.is_empty() {
         return Ok(WorktreeStatuses::default());
@@ -174,7 +236,7 @@ fn fetch(
                 "-F".into(),
                 "name={repo}".into(),
                 "-f".into(),
-                format!("query={}", query(chunk)),
+                format!("query={}", query(chunk, heads)),
             ],
             &[("GH_PROMPT_DISABLED".into(), "1".into())],
             Some(cwd),
@@ -182,20 +244,32 @@ fn fetch(
             1024 * 1024,
         )
         .map_err(|error| error.to_string())?;
-        if output.timed_out || output.status != Some(0) {
-            return Err("GitHub status unavailable".into());
+        if output.timed_out {
+            return Err("GitHub status timed out".into());
+        }
+        if output.status != Some(0) {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if error.is_empty() {
+                "GitHub status unavailable".into()
+            } else {
+                error
+            });
         }
         let data: serde_json::Value =
             serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
         let repository = &data["data"]["repository"];
         if !repository.is_object() || data.get("errors").is_some() {
-            return Err("GitHub status unavailable".into());
+            return Err(format!("GitHub status unavailable: {}", data["errors"]));
         }
         for (index, branch) in chunk.iter().enumerate() {
             let nodes = repository[format!("b{index}")]["nodes"]
                 .as_array()
                 .ok_or("invalid GitHub status")?;
-            let Some(status) = find_status(nodes, heads.get(branch).copied()) else {
+            let Some(status) = find_status(
+                nodes,
+                heads.get(branch).copied(),
+                repository[format!("c{index}")]["statusCheckRollup"]["state"].as_str(),
+            ) else {
                 continue;
             };
             for tree in trees
@@ -209,7 +283,11 @@ fn fetch(
     Ok(result)
 }
 
-fn find_status(nodes: &[serde_json::Value], local_head: Option<&str>) -> Option<PullRequestStatus> {
+fn find_status(
+    nodes: &[serde_json::Value],
+    local_head: Option<&str>,
+    checks: Option<&str>,
+) -> Option<PullRequestStatus> {
     nodes.iter().find_map(|pr| {
         // Fork branches and terminal PRs must identify the current work by commit.
         if pr["isCrossRepository"] != false
@@ -217,11 +295,15 @@ fn find_status(nodes: &[serde_json::Value], local_head: Option<&str>) -> Option<
         {
             return None;
         }
-        parse_status(pr, local_head)
+        parse_status(pr, local_head, checks)
     })
 }
 
-fn parse_status(pr: &serde_json::Value, local_head: Option<&str>) -> Option<PullRequestStatus> {
+fn parse_status(
+    pr: &serde_json::Value,
+    local_head: Option<&str>,
+    checks: Option<&str>,
+) -> Option<PullRequestStatus> {
     if matches!(pr["state"].as_str(), Some("MERGED" | "CLOSED"))
         && (local_head.is_none() || local_head != pr["headRefOid"].as_str())
     {
@@ -235,7 +317,7 @@ fn parse_status(pr: &serde_json::Value, local_head: Option<&str>) -> Option<Pull
             if local_head.is_none() || local_head != pr["headRefOid"].as_str() {
                 WorkStatus::Open
             } else {
-                match pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"].as_str() {
+                match checks {
                     Some("SUCCESS") => WorkStatus::Passed,
                     Some("FAILURE" | "ERROR") => WorkStatus::Failed,
                     Some("PENDING" | "EXPECTED") => WorkStatus::Running,
@@ -254,6 +336,24 @@ fn parse_status(pr: &serde_json::Value, local_head: Option<&str>) -> Option<Pull
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_status(pr: &serde_json::Value, head: Option<&str>) -> Option<PullRequestStatus> {
+        super::parse_status(
+            pr,
+            head,
+            pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"].as_str(),
+        )
+    }
+
+    fn find_status(nodes: &[serde_json::Value], head: Option<&str>) -> Option<PullRequestStatus> {
+        let checks = nodes
+            .iter()
+            .find(|pr| pr["headRefOid"].as_str() == head)
+            .and_then(|pr| {
+                pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"].as_str()
+            });
+        super::find_status(nodes, head, checks)
+    }
 
     fn pr(state: &str, draft: bool, ci: Option<&str>) -> serde_json::Value {
         serde_json::json!({"number":114,"state":state,"isDraft":draft,"headRefOid":"abc","isCrossRepository":false,
@@ -292,7 +392,7 @@ mod tests {
 
     #[test]
     fn branch_names_are_graphql_strings() {
-        assert!(query(&["fix/a\"b"]).contains("headRefName:\"fix/a\\\"b\""));
+        assert!(query(&["fix/a\"b"], &BTreeMap::new()).contains("headRefName:\"fix/a\\\"b\""));
     }
 
     #[test]
@@ -332,5 +432,88 @@ mod tests {
             find_status(&[fork], Some("abc")).unwrap().status,
             WorkStatus::Passed
         );
+    }
+    #[test]
+    fn failed_status_refresh_keeps_good_data_and_retries_without_waiting_a_minute() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let repo = tempfile::tempdir().unwrap();
+        command::checked(
+            repo.path(),
+            &["init".into(), "-q".into()],
+            command::WORKTREE_LIST_TIMEOUT,
+        )
+        .unwrap();
+        let mut cache = StatusCache::default();
+        let good = WorktreeStatuses {
+            checkouts: [(
+                "checkout".into(),
+                PullRequestStatus {
+                    number: 1,
+                    status: WorkStatus::Passed,
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            cache
+                .lookup_with(repo.path(), false, |_, _, _| Ok(good.clone()))
+                .unwrap(),
+            good
+        );
+        cache.entries[0].time -= Duration::from_secs(61);
+        let failed = cache
+            .lookup_with(repo.path(), false, |_, _, _| {
+                Err("connection timed out".into())
+            })
+            .unwrap();
+        assert_eq!(failed.checkouts, good.checkouts);
+        assert!(failed.unavailable && failed.retryable);
+        cache.entries[0].time -= Duration::from_secs(2);
+        assert_eq!(
+            cache
+                .lookup_with(repo.path(), false, |_, _, _| Ok(good.clone()))
+                .unwrap(),
+            good
+        );
+        cache
+            .lookup_with(repo.path(), true, |_, _, _| {
+                panic!("a duplicate forced refresh must share the completed lookup")
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn query_fetches_checks_once_per_local_head_outside_pr_candidates() {
+        let query = query(
+            &["feat/a", "feat/b"],
+            &[("feat/a", "abc"), ("feat/b", "def")].into(),
+        );
+        assert_eq!(query.matches("statusCheckRollup").count(), 2);
+        assert!(!query.contains("commits(last:"));
+        assert!(query.contains("c0:object(oid:\"abc\")"));
+        assert!(query.contains("first:10"));
+    }
+
+    #[test]
+    fn only_recoverable_read_errors_are_retried() {
+        for error in [
+            "git timed out",
+            "too many worktree requests are pending",
+            "connection reset",
+            "gh: HTTP 503",
+        ] {
+            assert!(transient_error(error), "{error}");
+        }
+        for error in [
+            "not a git repository",
+            "gh auth login",
+            "git was not found",
+            "permission denied",
+        ] {
+            assert!(!transient_error(error), "{error}");
+        }
     }
 }

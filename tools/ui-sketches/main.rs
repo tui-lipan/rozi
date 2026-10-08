@@ -231,6 +231,7 @@ fn work_statuses(trees: &[WorktreeInfo]) -> rozi::git::pull_requests::WorktreeSt
             })
             .collect(),
         unavailable: false,
+        ..Default::default()
     }
 }
 
@@ -598,6 +599,30 @@ fn worktree_picker() {
         backend.render();
         write_png(&mut backend, &format!("worktree-form-{width}x{height}"));
     }
+    {
+        let form = backend
+            .state_mut()
+            .worktree_picker
+            .as_mut()
+            .unwrap()
+            .form
+            .as_mut()
+            .unwrap();
+        form.choosing_branch = true;
+        form.branch_query.set_text("feat");
+        form.branches = vec![
+            rozi::git::worktrees::WorktreeBranch {
+                name: "feat/current".into(),
+                checkout: Some("/home/me/src/rozi".into()),
+            },
+            rozi::git::worktrees::WorktreeBranch {
+                name: "feat/available".into(),
+                checkout: None,
+            },
+        ];
+    }
+    backend.render();
+    write_png(&mut backend, "worktree-branches");
 }
 
 fn floating_title_caps() {

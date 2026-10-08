@@ -15,6 +15,10 @@ repository, or use the sidebar's [Worktrees tab](sidebar.md#worktrees), which li
 checkouts. The palette lists **Worktrees** only while the focused pane is in a Git repository.
 **Worktrees** has no default command key.
 
+The picker title names the repository, using its primary checkout even when you open it from a
+linked worktree. A remote host is named in the title; `local` appears only while a remote host is
+connected or connecting. The search field and divider stay above the checkout list.
+
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
 marks the checkout the focused pane is in. Each row shows the branch and its PR/CI status, with
 `primary`, `locked`, `stale lock`, or `prunable` alongside it when applicable. Paths stay searchable
@@ -22,7 +26,11 @@ without appearing in rows. Press `Ctrl+C` or click **copy path** to copy the sel
 path, including a remote host's path, to your clipboard.
 
 The picker refreshes the checkout list when opened. Press `Ctrl+R` to refresh both checkouts and
-PR status.
+PR status. While the picker is open, PR status also refreshes about once a minute. Failed refreshes
+keep the last results visible. Temporary Git or network failures retry after roughly 1, 3, and 10
+seconds, then once a minute while the picker or sidebar remains open. A `stale` label means a PR
+badge reflects the last successful lookup. Missing tools and authentication errors explain the
+problem in a notification; fix the problem and press `Ctrl+R`.
 
 Press `Enter` on a checkout to open it:
 
@@ -80,8 +88,13 @@ picker checks immediately.
 
 ## Create a worktree
 
-Press `Ctrl+N` in the picker to open the new-worktree form. It has three fields; `Tab` and
-`Shift+Tab` move between them.
+Press `Ctrl+N` in the picker to open the new-worktree form. Press `Ctrl+B` or click **branches**
+to search local branches on the session host. Branches already checked out are dimmed and cannot
+be chosen. Choose an available branch, or type a new name and choose its **create branch** row,
+to fill the form. `Esc` returns to the form without changing the branch. Selecting a branch does
+not create the checkout until you submit the form.
+
+The form has three fields; `Tab` and `Shift+Tab` move between them.
 
 | Field | Meaning |
 | --- | --- |
@@ -138,6 +151,8 @@ Removal follows these rules:
   removal. Forcing affects only that Git check, never a lock.
 
 In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
+During removal, the checkout shows an animated spinner and `removing…` in the picker and sidebar
+until the host finishes or reports an error.
 
 A create or remove that has started finishes even if you close the picker, and rozi reports the
 result. If a created checkout is reported in a toast, right-click it to copy the checkout path on

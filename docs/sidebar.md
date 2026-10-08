@@ -23,14 +23,28 @@ While the sidebar is visible, these command keys work without focusing it:
 | `PageDown` | Next tab |
 | `PageUp` | Previous tab |
 
-Open **Settings… → Bars → Left sidebar…** or **Right sidebar…** to choose **Disabled**, **1 panel**,
-**2 panels**, or **3 panels**. Highlighting a choice leaves the layout unchanged; Enter applies and
-saves it. Escape cancels. Disabled preserves panel assignments, counts, weights, and width for
-later use. The global `b` command temporarily hides or restores the current dock combination.
+Open **Settings… → Bars → Left panels…** or **Right panels…** to choose one to three panels.
+Highlighting a choice leaves the layout unchanged; `Enter` applies and saves it. `Esc` cancels.
+Panel-count changes preserve hidden docks and dormant tab assignments.
+
+**Sidebars at startup…** chooses **None**, **Left**, **Right**, or **Both** for the next client launch.
+Changing it or reloading the configuration never opens or closes the current client's sidebars.
+Both docks always exist structurally, including empty docks that accept dragged tabs.
+
+The `b` command hides the shown docks and brings the same combination back. **Show/Hide left
+sidebar** and **Show/Hide right sidebar** in the command palette toggle one dock independently;
+these actions have no default keys and can be bound. Hiding the last dock remembers that dock:
+show both, hide Right, then hide Left, and `b` brings back only Left. Showing one dock while both
+are hidden shows only the requested dock.
+
+On first use, when no combination has been remembered, `b` shows docks with enabled, available
+tabs, or Left if every dock is empty. `B` restores visibility if needed, shows the remembered
+panel's dock, and focuses that panel. Showing an empty dock explicitly exposes its drag target.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
-<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left sidebar, Right sidebar, and Sidebar tabs entries" data-label="Settings" data-caption="Choose each sidebar independently from Settings.">
-<img src="./assets/captures/sidebar-panels.webp" alt="Left sidebar choices: Disabled, 1 panel, 2 panels, and 3 panels" data-label="Panels" data-caption="Enter applies a panel count; Escape cancels without rearranging the workspace.">
+<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, startup visibility, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
+<img src="./assets/captures/sidebar-panels.webp" alt="Left panel count choices: 1 panel, 2 panels, and 3 panels" data-label="Panels" data-caption="Enter applies a panel count; Escape cancels without rearranging the workspace.">
+<img src="./assets/captures/sidebar-startup.webp" alt="Sidebars at startup choices: None, Left, Right, and Both" data-label="Startup" data-caption="Startup visibility applies to the next client launch.">
 </CaptureGallery>
 
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
@@ -61,8 +75,8 @@ After the `B` command key focuses the sidebar:
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
 `width` allows. Drag the divider between panels to change the split.
 
-rozi saves tab order, visibility preferences, placement, dock widths, panel counts, and panel weights
-to `config.toml`.
+rozi saves tab order, tab visibility, startup visibility, placement, dock widths, panel counts, and
+panel weights to `config.toml`.
 Whether the sidebar is visible and which tab is selected are not saved.
 
 ## Activity
@@ -214,15 +228,16 @@ are starting configurations, so later edits remain yours.
 
 Individual dock toggles and dock navigation remain bindable through `toggle-left-sidebar`,
 `toggle-right-sidebar`, `sidebar-other-dock`, and `sidebar-move-to-other-dock`. The command palette
-keeps the global sidebar toggle, **Focus sidebar**, and **Sidebar tabs…**.
+lists the global and individual sidebar toggles, **Focus sidebar**, and **Sidebar tabs…**.
 
 ```toml
 [sidebar]
+startup = "left"
 tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
-layout = { left = { visible = true, width = 32, panel_count = 2, panels = [
+layout = { left = { width = 32, panel_count = 2, panels = [
   { weight = 0.4, tabs = ["activity", "panes", "sessions"] },
   { weight = 0.6, tabs = ["files", "git", "worktrees"] },
-] }, right = { visible = false, width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
+] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false
 gap = true
 background = true
@@ -243,10 +258,14 @@ same appearance controls as the former sidebar.
 ### Migrate an existing configuration
 
 The former `visible`, `width`, `position`, `panels`, `split`, and `split_ratio` keys produce an explicit
-migration diagnostic. rozi resolves them into `layout` in memory, preserving unknown tab IDs and
-custom definitions. The next layout save writes `layout` and removes those geometry keys. You can
-also replace them manually using the example above. An explicit `layout` takes precedence. Saves
-preserve tab definitions and unrelated settings; malformed TOML is reported and left untouched.
+migration diagnostic. rozi resolves them into `layout` and `startup` in memory, preserving unknown
+tab IDs and custom definitions. The next layout save writes the new schema and removes those
+geometry keys. You can also replace them manually using the example above. An explicit `layout`
+takes precedence.
+
+The former `layout.<dock>.visible` flags also migrate to `sidebar.startup`; an explicit `startup`
+takes precedence. Saves preserve tab definitions and unrelated settings. Malformed TOML is
+reported and left untouched.
 
 When `background` is on, the tab strip uses a raised sidebar fill, or the `element` colour when
 `background_follows_canvas` is on.

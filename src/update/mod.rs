@@ -294,7 +294,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             path,
             expanded,
         } => sidebar::tree_toggle(ctx, tab_id, path, expanded),
-        Msg::SidebarTreeEntryRequest { path } => sidebar::tree_entry_request(ctx, path),
+        Msg::SidebarTreeEntryRequest { epoch, path } => {
+            sidebar::tree_entry_request(ctx, epoch, path)
+        }
         Msg::SessionDirectoryListing {
             epoch,
             path,

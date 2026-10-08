@@ -157,16 +157,19 @@ pub(super) fn tree_tab(
     // itself. Serve listings from state instead and let it ask for what it is missing; local
     // attaches keep the default filesystem source and never pay for any of this.
     if ctx.state.current().remote_host.is_some() {
+        let epoch = ctx.state.runtime_epoch;
         tree = tree
             .entry_source(FileTreeEntrySource::provided(
                 ctx.state.sidebar.tree_listings.clone(),
             ))
-            .on_entry_request(crate::view::sidebar::callback(
-                ctx,
-                |request: FileTreeEntryRequest| Msg::SidebarTreeEntryRequest {
+            // FileTree remembers requested paths until a listing arrives. Geometry changes must
+            // not drop this data request while the original widget remains mounted.
+            .on_entry_request(ctx.link().callback(move |request: FileTreeEntryRequest| {
+                Msg::SidebarTreeEntryRequest {
+                    epoch,
                     path: request.path.to_string(),
-                },
-            ))
+                }
+            }))
             // Local git discovery would walk this client's filesystem using the *server's* paths,
             // so the Changes projection has to come from the server's own scan too.
             .change_source(FileTreeChangeSource::Provided(

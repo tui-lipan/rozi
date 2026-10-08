@@ -107,15 +107,13 @@ pub(crate) fn tree_toggle(
     Update::none()
 }
 
-/// The git repository containing `cwd`, found by walking ancestors for a `.git` entry. `.git` is a
-/// file rather than a directory inside worktrees and submodules, so this tests existence, not kind.
 /// The file tree needs a directory it has no listing for. Ask the session server to read it.
 ///
-/// Deduplicated against in-flight and already-delivered paths: the widget re-emits a request on
-/// every rebuild while a directory is still absent from the provided source, so without this an
-/// expanded-but-slow directory would issue one `ListDirectory` per frame.
-pub(crate) fn tree_entry_request(ctx: &mut Context<AppRoot>, path: String) -> Update {
-    if ctx.state.current().remote_host.is_none() {
+/// Shared across tree tabs and deduplicated against in-flight and already-delivered paths.
+/// A directory path belongs to its attachment, independently of tab configuration and geometry.
+/// Unlike tab actions, a configuration reload cannot change the meaning of this data request.
+pub(crate) fn tree_entry_request(ctx: &mut Context<AppRoot>, epoch: u64, path: String) -> Update {
+    if epoch != ctx.state.runtime_epoch || ctx.state.current().remote_host.is_none() {
         return Update::none();
     }
     if ctx.state.sidebar.tree_pending.contains(&path)

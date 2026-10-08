@@ -2220,3 +2220,143 @@ fn shift_g_still_jumps_to_the_last_row() {
         assert!(backend.state().sidebar.focused);
     });
 }
+
+#[test]
+fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change() {
+    on_test_thread(|| {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::{ClientMessage, WireDirEntry};
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        show_files_tab(&mut backend);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.sidebar.dock_visible = [true, false];
+            for panel in state.sidebar.panels.iter_mut().skip(1) {
+                panel.tabs.clear();
+                panel.active_tab = None;
+            }
+            state.current_mut().remote_host = Some("tree-host".into());
+            state.current_mut().session_client = Some(client);
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/repo".into());
+        }
+        // Synchronize the source before mounting the provided tree, without draining callbacks.
+        backend
+            .update_level(crate::Msg::SidebarPointerMoved(0))
+            .unwrap();
+        backend.render();
+        let epoch = backend.state().sidebar.layout_epoch;
+        assert!(backend.state().sidebar.tree_pending.is_empty());
+        assert!(outbound.try_iter().all(|message| !matches!(
+            message,
+            ClientOutbound::Control(ClientMessage::ListDirectory { .. })
+        )));
+        let tree_key = "rozi-sidebar-body-left-0-files-/remote/repo-tree".into();
+        assert!(
+            backend.focus_key(&tree_key),
+            "the original tree is mounted: {}",
+            backend.capture_ui_snapshot().to_markdown()
+        );
+        let mounted = backend.focused();
+        // Process the dock command before the directory callback already queued by FileTree.
+        backend
+            .update_level(crate::Msg::RunAction(
+                crate::input::Action::ToggleRightSidebar,
+            ))
+            .unwrap();
+        backend.render();
+        assert_ne!(backend.state().sidebar.layout_epoch, epoch);
+        assert_eq!(backend.focused(), mounted, "the tree was not remounted");
+        backend.pump().unwrap();
+        let requests: Vec<_> = outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests, ["/remote/repo"]);
+        assert!(
+            backend
+                .state()
+                .sidebar
+                .tree_pending
+                .contains("/remote/repo")
+        );
+        backend
+            .dispatch(crate::Msg::SessionDirectoryListing {
+                epoch: backend.state().runtime_epoch,
+                path: "/remote/repo".into(),
+                entries: vec![WireDirEntry {
+                    name: "loaded.rs".into(),
+                    is_dir: false,
+                    is_symlink: false,
+                    symlink_target: None,
+                    ignored: false,
+                    git_staged: None,
+                    git_unstaged: None,
+                }],
+                error: None,
+            })
+            .unwrap();
+        assert!(
+            backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .any(|line| line.contains("loaded.rs"))
+        );
+        assert!(
+            !backend
+                .state()
+                .sidebar
+                .tree_pending
+                .contains("/remote/repo")
+        );
+    });
+}
+
+#[test]
+fn remote_directory_requests_reject_old_sessions_but_survive_configuration_changes() {
+    on_test_thread(|| {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().remote_host = Some("tree-host".into());
+        backend.state_mut().current_mut().session_client = Some(client);
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .dispatch(crate::Msg::SidebarTreeEntryRequest {
+                epoch: epoch.wrapping_add(1),
+                path: "/stale".into(),
+            })
+            .unwrap();
+        assert!(!backend.state().sidebar.tree_pending.contains("/stale"));
+        assert!(outbound.try_iter().all(|message| !matches!(
+            message,
+            ClientOutbound::Control(ClientMessage::ListDirectory { .. })
+        )));
+        backend.state_mut().sidebar.config_epoch += 1;
+        for _ in 0..2 {
+            backend
+                .dispatch(crate::Msg::SidebarTreeEntryRequest {
+                    epoch,
+                    path: "/current".into(),
+                })
+                .unwrap();
+        }
+        let paths: Vec<_> = outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, ["/current"], "valid requests remain deduplicated");
+    });
+}

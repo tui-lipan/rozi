@@ -838,6 +838,7 @@ pub enum Msg {
     },
     /// The file tree needs a directory it does not have yet (emitted by the widget).
     SidebarTreeEntryRequest {
+        epoch: u64,
         path: String,
     },
     SessionError {

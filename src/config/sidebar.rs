@@ -89,6 +89,13 @@ pub(super) fn apply_sidebar_config(
     extension_tabs: Vec<SidebarTab>,
     warnings: &mut Vec<String>,
 ) {
+    let layout = raw.layout.clone();
+    let legacy = raw.visible.is_some()
+        || raw.width.is_some()
+        || raw.position.is_some()
+        || raw.panels.is_some()
+        || raw.split.is_some()
+        || raw.split_ratio.is_some();
     let requested_panels = raw.panels;
     if let Some(visible) = raw.visible {
         sidebar.visible = visible;
@@ -170,6 +177,55 @@ pub(super) fn apply_sidebar_config(
             ));
         }
         sidebar.split_ratio = clamped;
+    }
+    sidebar.layout = if let Some(layout) = layout {
+        layout
+    } else if legacy || custom_tabs {
+        let mut layout = super::schema::SidebarDockLayout::default();
+        let dock = layout.dock_mut(sidebar.position);
+        dock.visible = sidebar.visible;
+        dock.width = sidebar.width;
+        dock.panel_count = if sidebar.split {
+            sidebar.panels.len()
+        } else {
+            1
+        };
+        dock.panels = sidebar
+            .panels
+            .iter()
+            .enumerate()
+            .map(|(index, tabs)| super::schema::SidebarDockPanel {
+                weight: if index == 0 {
+                    sidebar.split_ratio
+                } else {
+                    1.0 - sidebar.split_ratio
+                },
+                tabs: tabs.iter().map(|id| id.as_str().to_string()).collect(),
+            })
+            .collect();
+        if sidebar.position == SidebarPosition::Right {
+            layout.left.panels.iter_mut().for_each(|p| p.tabs.clear());
+        }
+        layout
+    } else {
+        sidebar.layout.clone()
+    };
+    if legacy {
+        warnings.push("Legacy sidebar geometry migrated in memory to sidebar.layout; the next layout save writes the new schema. See docs/sidebar.md".into());
+    }
+    sidebar.layout.validate(warnings);
+    for tab in &sidebar.tabs {
+        let id = tab.id();
+        if sidebar.layout.location(id.as_str()).is_none() {
+            let panel = if ["files", "git", "worktrees"].contains(&id.as_str()) {
+                1
+            } else {
+                0
+            };
+            sidebar
+                .layout
+                .place(id.as_str(), SidebarPosition::Left, panel);
+        }
     }
 }
 
@@ -1063,5 +1119,50 @@ mod tests {
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings.iter().any(|w| w.contains("must not be empty")));
         assert!(warnings.iter().any(|w| w.contains("is a launcher")));
+    }
+}
+
+#[cfg(test)]
+mod docking_contract_tests {
+    use super::super::schema::*;
+
+    #[test]
+    fn compacting_is_lossless_and_transfer_is_unique() {
+        let mut layout = SidebarDockLayout::default();
+        let original = layout.left.panels.clone();
+        layout.left.panel_count = 1;
+        layout.validate(&mut Vec::new());
+        assert_eq!(layout.left.panels, original);
+        layout.place("files", SidebarPosition::Right, 2);
+        assert_eq!(layout.location("files"), Some((SidebarPosition::Right, 2)));
+        assert!(
+            !layout
+                .left
+                .panels
+                .iter()
+                .any(|p| p.tabs.contains(&"files".into()))
+        );
+        layout.hidden.push("files".into());
+        layout.left.panel_count = 3;
+        layout.validate(&mut Vec::new());
+        assert_eq!(layout.location("files"), Some((SidebarPosition::Right, 2)));
+        assert!(layout.hidden.contains(&"files".into()));
+    }
+
+    #[test]
+    fn validation_retains_unknown_tabs_and_dormant_panels() {
+        let mut layout = SidebarDockLayout::default();
+        layout.place("removed.extension", SidebarPosition::Right, 4);
+        layout.right.panels[4].weight = f32::NAN;
+        layout.right.panels[0].tabs.push("files".into());
+        let mut warnings = Vec::new();
+        layout.validate(&mut warnings);
+        assert_eq!(layout.right.panels.len(), 5);
+        assert_eq!(layout.right.panels[4].weight, 1.0);
+        assert_eq!(
+            layout.location("removed.extension"),
+            Some((SidebarPosition::Right, 4))
+        );
+        assert_eq!(warnings.len(), 2);
     }
 }

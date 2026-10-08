@@ -575,6 +575,39 @@ pub fn persist_layout_default(
     Ok(path)
 }
 
+/// Save layout without rewriting tab definitions or unrelated settings. Legacy keys are removed
+/// only after their in-memory migration has been resolved successfully.
+pub fn persist_sidebar_layout(
+    layout: &super::schema::SidebarDockLayout,
+) -> std::result::Result<PathBuf, String> {
+    let _edit = config_edit_lock();
+    let path = config_path();
+    let mut text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    // A malformed manual edit must never be overwritten by a preference save.
+    text.parse::<toml::Value>()
+        .map_err(|err| format!("Config is invalid: {err}"))?;
+    for key in [
+        "visible",
+        "width",
+        "position",
+        "panels",
+        "split",
+        "split_ratio",
+    ] {
+        text = remove_value_in_section(&text, "sidebar", key);
+    }
+    let value = toml::Value::try_from(layout)
+        .map_err(|err| err.to_string())?
+        .to_string();
+    text = upsert_value_in_section(&text, "sidebar", "layout", &value);
+    write_config_text(&path, text)?;
+    Ok(path)
+}
+
 pub fn persist_sidebar_width(width: u16) -> std::result::Result<PathBuf, String> {
     persist_sidebar_value("width", &width.to_string())
 }

@@ -261,6 +261,7 @@ pub(super) struct UserCommandTableSpec {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct SidebarFileConfig {
+    pub(super) layout: Option<super::schema::SidebarDockLayout>,
     pub(super) visible: Option<bool>,
     pub(super) width: Option<u16>,
     pub(super) position: Option<String>,

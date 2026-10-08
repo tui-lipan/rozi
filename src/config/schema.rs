@@ -1854,8 +1854,151 @@ impl SidebarTab {
     }
 }
 
+/// Durable docking preferences. Panel storage is never truncated when panel_count shrinks.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SidebarDock {
+    pub visible: bool,
+    pub width: u16,
+    pub panel_count: usize,
+    pub panels: Vec<SidebarDockPanel>,
+}
+
+impl Default for SidebarDock {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            width: 32,
+            panel_count: 1,
+            panels: vec![SidebarDockPanel::default()],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SidebarDockPanel {
+    pub weight: f32,
+    pub tabs: Vec<String>,
+}
+
+impl Default for SidebarDockPanel {
+    fn default() -> Self {
+        Self {
+            weight: 1.0,
+            tabs: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SidebarDockLayout {
+    pub left: SidebarDock,
+    pub right: SidebarDock,
+    pub hidden: Vec<String>,
+}
+
+impl Default for SidebarDockLayout {
+    fn default() -> Self {
+        Self {
+            left: SidebarDock {
+                panel_count: 2,
+                panels: vec![
+                    SidebarDockPanel {
+                        weight: 0.4,
+                        tabs: vec!["activity".into(), "panes".into(), "sessions".into()],
+                    },
+                    SidebarDockPanel {
+                        weight: 0.6,
+                        tabs: vec!["files".into(), "git".into(), "worktrees".into()],
+                    },
+                ],
+                ..SidebarDock::default()
+            },
+            right: SidebarDock::default(),
+            hidden: Vec::new(),
+        }
+    }
+}
+
+impl SidebarDockLayout {
+    pub fn dock(&self, side: SidebarPosition) -> &SidebarDock {
+        match side {
+            SidebarPosition::Left => &self.left,
+            SidebarPosition::Right => &self.right,
+        }
+    }
+    pub fn dock_mut(&mut self, side: SidebarPosition) -> &mut SidebarDock {
+        match side {
+            SidebarPosition::Left => &mut self.left,
+            SidebarPosition::Right => &mut self.right,
+        }
+    }
+    pub fn location(&self, id: &str) -> Option<(SidebarPosition, usize)> {
+        [SidebarPosition::Left, SidebarPosition::Right]
+            .into_iter()
+            .find_map(|side| {
+                self.dock(side)
+                    .panels
+                    .iter()
+                    .position(|panel| panel.tabs.iter().any(|tab| tab == id))
+                    .map(|panel| (side, panel))
+            })
+    }
+    pub fn place(&mut self, id: &str, side: SidebarPosition, panel: usize) {
+        for side in [SidebarPosition::Left, SidebarPosition::Right] {
+            for panel in &mut self.dock_mut(side).panels {
+                panel.tabs.retain(|tab| tab != id);
+            }
+        }
+        let dock = self.dock_mut(side);
+        dock.panels
+            .resize_with(dock.panels.len().max(panel + 1), SidebarDockPanel::default);
+        dock.panels[panel].tabs.push(id.to_string());
+    }
+    pub fn validate(&mut self, warnings: &mut Vec<String>) {
+        let mut seen = HashSet::new();
+        for side in [SidebarPosition::Left, SidebarPosition::Right] {
+            let dock = self.dock_mut(side);
+            let count = dock.panel_count.clamp(1, 3);
+            if count != dock.panel_count {
+                warnings.push(format!(
+                    "sidebar.layout.{} panel_count must be 1–3; clamped",
+                    side.id()
+                ));
+            }
+            dock.panel_count = count;
+            dock.width = dock.width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+            dock.panels
+                .resize_with(dock.panels.len().max(count), SidebarDockPanel::default);
+            for panel in &mut dock.panels {
+                if !panel.weight.is_finite() || panel.weight <= 0.0 {
+                    warnings.push(format!(
+                        "sidebar.layout.{} panel weight must be finite and positive; using 1",
+                        side.id()
+                    ));
+                    panel.weight = 1.0;
+                }
+                panel.tabs.retain(|id| {
+                    let keep = !id.trim().is_empty() && seen.insert(id.clone());
+                    if !keep {
+                        warnings.push(format!(
+                            "Duplicate or empty sidebar placement `{id}`; skipped"
+                        ));
+                    }
+                    keep
+                });
+            }
+        }
+        self.hidden.sort();
+        self.hidden.dedup();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
+    pub layout: SidebarDockLayout,
     pub visible: bool,
     pub width: u16,
     pub position: SidebarPosition,
@@ -1891,6 +2034,7 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
         ];
         Self {
+            layout: SidebarDockLayout::default(),
             visible: false,
             width: 32,
             position: SidebarPosition::Left,

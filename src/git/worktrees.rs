@@ -588,8 +588,13 @@ mod tests {
 
         git(&repo, &["branch", "available"]);
         let choices = branches(&repo).unwrap();
-        assert!(choices.iter().any(|branch| branch.name == "existing"
-            && branch.checkout.as_deref() == Some(existing.to_string_lossy().as_ref())));
+        assert!(choices.iter().any(|branch| {
+            branch.name == "existing"
+                && branch
+                    .checkout
+                    .as_deref()
+                    .is_some_and(|checkout| same_path(Path::new(checkout), &existing))
+        }));
         assert!(
             choices
                 .iter()

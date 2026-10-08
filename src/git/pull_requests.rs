@@ -122,10 +122,8 @@ impl StatusCache {
             } else {
                 Duration::from_secs(60)
             };
-            // A burst of forced requests from different clients shares the just-finished lookup.
-            if entry.time.elapsed() < ttl
-                && (!refresh || entry.time.elapsed() < Duration::from_millis(500))
-            {
+            // Manual refreshes must fetch even immediately after a completed lookup.
+            if !refresh && entry.time.elapsed() < ttl {
                 return Ok(entry.value.clone());
             }
         }
@@ -437,6 +435,65 @@ mod tests {
         );
     }
     #[test]
+    fn forced_status_refresh_fetches_again_immediately_after_completion() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let repo = tempfile::tempdir().unwrap();
+        command::checked(
+            repo.path(),
+            &["init".into(), "-q".into()],
+            command::WORKTREE_LIST_TIMEOUT,
+        )
+        .unwrap();
+        for failed in [false, true] {
+            let mut cache = StatusCache::default();
+            let calls = std::cell::Cell::new(0);
+            cache
+                .lookup_with(repo.path(), false, |_, _, _| {
+                    calls.set(calls.get() + 1);
+                    if failed {
+                        Err("unexpected EOF".into())
+                    } else {
+                        Ok(WorktreeStatuses::default())
+                    }
+                })
+                .unwrap();
+            // Keep the entry within the former 500 ms window throughout bounded Git reads.
+            cache.entries[0].time = Instant::now() + Duration::from_secs(60);
+            let fresh = WorktreeStatuses {
+                checkouts: [(
+                    "checkout".into(),
+                    PullRequestStatus {
+                        number: 42,
+                        status: WorkStatus::Passed,
+                    },
+                )]
+                .into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                cache
+                    .lookup_with(repo.path(), true, |_, _, _| {
+                        calls.set(calls.get() + 1);
+                        Ok(fresh.clone())
+                    })
+                    .unwrap(),
+                fresh
+            );
+            assert_eq!(calls.get(), 2, "forced refresh must execute the fetch");
+            assert_eq!(
+                cache
+                    .lookup_with(repo.path(), false, |_, _, _| {
+                        panic!("automatic refresh must reuse fresh results")
+                    })
+                    .unwrap(),
+                fresh
+            );
+        }
+    }
+
+    #[test]
     fn failed_status_refresh_keeps_good_data_and_retries_without_waiting_a_minute() {
         if !crate::platform::command::program_exists("git") {
             return;
@@ -482,8 +539,8 @@ mod tests {
             good
         );
         cache
-            .lookup_with(repo.path(), true, |_, _, _| {
-                panic!("a duplicate forced refresh must share the completed lookup")
+            .lookup_with(repo.path(), false, |_, _, _| {
+                panic!("an automatic refresh must share the completed lookup")
             })
             .unwrap();
     }

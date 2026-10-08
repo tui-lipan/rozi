@@ -575,7 +575,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
-| `layout.<dock>.visible` | bool | `false` | Startup visibility. Runtime toggles remain client-local. |
+| `layout.<dock>.visible` | bool | `false` | Startup visibility, editable through Settings’ **Left/Right dock at startup** controls. Runtime toggles remain client-local. |
 | `layout.<dock>.width` | integer | `32` | Clamped to `16..=80`; both docks share the available width. |
 | `layout.<dock>.panel_count` | integer | left `2`, right `1` | `1..=3`; reducing the count retains saved panels. |
 | `layout.<dock>.panels` | table array | left session/repository groups, right empty | Each table contains `weight` (finite, positive) and ordered `tabs` (IDs). Unknown IDs retain their placement. |

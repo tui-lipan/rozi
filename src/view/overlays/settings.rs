@@ -246,14 +246,14 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             "Sidebar",
             vec![
                 (
-                    "Left dock",
-                    enabled_status(ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[0]),
-                    ToggleLeftSidebar,
+                    "Left dock at startup",
+                    enabled_status(ctx.state.config.sidebar.layout.left.visible),
+                    ToggleLeftSidebarStartup,
                 ),
                 (
-                    "Right dock",
-                    enabled_status(ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[1]),
-                    ToggleRightSidebar,
+                    "Right dock at startup",
+                    enabled_status(ctx.state.config.sidebar.layout.right.visible),
+                    ToggleRightSidebarStartup,
                 ),
                 (
                     "Left panels",

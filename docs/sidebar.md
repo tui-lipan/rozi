@@ -24,6 +24,10 @@ While the sidebar is visible, these command keys work without focusing it:
 | `PageUp` | Previous tab |
 | `\` | Switch between one and two panels |
 
+Configure **Left dock at startup** and **Right dock at startup** in **Settings → Bars → Sidebar**
+to save the arrangement for future clients and apply it to this client. Command-palette dock toggles
+remain local and leave startup preferences unchanged.
+
 Choose one to three panels independently for each dock in **Settings → Bars → Sidebar**. Highlighting a
 choice leaves the layout unchanged; confirm it to apply. The `\` command and focused `s` key toggle
 one and two panels in the active dock.

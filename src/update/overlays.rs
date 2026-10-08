@@ -426,11 +426,17 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ManageSidebarTabs => {
             return crate::update::sidebar::open_manager(ctx);
         }
-        ToggleRightSidebar => {
-            execute_action(ctx, Action::ToggleRightSidebar);
+        ToggleRightSidebarStartup => {
+            let _ = crate::update::sidebar::toggle_startup_dock(
+                ctx,
+                crate::config::SidebarPosition::Right,
+            );
         }
-        ToggleLeftSidebar => {
-            execute_action(ctx, Action::ToggleLeftSidebar);
+        ToggleLeftSidebarStartup => {
+            let _ = crate::update::sidebar::toggle_startup_dock(
+                ctx,
+                crate::config::SidebarPosition::Left,
+            );
         }
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);

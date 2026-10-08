@@ -55,6 +55,20 @@ pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
         }
         visibility_changed(ctx).command
     };
+    // Config reloads and local visibility commands can leave a remembered panel in a hidden dock.
+    if !ctx
+        .state
+        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
+    {
+        let Some(panel) = (0..ctx.state.sidebar.panels.len())
+            .find(|panel| ctx.state.sidebar_panel_visible(*panel))
+        else {
+            ctx.state.sidebar.focused = false;
+            release_focus(ctx);
+            return Update::with_command(command);
+        };
+        ctx.state.sidebar.active_panel = panel;
+    }
     // Resolves after reconciliation, so requesting it in the same pass that reveals the sidebar is
     // fine even though the body has not mounted yet.
     let key = crate::view::sidebar_focus_key(ctx);

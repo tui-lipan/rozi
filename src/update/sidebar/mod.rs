@@ -348,6 +348,25 @@ pub(crate) fn toggle_dock(
     visibility_changed(ctx)
 }
 
+/// Settings edits a startup preference and applies it to this client. Runtime commands use
+/// `toggle_dock` and never change the shared configuration file.
+pub(crate) fn toggle_startup_dock(
+    ctx: &mut Context<AppRoot>,
+    side: crate::config::SidebarPosition,
+) -> Update {
+    let dock = ctx.state.config.sidebar.layout.dock_mut(side);
+    dock.visible = !dock.visible;
+    let visible = dock.visible;
+    if !ctx.state.sidebar_visible {
+        ctx.state.sidebar.dock_visible = [false, false];
+    }
+    ctx.state.sidebar.dock_visible[usize::from(side == crate::config::SidebarPosition::Right)] =
+        visible;
+    ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
+    save_layout(ctx);
+    visibility_changed(ctx)
+}
+
 pub(crate) fn toggle_split(ctx: &mut Context<AppRoot>) -> Update {
     let split = ctx
         .state

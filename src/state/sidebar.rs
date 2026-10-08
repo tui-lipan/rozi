@@ -851,13 +851,22 @@ pub struct SidebarState {
 
 impl SidebarState {
     pub fn new(config: &SidebarConfig) -> Self {
+        let panels = resolved_panels(config);
+        let dock_visible = if config.layout.left.visible || config.layout.right.visible {
+            [config.layout.left.visible, config.layout.right.visible]
+        } else {
+            [true, false]
+        };
+        let active_panel = panels
+            .iter()
+            .position(|panel| {
+                dock_visible[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
+            })
+            .unwrap_or(0);
         Self {
-            panels: resolved_panels(config),
-            dock_visible: if config.layout.left.visible || config.layout.right.visible {
-                [config.layout.left.visible, config.layout.right.visible]
-            } else {
-                [true, false]
-            },
+            panels,
+            dock_visible,
+            active_panel,
             right_slide: Cell::new(if config.layout.right.visible {
                 1.0
             } else {

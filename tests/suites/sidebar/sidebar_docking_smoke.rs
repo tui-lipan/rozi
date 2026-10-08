@@ -356,3 +356,82 @@ fn compacted_reordering_preserves_home_panels_hidden_slots_and_selection() {
         assert!(state.sidebar.panels[2].tabs.is_empty());
     });
 }
+
+#[test]
+fn settings_persists_startup_docks_while_runtime_toggles_remain_client_local() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let mut b = backend(120, 30, [2, 2], [true, false]);
+        let path = rozi::config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[theme]\nname = \"nord\"\n").unwrap();
+        b.state_mut().config.sidebar.layout.left.visible = true;
+        b.state_mut().config.sidebar.layout.right.visible = false;
+        b.dispatch(Msg::SettingsActivate(
+            SettingsAction::ToggleRightSidebarStartup,
+        ))
+        .unwrap();
+        assert!(b.state().config.sidebar.layout.right.visible);
+        assert_eq!(b.state().sidebar.dock_visible, [true, true]);
+        let loaded = rozi::config::load_config();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let restarted = rozi::state::State::new(loaded.config, Theme::default());
+        assert!(restarted.sidebar_visible);
+        assert_eq!(restarted.sidebar.dock_visible, [true, true]);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        for action in [
+            Action::ToggleLeftSidebar,
+            Action::ToggleRightSidebar,
+            Action::ToggleSidebar,
+        ] {
+            b.dispatch(Msg::RunAction(action)).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        }
+        // Settings reflects the configured startup value even when local chrome is hidden.
+        b.dispatch(Msg::SettingsActivate(
+            SettingsAction::ToggleLeftSidebarStartup,
+        ))
+        .unwrap();
+        assert!(!b.state().config.sidebar.layout.left.visible);
+        let loaded = rozi::config::load_config();
+        let restarted = rozi::state::State::new(loaded.config, Theme::default());
+        assert_eq!(restarted.sidebar.dock_visible, [false, true]);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("name = \"nord\"")
+        );
+    });
+}
+
+#[test]
+fn right_only_startup_focuses_a_mounted_panel_and_recovers_a_hidden_target() {
+    on_stack(|| {
+        let mut b = backend(120, 30, [2, 2], [false, true]);
+        let mut config = b.state().config.clone();
+        config.sidebar.layout.left.visible = false;
+        config.sidebar.layout.right.visible = true;
+        *b.state_mut() = rozi::state::State::new(config, Theme::default());
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
+        b.render();
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        b.render();
+        assert!(b.state().sidebar.focused);
+        assert!(
+            b.focused_key().unwrap().as_ref().contains("right-0"),
+            "{:?}",
+            b.focused_key()
+        );
+        b.dispatch(Msg::SidebarBlur).unwrap();
+        b.state_mut().sidebar.active_panel = 0;
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        b.render();
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
+        assert!(
+            b.focused_key().unwrap().as_ref().contains("right-0"),
+            "{:?}",
+            b.focused_key()
+        );
+        assert_eq!(b.state().sidebar.dock_visible, [false, true]);
+    });
+}

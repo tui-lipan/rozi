@@ -39,6 +39,8 @@ pub struct WorktreePickerState {
     pub selected: usize,
     pub pending_list: Option<u64>,
     pub pending_status: Option<u64>,
+    /// Coalesce manual refreshes received while a shared status lookup is running.
+    pub forced_status_refresh: bool,
     pub list_refresh: WorktreeReadRefresh,
     pub status_refresh: WorktreeReadRefresh,
     pub statuses: crate::git::pull_requests::WorktreeStatuses,
@@ -122,6 +124,7 @@ impl WorktreePickerState {
             selected: 0,
             pending_list: None,
             pending_status: None,
+            forced_status_refresh: false,
             list_refresh: Default::default(),
             status_refresh: Default::default(),
             statuses: Default::default(),
@@ -242,19 +245,23 @@ impl WorktreeListCache {
             .find(|tree| !tree.linked)
             .map_or(cwd, |tree| tree.path.as_str());
         let name = path_leaf(root).unwrap_or(root);
-        let collision = self.lists.iter().any(|(host, _, trees)| {
-            host.as_ref() == target
-                && trees
-                    .iter()
-                    .find(|tree| !tree.linked)
-                    .is_some_and(|tree| tree.path != root && path_leaf(&tree.path) == Some(name))
-        });
-        if collision {
-            let parts = path_segments(root);
-            parts[parts.len().saturating_sub(2)..].join("/")
-        } else {
-            name.to_string()
+        let others: Vec<_> = self
+            .lists
+            .iter()
+            .filter(|(host, _, _)| host.as_ref() == target)
+            .filter_map(|(_, _, trees)| trees.iter().find(|tree| !tree.linked))
+            .filter(|tree| tree.path != root && path_leaf(&tree.path) == Some(name))
+            .map(|tree| path_segments(&tree.path))
+            .collect();
+        let parts = path_segments(root);
+        for length in 1..=parts.len() {
+            let suffix = &parts[parts.len() - length..];
+            if others.iter().all(|other| !other.ends_with(suffix)) {
+                return suffix.join("/");
+            }
         }
+        // A root that is itself a suffix of another needs its absolute spelling.
+        root.to_string()
     }
 
     pub fn forget(&mut self, target: Option<&crate::session::remote::RemoteTarget>, cwd: &str) {
@@ -1807,6 +1814,31 @@ mod worktree_cache_tests {
         );
         assert_eq!(cache.get_repository(None, "/elsewhere"), None);
     }
+    #[test]
+    fn repository_names_extend_to_the_shortest_unique_suffix() {
+        let mut cache = WorktreeListCache::default();
+        let roots = [
+            "/home/alice/projects/rozi",
+            "/work/projects/rozi",
+            "/home/bob/projects/rozi",
+            "/projects/rozi",
+        ];
+        for root in roots {
+            let mut primary = tree(root);
+            primary.linked = false;
+            cache.put(None, root.into(), vec![primary]);
+        }
+        for (root, expected) in roots.into_iter().zip([
+            "alice/projects/rozi",
+            "work/projects/rozi",
+            "bob/projects/rozi",
+            "/projects/rozi",
+        ]) {
+            let entries = cache.get(None, root).unwrap();
+            assert_eq!(cache.repository_label(None, root, entries), expected);
+        }
+    }
+
     #[test]
     fn repository_names_use_primary_checkouts_and_qualify_collisions_per_host() {
         let mut cache = WorktreeListCache::default();

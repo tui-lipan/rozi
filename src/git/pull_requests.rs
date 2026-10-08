@@ -172,6 +172,9 @@ pub(crate) fn transient_error(error: &str) -> bool {
         "pending",
         "resolve host",
         "tls",
+        "http 500",
+        "http 429",
+        "unexpected eof",
         "http 502",
         "http 503",
         "http 504",
@@ -504,6 +507,9 @@ mod tests {
             "too many worktree requests are pending",
             "connection reset",
             "gh: HTTP 503",
+            "HTTP 500: Internal Server Error",
+            "gh: HTTP 429",
+            "unexpected EOF",
         ] {
             assert!(transient_error(error), "{error}");
         }
@@ -512,6 +518,8 @@ mod tests {
             "gh auth login",
             "git was not found",
             "permission denied",
+            "HTTP 401: Bad credentials",
+            "HTTP 403: Resource not accessible by integration",
         ] {
             assert!(!transient_error(error), "{error}");
         }

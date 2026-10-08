@@ -209,17 +209,21 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 fn request_status(ctx: &mut Context<AppRoot>, refresh: bool) {
-    let Some(picker) = ctx.state.worktree_picker.as_ref() else {
+    let Some(picker) = ctx.state.worktree_picker.as_mut() else {
         return;
     };
-    if picker.standalone_form || picker.pending_status.is_some() {
+    if picker.standalone_form {
+        return;
+    }
+    if picker.pending_status.is_some() {
+        picker.forced_status_refresh |= refresh;
         return;
     }
     let cwd = picker.cwd.clone();
+    let target = picker.target.clone();
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
-    let target = picker.target.clone();
     let shared = &ctx.state.sidebar.worktrees;
     let pending = shared
         .source
@@ -229,7 +233,9 @@ fn request_status(ctx: &mut Context<AppRoot>, refresh: bool) {
         })
         .and(shared.pending_status);
     let id = pending.unwrap_or_else(|| request_id(ctx));
-    ctx.state.worktree_picker.as_mut().unwrap().pending_status = Some(id);
+    let picker = ctx.state.worktree_picker.as_mut().unwrap();
+    picker.pending_status = Some(id);
+    picker.forced_status_refresh = refresh && pending.is_some();
     if pending.is_none() {
         client.worktree(id, WorktreeRequest::Status { cwd, refresh });
     }
@@ -1165,6 +1171,15 @@ pub(crate) fn apply_result(
             crate::pane::pty_events::notify_error(ctx, "PR status unavailable", error.to_string());
         }
         ctx.state.worktree_statuses.put(target, cwd, statuses);
+        if picker_status
+            && ctx
+                .state
+                .worktree_picker
+                .as_ref()
+                .is_some_and(|picker| picker.forced_status_refresh)
+        {
+            request_status(ctx, true);
+        }
         return if changed {
             Update::full()
         } else {
@@ -1828,6 +1843,115 @@ mod tests {
     }
 
     #[test]
+    fn manual_status_refreshes_coalesce_and_run_after_pending_lookup() {
+        on_large_stack(|| {
+            use crate::session::protocol::WorktreeRequest;
+            for failed in [false, true] {
+                for (list_pending, sidebar_pending) in [(false, false), (true, false), (true, true)]
+                {
+                    let (mut backend, outbound) = reads_backend();
+                    let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                    picker.pending_status = (!sidebar_pending).then_some(100);
+                    picker.pending_list = list_pending.then_some(101);
+                    if sidebar_pending {
+                        let sidebar = &mut backend.state_mut().sidebar.worktrees;
+                        sidebar.source = Some((None, "/src/repo".into()));
+                        sidebar.pending_status = Some(100);
+                    }
+                    for _ in 0..3 {
+                        backend.dispatch(Msg::WorktreeRefresh).unwrap();
+                    }
+                    assert!(requests(&outbound).iter().all(|(_, request)| {
+                        !matches!(request, WorktreeRequest::Status { .. })
+                    }));
+                    let epoch = backend.state().runtime_epoch;
+                    backend
+                        .dispatch(Msg::SessionWorktreeResult {
+                            epoch,
+                            request_id: 100,
+                            result: if failed {
+                                WorktreeResult::Failed {
+                                    message: "HTTP 500: Internal Server Error".into(),
+                                }
+                            } else {
+                                WorktreeResult::Statuses {
+                                    statuses: Default::default(),
+                                }
+                            },
+                        })
+                        .unwrap();
+                    let followup = requests(&outbound);
+                    assert_eq!(followup.len(), 1);
+                    assert!(matches!(
+                        &followup[0].1,
+                        WorktreeRequest::Status { cwd, refresh: true } if cwd == "/src/repo"
+                    ));
+                    backend
+                        .dispatch(Msg::SessionWorktreeResult {
+                            epoch,
+                            request_id: followup[0].0,
+                            result: WorktreeResult::Statuses {
+                                statuses: Default::default(),
+                            },
+                        })
+                        .unwrap();
+                    assert!(requests(&outbound).is_empty());
+                    let picker = backend.state().worktree_picker.as_ref().unwrap();
+                    assert!(picker.pending_status.is_none());
+                    assert!(!picker.forced_status_refresh);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn status_failures_schedule_retries_only_for_transient_errors() {
+        on_large_stack(|| {
+            for (message, retryable) in [
+                ("HTTP 500: Internal Server Error", true),
+                ("HTTP 429", true),
+                ("unexpected EOF", true),
+                ("HTTP 401: Bad credentials", false),
+                ("HTTP 403: Resource not accessible by integration", false),
+                ("permission denied", false),
+            ] {
+                let (mut backend, outbound) = reads_backend();
+                backend.dispatch(Msg::WorktreeRefresh).unwrap();
+                requests(&outbound);
+                let epoch = backend.state().runtime_epoch;
+                let id = backend
+                    .state()
+                    .worktree_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_status
+                    .unwrap();
+                backend
+                    .dispatch(Msg::SessionWorktreeResult {
+                        epoch,
+                        request_id: id,
+                        result: WorktreeResult::Failed {
+                            message: message.into(),
+                        },
+                    })
+                    .unwrap();
+                let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                assert_eq!(picker.status_refresh.due.is_some(), retryable, "{message}");
+                assert_eq!(picker.statuses.retryable, retryable, "{message}");
+                if retryable {
+                    picker.status_refresh.due = Some(std::time::Instant::now());
+                }
+                backend.dispatch(Msg::WorktreeTick).unwrap();
+                assert_eq!(
+                    requests(&outbound).len(),
+                    usize::from(retryable),
+                    "{message}"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn failed_reads_preserve_rows_and_status_and_retry_until_recovered() {
         on_large_stack(|| {
             use crate::git::pull_requests::{PullRequestStatus, WorkStatus};
@@ -1836,11 +1960,6 @@ mod tests {
             backend.dispatch(Msg::WorktreeRefresh).unwrap();
             let initial = requests(&outbound);
             assert_eq!(initial.len(), 2);
-            backend.dispatch(Msg::WorktreeRefresh).unwrap();
-            assert!(
-                requests(&outbound).is_empty(),
-                "refresh joins pending reads"
-            );
             let status_id = initial
                 .iter()
                 .find(|(_, request)| matches!(request, WorktreeRequest::Status { .. }))
@@ -1926,9 +2045,9 @@ mod tests {
             state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("worktrees"));
             backend.dispatch(Msg::WorktreeRefresh).unwrap();
-            let requests = requests(&outbound);
+            let initial = requests(&outbound);
             assert_eq!(
-                requests
+                initial
                     .iter()
                     .filter(|(_, request)| matches!(request, WorktreeRequest::Status { .. }))
                     .count(),
@@ -1942,6 +2061,8 @@ mod tests {
                 .pending_status
                 .unwrap();
             assert_eq!(backend.state().sidebar.worktrees.pending_status, Some(id));
+            backend.dispatch(Msg::WorktreeRefresh).unwrap();
+            assert!(requests(&outbound).is_empty());
             let epoch = backend.state().runtime_epoch;
             backend
                 .dispatch(Msg::SessionWorktreeResult {
@@ -1952,6 +2073,22 @@ mod tests {
                     },
                 })
                 .unwrap();
+            let followup = requests(&outbound);
+            assert_eq!(followup.len(), 1);
+            assert!(matches!(
+                followup[0].1,
+                WorktreeRequest::Status { refresh: true, .. }
+            ));
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: followup[0].0,
+                    result: WorktreeResult::Statuses {
+                        statuses: Default::default(),
+                    },
+                })
+                .unwrap();
+            assert!(requests(&outbound).is_empty());
             assert!(backend.state().sidebar.worktrees.pending_status.is_none());
             assert!(
                 backend

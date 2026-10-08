@@ -16,7 +16,8 @@ checkouts. The palette lists **Worktrees** only while the focused pane is in a G
 **Worktrees** has no default command key.
 
 The picker title names the repository, using its primary checkout even when you open it from a
-linked worktree. A remote host is named in the title; `local` appears only while a remote host is
+linked worktree. Repositories with the same name on one host use the shortest unique path suffix.
+A remote host is named in the title; `local` appears only while a remote host is
 connected or connecting. The search field and divider stay above the checkout list.
 
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
@@ -26,7 +27,8 @@ without appearing in rows. Press `Ctrl+C` or click **copy path** to copy the sel
 path, including a remote host's path, to your clipboard.
 
 The picker refreshes the checkout list when opened. Press `Ctrl+R` to refresh both checkouts and
-PR status. While the picker is open, PR status also refreshes about once a minute. Failed refreshes
+PR status. If a PR lookup is already running, repeated presses queue one refresh after it finishes.
+While the picker is open, PR status also refreshes about once a minute. Failed refreshes
 keep the last results visible. Temporary Git or network failures retry after roughly 1, 3, and 10
 seconds, then once a minute while the picker or sidebar remains open. A `stale` label means a PR
 badge reflects the last successful lookup. Missing tools and authentication errors explain the

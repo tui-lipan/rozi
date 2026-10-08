@@ -302,6 +302,65 @@ fn native_drag_transfers_a_tab_into_an_empty_panel_in_the_other_dock() {
 }
 
 #[test]
+fn one_held_drag_keeps_the_same_tab_through_repeated_panel_transfers() {
+    on_stack(|| {
+        use tui_lipan::core::event::{MouseButton, MouseKind};
+        let _config = rozi::test_support::lock_config_file();
+        for over_body in [false, true] {
+            let mut b = backend(120, 24, [2, 2], [true, true]);
+            assert!(b.state_mut().sidebar.transfer_tab(2, 1, 0, 1));
+            assert!(b.state_mut().sidebar.transfer_tab(3, 1, 0, 2));
+            b.render();
+            let grid = b.capture_frame().to_fixed_grid_lines();
+            let (source_y, source_row) = grid
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("Right1"))
+                .unwrap();
+            let source_x = source_row.find("Right1").unwrap() as u16;
+            b.send_mouse(mouse(
+                source_x,
+                source_y as u16,
+                MouseKind::Down(MouseButton::Left),
+            ))
+            .unwrap();
+            for destination in [0, 1, 3, 1, 0, 1] {
+                let x = if destination == 3 { 92 } else { 3 };
+                let y = if destination == 0 { 0 } else { source_y as u16 }
+                    + if over_body { 4 } else { 0 };
+                b.send_mouse(mouse(x, y, MouseKind::Drag(MouseButton::Left)))
+                    .unwrap();
+                b.render();
+                assert!(
+                    b.state().sidebar.panels[destination]
+                        .tabs
+                        .contains(&SidebarTabId::new("right1")),
+                    "held tab must follow pointer to panel {destination}, body={over_body}"
+                );
+                assert!(
+                    b.state().sidebar.panels[1]
+                        .tabs
+                        .contains(&SidebarTabId::new("right2")),
+                    "another tab must never be transferred instead"
+                );
+                assert_eq!(
+                    b.state()
+                        .sidebar
+                        .panels
+                        .iter()
+                        .map(|panel| panel.tabs.len())
+                        .sum::<usize>(),
+                    4
+                );
+            }
+            b.send_mouse(mouse(3, source_y as u16, MouseKind::Up(MouseButton::Left)))
+                .unwrap();
+            assert!(!b.state().sidebar.focused);
+        }
+    });
+}
+
+#[test]
 fn follower_docks_keep_the_controller_canvas_and_layout_revision() {
     on_stack(|| {
         let mut b = backend(120, 30, [3, 3], [false, false]);

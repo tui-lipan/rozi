@@ -219,6 +219,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .active(active)
         .bar_id(bar_id)
         .drag_group("rozi-sidebar-tabs")
+        .drop_area(panel_identity(&ctx.state, panel))
         .reorder_mode(DragReorderMode::Live)
         .border(false)
         .divider(' ')

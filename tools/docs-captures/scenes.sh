@@ -86,6 +86,20 @@ layout = { left = { width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs 
 session = "off"'
 PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
 sidebar_visibility=${sidebar_docks/left =/hidden = [\"sessions\", \"git\", \"worktrees\"], left =}
+# A panel body accepts a tab even when its bar is empty.
+PROFILE=web clip sidebar-body-transfer "$wide" 4500 "mouse:down,5,0
+mouse:drag,5,20
+sleep:700
+mouse:drag,130,20
+sleep:700
+mouse:drag,5,5
+sleep:700
+mouse:drag,130,35
+sleep:700
+mouse:drag,130,20
+sleep:700
+mouse:up,130,20
+sleep:700" "$sidebar_visibility"
 PROFILE=web scene sidebar-manager "$focus" 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-manager-compact 80x24 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"

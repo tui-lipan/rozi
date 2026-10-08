@@ -225,9 +225,10 @@ change visibility. Enabled tabs use a filled dot; disabled tabs use a hollow dot
 Unavailable extension tabs stay listed with a dash and retain their preferences. The picker stays
 open so several tabs can be toggled. It remains available when every tab is disabled.
 
-Arrange tabs by dragging them, or use the focused-sidebar keys above. Empty panels remain drag
-targets. Enabling a tab restores its saved location, including a dormant panel whose count was
-reduced. Unavailable extensions recover their placement when re-enabled.
+Arrange tabs by dragging them, or use the focused-sidebar keys above. Drag onto another panel’s
+body to append the tab, or onto its tab bar to choose its position. You can keep dragging between
+panels and docks without releasing the mouse. Empty panels remain drag targets. Enabling a tab
+restores its saved location, including a dormant panel whose count was reduced. Unavailable extensions recover their placement when re-enabled.
 
 When extensions provide presets, **Settings… → Bars → Sidebar layout preset…** offers them alongside
 the default layout.

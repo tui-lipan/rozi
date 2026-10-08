@@ -322,6 +322,9 @@ pub struct ServerPane {
     pub command_completed: bool,
     pub palette: WirePalette,
     pub pty: Option<TerminalPty>,
+    /// The canonical screen geometry has not yet been successfully applied to the PTY.
+    /// An identical resize request retries only the PTY call while this remains set.
+    pty_resize_pending: bool,
     /// Reached through [`ServerPane::screen_mut`] / [`ServerPane::screen_without_change`] rather
     /// than directly, so a content change cannot silently skip `content_generation`.
     ///

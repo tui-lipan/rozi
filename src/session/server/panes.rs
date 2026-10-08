@@ -227,6 +227,7 @@ impl SessionServer {
                         command_completed: false,
                         palette: request.palette,
                         pty: Some(pty),
+                        pty_resize_pending: false,
                         terminal: screen,
                         content_generation: 0,
                         output_seen: seed.is_some(),
@@ -275,6 +276,7 @@ impl SessionServer {
                             command_completed: false,
                             palette: request.palette,
                             pty: None,
+                            pty_resize_pending: false,
                             terminal: screen,
                             content_generation: 0,
                             output_seen: seed.is_some(),
@@ -456,6 +458,7 @@ impl SessionServer {
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.pty = None;
+                        pane.pty_resize_pending = false;
                         // A launch intent is what divides this from the client's
                         // `[pane] hold_on_exit`: a pane launched with a command is held here, as a
                         // live shell with the command's output above it, while a plain shell pane
@@ -619,7 +622,9 @@ impl SessionServer {
         // over its launch directory, and never returns a remote one.
         let cwd = pane.spawnable_cwd();
         let (cols, rows) = (pane.cols, pane.rows);
-        let mut config = pty_config(None, &pane.shell, &[]).size(cols.max(1), rows.max(1));
+        let mut config = pty_config(None, &pane.shell, &[])
+            .size(cols.max(1), rows.max(1))
+            .cell_size(pane.cell);
         if let Some(cwd) = cwd.filter(|cwd| Path::new(cwd).is_dir()) {
             config = config.cwd(cwd);
         }
@@ -638,6 +643,7 @@ impl SessionServer {
             Ok(pty) => {
                 pane.initial_cursor_report_primed = cfg!(windows);
                 pane.pty = Some(pty);
+                pane.pty_resize_pending = false;
                 pane.command_completed = true;
                 pane.exited = None;
                 // The pane id and generation survive this swap, so nothing else clears what was

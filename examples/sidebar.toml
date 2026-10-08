@@ -4,7 +4,7 @@
 # match the tools available in your shell.
 
 [sidebar]
-startup = "left"
+startup = true
 tabs = [
   "activity",
   "panes",

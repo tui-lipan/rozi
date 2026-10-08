@@ -292,7 +292,7 @@ impl Drop for PersistGuard {
 
 /// Serialize tests that read or write process-wide persisted state under the per-process scratch
 /// root. Unit tests share one `host-sessions.json`, `saved-hosts`, `recent-remotes`, and
-/// `last-sessions.json`, so two tests mutating those files in parallel can observe each other's
+/// `last-sessions.json`, and `sidebar-docks.json`, so two tests mutating those files in parallel can observe each other's
 /// leftovers. Hold this for the whole read/write/assert sequence, on the thread that performs the
 /// I/O.
 #[cfg(test)]
@@ -304,7 +304,7 @@ pub(crate) fn lock_persisted_state() -> PersistGuard {
     PersistGuard { _lock: lock }
 }
 
-/// Run `f` with exclusive access to persisted session files. Nested calls on the same thread reuse
+/// Run `f` with exclusive access to persisted state files. Nested calls on the same thread reuse
 /// the held guard so a test lock and a persist helper cannot deadlock.
 #[cfg(test)]
 pub(crate) fn with_persisted_state<T>(f: impl FnOnce() -> T) -> T {

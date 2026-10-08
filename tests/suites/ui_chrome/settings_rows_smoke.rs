@@ -336,7 +336,7 @@ fn settings_all_keeps_every_control_available() {
         for label in [
             "Left panels…",
             "Right panels…",
-            "Sidebars at startup…",
+            "Open sidebars at startup",
             "Sidebar tabs…",
         ] {
             setting_row(sidebar, label);
@@ -515,7 +515,7 @@ fn settings_reports_sidebar_values() {
             let state = backend.state_mut();
             state.sidebar.shown = [true, false];
             state.sidebar.hide_all();
-            state.config.sidebar.startup = rozi::config::SidebarStartup::Right;
+            state.config.sidebar.startup = true;
             state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
@@ -530,7 +530,7 @@ fn settings_reports_sidebar_values() {
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         assert!(
             setting_row(sidebar, "Right panels…").contains("1 panel")
-                && setting_row(sidebar, "Sidebars at startup…").contains("Right"),
+                && setting_row(sidebar, "Open sidebars at startup").contains("Enabled"),
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(

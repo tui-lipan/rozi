@@ -366,8 +366,9 @@
 #height = 0.4
 
 [sidebar]
-# Sidebars at startup: none, left, right, or both. Applies only to the next client launch.
-#startup = "none"
+# Open the last-used dock combination at startup. When false, b or B restores it on demand.
+#startup = false
+# The combination is remembered in local state on exit or detach, without writing per toggle.
 # Runtime visibility stays client-local; panel counts never show or hide docks.
 # Widths share the terminal budget, preserving at least 20 columns for the workspace.
 # Saved panels beyond panel_count fold into the last displayed panel and return when expanded.

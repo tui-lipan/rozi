@@ -83,6 +83,7 @@ pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
 /// temporary sessions that prompt was about are closed; without it, everything that can keep
 /// running does. Every path out of the client ends here.
 pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool) -> Update {
+    crate::ops::sidebar_memory::save_for_exit(&ctx.state);
     clear_pending(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
     crate::ops::popup::kill_if_open(ctx);
@@ -181,6 +182,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<
 /// quitting) and means the bytes are out of the door before the pty can disappear (issue #2).
 pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     release_terminal_for_exit(ctx);
+    crate::ops::sidebar_memory::save_for_exit(&ctx.state);
     crate::ops::session::flush_layout_commit(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
     mark_session_detached(ctx, None);

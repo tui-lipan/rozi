@@ -382,7 +382,6 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | ChooseWorkbar
         | CycleTitleStyle
         | CycleSidebarTabStyle
-        | SidebarStartup
         | LeftSidebarPanels
         | RightSidebarPanels
         | SidebarLayoutPreset
@@ -427,6 +426,10 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         }
         SidebarTabs => {
             return crate::update::sidebar::open_manager(ctx);
+        }
+        ToggleSidebarStartup => {
+            ctx.state.config.sidebar.startup = !ctx.state.config.sidebar.startup;
+            crate::update::sidebar::save_layout(ctx);
         }
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);
@@ -747,9 +750,6 @@ fn apply_settings_choice(
         };
         crate::update::sidebar::set_panel_count(ctx, side, index + 1);
         let _ = crate::update::sidebar::visibility_changed(ctx);
-    }
-    if persist && action == crate::state::SettingsAction::SidebarStartup {
-        crate::update::sidebar::save_layout(ctx);
     }
     if persist && action == crate::state::SettingsAction::SidebarLayoutPreset {
         crate::update::sidebar::apply_layout_preset(ctx, index);

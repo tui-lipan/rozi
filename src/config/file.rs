@@ -262,7 +262,7 @@ pub(super) struct UserCommandTableSpec {
 #[derive(Debug)]
 pub(super) struct SidebarFileLayout {
     pub(super) layout: super::schema::SidebarDockLayout,
-    pub(super) startup: Option<super::schema::SidebarStartup>,
+    pub(super) migrated_docks: Option<[bool; 2]>,
 }
 
 impl<'de> Deserialize<'de> for SidebarFileLayout {
@@ -283,7 +283,7 @@ impl<'de> Deserialize<'de> for SidebarFileLayout {
         }
         Ok(Self {
             layout: value.try_into().map_err(D::Error::custom)?,
-            startup: migrated.then(|| super::schema::SidebarStartup::from_docks(visible)),
+            migrated_docks: migrated.then_some(visible),
         })
     }
 }
@@ -292,7 +292,7 @@ impl<'de> Deserialize<'de> for SidebarFileLayout {
 #[serde(default)]
 pub(super) struct SidebarFileConfig {
     pub(super) layout: Option<SidebarFileLayout>,
-    pub(super) startup: Option<super::schema::SidebarStartup>,
+    pub(super) startup: Option<bool>,
     pub(super) visible: Option<bool>,
     pub(super) width: Option<u16>,
     pub(super) position: Option<String>,

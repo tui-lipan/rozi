@@ -841,10 +841,7 @@ mod tests {
                     .expect("toggle controller sidebar");
                 assert!(backend.state().sidebar_shown());
                 // Toggling is client-local: it must not write the config default back.
-                assert_eq!(
-                    backend.state().config.sidebar.startup,
-                    crate::config::SidebarStartup::None
-                );
+                assert!(!backend.state().config.sidebar.startup);
                 assert_eq!(
                     backend
                         .state()

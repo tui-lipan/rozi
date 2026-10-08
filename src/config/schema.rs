@@ -2086,48 +2086,11 @@ impl SidebarDockLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SidebarStartup {
-    #[default]
-    None,
-    Left,
-    Right,
-    Both,
-}
-
-impl SidebarStartup {
-    pub fn docks(self) -> [bool; 2] {
-        match self {
-            Self::None => [false, false],
-            Self::Left => [true, false],
-            Self::Right => [false, true],
-            Self::Both => [true, true],
-        }
-    }
-
-    pub fn from_docks(docks: [bool; 2]) -> Self {
-        match docks {
-            [false, false] => Self::None,
-            [true, false] => Self::Left,
-            [false, true] => Self::Right,
-            [true, true] => Self::Both,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::None => "None",
-            Self::Left => "Left",
-            Self::Right => "Right",
-            Self::Both => "Both",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
-    pub startup: SidebarStartup,
+    pub startup: bool,
+    /// Legacy visibility used only to seed startup memory when no local memory exists.
+    pub migrated_docks: Option<[bool; 2]>,
     pub presets: Vec<SidebarLayoutPreset>,
     pub layout: SidebarDockLayout,
     pub tabs: Vec<SidebarTab>,
@@ -2156,7 +2119,8 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
         ];
         Self {
-            startup: SidebarStartup::None,
+            startup: false,
+            migrated_docks: None,
             layout: SidebarDockLayout::default(),
             presets: Vec::new(),
             tabs,

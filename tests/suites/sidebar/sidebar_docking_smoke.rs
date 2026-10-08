@@ -382,24 +382,28 @@ fn startup_preferences_apply_on_restart_without_changing_client_visibility() {
         let path = rozi::config::config_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "[theme]\nname = \"nord\"\n").unwrap();
-        for (index, expected) in [[false, false], [true, false], [false, true], [true, true]]
-            .into_iter()
-            .enumerate()
-        {
-            b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarStartup))
+        for expected in [true, false] {
+            b.dispatch(Msg::SettingsActivate(SettingsAction::ToggleSidebarStartup))
                 .unwrap();
-            b.dispatch(Msg::SettingsChoiceSelect(index)).unwrap();
+            assert!(b.state().settings_choice.is_none());
             assert_eq!(b.state().sidebar.shown, [true, false]);
-            b.dispatch(Msg::SettingsChoiceCancel).unwrap();
-            b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarStartup))
-                .unwrap();
-            b.dispatch(Msg::SettingsChoicePick(index)).unwrap();
-            assert_eq!(b.state().sidebar.shown, [true, false]);
+            assert_eq!(b.state().config.sidebar.startup, expected);
             let loaded = rozi::config::load_config();
             assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-            let restarted = rozi::state::State::new(loaded.config, Theme::default());
-            assert_eq!(restarted.sidebar.shown, expected);
-            assert_eq!(restarted.sidebar.restore, [false, false]);
+            assert_eq!(loaded.config.sidebar.startup, expected);
+            let mut restarted = rozi::state::State::new(loaded.config, Theme::default());
+            restarted
+                .sidebar
+                .initialize_visibility(expected, Some([false, true]));
+            assert_eq!(
+                restarted.sidebar.shown,
+                if expected {
+                    [false, true]
+                } else {
+                    [false, false]
+                }
+            );
+            assert_eq!(restarted.sidebar.restore, [false, true]);
         }
         let saved = std::fs::read_to_string(&path).unwrap();
         for action in [
@@ -433,10 +437,8 @@ layout = { left = { visible = false }, right = { visible = true, width = 41, pan
         std::fs::write(&path, text).unwrap();
         let original: toml::Value = toml::from_str(text).unwrap();
         let loaded = rozi::config::load_config();
-        assert_eq!(
-            loaded.config.sidebar.startup,
-            rozi::config::SidebarStartup::Right
-        );
+        assert!(loaded.config.sidebar.startup);
+        assert_eq!(loaded.config.sidebar.migrated_docks, Some([false, true]));
         assert!(
             loaded
                 .warnings
@@ -449,7 +451,7 @@ layout = { left = { visible = false }, right = { visible = true, width = 41, pan
             .unwrap();
         b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
         let saved: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(saved["sidebar"]["startup"].as_str(), Some("right"));
+        assert_eq!(saved["sidebar"]["startup"].as_bool(), Some(true));
         assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
         assert_eq!(saved["theme"], original["theme"]);
         assert!(saved["sidebar"]["layout"]["right"].get("visible").is_none());
@@ -469,7 +471,8 @@ fn right_only_startup_focuses_a_mounted_panel_without_revealing_a_hidden_dock() 
     on_stack(|| {
         let mut b = backend(120, 30, [2, 2], [false, true]);
         let mut config = b.state().config.clone();
-        config.sidebar.startup = rozi::config::SidebarStartup::Right;
+        config.sidebar.startup = true;
+        config.sidebar.migrated_docks = Some([false, true]);
         *b.state_mut() = rozi::state::State::new(config, Theme::default());
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
         b.render();
@@ -541,7 +544,7 @@ fn independent_dock_commands_open_only_the_requested_dock_from_hidden_startup() 
         ] {
             let mut b = backend(120, 30, [2, 2], [false, false]);
             let mut config = b.state().config.clone();
-            config.sidebar.startup = rozi::config::SidebarStartup::None;
+            config.sidebar.startup = false;
             *b.state_mut() = rozi::state::State::new(config, Theme::default());
             assert!(!b.state().sidebar_shown());
             b.dispatch(Msg::RunAction(action)).unwrap();

@@ -857,22 +857,43 @@ pub struct SidebarState {
 impl SidebarState {
     pub fn new(config: &SidebarConfig) -> Self {
         let panels = resolved_panels(config);
-        let shown = config.startup.docks();
-        let active_panel = panels
+        let mut state = Self {
+            panels,
+            ..Self::default()
+        };
+        state.initialize_visibility(config.startup, config.migrated_docks);
+        state
+    }
+
+    /// Seed a new client only. Configuration reloads never reapply startup visibility.
+    pub fn initialize_visibility(&mut self, startup: bool, remembered: Option<[bool; 2]>) {
+        self.shown = [false, false];
+        self.restore = remembered
+            .filter(|docks| docks.iter().any(|shown| *shown))
+            .unwrap_or([false, false]);
+        if startup {
+            self.show_restored();
+        }
+        let target = self
+            .panels
             .iter()
             .position(|panel| {
-                shown[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
+                self.shown[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
             })
-            .or_else(|| panels.iter().position(|panel| !panel.tabs.is_empty()))
+            .or_else(|| self.panels.iter().position(|panel| !panel.tabs.is_empty()))
             .unwrap_or(0);
-        Self {
-            panels,
-            shown,
-            restore: [false, false],
-            active_panel,
-            right_slide: Cell::new(if shown[1] { 1.0 } else { 0.0 }),
-            ..Self::default()
-        }
+        self.select_panel(target);
+        self.right_slide.set(if self.shown[1] { 1.0 } else { 0.0 });
+    }
+
+    /// The last nonempty combination, suitable for saving when this client leaves.
+    pub fn remembered_docks(&self) -> Option<[bool; 2]> {
+        let docks = if self.any_shown() {
+            self.shown
+        } else {
+            self.restore
+        };
+        docks.iter().any(|shown| *shown).then_some(docks)
     }
 
     pub fn any_shown(&self) -> bool {
@@ -1230,7 +1251,8 @@ mod docking_tests {
     #[test]
     fn geometry_uses_one_budget_and_restores_after_resize() {
         let mut config = crate::config::Config::default();
-        config.sidebar.startup = crate::config::SidebarStartup::Both;
+        config.sidebar.startup = true;
+        config.sidebar.migrated_docks = Some([true, true]);
         let state = crate::state::State::new(config, Theme::default());
         for width in 0..180 {
             let rect = Rect {

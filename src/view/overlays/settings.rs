@@ -256,9 +256,9 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     RightSidebarPanels,
                 ),
                 (
-                    "Sidebars at startup",
-                    ctx.state.config.sidebar.startup.label().to_string(),
-                    SidebarStartup,
+                    "Open sidebars at startup",
+                    enabled_status(ctx.state.config.sidebar.startup),
+                    ToggleSidebarStartup,
                 ),
                 ("Sidebar tabs", String::new(), SidebarTabs),
                 ("Sidebar layout preset", String::new(), SidebarLayoutPreset),

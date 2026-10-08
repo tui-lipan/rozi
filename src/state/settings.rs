@@ -132,7 +132,7 @@ pub enum SettingsAction {
     CyclePaneOpenAnimation,
     CyclePaneCloseAnimation,
     ToggleSidebarBackgroundFollowsCanvas,
-    SidebarStartup,
+    ToggleSidebarStartup,
     LeftSidebarPanels,
     RightSidebarPanels,
     SidebarTabs,
@@ -221,7 +221,7 @@ impl SettingsAction {
             Self::CycleWorkbarTabStyle,
             Self::ToggleWorkbarPowerline,
             // Sidebar
-            Self::SidebarStartup,
+            Self::ToggleSidebarStartup,
             Self::LeftSidebarPanels,
             Self::RightSidebarPanels,
             Self::SidebarTabs,
@@ -408,17 +408,6 @@ impl SettingsAction {
                     },
                 ))
             }
-            Self::SidebarStartup => Some(choice_ring(
-                "Sidebars at startup",
-                &[
-                    crate::config::SidebarStartup::None,
-                    crate::config::SidebarStartup::Left,
-                    crate::config::SidebarStartup::Right,
-                    crate::config::SidebarStartup::Both,
-                ],
-                config.sidebar.startup,
-                crate::config::SidebarStartup::label,
-            )),
             Self::SidebarLayoutPreset => Some(SettingsChoiceRing {
                 title: "Sidebar layout preset",
                 options: std::iter::once("Default layout".to_string())
@@ -614,16 +603,6 @@ impl SettingsAction {
                 };
                 assign_choice(&[1_usize, 2, 3], index, &mut dock.panel_count)
             }
-            Self::SidebarStartup => assign_choice(
-                &[
-                    crate::config::SidebarStartup::None,
-                    crate::config::SidebarStartup::Left,
-                    crate::config::SidebarStartup::Right,
-                    crate::config::SidebarStartup::Both,
-                ],
-                index,
-                &mut config.sidebar.startup,
-            ),
             Self::SidebarLayoutPreset => index <= config.sidebar.presets.len(),
             Self::CycleSidebarTabStyle => {
                 assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)

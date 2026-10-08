@@ -27,9 +27,15 @@ Open **Settings… → Bars → Left panels…** or **Right panels…** to choos
 Highlighting a choice leaves the layout unchanged; `Enter` applies and saves it. `Esc` cancels.
 Panel-count changes preserve hidden docks and dormant tab assignments.
 
-**Sidebars at startup…** chooses **None**, **Left**, **Right**, or **Both** for the next client launch.
-Changing it or reloading the configuration never opens or closes the current client's sidebars.
-Both docks always exist structurally, including empty docks that accept dragged tabs.
+**Open sidebars at startup** controls whether the next client opens your remembered combination
+immediately. When disabled, the client starts with both docks hidden; `b` or `B` brings back the
+same combination. Changing this setting or reloading the configuration leaves the current
+client's sidebars alone. Both docks always exist, including empty docks that accept dragged tabs.
+
+On exit or detach, rozi remembers the shown docks, or the restore combination when everything is
+hidden. It saves this memory as `sidebar-docks.json` in the local state directory, separately
+from `config.toml`.
+The last client to exit wins; running clients keep their own visibility and restore memory.
 
 The `b` command hides the shown docks and brings the same combination back. **Show/Hide left
 sidebar** and **Show/Hide right sidebar** in the command palette toggle one dock independently;
@@ -44,9 +50,9 @@ It never reopens a hidden dock while another is shown. Showing an empty dock exp
 its drag target.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
-<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, startup visibility, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
+<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, Open sidebars at startup, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
 <img src="./assets/captures/sidebar-panels.webp" alt="Left panel count choices: 1 panel, 2 panels, and 3 panels" data-label="Panels" data-caption="Enter applies a panel count; Escape cancels without rearranging the workspace.">
-<img src="./assets/captures/sidebar-startup.webp" alt="Sidebars at startup choices: None, Left, Right, and Both" data-label="Startup" data-caption="Startup visibility applies to the next client launch.">
+<img src="./assets/captures/sidebar-startup.webp" alt="Open sidebars at startup disabled in Settings while both docks stay visible" data-label="Startup" data-caption="Disable automatic opening while keeping your remembered sidebars for the next launch.">
 </CaptureGallery>
 
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
@@ -77,9 +83,9 @@ After the `B` command key focuses the sidebar:
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
 `width` allows. Drag the divider between panels to change the split.
 
-rozi saves tab order, tab visibility, startup visibility, placement, dock widths, panel counts, and
-panel weights to `config.toml`.
-Whether the sidebar is visible and which tab is selected are not saved.
+rozi saves tab order, tab visibility, the startup switch, placement, dock widths, panel counts,
+and panel weights to `config.toml`. The last nonempty dock combination is saved on client exit;
+keyboard focus and tab selection remain client-local and are not saved.
 
 ## Activity
 
@@ -234,7 +240,7 @@ lists the global and individual sidebar toggles and **Focus sidebar**.
 
 ```toml
 [sidebar]
-startup = "left"
+startup = false
 tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
 layout = { left = { width = 32, panel_count = 2, panels = [
   { weight = 0.4, tabs = ["activity", "panes", "sessions"] },
@@ -265,9 +271,11 @@ tab IDs and custom definitions. The next layout save writes the new schema and r
 geometry keys. You can also replace them manually using the example above. An explicit `layout`
 takes precedence.
 
-The former `layout.<dock>.visible` flags also migrate to `sidebar.startup`; an explicit `startup`
-takes precedence. Saves preserve tab definitions and unrelated settings. Malformed TOML is
-reported and left untouched.
+The former `layout.<dock>.visible` flags enable `sidebar.startup` when either dock was visible
+and seed the remembered combination if no local memory exists. An explicit boolean `startup`
+takes precedence over the migrated startup switch. The seed is saved with local memory when the
+client leaves. Saves preserve tab definitions and unrelated settings. Malformed TOML is reported
+and left untouched.
 
 When `background` is on, the tab strip uses a raised sidebar fill, or the `element` colour when
 `background_follows_canvas` is on.

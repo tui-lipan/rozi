@@ -24,6 +24,17 @@ fn valid_origin(origin: &SessionOrigin) -> bool {
         })
 }
 
+/// Canonical pane geometry reported by a client.
+pub(super) struct PaneResizeRequest {
+    pub pane_id: PaneId,
+    pub local: bool,
+    pub generation: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub cell_width: u16,
+    pub cell_height: u16,
+}
+
 impl SessionServer {
     pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<bool> {
         let mut accepted = false;
@@ -171,6 +182,87 @@ impl SessionServer {
             control::ControlCommand::RecordStart { .. } => self.reload_recording_defaults(),
             _ => {}
         }
+    }
+
+    // Keep the fallible PTY operation injectable so retry behavior can be tested without
+    // depending on an OS producing a transient ioctl/ConPTY failure.
+    pub(super) fn handle_resize_with(
+        &mut self,
+        client_id: ClientId,
+        request: PaneResizeRequest,
+        resize_pty: impl FnOnce(&ServerPane) -> io::Result<()>,
+    ) -> Vec<(Target, ServerMessage)> {
+        let PaneResizeRequest {
+            pane_id,
+            local,
+            generation,
+            cols,
+            rows,
+            cell_width,
+            cell_height,
+        } = request;
+        let owner = local.then_some(client_id);
+        if owner.is_none() && !self.is_controller(client_id) {
+            return Vec::new();
+        }
+        let scrollback = self.settings.scrollback;
+        let image_media_policy = self.image_media_policy();
+        if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
+            let (cols, rows) = (cols.max(1), rows.max(1));
+            let reported_cell = cell_size(cell_width, cell_height);
+            let dimensions_changed = cols != pane.cols || rows != pane.rows;
+            let cell_changed = reported_cell.is_some_and(|cell| cell != pane.cell);
+            if !dimensions_changed && !cell_changed {
+                if pane.pty_resize_pending {
+                    pane.pty_resize_pending = resize_pty(pane).is_err();
+                }
+                return Vec::new();
+            }
+            pane.cols = cols;
+            pane.rows = rows;
+            // The controller's cell size is canonical alongside its pane size: the child
+            // reads it out of the PTY to decide how many cells a picture needs, and the
+            // pane that renders that picture is measuring against the same value.
+            if let Some(cell) = reported_cell {
+                pane.cell = cell;
+            }
+            if pane.output_seen {
+                if dimensions_changed {
+                    pane.screen_mut().resize(rows, cols);
+                }
+                if cell_changed {
+                    let cell = pane.cell;
+                    pane.screen_mut().set_cell_size(cell);
+                }
+            } else if dimensions_changed {
+                // The spawn request uses a fallback geometry before the client's layout is
+                // available. Rebuild the still-empty parser at its authoritative size so a
+                // width reflow cannot discard the spare history-allocation slot.
+                let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
+                screen.set_cell_size(pane.cell);
+                screen.set_image_storage_enabled(true);
+                screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
+                screen.set_image_media_policy(image_media_policy);
+                screen.set_palette(pane.palette.into());
+                pane.replace_empty_screen(screen);
+            } else if cell_changed {
+                let cell = pane.cell;
+                pane.screen_mut().set_cell_size(cell);
+            }
+            pane.pty_resize_pending = resize_pty(pane).is_err();
+            // Broadcast so every client's parser reshapes at the same byte position.
+            return vec![(
+                owner.map_or(Target::Broadcast, Target::Client),
+                ServerMessage::Resized {
+                    pane_id,
+                    local,
+                    generation,
+                    cols: pane.cols,
+                    rows: pane.rows,
+                },
+            )];
+        }
+        Vec::new()
     }
 
     pub(super) fn handle_message(
@@ -511,59 +603,23 @@ impl SessionServer {
                 rows,
                 cell_width,
                 cell_height,
-            } => {
-                let owner = local.then_some(client_id);
-                if owner.is_none() && !self.is_controller(client_id) {
-                    return Vec::new();
-                }
-                let scrollback = self.settings.scrollback;
-                let image_media_policy = self.image_media_policy();
-                if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
-                    pane.cols = cols.max(1);
-                    pane.rows = rows.max(1);
-                    let (rows, cols) = (pane.rows, pane.cols);
-                    // The controller's cell size is canonical alongside its pane size: the child
-                    // reads it out of the PTY to decide how many cells a picture needs, and the
-                    // pane that renders that picture is measuring against the same value.
-                    let reported_cell = cell_size(cell_width, cell_height);
-                    if let Some(cell) = reported_cell {
-                        pane.cell = cell;
-                    }
-                    if pane.output_seen {
-                        pane.screen_mut().resize(rows, cols);
-                        if reported_cell.is_some() {
-                            let cell = pane.cell;
-                            pane.screen_mut().set_cell_size(cell);
-                        }
-                    } else {
-                        // The spawn request uses a fallback geometry before the client's layout is
-                        // available. Rebuild the still-empty parser at its authoritative size so a
-                        // width reflow cannot discard the spare history-allocation slot.
-                        let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
-                        screen.set_cell_size(pane.cell);
-                        screen.set_image_storage_enabled(true);
-                        screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
-                        screen.set_image_media_policy(image_media_policy);
-                        screen.set_palette(pane.palette.into());
-                        pane.replace_empty_screen(screen);
-                    }
-                    if let Some(pty) = &pane.pty {
-                        let _ = pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell);
-                    }
-                    // Broadcast so every client's parser reshapes at the same byte position.
-                    return vec![(
-                        owner.map_or(Target::Broadcast, Target::Client),
-                        ServerMessage::Resized {
-                            pane_id,
-                            local,
-                            generation,
-                            cols: pane.cols,
-                            rows: pane.rows,
-                        },
-                    )];
-                }
-                Vec::new()
-            }
+            } => self.handle_resize_with(
+                client_id,
+                PaneResizeRequest {
+                    pane_id,
+                    local,
+                    generation,
+                    cols,
+                    rows,
+                    cell_width,
+                    cell_height,
+                },
+                |pane| {
+                    pane.pty.as_ref().map_or(Ok(()), |pty| {
+                        pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell)
+                    })
+                },
+            ),
             ClientMessage::Kill {
                 pane_id,
                 local,

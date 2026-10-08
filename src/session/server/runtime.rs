@@ -1913,6 +1913,7 @@ mod tests {
             env: Vec::new(),
             palette: WirePalette::from(TerminalColorPalette::default()),
             pty: None,
+            pty_resize_pending: false,
             terminal: TerminalScreen::new(24, 80, 100),
             content_generation: 0,
             output_seen: false,

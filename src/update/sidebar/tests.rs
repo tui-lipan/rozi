@@ -22,7 +22,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
         let id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.config.sidebar.tabs = vec![SidebarTab::Command {
                 name: id.clone(),
                 label: "Rows".to_string(),
@@ -203,7 +203,7 @@ fn show_files_tab(backend: &mut TestBackend<AppRoot>) {
     };
     let id = tab.id();
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].tabs = vec![id.clone()];
     state.sidebar.panels[0].active_tab = Some(id);
     state.config.sidebar.tabs = vec![tab];
@@ -257,7 +257,7 @@ fn tree_refresh_loop_arms_once_and_disarms_when_hidden() {
             "repeated updates do not fork the chain"
         );
 
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
         backend
             .dispatch(crate::Msg::SidebarTreeRefresh { epoch })
             .expect("hidden tick dispatches");
@@ -286,7 +286,7 @@ fn open_sessions_tab_unswept(backend: &mut TestBackend<AppRoot>, epoch: u64) {
         "settle the mount with `settled_backend` before disarming the loop"
     );
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
     state.sidebar.sessions_epoch = epoch;
     state.command_link = None;
@@ -743,13 +743,13 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             state.sidebar.sessions_epoch = 10;
         }
         let stale = vec![discovered("old")];
 
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
         backend.state_mut().sidebar.invalidate_sessions();
         backend
             .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -760,7 +760,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
             .expect("stale close result");
         assert!(backend.state().sidebar.sessions.is_empty());
 
-        backend.state_mut().sidebar_visible = true;
+        backend.state_mut().sidebar.shown = [true, false];
         backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         backend.state_mut().sidebar.invalidate_sessions();
         backend
@@ -950,7 +950,7 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let id = backend
@@ -1021,7 +1021,7 @@ fn new_pane_row_spawns_on_the_named_workspace() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             // Empty but active, so the group still lists (heading + New pane) and the spawn has
             // nothing to split from.
@@ -1081,7 +1081,7 @@ fn a_sidebar_spawn_ends_a_split_drag_first() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let index = backend
@@ -1108,7 +1108,7 @@ fn a_sidebar_close_ends_a_split_drag_first() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let index = backend
@@ -1148,7 +1148,7 @@ fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let pane_row = 1;
@@ -1253,7 +1253,7 @@ fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             // Simulate a session switch: epoch advanced, old loop's armed epoch left behind.
             state.sidebar.sessions_epoch = 99;
@@ -1292,7 +1292,7 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
                 "winvm".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
         }
         backend
@@ -1362,7 +1362,7 @@ fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
         }
         backend
@@ -1386,7 +1386,7 @@ fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
             // Hide the sidebar so the recurring sweep stops replacing this fixed row list with
             // whatever sessions happen to be running on the machine the test runs on. Row
             // activation reads the active tab, not visibility, so the rows still resolve.
-            state.sidebar_visible = false;
+            state.sidebar.hide_all();
         }
 
         // The ✕ on the current session's row: arm, then confirm.
@@ -1435,7 +1435,7 @@ fn a_connected_host_is_still_swept_after_a_probe_fails() {
                 "winvm".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             state.sidebar.sessions_epoch = 7;
         }
@@ -1915,7 +1915,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
         let id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(id.clone());
             state.sidebar.command_epoch = 8;
             state.sidebar.command_in_flight.insert(id.clone(), 7);
@@ -1964,7 +1964,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
         }
         for (visible, epoch, active) in [(false, 6, "rows"), (true, 5, "rows"), (true, 6, "other")]
         {
-            backend.state_mut().sidebar_visible = visible;
+            backend.state_mut().sidebar.shown = [visible, false];
             backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new(active));
             backend
                 .dispatch(crate::Msg::SidebarCommandPoll {
@@ -1976,7 +1976,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
         }
 
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.sidebar.panels[0].active_tab = Some(id.clone());
         state.sidebar.command_in_flight.insert(id.clone(), 5);
         backend
@@ -1986,7 +1986,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
             })
             .expect("overlap guard");
         assert_eq!(backend.state().sidebar.command_in_flight.get(&id), Some(&5));
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
     });
 }
 
@@ -1998,7 +1998,7 @@ fn sessions_and_command_panels_refresh_together() {
         let command_id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.config.sidebar.tabs = vec![
                 SidebarTab::Sessions,
                 SidebarTab::Panes,
@@ -2043,7 +2043,7 @@ fn sessions_and_command_panels_refresh_together() {
                     .contains_key(&command_id),
             "the command panel must start even while Sessions is visible"
         );
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
     });
 }
 
@@ -2064,7 +2064,7 @@ fn focused_sidebar_backend(tabs: Vec<SidebarTab>) -> TestBackend<AppRoot> {
     session.connection = crate::state::ConnectionState::Connected;
     session.pending_session_attach = None;
     state.config.animations.enabled = false;
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].tabs = tabs.iter().map(SidebarTab::id).collect();
     state.sidebar.panels[0].active_tab = tabs.first().map(SidebarTab::id);
     state.config.sidebar.tabs = tabs;
@@ -2231,7 +2231,7 @@ fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change(
         {
             let state = backend.state_mut();
             state.config.animations.enabled = false;
-            state.sidebar.dock_visible = [true, false];
+            state.sidebar.shown = [true, false];
             for panel in state.sidebar.panels.iter_mut().skip(1) {
                 panel.tabs.clear();
                 panel.active_tab = None;

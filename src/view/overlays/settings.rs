@@ -246,14 +246,19 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             "Sidebar",
             vec![
                 (
-                    "Left sidebar",
+                    "Left panels",
                     sidebar_dock_status(&ctx.state.config.sidebar.layout.left),
                     LeftSidebarPanels,
                 ),
                 (
-                    "Right sidebar",
+                    "Right panels",
                     sidebar_dock_status(&ctx.state.config.sidebar.layout.right),
                     RightSidebarPanels,
+                ),
+                (
+                    "Sidebars at startup",
+                    ctx.state.config.sidebar.startup.label().to_string(),
+                    SidebarStartup,
                 ),
                 ("Sidebar tabs", String::new(), SidebarTabs),
                 ("Sidebar layout preset", String::new(), SidebarLayoutPreset),
@@ -1162,9 +1167,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
 }
 
 fn sidebar_dock_status(dock: &crate::config::SidebarDock) -> String {
-    if !dock.visible {
-        "Disabled".into()
-    } else if dock.panel_count == 1 {
+    if dock.panel_count == 1 {
         "1 panel".into()
     } else {
         format!("{} panels", dock.panel_count)

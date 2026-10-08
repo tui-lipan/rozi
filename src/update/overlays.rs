@@ -382,6 +382,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | ChooseWorkbar
         | CycleTitleStyle
         | CycleSidebarTabStyle
+        | SidebarStartup
         | LeftSidebarPanels
         | RightSidebarPanels
         | SidebarLayoutPreset
@@ -744,19 +745,11 @@ fn apply_settings_choice(
         } else {
             crate::config::SidebarPosition::Right
         };
-        let visible = index != 0;
-        if !ctx.state.sidebar_visible {
-            ctx.state.sidebar.dock_visible = [false, false];
-        }
-        ctx.state.sidebar.dock_visible
-            [usize::from(side == crate::config::SidebarPosition::Right)] = visible;
-        ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
-        if visible {
-            crate::update::sidebar::set_panel_count(ctx, side, index);
-        } else {
-            crate::update::sidebar::save_layout(ctx);
-        }
+        crate::update::sidebar::set_panel_count(ctx, side, index + 1);
         let _ = crate::update::sidebar::visibility_changed(ctx);
+    }
+    if persist && action == crate::state::SettingsAction::SidebarStartup {
+        crate::update::sidebar::save_layout(ctx);
     }
     if persist && action == crate::state::SettingsAction::SidebarLayoutPreset {
         crate::update::sidebar::apply_layout_preset(ctx, index);

@@ -632,6 +632,10 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     base_label.to_string()
 }
 
+fn show_hide_label(noun: &str, shown: bool) -> String {
+    format!("{} {noun}", if shown { "Hide" } else { "Show" })
+}
+
 fn toggle_command_label(action: Action, state: &State) -> Option<String> {
     Some(match action {
         Action::TogglePaneRecording => if crate::ops::recording::target_is_recording(state) {
@@ -679,15 +683,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         }
         // Ranking for the query "sidebar" comes from the exact `sidebar` palette alias, not from the
         // label, so this stays parallel with every other toggle instead of leading with the noun.
-        Action::ToggleSidebar => enable_disable_label("sidebar", state.sidebar_visible),
-        Action::ToggleLeftSidebar => enable_disable_label(
-            "left sidebar",
-            state.sidebar_visible && state.sidebar.dock_visible[0],
-        ),
-        Action::ToggleRightSidebar => enable_disable_label(
-            "right sidebar",
-            state.sidebar_visible && state.sidebar.dock_visible[1],
-        ),
+        Action::ToggleSidebar => show_hide_label("sidebar", state.sidebar_shown()),
+        Action::ToggleLeftSidebar => show_hide_label("left sidebar", state.sidebar.shown[0]),
+        Action::ToggleRightSidebar => show_hide_label("right sidebar", state.sidebar.shown[1]),
         Action::ToggleSidebarGap => enable_disable_label("sidebar gap", state.config.sidebar.gap),
         Action::ToggleSidebarBackground => {
             enable_disable_label("sidebar background", state.config.sidebar.background)
@@ -1300,8 +1298,8 @@ mod tests {
         assert!(!is_palette_eligible("choose-theme"));
         assert!(!is_palette_eligible("toggle-titles"));
         assert!(!is_palette_eligible("toggle-workbar"));
-        assert!(!is_palette_eligible("toggle-left-sidebar"));
-        assert!(!is_palette_eligible("toggle-right-sidebar"));
+        assert!(is_palette_eligible("toggle-left-sidebar"));
+        assert!(is_palette_eligible("toggle-right-sidebar"));
         assert!(is_palette_eligible("sidebar-tabs"));
         assert!(!is_palette_eligible("toggle-animations"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));

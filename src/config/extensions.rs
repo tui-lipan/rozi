@@ -2629,7 +2629,7 @@ suggested_location = {{ dock = "right", panel = 3 }}
 [[sidebar_presets]]
 name = "review"
 label = "Review"
-layout = {{ right = {{ visible = true, panel_count = 2, panels = [{{ tabs = ["jobs", "files"], weight = 1.0 }}] }}, hidden = ["jobs"] }}
+layout = {{ right = {{ panel_count = 2, panels = [{{ tabs = ["jobs", "files"], weight = 1.0 }}] }}, hidden = ["jobs"] }}
 "#,
             manifest("tools", "1")
         );

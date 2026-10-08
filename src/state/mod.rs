@@ -215,11 +215,10 @@ pub struct State {
     /// How many half periods have passed since [`Self::alert_pulse_armed_at`], as of the latest
     /// tick. The phases follow from it.
     pub alert_pulse_turns: u32,
-    pub sidebar_visible: bool,
     /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
     /// view each frame, because the transition driving it lives there.
     ///
-    /// Layout reads this rather than [`Self::sidebar_visible`], so the columns the sidebar reserves
+    /// Layout reads this rather than [`Self::sidebar_shown`], so the columns the sidebar reserves
     /// grow and shrink with the animation and the pane column is genuinely resized to make room -
     /// the same way the tile beside a spawning pane is. Seeded from the config so a `State` that has
     /// never been rendered reports settled geometry.
@@ -550,8 +549,6 @@ impl State {
         let (extension_generations, retired) =
             crate::config::reconcile_generations(None, &mut config, &HashMap::new());
         debug_assert!(retired.is_empty());
-        let sidebar_visible =
-            config.sidebar.layout.left.visible || config.sidebar.layout.right.visible;
         let sidebar = SidebarState::new(&config.sidebar);
         let attachment = fresh_default_attachment(&config);
 
@@ -598,12 +595,7 @@ impl State {
             alert_pulse_armed_at: std::time::Duration::ZERO,
             alert_pulse_half: std::time::Duration::ZERO,
             alert_pulse_turns: 0,
-            sidebar_visible,
-            sidebar_slide: Cell::new(if sidebar_visible && sidebar.dock_visible[0] {
-                1.0
-            } else {
-                0.0
-            }),
+            sidebar_slide: Cell::new(if sidebar.shown[0] { 1.0 } else { 0.0 }),
             sidebar,
             workbar: WorkbarState::default(),
             show_palette: false,
@@ -1322,8 +1314,8 @@ impl State {
         let layout = &self.config.sidebar.layout;
         // Include a retracting dock in the budget until its animation ends.
         let live = [
-            self.sidebar.dock_visible[0] || self.sidebar_slide.get() > 0.0,
-            self.sidebar.dock_visible[1] || self.sidebar.right_slide.get() > 0.0,
+            self.sidebar.shown[0] || self.sidebar_slide.get() > 0.0,
+            self.sidebar.shown[1] || self.sidebar.right_slide.get() > 0.0,
         ];
         let wanted = [
             if live[0] {
@@ -1392,12 +1384,13 @@ impl State {
     pub fn terminal_content_left_offset(&self, viewport: Rect) -> u16 {
         self.dock_reserved_width(viewport, crate::config::SidebarPosition::Left)
     }
+    pub fn sidebar_shown(&self) -> bool {
+        self.sidebar.any_shown()
+    }
     pub fn sidebar_panel_visible(&self, panel: usize) -> bool {
-        self.sidebar_visible
-            && self.sidebar.panels.get(panel).is_some_and(|p| {
-                self.sidebar.dock_visible
-                    [usize::from(p.dock == crate::config::SidebarPosition::Right)]
-            })
+        self.sidebar.panels.get(panel).is_some_and(|p| {
+            self.sidebar.shown[usize::from(p.dock == crate::config::SidebarPosition::Right)]
+        })
     }
     pub fn visible_sidebar_tabs(&self) -> impl Iterator<Item = &crate::config::SidebarTabId> {
         self.sidebar

@@ -103,7 +103,7 @@ fn render_tree(
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 // Revealing the sidebar after the first frame is a real toggle, so it runs the
                 // real slide; these assertions are about the settled column, not a frame
                 // part-way through it.
@@ -166,7 +166,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.nerd_icons = false;
                 let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
@@ -232,7 +232,7 @@ fn files_tab_refresh_tick_reloads_directory_without_remounting() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
@@ -343,7 +343,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
@@ -423,7 +423,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                 });
                 {
                     let state = backend.state_mut();
-                    state.sidebar_visible = true;
+                    state.sidebar.shown = [true, false];
                     state.config.animations.sidebar = false;
                     state.config.sidebar.layout.left.width = 34;
                     state.sidebar.panels[0].tabs = vec![tab.id()];
@@ -555,7 +555,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
             });
             let pane = {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
@@ -718,7 +718,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
@@ -881,7 +881,7 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {

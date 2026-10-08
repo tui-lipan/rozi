@@ -157,21 +157,13 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // visible starts settled rather than sliding in at launch.
     let sidebar_progress = ctx.transition::<f32>(
         "rozi-sidebar-progress",
-        if ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[0] {
-            1.0
-        } else {
-            0.0
-        },
+        if ctx.state.sidebar.shown[0] { 1.0 } else { 0.0 },
         crate::layout::anim::sidebar_transition(ctx.state.config.animations),
     );
     ctx.state.sidebar_slide.set(sidebar_progress);
     let right_progress = ctx.transition::<f32>(
         "rozi-sidebar-right-progress",
-        if ctx.state.sidebar_visible && ctx.state.sidebar.dock_visible[1] {
-            1.0
-        } else {
-            0.0
-        },
+        if ctx.state.sidebar.shown[1] { 1.0 } else { 0.0 },
         crate::layout::anim::sidebar_transition(ctx.state.config.animations),
     );
     ctx.state.sidebar.right_slide.set(right_progress);

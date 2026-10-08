@@ -652,9 +652,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "visible": {
-                    "type": "boolean"
-                  },
                   "width": {
                     "type": "integer",
                     "minimum": 16,
@@ -691,9 +688,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "visible": {
-                    "type": "boolean"
-                  },
                   "width": {
                     "type": "integer",
                     "minimum": 16,

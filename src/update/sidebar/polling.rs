@@ -15,7 +15,7 @@ pub(crate) const COMMAND_DISPLAY_ROW_CHARS: usize = 160;
 pub(crate) const COMMAND_BUSY_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub(crate) fn sessions_active(ctx: &Context<AppRoot>) -> bool {
-    ctx.state.sidebar_visible
+    ctx.state.sidebar_shown()
         && ctx
             .state
             .visible_sidebar_tabs()
@@ -23,11 +23,11 @@ pub(crate) fn sessions_active(ctx: &Context<AppRoot>) -> bool {
 }
 
 pub(crate) fn command_active(ctx: &Context<AppRoot>, id: &SidebarTabId) -> bool {
-    ctx.state.sidebar_visible && ctx.state.visible_sidebar_tabs().any(|active| active == id)
+    ctx.state.sidebar_shown() && ctx.state.visible_sidebar_tabs().any(|active| active == id)
 }
 
 pub(crate) fn tree_active(ctx: &Context<AppRoot>) -> bool {
-    ctx.state.sidebar_visible
+    ctx.state.sidebar_shown()
         && ctx.state.visible_sidebar_tabs().any(|id| {
             ctx.state
                 .config
@@ -84,7 +84,7 @@ pub(crate) fn command_group_prefix(ctx: &Context<AppRoot>, id: &SidebarTabId) ->
 }
 
 pub(crate) fn request_command_poll(ctx: &mut Context<AppRoot>) {
-    if !ctx.state.sidebar_visible {
+    if !ctx.state.sidebar_shown() {
         return;
     }
     let Some(link) = ctx.state.command_link.clone() else {

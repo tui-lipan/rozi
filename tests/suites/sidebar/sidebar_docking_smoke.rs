@@ -53,8 +53,7 @@ fn backend(
             });
         }
     }
-    state.sidebar.dock_visible = visible;
-    state.sidebar_visible = visible.iter().any(|v| *v);
+    state.sidebar.shown = visible;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
     backend.render();
     backend
@@ -119,7 +118,7 @@ fn panel_choice_waits_for_confirmation_and_cancellation_is_lossless() {
         assert_eq!(b.state().config.sidebar.layout, saved);
         b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
             .unwrap();
-        b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
+        b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
         assert_eq!(b.state().config.sidebar.layout.left.panel_count, 1);
         assert_eq!(
             b.state().config.sidebar.layout.left.panels,
@@ -212,7 +211,8 @@ fn global_toggle_restores_the_dock_combination_and_stale_events_are_ignored() {
         b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
         b.render();
         assert_eq!(b.state().content_viewport(b.viewport()).w, 120);
-        assert_eq!(b.state().sidebar.dock_visible, [true, true]);
+        assert_eq!(b.state().sidebar.shown, [false, false]);
+        assert_eq!(b.state().sidebar.restore, [true, true]);
         b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
         b.render();
         assert_eq!(b.state().content_viewport(b.viewport()).w, 56);
@@ -374,25 +374,32 @@ fn compacted_reordering_preserves_home_panels_hidden_slots_and_selection() {
 }
 
 #[test]
-fn settings_persists_startup_docks_while_runtime_toggles_remain_client_local() {
+fn startup_preferences_apply_on_restart_without_changing_client_visibility() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
         let mut b = backend(120, 30, [2, 2], [true, false]);
         let path = rozi::config::config_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "[theme]\nname = \"nord\"\n").unwrap();
-        b.state_mut().config.sidebar.layout.left.visible = true;
-        b.state_mut().config.sidebar.layout.right.visible = false;
-        b.dispatch(Msg::SettingsActivate(SettingsAction::RightSidebarPanels))
-            .unwrap();
-        b.dispatch(Msg::SettingsChoicePick(2)).unwrap();
-        assert!(b.state().config.sidebar.layout.right.visible);
-        assert_eq!(b.state().sidebar.dock_visible, [true, true]);
-        let loaded = rozi::config::load_config();
-        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        let restarted = rozi::state::State::new(loaded.config, Theme::default());
-        assert!(restarted.sidebar_visible);
-        assert_eq!(restarted.sidebar.dock_visible, [true, true]);
+        for (index, expected) in [[false, false], [true, false], [false, true], [true, true]]
+            .into_iter()
+            .enumerate()
+        {
+            b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarStartup))
+                .unwrap();
+            b.dispatch(Msg::SettingsChoiceSelect(index)).unwrap();
+            assert_eq!(b.state().sidebar.shown, [true, false]);
+            b.dispatch(Msg::SettingsChoiceCancel).unwrap();
+            b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarStartup))
+                .unwrap();
+            b.dispatch(Msg::SettingsChoicePick(index)).unwrap();
+            assert_eq!(b.state().sidebar.shown, [true, false]);
+            let loaded = rozi::config::load_config();
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            let restarted = rozi::state::State::new(loaded.config, Theme::default());
+            assert_eq!(restarted.sidebar.shown, expected);
+            assert_eq!(restarted.sidebar.restore, [false, false]);
+        }
         let saved = std::fs::read_to_string(&path).unwrap();
         for action in [
             Action::ToggleLeftSidebar,
@@ -402,29 +409,66 @@ fn settings_persists_startup_docks_while_runtime_toggles_remain_client_local() {
             b.dispatch(Msg::RunAction(action)).unwrap();
             assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
         }
-        // Settings reflects the configured startup value even when local chrome is hidden.
-        b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
-            .unwrap();
-        b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
-        assert!(!b.state().config.sidebar.layout.left.visible);
-        let loaded = rozi::config::load_config();
-        let restarted = rozi::state::State::new(loaded.config, Theme::default());
-        assert_eq!(restarted.sidebar.dock_visible, [false, true]);
-        assert!(
-            std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("name = \"nord\"")
-        );
+        let before = (b.state().sidebar.shown, b.state().sidebar.restore);
+        b.dispatch(Msg::ConfigFileChanged).unwrap();
+        assert_eq!((b.state().sidebar.shown, b.state().sidebar.restore), before);
+        assert!(saved.contains("name = \"nord\""));
     });
 }
 
 #[test]
-fn right_only_startup_focuses_a_mounted_panel_and_recovers_a_hidden_target() {
+fn a_layout_save_migrates_startup_flags_without_losing_tab_definitions() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        rozi::test_support::isolate_user_dirs();
+        let path = rozi::config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = r#"[theme]
+name = "nord"
+[sidebar]
+tabs = [{ name = "jobs", label = "Jobs", entries = [] }]
+layout = { left = { visible = false }, right = { visible = true, width = 41, panels = [{ weight = 0.7, tabs = ["jobs", "missing.extension"] }] }, hidden = ["missing.extension"] }
+"#;
+        std::fs::write(&path, text).unwrap();
+        let original: toml::Value = toml::from_str(text).unwrap();
+        let loaded = rozi::config::load_config();
+        assert_eq!(
+            loaded.config.sidebar.startup,
+            rozi::config::SidebarStartup::Right
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("migrated to sidebar.startup"))
+        );
+        let mut b = backend(120, 30, [2, 2], [false, false]);
+        *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
+        b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
+            .unwrap();
+        b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
+        let saved: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved["sidebar"]["startup"].as_str(), Some("right"));
+        assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
+        assert_eq!(saved["theme"], original["theme"]);
+        assert!(saved["sidebar"]["layout"]["right"].get("visible").is_none());
+        let reloaded = rozi::config::load_config();
+        assert!(reloaded.warnings.is_empty(), "{:?}", reloaded.warnings);
+        assert_eq!(reloaded.config.sidebar.layout.right.width, 41);
+        assert_eq!(
+            reloaded.config.sidebar.layout.location("missing.extension"),
+            Some((Right, 0))
+        );
+        assert_eq!(b.state().sidebar.shown, [false, true]);
+    });
+}
+
+#[test]
+fn right_only_startup_focuses_a_mounted_panel_and_reveals_a_remembered_dock() {
     on_stack(|| {
         let mut b = backend(120, 30, [2, 2], [false, true]);
         let mut config = b.state().config.clone();
-        config.sidebar.layout.left.visible = false;
-        config.sidebar.layout.right.visible = true;
+        config.sidebar.startup = rozi::config::SidebarStartup::Right;
         *b.state_mut() = rozi::state::State::new(config, Theme::default());
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
         b.render();
@@ -440,27 +484,23 @@ fn right_only_startup_focuses_a_mounted_panel_and_recovers_a_hidden_target() {
         b.state_mut().sidebar.active_panel = 0;
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
         b.render();
-        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Left);
         assert!(
-            b.focused_key().unwrap().as_ref().contains("right-0"),
+            b.focused_key().unwrap().as_ref().contains("left-0"),
             "{:?}",
             b.focused_key()
         );
-        assert_eq!(b.state().sidebar.dock_visible, [false, true]);
+        assert_eq!(b.state().sidebar.shown, [true, true]);
     });
 }
 
 #[test]
-fn dock_choices_disable_without_losing_panel_preferences_across_restart() {
+fn panel_count_changes_preserve_hidden_docks_and_dormant_panels() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
-        let path = rozi::config::config_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         for side in [Left, Right] {
-            std::fs::write(&path, "[sidebar]\ntabs = []\n").unwrap();
-            let mut b = backend(120, 30, [3, 3], [true, true]);
-            b.state_mut().config.sidebar.layout.left.visible = true;
-            b.state_mut().config.sidebar.layout.right.visible = true;
+            let mut b = backend(120, 30, [3, 3], [false, false]);
+            b.state_mut().sidebar.restore = [false, true];
             let action = if side == Left {
                 SettingsAction::LeftSidebarPanels
             } else {
@@ -469,39 +509,23 @@ fn dock_choices_disable_without_losing_panel_preferences_across_restart() {
             let saved = b.state().config.sidebar.layout.dock(side).clone();
             b.dispatch(Msg::SettingsActivate(action)).unwrap();
             b.dispatch(Msg::SettingsChoiceSelect(0)).unwrap();
-            assert_eq!(b.state().config.sidebar.layout.dock(side), &saved);
             b.dispatch(Msg::SettingsChoiceCancel).unwrap();
             assert_eq!(b.state().config.sidebar.layout.dock(side), &saved);
-            b.dispatch(Msg::SettingsActivate(action)).unwrap();
-            b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
-            assert!(!b.state().config.sidebar.layout.dock(side).visible);
-            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 3);
-            assert_eq!(
-                b.state().config.sidebar.layout.dock(side).panels,
-                saved.panels
-            );
-            assert!(b.state().config.sidebar.layout.dock(side.toggled()).visible);
-            let loaded = rozi::config::load_config();
-            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-            assert!(!loaded.config.sidebar.layout.dock(side).visible);
-            let restored_panels = loaded.config.sidebar.layout.dock(side).panels.clone();
-            for (restored, original) in restored_panels.iter().zip(&saved.panels) {
-                assert_eq!(restored.weight, original.weight);
-                assert!(restored.tabs.starts_with(&original.tabs));
-            }
-            *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
-            for count in [1, 3] {
+            for count in [1, 2, 3] {
                 b.dispatch(Msg::SettingsActivate(action)).unwrap();
-                b.dispatch(Msg::SettingsChoicePick(count)).unwrap();
-                assert!(b.state().config.sidebar.layout.dock(side).visible);
+                b.dispatch(Msg::SettingsChoicePick(count - 1)).unwrap();
                 assert_eq!(
                     b.state().config.sidebar.layout.dock(side).panel_count,
                     count
                 );
                 assert_eq!(
                     b.state().config.sidebar.layout.dock(side).panels,
-                    restored_panels
+                    saved.panels
                 );
+                assert_eq!(b.state().sidebar.shown, [false, false]);
+                assert_eq!(b.state().sidebar.restore, [false, true]);
+                let loaded = rozi::config::load_config();
+                assert_eq!(loaded.config.sidebar.layout.dock(side).panel_count, count);
             }
         }
     });
@@ -516,13 +540,12 @@ fn independent_dock_commands_open_only_the_requested_dock_from_hidden_startup() 
         ] {
             let mut b = backend(120, 30, [2, 2], [false, false]);
             let mut config = b.state().config.clone();
-            config.sidebar.layout.left.visible = false;
-            config.sidebar.layout.right.visible = false;
+            config.sidebar.startup = rozi::config::SidebarStartup::None;
             *b.state_mut() = rozi::state::State::new(config, Theme::default());
-            assert!(!b.state().sidebar_visible);
+            assert!(!b.state().sidebar_shown());
             b.dispatch(Msg::RunAction(action)).unwrap();
-            assert!(b.state().sidebar_visible);
-            assert_eq!(b.state().sidebar.dock_visible, expected);
+            assert!(b.state().sidebar_shown());
+            assert_eq!(b.state().sidebar.shown, expected);
             let frame = b.capture_frame().to_fixed_grid_lines();
             assert_eq!(frame.iter().any(|row| row.contains("Left1")), expected[0]);
             assert_eq!(frame.iter().any(|row| row.contains("Right1")), expected[1]);
@@ -531,27 +554,126 @@ fn independent_dock_commands_open_only_the_requested_dock_from_hidden_startup() 
 }
 
 #[test]
-fn independent_dock_commands_preserve_the_global_restore_combination() {
+fn hiding_the_last_dock_updates_the_global_restore_combination() {
     on_stack(|| {
         for action in [Action::ToggleLeftSidebar, Action::ToggleRightSidebar] {
             let mut b = backend(120, 30, [2, 2], [true, true]);
             b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
             b.dispatch(Msg::RunAction(action)).unwrap();
-            assert!(b.state().sidebar_visible);
-            assert_eq!(
-                b.state()
-                    .sidebar
-                    .dock_visible
-                    .iter()
-                    .filter(|v| **v)
-                    .count(),
-                1
-            );
+            assert!(b.state().sidebar_shown());
+            assert_eq!(b.state().sidebar.shown.iter().filter(|v| **v).count(), 1);
             b.dispatch(Msg::RunAction(action)).unwrap();
-            assert!(!b.state().sidebar_visible);
+            assert!(!b.state().sidebar_shown());
             b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
-            assert_eq!(b.state().sidebar.dock_visible, [true, true]);
+            assert_eq!(
+                b.state().sidebar.shown,
+                [
+                    action == Action::ToggleLeftSidebar,
+                    action == Action::ToggleRightSidebar
+                ]
+            );
         }
+    });
+}
+
+#[test]
+fn visibility_actions_round_trip_every_shown_and_restore_combination() {
+    on_stack(|| {
+        for shown in [[false, false], [true, false], [false, true], [true, true]] {
+            for restore in [[false, false], [true, false], [false, true], [true, true]] {
+                for action in [
+                    Action::ToggleSidebar,
+                    Action::ToggleLeftSidebar,
+                    Action::ToggleRightSidebar,
+                ] {
+                    let mut b = backend(120, 30, [2, 2], shown);
+                    b.state_mut().sidebar.restore = restore;
+                    b.dispatch(Msg::RunAction(action)).unwrap();
+                    b.dispatch(Msg::RunAction(action)).unwrap();
+                    assert_eq!(
+                        b.state().sidebar.shown,
+                        shown,
+                        "{shown:?} {restore:?} {action:?}"
+                    );
+                }
+            }
+        }
+        let mut b = backend(120, 30, [2, 2], [true, true]);
+        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
+            .unwrap();
+        b.dispatch(Msg::RunAction(Action::ToggleLeftSidebar))
+            .unwrap();
+        assert_eq!(b.state().sidebar.shown, [false, false]);
+        assert_eq!(b.state().sidebar.restore, [true, false]);
+        b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
+        assert_eq!(b.state().sidebar.shown, [true, false]);
+    });
+}
+
+#[test]
+fn focus_reveals_the_panel_remembered_before_an_individual_hide() {
+    on_stack(|| {
+        let mut b = backend(120, 30, [2, 2], [true, true]);
+        b.state_mut().sidebar.active_panel = 3;
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        b.dispatch(Msg::SidebarBlur).unwrap();
+        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
+            .unwrap();
+        assert_eq!(b.state().sidebar.shown, [true, false]);
+        assert_eq!(b.state().sidebar.active_panel, 3);
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        assert_eq!(b.state().sidebar.shown, [true, true]);
+        assert_eq!(b.state().sidebar.active_panel, 3);
+        assert!(b.focused_key().unwrap().as_ref().contains("right-1"));
+        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
+            .unwrap();
+        assert!(b.state().sidebar.focused);
+        assert!(b.focused_key().unwrap().as_ref().contains("left-"));
+        b.dispatch(Msg::RunAction(Action::ToggleLeftSidebar))
+            .unwrap();
+        assert!(!b.state().sidebar.focused);
+    });
+}
+
+#[test]
+fn first_show_uses_available_tabs_and_explicit_actions_can_reveal_empty_docks() {
+    on_stack(|| {
+        for populated in [[true, false], [false, true], [true, true], [false, false]] {
+            let mut b = backend(120, 30, [2, 2], [false, false]);
+            for panel in &mut b.state_mut().sidebar.panels {
+                if !populated[usize::from(panel.dock == Right)] {
+                    panel.tabs.clear();
+                    panel.active_tab = None;
+                }
+            }
+            b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
+            assert_eq!(
+                b.state().sidebar.shown,
+                if populated == [false, false] {
+                    [true, false]
+                } else {
+                    populated
+                }
+            );
+        }
+        let mut b = backend(120, 30, [1, 1], [true, false]);
+        b.state_mut().config.sidebar.tabs.clear();
+        let state = b.state_mut();
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
+            .unwrap();
+        assert_eq!(b.state().sidebar.shown, [true, true]);
+        assert!(
+            b.capture_frame()
+                .to_fixed_grid_lines()
+                .join("\n")
+                .contains("Drag tabs here")
+        );
+        b.state_mut().sidebar.active_panel = 1;
+        b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        assert!(b.state().sidebar.focused);
+        assert!(b.focused_key().unwrap().as_ref().contains("right-0"));
     });
 }
 
@@ -602,7 +724,7 @@ fn sidebar_mode_uses_directional_focus_and_alt_movement_across_visible_docks() {
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Left);
         b.send_key(key(KeyCode::Right, KeyMods::ALT)).unwrap();
         assert!(
-            !b.state().sidebar.dock_visible[1],
+            !b.state().sidebar.shown[1],
             "arrangement does not enable a dock"
         );
         b.send_key(key(KeyCode::Char('?'), KeyMods::SHIFT)).unwrap();
@@ -619,8 +741,6 @@ fn sidebar_presets_apply_only_on_confirmation_and_settings_regains_focus() {
         let mut b = backend(120, 30, [2, 2], [true, false]);
         let saved = b.state().config.sidebar.layout.clone();
         let mut preset = saved.clone();
-        preset.left.visible = false;
-        preset.right.visible = true;
         preset.place("left1", Right, 1);
         b.state_mut()
             .config
@@ -642,7 +762,7 @@ fn sidebar_presets_apply_only_on_confirmation_and_settings_regains_focus() {
             .unwrap();
         b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
         assert_eq!(b.state().config.sidebar.layout, preset);
-        assert_eq!(b.state().sidebar.dock_visible, [false, true]);
+        assert_eq!(b.state().sidebar.shown, [true, false]);
         assert!(b.state().show_settings);
         assert!(b.state().settings_choice.is_none());
         b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarTabs))

@@ -16,7 +16,7 @@ fn sidebar_backend() -> TestBackend<AppRoot> {
     });
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.config.animations.sidebar = false;
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.config.sidebar.layout.left.panel_count = 1;

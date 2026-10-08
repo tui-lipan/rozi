@@ -292,6 +292,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         CycleWorkbarBadgeStyle => alias_list(&["badges", "chips"]),
         CycleWorkbarTabStyle => alias_list(&["workspace tabs"]),
         ToggleWorkbarPowerline => alias_list(&["badge chain"]),
+        SidebarStartup => alias_list(&["sidebar", "startup", "launch", "visibility"]),
         LeftSidebarPanels | RightSidebarPanels => alias_list(&["sidebar", "panels", "dock"]),
         SidebarLayoutPreset => alias_list(&["sidebar", "layout", "preset"]),
         SidebarTabs => alias_list(&["sidebar", "tabs", "visibility"]),

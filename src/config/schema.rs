@@ -1874,7 +1874,6 @@ pub struct SidebarLayoutPreset {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SidebarDock {
-    pub visible: bool,
     pub width: u16,
     pub panel_count: usize,
     pub panels: Vec<SidebarDockPanel>,
@@ -1883,7 +1882,6 @@ pub struct SidebarDock {
 impl Default for SidebarDock {
     fn default() -> Self {
         Self {
-            visible: false,
             width: 32,
             panel_count: 1,
             panels: vec![SidebarDockPanel::default()],
@@ -1959,7 +1957,6 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
         #[derive(serde::Deserialize, Default)]
         #[serde(default, deny_unknown_fields)]
         struct DockPatch {
-            visible: Option<bool>,
             width: Option<u16>,
             panel_count: Option<usize>,
             panels: Option<Vec<SidebarDockPanel>>,
@@ -1994,9 +1991,6 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
             let dock = layout.dock_mut(side);
             let explicit_panels = patch.as_ref().is_some_and(|p| p.panels.is_some());
             if let Some(patch) = patch {
-                if let Some(visible) = patch.visible {
-                    dock.visible = visible;
-                }
                 if let Some(width) = patch.width {
                     dock.width = width;
                 }
@@ -2092,8 +2086,48 @@ impl SidebarDockLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarStartup {
+    #[default]
+    None,
+    Left,
+    Right,
+    Both,
+}
+
+impl SidebarStartup {
+    pub fn docks(self) -> [bool; 2] {
+        match self {
+            Self::None => [false, false],
+            Self::Left => [true, false],
+            Self::Right => [false, true],
+            Self::Both => [true, true],
+        }
+    }
+
+    pub fn from_docks(docks: [bool; 2]) -> Self {
+        match docks {
+            [false, false] => Self::None,
+            [true, false] => Self::Left,
+            [false, true] => Self::Right,
+            [true, true] => Self::Both,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Both => "Both",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
+    pub startup: SidebarStartup,
     pub presets: Vec<SidebarLayoutPreset>,
     pub layout: SidebarDockLayout,
     pub tabs: Vec<SidebarTab>,
@@ -2122,6 +2156,7 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
         ];
         Self {
+            startup: SidebarStartup::None,
             layout: SidebarDockLayout::default(),
             presets: Vec::new(),
             tabs,

@@ -31,8 +31,7 @@ fn rendered_sidebar(position: SidebarPosition) -> Vec<String> {
     let mut backend = sidebar_backend(100, 30);
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
-        state.sidebar.dock_visible = [
+        state.sidebar.shown = [
             position == SidebarPosition::Left,
             position == SidebarPosition::Right,
         ];
@@ -85,10 +84,10 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
             let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.sidebar.layout.left.width = 30;
                 state.config.sidebar.layout.right.width = 30;
-                state.sidebar.dock_visible = [true, false];
+                state.sidebar.shown = [true, false];
                 state.sidebar.panels.truncate(2);
                 state
                     .config
@@ -115,7 +114,7 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
                     .any(|line| line.chars().take(30).collect::<String>().contains("Panes"))
             );
 
-            backend.state_mut().sidebar.dock_visible = [false, true];
+            backend.state_mut().sidebar.shown = [false, true];
             backend.state_mut().sidebar.panels.truncate(2);
             backend
                 .state_mut()
@@ -163,7 +162,7 @@ fn narrow_sidebar_retains_half_the_canvas() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = sidebar_backend(10, 5);
-            backend.state_mut().sidebar_visible = true;
+            backend.state_mut().sidebar.shown = [true, false];
             // The sidebar reserves its columns once its slide has landed, which the render settles
             // here (this binary's backends turn the slide off).
             backend.render();
@@ -186,7 +185,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
             let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
@@ -225,7 +224,7 @@ fn an_empty_panel_puts_its_drop_hint_on_the_tab_bar() {
             let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.sidebar.tabs = vec![SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
@@ -297,7 +296,7 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
             ];
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.config.sidebar.layout.left.panels = configured_panels.clone();
                 state.config.sidebar.layout.left.panel_count = 1;
@@ -337,7 +336,7 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
             let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
@@ -424,7 +423,7 @@ fn sidebar_splitter_drag_stops_at_the_configured_width_bounds() {
         .spawn(|| {
             const ROW: u16 = 3;
             let mut backend = sidebar_backend(200, 20);
-            backend.state_mut().sidebar_visible = true;
+            backend.state_mut().sidebar.shown = [true, false];
             backend.render();
 
             let divider = |backend: &TestBackend<AppRoot>| {
@@ -492,7 +491,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
             // panel divider crosses it, so probing that row would find no vertical rule.
             const ROW: u16 = 3;
             let mut backend = sidebar_backend(100, 20);
-            backend.state_mut().sidebar_visible = true;
+            backend.state_mut().sidebar.shown = [true, false];
             backend.render();
             let initial = backend.capture_frame();
             let divider_bg = backend.state().theme.surface.element;

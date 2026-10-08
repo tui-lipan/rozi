@@ -760,13 +760,14 @@ the same `left`, `right`, and `hidden` fields as `[sidebar] layout`. Names of th
 are automatically namespaced inside panel tab lists. Preset names become `<extension>.<name>`.
 Users select and apply a preset through **Settings… → Bars → Sidebar layout preset…**; installing
 or reloading an extension never applies one. Applying copies the preset into user preferences, preserving saved
-assignments omitted by the preset. Later edits belong to the user.
+assignments omitted by the preset. Presets leave client visibility and startup preferences unchanged.
+Later edits belong to the user.
 
 ```toml
 [[sidebar_presets]]
 name = "review"
 label = "Review workspace"
-layout = { right = { visible = true, panel_count = 1, panels = [{ weight = 1.0, tabs = ["agents"] }] } }
+layout = { right = { panel_count = 1, panels = [{ weight = 1.0, tabs = ["agents"] }] } }
 ```
 
 ### Navigation targets

@@ -138,7 +138,11 @@ pub(super) fn apply_sidebar_config(
         if legacy {
             warnings.push("sidebar.layout overrides legacy sidebar geometry keys; remove visible/width/position/panels/split/split_ratio".into());
         }
-        sidebar.layout = layout;
+        sidebar.layout = layout.layout;
+        if let Some(startup) = layout.startup {
+            sidebar.startup = startup;
+            warnings.push("Legacy sidebar dock visible flags migrated to sidebar.startup; the next layout save writes the new schema".into());
+        }
     } else if legacy {
         let mut layout = super::schema::SidebarDockLayout::default();
         let side = raw
@@ -150,7 +154,14 @@ pub(super) fn apply_sidebar_config(
             std::mem::swap(&mut layout.left, &mut layout.right);
         }
         let dock = layout.dock_mut(side);
-        dock.visible = raw.visible.unwrap_or(false);
+        sidebar.startup = if raw.visible.unwrap_or(false) {
+            super::schema::SidebarStartup::from_docks([
+                side == SidebarPosition::Left,
+                side == SidebarPosition::Right,
+            ])
+        } else {
+            super::schema::SidebarStartup::None
+        };
         dock.width = raw.width.unwrap_or(32);
         if let Some(panels) = raw.panels {
             dock.panels = panels
@@ -174,6 +185,9 @@ pub(super) fn apply_sidebar_config(
         }
         sidebar.layout = layout;
         warnings.push("Legacy sidebar geometry migrated in memory to sidebar.layout; the next layout save writes the new schema. See docs/sidebar.md".into());
+    }
+    if let Some(startup) = raw.startup {
+        sidebar.startup = startup;
     }
     sidebar.layout.validate(warnings);
     for tab in &sidebar.tabs {
@@ -683,7 +697,7 @@ mod tests {
             warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
             "{warnings:?}"
         );
-        assert!(config.layout.right.visible);
+        assert_eq!(config.startup, crate::config::SidebarStartup::Right);
         assert_eq!(config.layout.right.panel_count, 2);
         assert_eq!(config.tabs.len(), 3);
         assert!(
@@ -917,6 +931,26 @@ mod layout_loading_tests {
     }
 
     #[test]
+    fn old_dock_startup_flags_migrate_with_explicit_startup_taking_precedence() {
+        for docks in [[false, false], [true, false], [false, true], [true, true]] {
+            let text = format!(
+                "layout = {{ left = {{ visible = {} }}, right = {{ visible = {} }} }}",
+                docks[0], docks[1]
+            );
+            let (config, warnings) = load(&text, Vec::new(), Default::default());
+            assert_eq!(config.startup.docks(), docks);
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("migrated to sidebar.startup"));
+            let (explicit, _) = load(
+                &format!("startup = \"right\"\n{text}"),
+                Vec::new(),
+                Default::default(),
+            );
+            assert_eq!(explicit.startup, crate::config::SidebarStartup::Right);
+        }
+    }
+
+    #[test]
     fn legacy_layout_migrates_with_an_explicit_diagnostic() {
         let (config, warnings) = load(
             r#"visible = true
@@ -930,7 +964,7 @@ split_ratio = 0.7"#,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].starts_with("Legacy sidebar"));
-        assert!(config.layout.right.visible);
+        assert_eq!(config.startup, crate::config::SidebarStartup::Right);
         assert_eq!(config.layout.right.width, 41);
         assert_eq!(config.layout.right.panel_count, 1);
         assert_eq!(config.layout.right.panels[0].weight, 0.7);

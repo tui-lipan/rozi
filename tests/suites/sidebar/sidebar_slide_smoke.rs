@@ -42,7 +42,7 @@ fn backend(position: SidebarPosition) -> TestBackend<AppRoot> {
         state.config.pane.show_workbar = false;
         state.config.pane.show_titles = false;
         state.config.pane.border_mode = PaneBorderMode::Separate;
-        state.sidebar.dock_visible = [
+        state.sidebar.restore = [
             position == SidebarPosition::Left,
             position == SidebarPosition::Right,
         ];
@@ -87,7 +87,11 @@ fn on_large_stack(test: impl FnOnce() + Send + 'static) {
 }
 
 fn set_visible(backend: &mut TestBackend<AppRoot>, visible: bool) {
-    backend.state_mut().sidebar_visible = visible;
+    if visible {
+        backend.state_mut().sidebar.show_restored();
+    } else {
+        backend.state_mut().sidebar.hide_all();
+    }
     backend.render();
 }
 

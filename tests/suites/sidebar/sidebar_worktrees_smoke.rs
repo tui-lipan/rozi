@@ -35,7 +35,7 @@ fn seeded(width: u16, height: u16) -> TestBackend<AppRoot> {
         h: height,
     });
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.config.animations.sidebar = false;
     state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
     state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];

@@ -20,8 +20,7 @@ fn backend() -> TestBackend<AppRoot> {
     });
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
-        state.sidebar.dock_visible = [true, false];
+        state.sidebar.shown = [true, false];
         state.sidebar.panels.truncate(2);
         state
             .config

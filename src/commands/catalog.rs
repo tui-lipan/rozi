@@ -664,14 +664,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Left sidebar",
         category: "Sidebar",
         default_keys: &[],
-        palette: false,
+        palette: true,
     },
     BuiltinCommand {
         action: Action::ToggleRightSidebar,
         label: "Right sidebar",
         category: "Sidebar",
         default_keys: &[],
-        palette: false,
+        palette: true,
     },
     BuiltinCommand {
         action: Action::SidebarTabs,

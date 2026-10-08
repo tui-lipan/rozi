@@ -226,7 +226,8 @@ change them with the mouse or keys. To choose where it sits and whether it opens
 
 ```toml
 [sidebar]
-layout = { right = { visible = true, width = 36, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
+startup = "right"
+layout = { right = { width = 36, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
 tab_style = "round"
 ```
 
@@ -338,7 +339,8 @@ right = ["layout", "clock", "session"]
 clock_format = "%H:%M"
 
 [sidebar]
-layout = { right = { visible = true, width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
+startup = "right"
+layout = { right = { width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
 tab_style = "round"
 
 [animations]

@@ -69,8 +69,6 @@ pub(crate) fn apply_layout_preset(ctx: &mut Context<AppRoot>, index: usize) {
                 }
             }
         }
-        ctx.state.sidebar.dock_visible = [layout.left.visible, layout.right.visible];
-        ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
         ctx.state.config.sidebar.layout = layout;
         ctx.state
             .sidebar

@@ -15,7 +15,7 @@ use crate::state::SidebarWorktrees;
 pub(crate) const TAB_ID: &str = "worktrees";
 
 pub(crate) fn worktrees_active(ctx: &Context<AppRoot>) -> bool {
-    ctx.state.sidebar_visible
+    ctx.state.sidebar_shown()
         && ctx
             .state
             .visible_sidebar_tabs()
@@ -252,7 +252,7 @@ mod tests {
         let mut backend = TestBackend::new(AppRoot::default());
         let (client, outbound) = SessionClient::test_channel();
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
         state.sidebar.panels[0].tabs = vec![SidebarTabId::new(super::TAB_ID)];
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new(super::TAB_ID));

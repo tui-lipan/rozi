@@ -775,8 +775,8 @@ mod tests {
                         .into_iter()
                         .filter(|line| {
                             [
-                                "Enable sidebar",
-                                "Disable sidebar",
+                                "Show sidebar",
+                                "Hide sidebar",
                                 "sidebar split",
                                 "Focus sidebar",
                                 "Next sidebar",
@@ -787,9 +787,9 @@ mod tests {
                         })
                         .collect();
                     let expected = if initially_visible {
-                        "Disable sidebar"
+                        "Hide sidebar"
                     } else {
-                        "Enable sidebar"
+                        "Show sidebar"
                     };
                     assert!(
                         rows.first().is_some_and(|row| row.contains(expected)),
@@ -802,7 +802,7 @@ mod tests {
                             mods: KeyMods::NONE,
                         })
                         .expect("activate sidebar toggle");
-                    assert_eq!(backend.state().sidebar_visible, !initially_visible);
+                    assert_eq!(backend.state().sidebar_shown(), !initially_visible);
                     assert!(!backend.state().show_palette);
                 }
             })

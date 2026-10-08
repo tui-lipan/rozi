@@ -18,9 +18,10 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.sidebar.width_drag_side = None;
     // Hiding the sidebar unmounts the body, so hand the keyboard back before it disappears rather
     // than leaving focus on a widget that is about to stop existing.
-    if !ctx
-        .state
-        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
+    if ctx.state.sidebar.focused
+        && !ctx
+            .state
+            .sidebar_panel_visible(ctx.state.sidebar.active_panel)
     {
         if let Some(index) =
             (0..ctx.state.sidebar.panels.len()).find(|i| ctx.state.sidebar_panel_visible(*i))
@@ -32,7 +33,7 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
             release_focus(ctx);
         }
     }
-    if !ctx.state.sidebar_visible {
+    if !ctx.state.sidebar_shown() {
         ctx.state.sidebar.width_preview = None;
         ctx.state.sidebar.right_width_preview = None;
     }
@@ -46,29 +47,19 @@ pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
 /// Sidebar targets opt out of Tab and their parent rejects pointer focus, so an explicit keyed
 /// request is the only way in.
 pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
-    let command = if ctx.state.sidebar_visible {
-        None
-    } else {
-        ctx.state.sidebar_visible = true;
-        if !ctx.state.sidebar.dock_visible.iter().any(|v| *v) {
-            ctx.state.sidebar.dock_visible[0] = true;
-        }
-        visibility_changed(ctx).command
-    };
-    // Config reloads and local visibility commands can leave a remembered panel in a hidden dock.
-    if !ctx
-        .state
-        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
-    {
-        let Some(panel) = (0..ctx.state.sidebar.panels.len())
-            .find(|panel| ctx.state.sidebar_panel_visible(*panel))
-        else {
-            ctx.state.sidebar.focused = false;
-            release_focus(ctx);
-            return Update::with_command(command);
-        };
-        ctx.state.sidebar.active_panel = panel;
+    let previous_shown = ctx.state.sidebar.shown;
+    let remembered_dock = ctx.state.sidebar.active_panel().map(|panel| panel.dock);
+    if !ctx.state.sidebar.any_shown() {
+        ctx.state.sidebar.show_restored();
     }
+    if let Some(side) = remembered_dock {
+        ctx.state.sidebar.shown[usize::from(side == crate::config::SidebarPosition::Right)] = true;
+    }
+    let command = if previous_shown != ctx.state.sidebar.shown {
+        visibility_changed(ctx).command
+    } else {
+        None
+    };
     // Resolves after reconciliation, so requesting it in the same pass that reveals the sidebar is
     // fine even though the body has not mounted yet.
     let key = crate::view::sidebar_focus_key(ctx);
@@ -126,8 +117,16 @@ pub(crate) fn release_focus(ctx: &mut Context<AppRoot>) {
 /// Tab / Shift-Tab while the body has focus. Cycling remounts the body under a new key, so focus
 /// has to be re-requested for the tab the user just landed on.
 pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
-    if !ctx.state.sidebar_visible {
+    if !ctx.state.sidebar_shown() {
         return Update::none();
+    }
+    if !ctx
+        .state
+        .sidebar_panel_visible(ctx.state.sidebar.active_panel)
+        && let Some(panel) = (0..ctx.state.sidebar.panels.len())
+            .find(|panel| ctx.state.sidebar_panel_visible(*panel))
+    {
+        ctx.state.sidebar.active_panel = panel;
     }
     let panel = ctx.state.sidebar.active_panel;
     ctx.state.sidebar.layout_epoch = ctx.state.sidebar.layout_epoch.wrapping_add(1);
@@ -378,7 +377,7 @@ pub(crate) fn row_hover(
 pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
     let side = super::active_side(ctx).toggled();
     let index = usize::from(side == crate::config::SidebarPosition::Right);
-    if !ctx.state.sidebar_visible || !ctx.state.sidebar.dock_visible[index] {
+    if !ctx.state.sidebar_shown() || !ctx.state.sidebar.shown[index] {
         return Update::none();
     }
     let home = ctx

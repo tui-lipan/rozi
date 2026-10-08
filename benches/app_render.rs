@@ -147,7 +147,7 @@ fn sidebar_render(c: &mut Criterion) {
             let mut backend = backend_with_panes(PANES, &filled);
             if let Some(tab) = tab.clone() {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.sidebar.panels[0].tabs = vec![tab.id()];
                 state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];

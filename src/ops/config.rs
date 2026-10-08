@@ -150,7 +150,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // the interval each time it reschedules, so the next tick already uses the new one.
     let had_update_check = ctx.state.config.updates.check;
 
-    // `layout.<dock>.visible` is a startup default only. A reload deliberately does not reapply it:
+    // `sidebar.startup` is a startup default only. A reload deliberately does not reapply it:
     // visibility is client-local view chrome, so the file must not reach in and open or close a
     // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
     ctx.state.sidebar.reconcile(&new_config.sidebar);
@@ -204,7 +204,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // caches and active-tab refresh still run. Refresh work is kicked explicitly below, so only
     // the synchronous focus/cache effects are needed here.
     let _ = crate::update::sidebar::visibility_changed(ctx);
-    if ctx.state.sidebar_visible && ctx.state.sidebar.focused {
+    if ctx.state.sidebar_shown() && ctx.state.sidebar.focused {
         crate::update::sidebar::refocus_body(ctx);
     }
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);

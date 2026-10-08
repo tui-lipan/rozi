@@ -258,10 +258,41 @@ pub(super) struct UserCommandTableSpec {
     pub(super) keep_open: Option<bool>,
 }
 
+/// File-only migration boundary for the previous dock startup flags.
+#[derive(Debug)]
+pub(super) struct SidebarFileLayout {
+    pub(super) layout: super::schema::SidebarDockLayout,
+    pub(super) startup: Option<super::schema::SidebarStartup>,
+}
+
+impl<'de> Deserialize<'de> for SidebarFileLayout {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut value = toml::Value::deserialize(deserializer)?;
+        let mut visible = [false, false];
+        let mut migrated = false;
+        for (index, side) in ["left", "right"].into_iter().enumerate() {
+            if let Some(dock) = value.get_mut(side).and_then(toml::Value::as_table_mut)
+                && let Some(old) = dock.remove("visible")
+            {
+                visible[index] = old
+                    .as_bool()
+                    .ok_or_else(|| D::Error::custom("sidebar dock visible must be a boolean"))?;
+                migrated = true;
+            }
+        }
+        Ok(Self {
+            layout: value.try_into().map_err(D::Error::custom)?,
+            startup: migrated.then(|| super::schema::SidebarStartup::from_docks(visible)),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct SidebarFileConfig {
-    pub(super) layout: Option<super::schema::SidebarDockLayout>,
+    pub(super) layout: Option<SidebarFileLayout>,
+    pub(super) startup: Option<super::schema::SidebarStartup>,
     pub(super) visible: Option<bool>,
     pub(super) width: Option<u16>,
     pub(super) position: Option<String>,

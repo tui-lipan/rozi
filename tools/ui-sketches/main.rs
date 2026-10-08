@@ -407,7 +407,7 @@ fn sidebar_worktrees_fixture() -> TestBackend<AppRoot> {
     backend.set_viewport(viewport(100, 26));
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.config.animations.sidebar = false;
         state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.panels.truncate(1);
@@ -692,7 +692,7 @@ fn agent_picker() {
     {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
-        state.sidebar_visible = false;
+        state.sidebar.hide_all();
         state.current_mut().session_name = Some("eph-1234".into());
         let mut pane = Pane::new(
             1,

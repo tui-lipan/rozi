@@ -747,9 +747,10 @@ pub struct SidebarWorktrees {
 pub struct SidebarState {
     pub layout_epoch: u64,
     selection_memory: HashMap<(crate::config::SidebarPosition, usize), SidebarTabId>,
-    pub dock_visible: [bool; 2],
-    /// The combination restored by the global toggle, independent of individual dock commands.
-    pub restore_docks: [bool; 2],
+    /// Docks currently displayed by this client, in left/right order.
+    pub shown: [bool; 2],
+    /// Last nonempty combination hidden by the global action or the last individual hide.
+    pub restore: [bool; 2],
     pub right_slide: Cell<f32>,
     pub right_width_preview: Option<u16>,
     pub width_drag_side: Option<crate::config::SidebarPosition>,
@@ -854,28 +855,64 @@ pub struct SidebarState {
 impl SidebarState {
     pub fn new(config: &SidebarConfig) -> Self {
         let panels = resolved_panels(config);
-        let dock_visible = if config.layout.left.visible || config.layout.right.visible {
-            [config.layout.left.visible, config.layout.right.visible]
-        } else {
-            [true, false]
-        };
+        let shown = config.startup.docks();
         let active_panel = panels
             .iter()
             .position(|panel| {
-                dock_visible[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
+                shown[usize::from(panel.dock == crate::config::SidebarPosition::Right)]
             })
+            .or_else(|| panels.iter().position(|panel| !panel.tabs.is_empty()))
             .unwrap_or(0);
         Self {
             panels,
-            dock_visible,
-            restore_docks: dock_visible,
+            shown,
+            restore: [false, false],
             active_panel,
-            right_slide: Cell::new(if config.layout.right.visible {
-                1.0
-            } else {
-                0.0
-            }),
+            right_slide: Cell::new(if shown[1] { 1.0 } else { 0.0 }),
             ..Self::default()
+        }
+    }
+
+    pub fn any_shown(&self) -> bool {
+        self.shown.iter().any(|shown| *shown)
+    }
+
+    pub fn hide_all(&mut self) {
+        if self.any_shown() {
+            self.restore = self.shown;
+            self.shown = [false, false];
+        }
+    }
+
+    pub fn show_restored(&mut self) {
+        self.shown = self.restore;
+        if !self.any_shown() {
+            for panel in &self.panels {
+                if !panel.tabs.is_empty() {
+                    self.shown[usize::from(panel.dock == crate::config::SidebarPosition::Right)] =
+                        true;
+                }
+            }
+            if !self.any_shown() {
+                self.shown[0] = true;
+            }
+        }
+    }
+
+    pub fn toggle_all(&mut self) {
+        if self.any_shown() {
+            self.hide_all();
+        } else {
+            self.show_restored();
+        }
+    }
+
+    pub fn toggle_dock(&mut self, side: crate::config::SidebarPosition) {
+        let index = usize::from(side == crate::config::SidebarPosition::Right);
+        let previous = self.shown;
+        self.shown[index] = !self.shown[index];
+        if !self.any_shown() {
+            self.restore = previous;
         }
     }
 
@@ -1154,8 +1191,7 @@ mod docking_tests {
     #[test]
     fn geometry_uses_one_budget_and_restores_after_resize() {
         let mut config = crate::config::Config::default();
-        config.sidebar.layout.left.visible = true;
-        config.sidebar.layout.right.visible = true;
+        config.sidebar.startup = crate::config::SidebarStartup::Both;
         let state = crate::state::State::new(config, Theme::default());
         for width in 0..180 {
             let rect = Rect {

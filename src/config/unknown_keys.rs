@@ -183,6 +183,7 @@ const SIDEBAR_KEYS: &[&str] = &[
     "panels",
     "split",
     "split_ratio",
+    "startup",
     "background_follows_canvas",
     "gap",
     "background",

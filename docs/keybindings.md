@@ -118,6 +118,11 @@ in [Sessions](sessions.md#leave-rozi).
 | Next sidebar tab | `PageDown` |
 | Previous sidebar tab | `PageUp` |
 
+Left and right sidebar toggles are available in the command palette and can be bound through
+`toggle-left-sidebar` and `toggle-right-sidebar`; neither has a default key. The global `b` command
+hides the current combination and restores the same docks. Panel counts and startup visibility
+are configured separately in Settings.
+
 See [Sidebar keys](#sidebar-keys) for the keys that work once the sidebar has focus.
 
 ## Commands without default keys

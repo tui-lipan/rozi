@@ -1113,7 +1113,7 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
                 state.sidebar.config_epoch = 11;
                 // Client-global chrome that must survive a create: an open sidebar on a chosen
                 // tab, and live workbar command scheduling state.
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.sidebar.panels[0].active_tab =
                     Some(crate::config::SidebarTabId::new("sessions"));
                 state.workbar.command_epoch = 3;
@@ -1169,7 +1169,7 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
             // flicker rather than blanking the tab.
             assert_eq!(state.sidebar.command_epoch, 8);
             assert_eq!(state.sidebar.config_epoch, 11);
-            assert!(state.sidebar_visible);
+            assert!(state.sidebar_shown());
             assert_eq!(
                 state.sidebar.active_tab(),
                 Some(&crate::config::SidebarTabId::new("sessions"))

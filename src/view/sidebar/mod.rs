@@ -374,7 +374,7 @@ pub(crate) fn active_tab_in_state(
 /// anything to advance, and did it change" input. `None` whenever nothing is showing one: the
 /// sidebar is hidden, another tab is up, or every agent is idle.
 pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
-    if !state.sidebar_visible
+    if !state.sidebar_shown()
         || !(0..state.sidebar.panels.len())
             .filter(|panel| state.sidebar_panel_visible(*panel))
             .any(|panel| {

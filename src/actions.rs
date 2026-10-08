@@ -470,14 +470,14 @@ fn execute_action_inner(
         Action::CycleSidebarTabStyle => crate::ops::preferences::cycle_sidebar_tab_style(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
-            if ctx.state.sidebar_visible {
+            if ctx.state.sidebar_shown() {
                 crate::update::sidebar::cycle_tab(ctx, true)
             } else {
                 Update::none()
             }
         }
         Action::SidebarPrevTab => {
-            if ctx.state.sidebar_visible {
+            if ctx.state.sidebar_shown() {
                 crate::update::sidebar::cycle_tab(ctx, false)
             } else {
                 Update::none()
@@ -839,9 +839,12 @@ mod tests {
                 backend
                     .dispatch(Msg::RunAction(Action::ToggleSidebar))
                     .expect("toggle controller sidebar");
-                assert!(backend.state().sidebar_visible);
+                assert!(backend.state().sidebar_shown());
                 // Toggling is client-local: it must not write the config default back.
-                assert!(!backend.state().config.sidebar.layout.left.visible);
+                assert_eq!(
+                    backend.state().config.sidebar.startup,
+                    crate::config::SidebarStartup::None
+                );
                 assert_eq!(
                     backend
                         .state()
@@ -874,7 +877,7 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     state.current_mut().session_client = Some(follower_client);
-                    state.sidebar_visible = false;
+                    state.sidebar.hide_all();
                     state.current_mut().shared.as_mut().unwrap().controller = Some(2);
                 }
                 backend

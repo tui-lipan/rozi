@@ -579,6 +579,7 @@ pub fn persist_layout_default(
 /// only after their in-memory migration has been resolved successfully.
 pub fn persist_sidebar_layout(
     layout: &super::schema::SidebarDockLayout,
+    startup: super::schema::SidebarStartup,
 ) -> std::result::Result<PathBuf, String> {
     let _edit = config_edit_lock();
     let path = config_path();
@@ -604,6 +605,12 @@ pub fn persist_sidebar_layout(
         .map_err(|err| err.to_string())?
         .to_string();
     text = upsert_value_in_section(&text, "sidebar", "layout", &value);
+    text = upsert_value_in_section(
+        &text,
+        "sidebar",
+        "startup",
+        &format!("\"{}\"", startup.label().to_lowercase()),
+    );
     write_config_text(&path, text)?;
     Ok(path)
 }
@@ -1947,7 +1954,7 @@ name = "nord"
         let mut layout = SidebarDockLayout::default();
         layout.place("missing.tasks", SidebarPosition::Right, 2);
         layout.hidden = vec!["missing.tasks".into()];
-        persist_sidebar_layout(&layout).unwrap();
+        persist_sidebar_layout(&layout, super::super::schema::SidebarStartup::None).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let saved: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
@@ -1957,7 +1964,7 @@ name = "nord"
         assert!(saved["sidebar"].get("split").is_none());
         let loaded: SidebarDockLayout = saved["sidebar"]["layout"].clone().try_into().unwrap();
         assert_eq!(loaded, layout);
-        persist_sidebar_layout(&loaded).unwrap();
+        persist_sidebar_layout(&loaded, super::super::schema::SidebarStartup::None).unwrap();
         assert_eq!(text, fs::read_to_string(&path).unwrap());
     }
 
@@ -1968,10 +1975,20 @@ name = "nord"
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let invalid = "[sidebar]\nlayout = { broken";
         fs::write(&path, invalid).unwrap();
-        assert!(persist_sidebar_layout(&SidebarDockLayout::default()).is_err());
+        assert!(
+            persist_sidebar_layout(
+                &SidebarDockLayout::default(),
+                super::super::schema::SidebarStartup::None
+            )
+            .is_err()
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), invalid);
         fs::write(&path, "[sidebar]\ngap = false\n").unwrap();
-        persist_sidebar_layout(&SidebarDockLayout::default()).unwrap();
+        persist_sidebar_layout(
+            &SidebarDockLayout::default(),
+            super::super::schema::SidebarStartup::None,
+        )
+        .unwrap();
         let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved["sidebar"]["gap"].as_bool(), Some(false));
         assert!(saved["sidebar"].get("layout").is_some());

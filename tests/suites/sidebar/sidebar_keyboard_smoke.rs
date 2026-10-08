@@ -81,7 +81,7 @@ fn backend_with_panes() -> TestBackend<AppRoot> {
     let mut backend = sidebar_backend();
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         state.current_mut().workspaces[0].panes = vec![pane(1), pane(2)];
@@ -131,7 +131,7 @@ fn backend_with_explorer() -> TestBackend<AppRoot> {
             view: SidebarTreeView::Files,
             config,
         };
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.sidebar.panels[0].tabs = vec![tab.id()];
         state.sidebar.panels[0].active_tab = Some(tab.id());
         state.config.sidebar.tabs = vec![tab];
@@ -313,14 +313,14 @@ fn focus_sidebar_reveals_a_hidden_sidebar() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().sidebar_visible = false;
+            backend.state_mut().sidebar.hide_all();
             backend.render();
 
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
             settle(&mut backend);
-            assert!(backend.state().sidebar_visible);
+            assert!(backend.state().sidebar_shown());
             assert!(backend.state().sidebar.focused);
         })
         .expect("spawn reveal thread")

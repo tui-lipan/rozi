@@ -132,6 +132,7 @@ pub enum SettingsAction {
     CyclePaneOpenAnimation,
     CyclePaneCloseAnimation,
     ToggleSidebarBackgroundFollowsCanvas,
+    SidebarStartup,
     LeftSidebarPanels,
     RightSidebarPanels,
     SidebarTabs,
@@ -220,6 +221,7 @@ impl SettingsAction {
             Self::CycleWorkbarTabStyle,
             Self::ToggleWorkbarPowerline,
             // Sidebar
+            Self::SidebarStartup,
             Self::LeftSidebarPanels,
             Self::RightSidebarPanels,
             Self::SidebarTabs,
@@ -391,22 +393,32 @@ impl SettingsAction {
             )),
             Self::LeftSidebarPanels | Self::RightSidebarPanels => {
                 let (title, dock) = if self == Self::LeftSidebarPanels {
-                    ("Left sidebar", &config.sidebar.layout.left)
+                    ("Left panels", &config.sidebar.layout.left)
                 } else {
-                    ("Right sidebar", &config.sidebar.layout.right)
+                    ("Right panels", &config.sidebar.layout.right)
                 };
                 Some(choice_ring(
                     title,
-                    &[0_usize, 1, 2, 3],
-                    if dock.visible { dock.panel_count } else { 0 },
+                    &[1_usize, 2, 3],
+                    dock.panel_count,
                     |n| match n {
-                        0 => "Disabled",
                         1 => "1 panel",
                         2 => "2 panels",
                         _ => "3 panels",
                     },
                 ))
             }
+            Self::SidebarStartup => Some(choice_ring(
+                "Sidebars at startup",
+                &[
+                    crate::config::SidebarStartup::None,
+                    crate::config::SidebarStartup::Left,
+                    crate::config::SidebarStartup::Right,
+                    crate::config::SidebarStartup::Both,
+                ],
+                config.sidebar.startup,
+                crate::config::SidebarStartup::label,
+            )),
             Self::SidebarLayoutPreset => Some(SettingsChoiceRing {
                 title: "Sidebar layout preset",
                 options: std::iter::once("Default layout".to_string())
@@ -595,20 +607,23 @@ impl SettingsAction {
                 &mut config.animations.pane_close_style,
             ),
             Self::LeftSidebarPanels | Self::RightSidebarPanels => {
-                if index > 3 {
-                    return false;
-                }
                 let dock = if self == Self::LeftSidebarPanels {
                     &mut config.sidebar.layout.left
                 } else {
                     &mut config.sidebar.layout.right
                 };
-                dock.visible = index != 0;
-                if index != 0 {
-                    dock.panel_count = index;
-                }
-                true
+                assign_choice(&[1_usize, 2, 3], index, &mut dock.panel_count)
             }
+            Self::SidebarStartup => assign_choice(
+                &[
+                    crate::config::SidebarStartup::None,
+                    crate::config::SidebarStartup::Left,
+                    crate::config::SidebarStartup::Right,
+                    crate::config::SidebarStartup::Both,
+                ],
+                index,
+                &mut config.sidebar.startup,
+            ),
             Self::SidebarLayoutPreset => index <= config.sidebar.presets.len(),
             Self::CycleSidebarTabStyle => {
                 assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)

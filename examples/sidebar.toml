@@ -4,6 +4,7 @@
 # match the tools available in your shell.
 
 [sidebar]
+startup = "left"
 tabs = [
   "activity",
   "panes",
@@ -40,7 +41,7 @@ tabs = [
     on_click = { send = "{line}" },
   },
 ]
-layout = { left = { visible = true, width = 38, panel_count = 2, panels = [
+layout = { left = { width = 38, panel_count = 2, panels = [
   { weight = 0.62, tabs = ["activity", "panes", "files", "git", "worktrees"] },
   { weight = 0.38, tabs = ["sessions", "dev", "branches", "agents", "remotes"] },
-] }, right = { visible = false, width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
+] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }

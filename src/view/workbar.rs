@@ -1484,8 +1484,8 @@ mod tests {
             h: 12,
         });
         let state = backend.state_mut();
-        state.config.sidebar.layout.left.visible = false;
-        state.sidebar_visible = false;
+        state.config.sidebar.startup = crate::config::SidebarStartup::None;
+        state.sidebar.hide_all();
         state.config.workbar.right = vec![
             crate::config::WorkbarItem {
                 segment: crate::config::WorkbarSegment::Clock,

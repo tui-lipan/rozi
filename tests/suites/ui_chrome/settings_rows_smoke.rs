@@ -333,7 +333,12 @@ fn settings_all_keeps_every_control_available() {
         setting_row(workbar, "Style");
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
-        for label in ["Left sidebar…", "Right sidebar…", "Sidebar tabs…"] {
+        for label in [
+            "Left panels…",
+            "Right panels…",
+            "Sidebars at startup…",
+            "Sidebar tabs…",
+        ] {
             setting_row(sidebar, label);
         }
         setting_row(sidebar, "Background follows canvas");
@@ -508,9 +513,9 @@ fn settings_reports_sidebar_values() {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
-            state.sidebar.dock_visible = [true, false];
-            state.sidebar_visible = false;
-            state.config.sidebar.layout.right.visible = true;
+            state.sidebar.shown = [true, false];
+            state.sidebar.hide_all();
+            state.config.sidebar.startup = rozi::config::SidebarStartup::Right;
             state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
@@ -524,7 +529,8 @@ fn settings_reports_sidebar_values() {
         );
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         assert!(
-            setting_row(sidebar, "Right sidebar…").contains("1 panel"),
+            setting_row(sidebar, "Right panels…").contains("1 panel")
+                && setting_row(sidebar, "Sidebars at startup…").contains("Right"),
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(
@@ -1148,7 +1154,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
         for (tab, count, expected) in [
             (SettingsTab::General, 19, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
-            (SettingsTab::Bars, 14, "Position"),
+            (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
             (SettingsTab::Sessions, 6, "Open Sessions on"),
         ] {

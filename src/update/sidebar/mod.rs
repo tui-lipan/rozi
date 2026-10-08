@@ -246,7 +246,10 @@ pub(crate) fn width_resized(ctx: &mut Context<AppRoot>, event: SplitterResizeEve
 pub(crate) fn save_layout(ctx: &mut Context<AppRoot>) {
     persist_sidebar_preference(
         ctx,
-        crate::config::persist_sidebar_layout(&ctx.state.config.sidebar.layout),
+        crate::config::persist_sidebar_layout(
+            &ctx.state.config.sidebar.layout,
+            ctx.state.config.sidebar.startup,
+        ),
     );
 }
 
@@ -322,23 +325,9 @@ pub(crate) fn persist_sidebar_preference(
     }
 }
 
-/// Visibility is client-local view chrome, like the active tab or a tree's expanded directories:
-/// it is never written back to `config.toml`. `layout.<dock>.visible` is the startup default only, so
-/// two clients sharing one config can disagree, and a toggle costs no disk write on a key that is
-/// pressed constantly.
+/// Runtime visibility belongs to this client and never writes preferences.
 pub(crate) fn toggle_visible(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.state.sidebar_visible {
-        ctx.state.sidebar.restore_docks = ctx.state.sidebar.dock_visible;
-        ctx.state.sidebar_visible = false;
-    } else {
-        let restored = ctx.state.sidebar.restore_docks;
-        ctx.state.sidebar.dock_visible = if restored.iter().any(|v| *v) {
-            restored
-        } else {
-            [true, false]
-        };
-        ctx.state.sidebar_visible = true;
-    }
+    ctx.state.sidebar.toggle_all();
     visibility_changed(ctx)
 }
 
@@ -346,12 +335,7 @@ pub(crate) fn toggle_dock(
     ctx: &mut Context<AppRoot>,
     side: crate::config::SidebarPosition,
 ) -> Update {
-    let index = usize::from(side == crate::config::SidebarPosition::Right);
-    if !ctx.state.sidebar_visible {
-        ctx.state.sidebar.dock_visible = [false, false];
-    }
-    ctx.state.sidebar.dock_visible[index] = !ctx.state.sidebar.dock_visible[index];
-    ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
+    ctx.state.sidebar.toggle_dock(side);
     visibility_changed(ctx)
 }
 

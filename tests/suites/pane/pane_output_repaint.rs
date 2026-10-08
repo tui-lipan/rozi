@@ -13,7 +13,7 @@
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneId};
+use rozi::state::{Pane, PaneBorderMode, PaneId, PaneTitlebarMode};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect, UpdateLevel};
 
@@ -59,10 +59,14 @@ fn backend() -> TestBackend<AppRoot> {
 }
 
 fn output(bytes: &str) -> rozi::Msg {
+    output_to(bytes, false)
+}
+
+fn output_to(bytes: &str, local: bool) -> rozi::Msg {
     rozi::Msg::SessionOutput {
         epoch: 0,
         pane_id: PANE,
-        local: false,
+        local,
         generation: 0,
         bytes: bytes.as_bytes().to_vec(),
     }
@@ -108,24 +112,82 @@ fn output_to_a_visible_pane_asks_for_a_repaint() {
 }
 
 #[test]
-fn an_osc_title_change_repaints_a_live_label_and_rebuilds_a_border_title() {
+fn osc_title_changes_repaint_all_live_title_modes() {
+    on_large_stack(|| {
+        for mode in [
+            PaneTitlebarMode::Bar,
+            PaneTitlebarMode::Inset,
+            PaneTitlebarMode::Integrated,
+        ] {
+            for scratch in [false, true] {
+                let mut backend = backend();
+                {
+                    let state = backend.state_mut();
+                    state.config.animations.enabled = false;
+                    state.config.pane.titlebar = mode;
+                    // Integrated must own an interior title row, rather than a merged seam.
+                    state.config.pane.border_mode = PaneBorderMode::Separate;
+                    if scratch {
+                        let pane = state.current_mut().workspaces[0].panes.remove(0);
+                        assert_eq!(pane.id, PANE);
+                        state.current_mut().workspaces[0].tile_tree = None;
+                        state.current_mut().workspaces[0].focused_pane = Some(OTHER_PANE);
+                        state.current_mut().focused_pane = Some(OTHER_PANE);
+                        state.scratch.panes.clear();
+                        state.scratch.panes.push(pane);
+                        state.scratch.tile_tree = None;
+                        state.scratch.focused_pane = Some(PANE);
+                        state.scratch_visible = true;
+                    }
+                }
+                backend
+                    .update_level(output_to("ready\r\n\x1b]0;initial-title\x07", scratch))
+                    .expect("settle");
+                backend.render();
+                let prefix = if scratch { "S · " } else { "" };
+                let mut previous = "initial-title";
+                assert!(
+                    backend
+                        .capture_frame()
+                        .plain_text()
+                        .contains(&format!("{prefix}{previous}")),
+                    "{mode:?}/scratch={scratch}: initial title and marker must be rendered"
+                );
+                for title in ["renamed-session", "short"] {
+                    assert_eq!(
+                        backend
+                            .update_level(output_to(&format!("\x1b]0;{title}\x07"), scratch))
+                            .expect("title chunk"),
+                        UpdateLevel::TerminalPaint,
+                        "{mode:?}/scratch={scratch}: live titles need no composition"
+                    );
+                    assert!(
+                        backend.refresh_live_terminals(),
+                        "{mode:?}/scratch={scratch}: live title moved"
+                    );
+                    // No render()/view rebuild between the OSC update and the captured frame.
+                    let frame = backend.capture_frame().plain_text();
+                    assert!(
+                        frame.contains(&format!("{prefix}{title}")),
+                        "{mode:?}/scratch={scratch}: updated title and marker missing: {frame}"
+                    );
+                    assert!(
+                        !frame.contains(previous),
+                        "{mode:?}/scratch={scratch}: stale title remains: {frame}"
+                    );
+                    previous = title;
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn osc_title_changes_still_rebuild_border_titles() {
     on_large_stack(|| {
         let mut backend = backend();
-        let _ = backend.update_level(output("ready\r\n")).expect("settle");
-        backend.render();
-
-        // The ordinary titlebar binds a live label, so title updates need no view/layout pass.
-        assert_eq!(
-            backend
-                .update_level(output("\x1b]0;renamed\x07"))
-                .expect("title chunk"),
-            UpdateLevel::TerminalPaint,
-            "live title labels participate in damage painting"
-        );
-        assert!(backend.refresh_live_terminals(), "the title label moved");
-        assert!(backend.capture_frame().plain_text().contains("renamed"));
-
-        backend.state_mut().config.pane.titlebar = rozi::state::PaneTitlebarMode::Border;
+        backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Border;
+        backend.update_level(output("ready\r\n")).expect("settle");
         backend.render();
         assert_eq!(
             backend
@@ -133,6 +195,13 @@ fn an_osc_title_change_repaints_a_live_label_and_rebuilds_a_border_title() {
                 .expect("border title"),
             UpdateLevel::Full,
             "titles embedded in a frame border still need composition"
+        );
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .plain_text()
+                .contains("border renamed")
         );
     });
 }

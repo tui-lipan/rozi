@@ -2,8 +2,12 @@
 
 This follow-up implements the optimization targets from the
 [active TUI investigation](2026-10-07-active-tui.md). It measures a local rozi build with sibling
-framework changes. The framework changes still need a release before rozi can consume them through
-its normal registry dependency.
+framework changes. At measurement time, those changes still needed a release before normal registry
+consumption.
+
+**Release follow-up:** These framework changes are now available in `tui-lipan` 0.21.0, and
+[rozi PR #139](https://github.com/tui-lipan/rozi/pull/139) consumes that release from crates.io.
+The measurements and local-checkout details below preserve the original measurement context.
 
 ## Implementation
 

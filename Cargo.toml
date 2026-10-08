@@ -7,7 +7,6 @@ rust-version = "1.96"
 license = "MPL-2.0"
 description = "Modern tiling terminal multiplexer built on tui-lipan"
 repository = "https://github.com/tui-lipan/rozi"
-homepage = "https://rozi.tui-lipan.dev"
 # The crate is mostly a binary, so docs.rs has little to show; point readers at
 # the handwritten documentation instead.
 documentation = "https://rozi.tui-lipan.dev"

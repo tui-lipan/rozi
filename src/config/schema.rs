@@ -1877,6 +1877,8 @@ pub struct SidebarDock {
     pub visible: bool,
     pub width: u16,
     pub panel_count: usize,
+    /// Last chosen multi-panel count, retained while the dock is collapsed to one panel.
+    pub expanded_panel_count: usize,
     pub panels: Vec<SidebarDockPanel>,
 }
 
@@ -1886,6 +1888,7 @@ impl Default for SidebarDock {
             visible: false,
             width: 32,
             panel_count: 1,
+            expanded_panel_count: 2,
             panels: vec![SidebarDockPanel::default()],
         }
     }
@@ -1962,6 +1965,7 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
             visible: Option<bool>,
             width: Option<u16>,
             panel_count: Option<usize>,
+            expanded_panel_count: Option<usize>,
             panels: Option<Vec<SidebarDockPanel>>,
         }
         #[derive(serde::Deserialize, Default)]
@@ -2002,6 +2006,12 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
                 }
                 if let Some(count) = patch.panel_count {
                     dock.panel_count = count;
+                    if count > 1 {
+                        dock.expanded_panel_count = count;
+                    }
+                }
+                if let Some(count) = patch.expanded_panel_count {
+                    dock.expanded_panel_count = count;
                 }
                 if let Some(panels) = patch.panels {
                     dock.panels = panels;
@@ -2065,6 +2075,16 @@ impl SidebarDockLayout {
                 ));
             }
             dock.panel_count = count;
+            if !(2..=3).contains(&dock.expanded_panel_count) {
+                warnings.push(format!(
+                    "sidebar.layout.{} expanded_panel_count must be 2–3; clamped",
+                    side.id()
+                ));
+                dock.expanded_panel_count = dock.expanded_panel_count.clamp(2, 3);
+            }
+            if count > 1 {
+                dock.expanded_panel_count = count;
+            }
             dock.width = dock.width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
             dock.panels
                 .resize_with(dock.panels.len().max(count), SidebarDockPanel::default);

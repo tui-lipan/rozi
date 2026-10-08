@@ -22,15 +22,16 @@ While the sidebar is visible, these command keys work without focusing it:
 | --- | --- |
 | `PageDown` | Next tab |
 | `PageUp` | Previous tab |
-| `\` | Switch between one and two panels |
+| `\` | Collapse or restore this dock’s panels |
 
 Configure **Left dock at startup** and **Right dock at startup** in **Settings → Bars → Sidebar**
 to save the arrangement for future clients and apply it to this client. Command-palette dock toggles
 remain local and leave startup preferences unchanged.
 
 Choose one to three panels independently for each dock in **Settings → Bars → Sidebar**. Highlighting a
-choice leaves the layout unchanged; confirm it to apply. The `\` command and focused `s` key toggle
-one and two panels in the active dock.
+choice leaves the layout unchanged; confirm it to apply. The `\` command and focused `s` key
+collapse the active dock to one panel or restore its last multi-panel count. The restored count
+is saved as `expanded_panel_count`, so three-panel layouts survive a collapse and restart.
 
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
 part of the normal `Tab` focus order.
@@ -54,7 +55,7 @@ After the `B` command key focuses the sidebar:
 | `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab to the previous or next panel |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
-| `s` | Toggle one or two panels |
+| `s` | Collapse or restore this dock’s panels |
 | `Esc` | Return focus to the pane |
 
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that

@@ -297,7 +297,13 @@ pub(crate) fn set_panel_count(
     count: usize,
 ) {
     let dock = ctx.state.config.sidebar.layout.dock_mut(side);
+    if dock.panel_count > 1 {
+        dock.expanded_panel_count = dock.panel_count;
+    }
     dock.panel_count = count.clamp(1, 3);
+    if dock.panel_count > 1 {
+        dock.expanded_panel_count = dock.panel_count;
+    }
     dock.panels.resize_with(
         dock.panels.len().max(dock.panel_count),
         crate::config::SidebarDockPanel::default,
@@ -306,10 +312,6 @@ pub(crate) fn set_panel_count(
         .sidebar
         .apply_configured_panels(&ctx.state.config.sidebar);
     save_layout(ctx);
-}
-
-pub(crate) fn set_split_enabled(ctx: &mut Context<AppRoot>, split: bool) {
-    set_panel_count(ctx, active_side(ctx), if split { 2 } else { 1 });
 }
 
 pub(crate) fn persist_sidebar_preference(
@@ -368,15 +370,14 @@ pub(crate) fn toggle_startup_dock(
 }
 
 pub(crate) fn toggle_split(ctx: &mut Context<AppRoot>) -> Update {
-    let split = ctx
-        .state
-        .config
-        .sidebar
-        .layout
-        .dock(active_side(ctx))
-        .panel_count
-        == 1;
-    set_split_enabled(ctx, split);
+    let side = active_side(ctx);
+    let dock = ctx.state.config.sidebar.layout.dock(side);
+    let count = if dock.panel_count == 1 {
+        dock.expanded_panel_count
+    } else {
+        1
+    };
+    set_panel_count(ctx, side, count);
     let update = visibility_changed(ctx);
     refocus_body(ctx);
     update

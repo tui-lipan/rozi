@@ -435,3 +435,92 @@ fn right_only_startup_focuses_a_mounted_panel_and_recovers_a_hidden_target() {
         assert_eq!(b.state().sidebar.dock_visible, [false, true]);
     });
 }
+
+#[test]
+fn split_shortcut_restores_each_docks_preferred_count_even_after_restart() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let path = rozi::config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "").unwrap();
+        for side in [Left, Right] {
+            let mut b = backend(120, 30, [3, 3], [true, true]);
+            b.state_mut().config.sidebar.layout.left.visible = true;
+            b.state_mut().config.sidebar.layout.right.visible = true;
+            let selected = b
+                .state()
+                .sidebar
+                .panels
+                .iter()
+                .position(|p| p.dock == side)
+                .unwrap();
+            b.state_mut().sidebar.active_panel = selected;
+            let panels = b.state().config.sidebar.layout.dock(side).panels.clone();
+            b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
+                .unwrap();
+            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 1);
+            assert_eq!(
+                b.state()
+                    .config
+                    .sidebar
+                    .layout
+                    .dock(side)
+                    .expanded_panel_count,
+                3
+            );
+            assert_eq!(b.state().config.sidebar.layout.dock(side).panels, panels);
+            assert_eq!(
+                b.state()
+                    .config
+                    .sidebar
+                    .layout
+                    .dock(side.toggled())
+                    .panel_count,
+                3
+            );
+            let loaded = rozi::config::load_config();
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(
+                loaded.config.sidebar.layout.dock(side).expanded_panel_count,
+                3
+            );
+            *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
+            let selected = b
+                .state()
+                .sidebar
+                .panels
+                .iter()
+                .position(|p| p.dock == side)
+                .unwrap();
+            b.state_mut().sidebar.active_panel = selected;
+            b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
+                .unwrap();
+            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 3);
+            assert_eq!(
+                b.state()
+                    .sidebar
+                    .panels
+                    .iter()
+                    .filter(|p| p.dock == side)
+                    .count(),
+                3
+            );
+            // A later explicit two-panel choice replaces the remembered expanded count.
+            b.dispatch(Msg::SettingsActivate(if side == Left {
+                SettingsAction::LeftSidebarPanels
+            } else {
+                SettingsAction::RightSidebarPanels
+            }))
+            .unwrap();
+            b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
+            for count in [1, 2] {
+                b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
+                    .unwrap();
+                assert_eq!(
+                    b.state().config.sidebar.layout.dock(side).panel_count,
+                    count
+                );
+            }
+        }
+    });
+}

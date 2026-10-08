@@ -113,7 +113,7 @@ in [Sessions](sessions.md#leave-rozi).
 | Command | Command key |
 | --- | --- |
 | Toggle sidebar | `b` |
-| Toggle one or two panels | `\` |
+| Collapse or restore dock panels | `\` |
 | Focus sidebar | `B` |
 | Next sidebar tab | `PageDown` |
 | Previous sidebar tab | `PageUp` |
@@ -221,7 +221,7 @@ After the `B` command key focuses the sidebar:
 | `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab between panels |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
-| `s` | Toggle one or two panels |
+| `s` | Collapse or restore dock panels |
 | `Esc` | Return focus to the pane |
 
 See [Sidebar](sidebar.md) for what each tab shows.

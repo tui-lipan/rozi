@@ -578,6 +578,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `layout.<dock>.visible` | bool | `false` | Startup visibility, editable through Settings’ **Left/Right dock at startup** controls. Runtime toggles remain client-local. |
 | `layout.<dock>.width` | integer | `32` | Clamped to `16..=80`; both docks share the available width. |
 | `layout.<dock>.panel_count` | integer | left `2`, right `1` | `1..=3`; reducing the count retains saved panels. |
+| `layout.<dock>.expanded_panel_count` | integer | `2`, or the configured multi-panel count | `2..=3`; count restored by the split shortcut after collapsing to one panel. |
 | `layout.<dock>.panels` | table array | left session/repository groups, right empty | Each table contains `weight` (finite, positive) and ordered `tabs` (IDs). Unknown IDs retain their placement. |
 | `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas background instead of the raised panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |

@@ -684,6 +684,12 @@
                         }
                       }
                     }
+                  },
+                  "expanded_panel_count": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 3,
+                    "description": "Multi-panel count restored by the split shortcut while panel_count is 1."
                   }
                 }
               },
@@ -723,6 +729,12 @@
                         }
                       }
                     }
+                  },
+                  "expanded_panel_count": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 3,
+                    "description": "Multi-panel count restored by the split shortcut while panel_count is 1."
                   }
                 }
               },

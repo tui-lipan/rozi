@@ -9,3 +9,6 @@
 #
 # Nothing here needs CRLF: there are no .bat or .cmd files, and PowerShell is content with LF.
 * text=auto eol=lf
+
+# Terminal snapshots preserve every column, including blank cells at the right edge.
+tests/fixtures/sidebar/*.txt whitespace=-blank-at-eol

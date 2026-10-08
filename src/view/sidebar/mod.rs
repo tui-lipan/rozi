@@ -691,6 +691,18 @@ pub(super) fn placeholder(ctx: &Context<AppRoot>, text: &str) -> Element {
         .into()
 }
 
+/// Reject queued UI events from a layout that has already been replaced.
+fn callback<T: Send + 'static>(
+    ctx: &Context<AppRoot>,
+    map: impl Fn(T) -> Msg + Send + Sync + 'static,
+) -> Callback<T> {
+    let epoch = ctx.state.sidebar.layout_epoch;
+    ctx.link().callback(move |value| Msg::SidebarUiEvent {
+        epoch,
+        event: Box::new(map(value)),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,16 +765,4 @@ mod tests {
             theme.surface.element
         );
     }
-}
-
-/// Reject queued UI events from a layout that has already been replaced.
-fn callback<T: Send + 'static>(
-    ctx: &Context<AppRoot>,
-    map: impl Fn(T) -> Msg + Send + Sync + 'static,
-) -> Callback<T> {
-    let epoch = ctx.state.sidebar.layout_epoch;
-    ctx.link().callback(move |value| Msg::SidebarUiEvent {
-        epoch,
-        event: Box::new(map(value)),
-    })
 }

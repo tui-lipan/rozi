@@ -32,7 +32,10 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
                     .detail(
                         row::truncate_start(
                             &location,
-                            location_budget(ctx.state.sidebar_requested_width()),
+                            location_budget(
+                                ctx.state
+                                    .sidebar_tab_width(&crate::config::SidebarTabId::new("panes")),
+                            ),
                         ),
                         super::super::fg_only(&ctx.state.theme.muted),
                     ),

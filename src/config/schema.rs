@@ -1972,8 +1972,10 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
             hidden: Vec<String>,
         }
         let patch = LayoutPatch::deserialize(deserializer)?;
-        let mut layout = Self::default();
-        layout.hidden = patch.hidden;
+        let mut layout = Self {
+            hidden: patch.hidden,
+            ..Self::default()
+        };
         let explicit: [HashSet<String>; 2] = [&patch.left, &patch.right].map(|dock| {
             dock.as_ref()
                 .and_then(|dock| dock.panels.as_ref())

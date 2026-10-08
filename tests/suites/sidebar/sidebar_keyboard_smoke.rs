@@ -568,7 +568,7 @@ fn s_toggles_sidebar_split_while_focused() {
 
             let _ = backend.send_key(key(KeyCode::Char('s')));
             settle(&mut backend);
-            assert!(!(backend.state().config.sidebar.layout.left.panel_count > 1));
+            assert_eq!(backend.state().config.sidebar.layout.left.panel_count, 1);
             assert_eq!(
                 backend
                     .state()

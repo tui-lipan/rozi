@@ -307,3 +307,52 @@ fn follower_docks_keep_the_controller_canvas_and_layout_revision() {
         }
     });
 }
+
+#[test]
+fn compacted_reordering_preserves_home_panels_hidden_slots_and_selection() {
+    on_stack(|| {
+        use tui_lipan::core::event::{KeyCode, KeyEvent, KeyMods};
+        let _config = rozi::test_support::lock_config_file();
+        let mut b = backend(120, 30, [3, 1], [true, false]);
+        let state = b.state_mut();
+        state.config.sidebar.layout.left.panels[1].tabs =
+            vec!["left2".into(), "unavailable.tab".into(), "left3".into()];
+        state.config.sidebar.layout.left.panels[2].tabs.clear();
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("left3"));
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        b.render();
+        b.send_key(KeyEvent {
+            code: KeyCode::Left,
+            mods: KeyMods {
+                ctrl: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        })
+        .unwrap();
+        b.render();
+        assert_eq!(
+            b.state().config.sidebar.layout.left.panels[0].tabs,
+            ["left1"]
+        );
+        assert_eq!(
+            b.state().config.sidebar.layout.left.panels[1].tabs,
+            ["left3", "unavailable.tab", "left2"]
+        );
+        b.state_mut().config.sidebar.layout.left.panel_count = 3;
+        let state = b.state_mut();
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        assert_eq!(state.sidebar.active_panel, 1);
+        assert_eq!(
+            state.sidebar.active_tab(),
+            Some(&SidebarTabId::new("left3"))
+        );
+        assert_eq!(
+            state.sidebar.panels[1].tabs,
+            [SidebarTabId::new("left3"), SidebarTabId::new("left2")]
+        );
+        assert!(state.sidebar.panels[2].tabs.is_empty());
+    });
+}

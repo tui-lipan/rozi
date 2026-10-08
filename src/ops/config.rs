@@ -150,7 +150,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // the interval each time it reschedules, so the next tick already uses the new one.
     let had_update_check = ctx.state.config.updates.check;
 
-    // `[sidebar] visible` is a startup default only. A reload deliberately does not reapply it:
+    // `layout.<dock>.visible` is a startup default only. A reload deliberately does not reapply it:
     // visibility is client-local view chrome, so the file must not reach in and open or close a
     // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
     ctx.state.sidebar.reconcile(&new_config.sidebar);

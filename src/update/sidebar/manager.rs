@@ -19,7 +19,11 @@ pub(crate) fn manager_back(ctx: &mut Context<AppRoot>) -> Update {
     if std::mem::take(&mut ctx.state.sidebar_manager_presets)
         || ctx.state.sidebar_manager_tab.take().is_some()
     {
-        ctx.request_focus("sidebar-manager");
+        ctx.request_focus(if ctx.state.sidebar_manager_tab.is_some() {
+            "sidebar-manager-detail"
+        } else {
+            "sidebar-manager"
+        });
         return Update::full();
     }
     ctx.state.sidebar_manager = false;
@@ -62,7 +66,11 @@ pub(crate) fn manager_activate(ctx: &mut Context<AppRoot>, value: String) -> Upd
             let _ = super::visibility_changed(ctx);
         }
         ctx.state.sidebar_manager_presets = false;
-        ctx.request_focus("sidebar-manager");
+        ctx.request_focus(if ctx.state.sidebar_manager_tab.is_some() {
+            "sidebar-manager-detail"
+        } else {
+            "sidebar-manager"
+        });
         return Update::full();
     }
     let Some(id) = ctx.state.sidebar_manager_tab.clone() else {

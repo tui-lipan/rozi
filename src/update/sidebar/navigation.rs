@@ -369,15 +369,13 @@ pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
     let Some(target) = ctx.state.sidebar.panels.iter().position(|p| p.dock == side) else {
         return Update::none();
     };
-    if transfer {
-        if let Some(id) = ctx.state.sidebar.active_tab().cloned() {
-            ctx.state.config.sidebar.layout.place(id.as_str(), side, 0);
-            ctx.state
-                .sidebar
-                .apply_configured_panels(&ctx.state.config.sidebar);
-            ctx.state.sidebar.panels[target].active_tab = Some(id);
-            super::save_layout(ctx);
-        }
+    if transfer && let Some(id) = ctx.state.sidebar.active_tab().cloned() {
+        ctx.state.config.sidebar.layout.place(id.as_str(), side, 0);
+        ctx.state
+            .sidebar
+            .apply_configured_panels(&ctx.state.config.sidebar);
+        ctx.state.sidebar.panels[target].active_tab = Some(id);
+        super::save_layout(ctx);
     }
     ctx.state.sidebar.active_panel = target;
     let update = visibility_changed(ctx);

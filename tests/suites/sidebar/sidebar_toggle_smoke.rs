@@ -88,10 +88,7 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
                 state.sidebar_visible = true;
                 state.config.sidebar.layout.left.width = 30;
                 state.config.sidebar.layout.right.width = 30;
-                state.sidebar.dock_visible = [
-                    SidebarPosition::Left == SidebarPosition::Left,
-                    SidebarPosition::Left == SidebarPosition::Right,
-                ];
+                state.sidebar.dock_visible = [true, false];
                 state.sidebar.panels.truncate(2);
                 state
                     .config
@@ -118,10 +115,7 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
                     .any(|line| line.chars().take(30).collect::<String>().contains("Panes"))
             );
 
-            backend.state_mut().sidebar.dock_visible = [
-                SidebarPosition::Right == SidebarPosition::Left,
-                SidebarPosition::Right == SidebarPosition::Right,
-            ];
+            backend.state_mut().sidebar.dock_visible = [false, true];
             backend.state_mut().sidebar.panels.truncate(2);
             backend
                 .state_mut()

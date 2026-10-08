@@ -1376,24 +1376,22 @@ impl State {
         if reserved <= 1 { 0 } else { reserved }
     }
 
-    pub fn sidebar_pane_bounds(&self, viewport: Rect) -> (u16, u16) {
-        let width = self.dock_deployed_widths(viewport)[0];
-        (
-            crate::config::SIDEBAR_MIN_WIDTH
-                .min(width)
-                .saturating_sub(1),
-            crate::config::SIDEBAR_MAX_WIDTH
-                .min(viewport.w.saturating_sub(20))
-                .saturating_sub(1),
-        )
-    }
-    pub fn sidebar_slide_width(&self, viewport: Rect) -> u16 {
-        self.dock_deployed_widths(viewport)[0]
-    }
-    pub fn sidebar_requested_width(&self) -> u16 {
-        self.sidebar
-            .width_preview
-            .unwrap_or(self.config.sidebar.layout.left.width)
+    /// Width available to this tab in its own dock, including temporary viewport compaction.
+    pub fn sidebar_tab_width(&self, id: &crate::config::SidebarTabId) -> u16 {
+        let side = self
+            .config
+            .sidebar
+            .layout
+            .location(id.as_str())
+            .map(|(side, _)| side)
+            .unwrap_or(crate::config::SidebarPosition::Left);
+        self.last_viewport
+            .get()
+            .map(|viewport| {
+                self.dock_deployed_widths(viewport)
+                    [usize::from(side == crate::config::SidebarPosition::Right)]
+            })
+            .unwrap_or(self.config.sidebar.layout.dock(side).width)
     }
     pub fn terminal_content_left_offset(&self, viewport: Rect) -> u16 {
         self.dock_reserved_width(viewport, crate::config::SidebarPosition::Left)

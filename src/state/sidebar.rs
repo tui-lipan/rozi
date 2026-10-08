@@ -748,6 +748,8 @@ pub struct SidebarState {
     pub layout_epoch: u64,
     selection_memory: HashMap<(crate::config::SidebarPosition, usize), SidebarTabId>,
     pub dock_visible: [bool; 2],
+    /// The combination restored by the global toggle, independent of individual dock commands.
+    pub restore_docks: [bool; 2],
     pub right_slide: Cell<f32>,
     pub right_width_preview: Option<u16>,
     pub width_drag_side: Option<crate::config::SidebarPosition>,
@@ -866,6 +868,7 @@ impl SidebarState {
         Self {
             panels,
             dock_visible,
+            restore_docks: dock_visible,
             active_panel,
             right_slide: Cell::new(if config.layout.right.visible {
                 1.0

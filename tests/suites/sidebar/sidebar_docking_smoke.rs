@@ -524,3 +524,51 @@ fn split_shortcut_restores_each_docks_preferred_count_even_after_restart() {
         }
     });
 }
+
+#[test]
+fn independent_dock_commands_open_only_the_requested_dock_from_hidden_startup() {
+    on_stack(|| {
+        for (action, expected) in [
+            (Action::ToggleLeftSidebar, [true, false]),
+            (Action::ToggleRightSidebar, [false, true]),
+        ] {
+            let mut b = backend(120, 30, [2, 2], [false, false]);
+            let mut config = b.state().config.clone();
+            config.sidebar.layout.left.visible = false;
+            config.sidebar.layout.right.visible = false;
+            *b.state_mut() = rozi::state::State::new(config, Theme::default());
+            assert!(!b.state().sidebar_visible);
+            b.dispatch(Msg::RunAction(action)).unwrap();
+            assert!(b.state().sidebar_visible);
+            assert_eq!(b.state().sidebar.dock_visible, expected);
+            let frame = b.capture_frame().to_fixed_grid_lines();
+            assert_eq!(frame.iter().any(|row| row.contains("Left1")), expected[0]);
+            assert_eq!(frame.iter().any(|row| row.contains("Right1")), expected[1]);
+        }
+    });
+}
+
+#[test]
+fn independent_dock_commands_preserve_the_global_restore_combination() {
+    on_stack(|| {
+        for action in [Action::ToggleLeftSidebar, Action::ToggleRightSidebar] {
+            let mut b = backend(120, 30, [2, 2], [true, true]);
+            b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
+            b.dispatch(Msg::RunAction(action)).unwrap();
+            assert!(b.state().sidebar_visible);
+            assert_eq!(
+                b.state()
+                    .sidebar
+                    .dock_visible
+                    .iter()
+                    .filter(|v| **v)
+                    .count(),
+                1
+            );
+            b.dispatch(Msg::RunAction(action)).unwrap();
+            assert!(!b.state().sidebar_visible);
+            b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
+            assert_eq!(b.state().sidebar.dock_visible, [true, true]);
+        }
+    });
+}

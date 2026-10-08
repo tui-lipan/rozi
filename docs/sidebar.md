@@ -204,8 +204,9 @@ hidden, and unavailable tabs. Empty panels remain drag targets, and the manager 
 when every tab is hidden. Use `Ctrl+P` in the manager to select and apply a layout preset.
 
 **Left sidebar** and **Right sidebar** toggle docks independently. The global `b` command hides or
-restores the current combination. **Focus other sidebar dock** and **Move sidebar tab to other dock**
-are also available in the command palette and can be bound by their action IDs,
+restores the current combination. From a hidden sidebar, an individual dock command opens only
+the requested dock and preserves the combination remembered by the global toggle. **Focus other
+sidebar dock** and **Move sidebar tab to other dock** are also available in the command palette and can be bound by their action IDs,
 `sidebar-other-dock` and `sidebar-move-to-other-dock`.
 
 ```toml

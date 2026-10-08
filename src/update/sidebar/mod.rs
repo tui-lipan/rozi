@@ -333,9 +333,17 @@ pub(crate) fn persist_sidebar_preference(
 /// two clients sharing one config can disagree, and a toggle costs no disk write on a key that is
 /// pressed constantly.
 pub(crate) fn toggle_visible(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
-    if ctx.state.sidebar_visible && !ctx.state.sidebar.dock_visible.iter().any(|v| *v) {
-        ctx.state.sidebar.dock_visible[0] = true;
+    if ctx.state.sidebar_visible {
+        ctx.state.sidebar.restore_docks = ctx.state.sidebar.dock_visible;
+        ctx.state.sidebar_visible = false;
+    } else {
+        let restored = ctx.state.sidebar.restore_docks;
+        ctx.state.sidebar.dock_visible = if restored.iter().any(|v| *v) {
+            restored
+        } else {
+            [true, false]
+        };
+        ctx.state.sidebar_visible = true;
     }
     visibility_changed(ctx)
 }
@@ -345,6 +353,9 @@ pub(crate) fn toggle_dock(
     side: crate::config::SidebarPosition,
 ) -> Update {
     let index = usize::from(side == crate::config::SidebarPosition::Right);
+    if !ctx.state.sidebar_visible {
+        ctx.state.sidebar.dock_visible = [false, false];
+    }
     ctx.state.sidebar.dock_visible[index] = !ctx.state.sidebar.dock_visible[index];
     ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
     visibility_changed(ctx)

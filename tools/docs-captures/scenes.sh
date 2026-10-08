@@ -50,10 +50,11 @@ right = ["layout", "clock", "session"]
 clock_format = "%H:%M"
 
 [sidebar]
-visible = true
-position = "right"
-width = 34
-tab_style = "round"'
+layout = { right = { visible = true, width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
+tab_style = "round"
+
+[animations]
+session = "off"'
 
 # Layouts, from the same five panes.
 for layout in dwindle master grid columns scrollable monocle; do
@@ -74,6 +75,16 @@ PROFILE=api scene settings-theme-preview "$focus" 4000 "$open_settings; key:ente
 PROFILE=api scene which-key "$focus" 4000 "key:ctrl+a; wait:800"
 PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:600"
+
+# Independent docks and the searchable manager, using the same saved placement.
+# Static captures skip the session portal; its paint-only progress needs a live terminal.
+sidebar_docks='[sidebar]
+layout = { left = { visible = true, width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }, { weight = 1.0, tabs = ["activity"] }] }, right = { visible = true, width = 36, panel_count = 3, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }, { weight = 1.0, tabs = ["worktrees"] }] } }
+[animations]
+session = "off"'
+PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
+PROFILE=web scene sidebar-manager "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:Manage Sidebar Tabs; key:enter; wait:500" "$sidebar_docks"
+
 
 # Recording indicators. Animations are off so the blinking dots hold steady; the long wait lets
 # each start's toast expire.

@@ -750,11 +750,24 @@ A tab's public ID is `<extension-id>.<name>`, so an extension can add tabs but n
 built-in one. If a `config.toml` tab has the same ID, it wins and the extension's tab is skipped.
 Out-of-range values are clamped without a warning, unlike the same settings in `config.toml`.
 
-Extension tabs go in the first panel unless `[sidebar] panels` already places them. Users can drag
-them anywhere, and `rozi` remembers the arrangement as it does for built-in tabs. A placement for a
-tab whose extension is disabled, updating, or failing to load is kept silently and restored when the
-extension returns. It is dropped only after the extension is gone from disk, and only the next time
-the user rearranges the sidebar; `rozi` never rewrites the layout on load.
+An extension tab may declare `suggested_location = { dock = "right", panel = 2 }`, with a one-based
+panel number from 1 to 3. An explicit saved placement wins. Tabs without a suggestion start in the
+first left panel. The user's hidden state and placement survive disabling, failed loads, updates,
+removal, and reinstallation. Unavailable tabs remain listed in **Manage Sidebar Tabs**.
+
+Extensions may also declare `[[sidebar_presets]]` with `name`, `label`, and `layout`. The layout uses
+the same `left`, `right`, and `hidden` fields as `[sidebar] layout`. Names of this extension's tabs
+are automatically namespaced inside panel tab lists. Preset names become `<extension>.<name>`.
+Users select and apply a preset through `Ctrl+P` in **Manage Sidebar Tabs**; installing or reloading
+an extension never applies one. Applying copies the preset into user preferences, preserving saved
+assignments omitted by the preset. Later edits belong to the user.
+
+```toml
+[[sidebar_presets]]
+name = "review"
+label = "Review workspace"
+layout = { right = { visible = true, panel_count = 1, panels = [{ weight = 1.0, tabs = ["agents"] }] } }
+```
 
 ### Navigation targets
 

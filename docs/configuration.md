@@ -572,21 +572,22 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `visible` | bool | `false` | Whether the sidebar is open at startup. |
-| `width` | integer | `32` | Clamped to `16..=80`. |
-| `position` | string | `"left"` | `"left"` or `"right"`. |
-| `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Replaces the list of available tabs. IDs must be unique. |
-| `panels` | array of one or two string arrays | `[["activity", "panes", "sessions"], ["files", "git", "worktrees"]]` | Orders tab IDs into panels. Unknown and duplicate IDs are skipped. |
-| `split` | bool | `true`, or inferred from the number of panels | Shows two panels. |
-| `split_ratio` | float | `0.4` | Finite value clamped to `0.15..=0.85`. |
+| `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
+| `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
+| `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
+| `layout.<dock>.visible` | bool | `false` | Startup visibility. Runtime toggles remain client-local. |
+| `layout.<dock>.width` | integer | `32` | Clamped to `16..=80`; both docks share the available width. |
+| `layout.<dock>.panel_count` | integer | left `2`, right `1` | `1..=3`; reducing the count retains saved panels. |
+| `layout.<dock>.panels` | table array | left session/repository groups, right empty | Each table contains `weight` (finite, positive) and ordered `tabs` (IDs). Unknown IDs retain their placement. |
 | `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas background instead of the raised panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
 
-A configured tab that `panels` leaves out is added to the first panel, except `worktrees`, which
-joins the panel holding `git` or `files`. A `panels` entry naming an extension tab that is not
-currently loaded is kept without a warning.
+Unplaced tabs join the first left panel; Files, Git, and Worktrees join the second. Extension
+suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
+and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
+for restoration rules, the tab manager, and migration from the former geometry keys.
 
 ### Tab tables
 

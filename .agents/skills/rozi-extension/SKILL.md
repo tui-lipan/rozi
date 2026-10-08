@@ -133,7 +133,7 @@ entries = [
   never substituted for a built-in one, and a `config.toml` tab of the same id wins. Out-of-range
   values are clamped silently here rather than warned about. Full format in `docs/extensions.md`.
 - A user may drag an extension tab anywhere; that placement is persisted and survives the extension
-  being disabled or failing to load, and is only dropped once the extension leaves the disk.
+  being disabled, failing to load, removed, or reinstalled. `suggested_location` can propose an initial dock and one-based panel; user placement wins. Named `[[sidebar_presets]]` require explicit user application through the tab manager.
 - A tab's processes receive the same `ROZI_EXTENSION*` environment a command does, settings
   included.
 - A command tab runs in the focused pane's working directory and re-lists when that changes. Its

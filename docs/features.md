@@ -40,7 +40,9 @@ See [Sessions](sessions.md), [Remote sessions](remote.md), [Profiles](profiles.m
 ## Find and monitor work
 
 - Open commands from a searchable palette and inspect active bindings in the help overlay.
-- Use the sidebar to browse panes, sessions, files, Git changes, and coding-agent activity.
+- Use independent left and right sidebars with up to three panels each to browse panes, sessions,
+  files, Git changes, and coding-agent activity. Resize panels, move tabs between docks, and manage
+  hidden or unavailable tabs through a searchable picker.
 - See at a glance whether each coding agent is working, blocked on your input, or finished.
 - Jump to panes that need input and show alerts in pane borders or workspace tabs.
 - See which agents want attention on a connected remote host, without attaching to a session there.

@@ -1,13 +1,14 @@
 # Sidebar
 
-The sidebar is a panel beside your panes with tabs for agent activity, panes, sessions, files, Git
-changes, and worktrees. This page covers opening and navigating it, what each tab shows, and how to
+The sidebar provides optional left and right docks beside your panes with tabs for agent activity,
+panes, sessions, files, Git changes, and worktrees. This page covers opening and navigating it, what each tab shows, and how to
 configure tabs or add your own.
 
 The sidebar belongs to your client. It is never part of a shared session layout.
 
 <CaptureGallery title="~/src/rozi — web">
 <img src="./assets/captures/sidebar.webp" alt="The sidebar on the left showing the Panes tab, listing each pane in the workspace beside the panes themselves" data-caption="The Panes tab lists every pane in the session. Ctrl+A, then PageDown moves to the next tab.">
+<img src="./assets/captures/sidebar-docks.webp" alt="Left and right sidebar docks with three independently sized panels each" data-label="Two docks" data-caption="Both docks share space with the workspace; panel assignments survive compaction.">
 </CaptureGallery>
 
 ## Open the sidebar
@@ -23,7 +24,9 @@ While the sidebar is visible, these command keys work without focusing it:
 | `PageUp` | Previous tab |
 | `\` | Switch between one and two panels |
 
-Switching to one panel keeps both panels' tab assignments, so switching back restores them.
+Choose one to three panels independently for each dock in **Settings → Bars → Sidebar**. Highlighting a
+choice leaves the layout unchanged; confirm it to apply. The `\` command and focused `s` key toggle
+one and two panels in the active dock.
 
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
 part of the normal `Tab` focus order.
@@ -42,8 +45,9 @@ After the `B` command key focuses the sidebar:
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle directories |
 | `Ctrl+Shift+Left/Right`, `Ctrl+Shift+h/l` | Reorder the active tab |
-| `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the other panel |
-| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab to the other panel |
+| `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
+| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the other dock |
+| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab to the previous or next panel |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
 | `s` | Toggle one or two panels |
@@ -52,7 +56,8 @@ After the `B` command key focuses the sidebar:
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
 `width` allows. Drag the divider between panels to change the split.
 
-rozi saves tab order, panel assignment, width, split state, and split ratio to `config.toml`.
+rozi saves tab order, visibility preferences, placement, dock widths, panel counts, and panel weights
+to `config.toml`.
 Whether the sidebar is visible and which tab is selected are not saved.
 
 ## Activity
@@ -140,7 +145,7 @@ repository, when it is loading, or when changes are unavailable. In a remote ses
 on the remote host's `PATH`.
 
 Files and Git refresh while they are on screen. They stop refreshing when you hide the sidebar or
-switch both panels to other tabs.
+switch every visible panel to other tabs.
 
 ## Worktrees
 
@@ -184,31 +189,51 @@ settings.
 
 ## Configure tabs and panels
 
+<CaptureGallery title="Manage Sidebar Tabs">
+<img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar Tabs manager showing each tab's visibility and dock location" data-caption="Select a tab to show, hide, locate, or move it. Ctrl+P opens layout presets.">
+</CaptureGallery>
+
+Open **Manage Sidebar Tabs** from Settings or the command palette. Search by name, then select a tab
+to show or hide it, assign it to a dock and panel, or locate it. The manager distinguishes available,
+hidden, and unavailable tabs. Empty panels remain drag targets, and the manager is available even
+when every tab is hidden. Use `Ctrl+P` in the manager to select and apply a layout preset.
+
+**Left sidebar** and **Right sidebar** toggle docks independently. The global `b` command hides or
+restores the current combination. **Focus other sidebar dock** and **Move sidebar tab to other dock**
+are also available in the command palette and can be bound by their action IDs,
+`sidebar-other-dock` and `sidebar-move-to-other-dock`.
+
 ```toml
 [sidebar]
-visible = false
-width = 32
-position = "left"
 tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
-panels = [["activity", "panes", "sessions"], ["files", "git", "worktrees"]]
-split = true
-split_ratio = 0.5
+layout = { left = { visible = true, width = 32, panel_count = 2, panels = [
+  { weight = 0.4, tabs = ["activity", "panes", "sessions"] },
+  { weight = 0.6, tabs = ["files", "git", "worktrees"] },
+] }, right = { visible = false, width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false
 gap = true
 background = true
 tab_style = "padded"
 ```
 
-| Key | Effect |
-| --- | --- |
-| `tabs` | Available tabs, by id. A repeated id is ignored after its first use. |
-| `panels` | Which tabs go in the top and bottom panel. Without `panels`, all tabs share one panel. |
-| `split` | `false` shows one panel but keeps both saved groups. |
-| `position` | `"left"` or `"right"`. Also available under **Settings → Position**. |
-| `background_follows_canvas` | Paint the sidebar with the canvas backdrop instead of the raised panel fill. |
-| `gap` | Keep one blank row between each tab bar and its list. |
-| `background` | Paint the tab strip as a distinct bar. When off, the strip matches the list below it. |
-| `tab_style` | `padded`, `round`, or `arrow` — the same end caps as workbar tabs. |
+The `layout` value may also be written using nested TOML tables. Every tab has one saved location.
+Reducing a dock's panel count folds surplus groups into its last displayed panel. Increasing it
+restores those groups and their proportions. Reordering a compacted group changes the order within
+each tab's saved home panel; transferring to another displayed panel or dock changes its home.
+Hiding a tab or dock preserves assignments. Narrow terminals temporarily reduce both dock widths
+while leaving the saved widths intact. The central workspace keeps at least 20 columns when the
+terminal has room; terminals of 20 columns or fewer retain at least half for the workspace.
+
+`background_follows_canvas`, `gap`, `background`, and `tab_style` apply to both docks. These keep the
+same appearance controls as the former sidebar.
+
+### Migrate an existing configuration
+
+The former `visible`, `width`, `position`, `panels`, `split`, and `split_ratio` keys produce an explicit
+migration diagnostic. rozi resolves them into `layout` in memory, preserving unknown tab IDs and
+custom definitions. The next layout save writes `layout` and removes those geometry keys. You can
+also replace them manually using the example above. An explicit `layout` takes precedence. Saves
+preserve tab definitions and unrelated settings; malformed TOML is reported and left untouched.
 
 When `background` is on, the tab strip uses a raised sidebar fill, or the `element` colour when
 `background_follows_canvas` is on.
@@ -279,8 +304,8 @@ evaluate it. `{line}` is rejected in `run` and
 ### Extension sidebar tabs
 
 Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher and command
-forms. Their ids are `<extension>.<name>`. They start in the first panel until you move them, and
-their placement is kept even while the extension is disabled or broken. See
+forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
+disablement, failed loads, updates, removal, and reinstallation. See
 [Extensions](extensions.md#sidebar-tabs).
 
 ### Security

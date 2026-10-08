@@ -281,6 +281,7 @@ pub struct State {
     pub worktree_lists: WorktreeListCache,
     pub worktree_statuses: WorktreeStatusCache,
     pub next_worktree_request_id: u64,
+    pub worktree_tick_armed: bool,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
@@ -638,6 +639,7 @@ impl State {
             worktree_lists: WorktreeListCache::default(),
             worktree_statuses: WorktreeStatusCache::default(),
             next_worktree_request_id: 1,
+            worktree_tick_armed: false,
             show_session_picker: false,
             session_picker: None,
             remote_picker: None,
@@ -748,6 +750,27 @@ impl State {
         attachment
             .and_then(|attachment| attachment.session_client.as_ref())
             .is_some_and(|client| operation.connection.is(client))
+    }
+
+    pub(crate) fn worktree_removing(
+        &self,
+        path: &str,
+        target: Option<&crate::session::remote::RemoteTarget>,
+    ) -> bool {
+        let Some(operation) = self
+            .worktree_operation
+            .as_ref()
+            .filter(|_| self.worktree_operation_reachable())
+        else {
+            return false;
+        };
+        let attachment = if operation.epoch == self.runtime_epoch {
+            Some(self.current())
+        } else {
+            self.background.get(&operation.epoch)
+        };
+        attachment.is_some_and(|attachment| attachment.remote_target.as_ref() == target)
+            && matches!(&operation.kind, WorktreeOperationKind::Remove { path: removing, .. } if removing == path)
     }
 
     pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {

@@ -16,7 +16,9 @@ impl WorktreeJob {
     pub fn size(&self) -> usize {
         use protocol::WorktreeRequest as Request;
         match &self.request {
-            Request::List { cwd } | Request::Status { cwd, .. } => cwd.len(),
+            Request::Branches { cwd } | Request::List { cwd } | Request::Status { cwd, .. } => {
+                cwd.len()
+            }
             Request::Preview { cwd, branch } => cwd.len() + branch.len(),
             Request::Create {
                 cwd,

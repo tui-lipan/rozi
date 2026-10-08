@@ -22,16 +22,11 @@ While the sidebar is visible, these command keys work without focusing it:
 | --- | --- |
 | `PageDown` | Next tab |
 | `PageUp` | Previous tab |
-| `\` | Collapse or restore this dock’s panels |
 
-Configure **Left dock at startup** and **Right dock at startup** in **Settings → Bars → Sidebar**
-to save the arrangement for future clients and apply it to this client. Command-palette dock toggles
-remain local and leave startup preferences unchanged.
-
-Choose one to three panels independently for each dock in **Settings → Bars → Sidebar**. Highlighting a
-choice leaves the layout unchanged; confirm it to apply. The `\` command and focused `s` key
-collapse the active dock to one panel or restore its last multi-panel count. The restored count
-is saved as `expanded_panel_count`, so three-panel layouts survive a collapse and restart.
+Open **Settings… → Bars → Left sidebar…** or **Right sidebar…** to choose **Disabled**, **1 panel**,
+**2 panels**, or **3 panels**. Highlighting a choice leaves the layout unchanged; Enter applies and
+saves it. Escape cancels. Disabled preserves panel assignments, counts, weights, and width for
+later use. The global `b` command temporarily hides or restores the current dock combination.
 
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
 part of the normal `Tab` focus order.
@@ -49,13 +44,13 @@ After the `B` command key focuses the sidebar:
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle directories |
-| `Ctrl+Shift+Left/Right`, `Ctrl+Shift+h/l` | Reorder the active tab |
+| `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
 | `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
-| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the other dock |
-| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab to the previous or next panel |
+| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
+| `Alt+Up/Down`, `Alt+k/j` | Move the active tab to the previous or next panel |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
-| `s` | Collapse or restore this dock’s panels |
+| `?` | Open Keybindings… |
 | `Esc` | Return focus to the pane |
 
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
@@ -194,20 +189,27 @@ settings.
 
 ## Configure tabs and panels
 
-<CaptureGallery title="Manage Sidebar Tabs">
-<img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar Tabs manager showing each tab's visibility and dock location" data-caption="Select a tab to show, hide, locate, or move it. Ctrl+P opens layout presets.">
+<CaptureGallery title="Sidebar tabs">
+<img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar tabs picker with symbols and dimmed disabled tabs" data-caption="Enter enables or disables a tab while preserving its placement.">
 </CaptureGallery>
 
-Open **Manage Sidebar Tabs** from Settings or the command palette. Search by name, then select a tab
-to show or hide it, assign it to a dock and panel, or locate it. The manager distinguishes available,
-hidden, and unavailable tabs. Empty panels remain drag targets, and the manager is available even
-when every tab is hidden. Use `Ctrl+P` in the manager to select and apply a layout preset.
+Open **Sidebar tabs…** from Settings or the command palette. Search by name and press Enter to
+change visibility. Enabled tabs use a filled dot; disabled tabs use a hollow dot and dimmed text.
+Unavailable extension tabs stay listed with a dash and retain their preferences. The picker stays
+open so several tabs can be toggled. It remains available when every tab is disabled.
 
-**Left sidebar** and **Right sidebar** toggle docks independently. The global `b` command hides or
-restores the current combination. From a hidden sidebar, an individual dock command opens only
-the requested dock and preserves the combination remembered by the global toggle. **Focus other
-sidebar dock** and **Move sidebar tab to other dock** are also available in the command palette and can be bound by their action IDs,
-`sidebar-other-dock` and `sidebar-move-to-other-dock`.
+Arrange tabs by dragging them, or use the focused-sidebar keys above. Empty panels remain drag
+targets. Enabling a tab restores its saved location, including a dormant panel whose count was
+reduced. Unavailable extensions recover their placement when re-enabled.
+
+When extensions provide presets, **Settings… → Bars → Sidebar layout preset…** offers them alongside
+the default layout.
+Highlighting a preset leaves the workspace unchanged; Enter applies it and Escape cancels. Presets
+are starting configurations, so later edits remain yours.
+
+Individual dock toggles and dock navigation remain bindable through `toggle-left-sidebar`,
+`toggle-right-sidebar`, `sidebar-other-dock`, and `sidebar-move-to-other-dock`. The command palette
+keeps the global sidebar toggle, **Focus sidebar**, and **Sidebar tabs…**.
 
 ```toml
 [sidebar]

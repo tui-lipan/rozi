@@ -236,9 +236,7 @@ pub struct State {
     pub command_palette_handoff_epoch: u64,
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,
-    pub sidebar_manager_presets: bool,
     pub sidebar_manager: bool,
-    pub sidebar_manager_tab: Option<String>,
     pub show_settings: bool,
     /// Highlighted settings row. Drives the choice card and
     /// `initial_selected_item_index` while the overlay is open.
@@ -613,9 +611,7 @@ impl State {
             command_palette_handoff: None,
             command_palette_handoff_epoch: 0,
             keybindings: None,
-            sidebar_manager_presets: false,
             sidebar_manager: false,
-            sidebar_manager_tab: None,
             show_settings: false,
             settings_selected: None,
             settings_navigation: SettingsNavigation::default(),

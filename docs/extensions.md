@@ -753,13 +753,13 @@ Out-of-range values are clamped without a warning, unlike the same settings in `
 An extension tab may declare `suggested_location = { dock = "right", panel = 2 }`, with a one-based
 panel number from 1 to 3. An explicit saved placement wins. Tabs without a suggestion start in the
 first left panel. The user's hidden state and placement survive disabling, failed loads, updates,
-removal, and reinstallation. Unavailable tabs remain listed in **Manage Sidebar Tabs**.
+removal, and reinstallation. Unavailable tabs remain listed in **Sidebar tabs…**.
 
 Extensions may also declare `[[sidebar_presets]]` with `name`, `label`, and `layout`. The layout uses
 the same `left`, `right`, and `hidden` fields as `[sidebar] layout`. Names of this extension's tabs
 are automatically namespaced inside panel tab lists. Preset names become `<extension>.<name>`.
-Users select and apply a preset through `Ctrl+P` in **Manage Sidebar Tabs**; installing or reloading
-an extension never applies one. Applying copies the preset into user preferences, preserving saved
+Users select and apply a preset through **Settings… → Bars → Sidebar layout preset…**; installing
+or reloading an extension never applies one. Applying copies the preset into user preferences, preserving saved
 assignments omitted by the preset. Later edits belong to the user.
 
 ```toml

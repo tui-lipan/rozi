@@ -119,7 +119,7 @@ fn panel_choice_waits_for_confirmation_and_cancellation_is_lossless() {
         assert_eq!(b.state().config.sidebar.layout, saved);
         b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
             .unwrap();
-        b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
+        b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
         assert_eq!(b.state().config.sidebar.layout.left.panel_count, 1);
         assert_eq!(
             b.state().config.sidebar.layout.left.panels,
@@ -130,48 +130,57 @@ fn panel_choice_waits_for_confirmation_and_cancellation_is_lossless() {
 }
 
 #[test]
-fn manager_recovers_hidden_tabs_and_moves_focused_content_between_docks() {
+fn tabs_picker_toggles_visibility_without_moving_tabs_or_closing() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
         let mut b = backend(120, 30, [2, 2], [true, false]);
-        b.dispatch(Msg::RunAction(Action::ManageSidebarTabs))
+        let location = b.state().config.sidebar.layout.location("left1");
+        b.state_mut()
+            .config
+            .sidebar
+            .layout
+            .place("missing.extension", Right, 1);
+        b.state_mut()
+            .config
+            .sidebar
+            .layout
+            .hidden
+            .push("missing.extension".into());
+        b.dispatch(Msg::RunAction(Action::SidebarTabs)).unwrap();
+        for hidden in [true, false] {
+            b.dispatch(Msg::SidebarManagerActivate("left1".into()))
+                .unwrap();
+            assert_eq!(
+                b.state()
+                    .config
+                    .sidebar
+                    .layout
+                    .hidden
+                    .contains(&"left1".into()),
+                hidden
+            );
+            assert_eq!(b.state().config.sidebar.layout.location("left1"), location);
+            assert!(b.state().sidebar_manager);
+            assert!(!b.state().sidebar.focused);
+            let snapshot = b.capture_ui_snapshot().to_markdown();
+            assert!(!snapshot.contains("Locate tab"));
+            assert!(!snapshot.contains("layout presets"));
+            assert!(snapshot.contains(if hidden { "Disabled" } else { "Enabled" }));
+        }
+        let saved = b.state().config.sidebar.layout.clone();
+        b.dispatch(Msg::SidebarManagerActivate("missing.extension".into()))
             .unwrap();
-        b.dispatch(Msg::SidebarManagerActivate("left1".into()))
-            .unwrap();
-        b.dispatch(Msg::SidebarManagerActivate("visibility".into()))
-            .unwrap();
+        assert_eq!(b.state().config.sidebar.layout, saved);
         assert!(
-            b.state()
-                .config
-                .sidebar
-                .layout
-                .hidden
-                .contains(&"left1".into())
+            b.capture_ui_snapshot()
+                .to_markdown()
+                .contains("Unavailable")
         );
-        assert!(b.state().sidebar.panels[0].tabs.is_empty());
         b.dispatch(Msg::SidebarManagerActivate("right:1".into()))
             .unwrap();
-        assert_eq!(
-            b.state().config.sidebar.layout.location("left1"),
-            Some((Right, 1))
-        );
-        b.dispatch(Msg::SidebarManagerActivate("locate".into()))
-            .unwrap();
-        b.render();
-        assert!(b.state().sidebar.dock_visible[1]);
+        assert_eq!(b.state().config.sidebar.layout.location("left1"), location);
+        b.dispatch(Msg::SidebarManagerBack).unwrap();
         assert!(!b.state().sidebar_manager);
-        assert!(b.state().config.sidebar.layout.hidden.is_empty());
-        assert_eq!(
-            b.state().sidebar.active_tab(),
-            Some(&SidebarTabId::new("left1"))
-        );
-        assert!(b.state().sidebar.focused);
-        assert!(b.focused_key().is_some());
-        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
-            .unwrap();
-        b.render();
-        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Left);
-        assert!(b.focused_key().is_some());
     });
 }
 
@@ -326,8 +335,7 @@ fn compacted_reordering_preserves_home_panels_hidden_slots_and_selection() {
         b.send_key(KeyEvent {
             code: KeyCode::Left,
             mods: KeyMods {
-                ctrl: true,
-                shift: true,
+                alt: true,
                 ..KeyMods::NONE
             },
         })
@@ -367,10 +375,9 @@ fn settings_persists_startup_docks_while_runtime_toggles_remain_client_local() {
         std::fs::write(&path, "[theme]\nname = \"nord\"\n").unwrap();
         b.state_mut().config.sidebar.layout.left.visible = true;
         b.state_mut().config.sidebar.layout.right.visible = false;
-        b.dispatch(Msg::SettingsActivate(
-            SettingsAction::ToggleRightSidebarStartup,
-        ))
-        .unwrap();
+        b.dispatch(Msg::SettingsActivate(SettingsAction::RightSidebarPanels))
+            .unwrap();
+        b.dispatch(Msg::SettingsChoicePick(2)).unwrap();
         assert!(b.state().config.sidebar.layout.right.visible);
         assert_eq!(b.state().sidebar.dock_visible, [true, true]);
         let loaded = rozi::config::load_config();
@@ -388,10 +395,9 @@ fn settings_persists_startup_docks_while_runtime_toggles_remain_client_local() {
             assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
         }
         // Settings reflects the configured startup value even when local chrome is hidden.
-        b.dispatch(Msg::SettingsActivate(
-            SettingsAction::ToggleLeftSidebarStartup,
-        ))
-        .unwrap();
+        b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
+            .unwrap();
+        b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
         assert!(!b.state().config.sidebar.layout.left.visible);
         let loaded = rozi::config::load_config();
         let restarted = rozi::state::State::new(loaded.config, Theme::default());
@@ -437,88 +443,56 @@ fn right_only_startup_focuses_a_mounted_panel_and_recovers_a_hidden_target() {
 }
 
 #[test]
-fn split_shortcut_restores_each_docks_preferred_count_even_after_restart() {
+fn dock_choices_disable_without_losing_panel_preferences_across_restart() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
         let path = rozi::config::config_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "").unwrap();
         for side in [Left, Right] {
+            std::fs::write(&path, "[sidebar]\ntabs = []\n").unwrap();
             let mut b = backend(120, 30, [3, 3], [true, true]);
             b.state_mut().config.sidebar.layout.left.visible = true;
             b.state_mut().config.sidebar.layout.right.visible = true;
-            let selected = b
-                .state()
-                .sidebar
-                .panels
-                .iter()
-                .position(|p| p.dock == side)
-                .unwrap();
-            b.state_mut().sidebar.active_panel = selected;
-            let panels = b.state().config.sidebar.layout.dock(side).panels.clone();
-            b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
-                .unwrap();
-            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 1);
-            assert_eq!(
-                b.state()
-                    .config
-                    .sidebar
-                    .layout
-                    .dock(side)
-                    .expanded_panel_count,
-                3
-            );
-            assert_eq!(b.state().config.sidebar.layout.dock(side).panels, panels);
-            assert_eq!(
-                b.state()
-                    .config
-                    .sidebar
-                    .layout
-                    .dock(side.toggled())
-                    .panel_count,
-                3
-            );
-            let loaded = rozi::config::load_config();
-            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-            assert_eq!(
-                loaded.config.sidebar.layout.dock(side).expanded_panel_count,
-                3
-            );
-            *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
-            let selected = b
-                .state()
-                .sidebar
-                .panels
-                .iter()
-                .position(|p| p.dock == side)
-                .unwrap();
-            b.state_mut().sidebar.active_panel = selected;
-            b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
-                .unwrap();
-            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 3);
-            assert_eq!(
-                b.state()
-                    .sidebar
-                    .panels
-                    .iter()
-                    .filter(|p| p.dock == side)
-                    .count(),
-                3
-            );
-            // A later explicit two-panel choice replaces the remembered expanded count.
-            b.dispatch(Msg::SettingsActivate(if side == Left {
+            let action = if side == Left {
                 SettingsAction::LeftSidebarPanels
             } else {
                 SettingsAction::RightSidebarPanels
-            }))
-            .unwrap();
-            b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
-            for count in [1, 2] {
-                b.dispatch(Msg::RunAction(Action::ToggleSidebarSplit))
-                    .unwrap();
+            };
+            let saved = b.state().config.sidebar.layout.dock(side).clone();
+            b.dispatch(Msg::SettingsActivate(action)).unwrap();
+            b.dispatch(Msg::SettingsChoiceSelect(0)).unwrap();
+            assert_eq!(b.state().config.sidebar.layout.dock(side), &saved);
+            b.dispatch(Msg::SettingsChoiceCancel).unwrap();
+            assert_eq!(b.state().config.sidebar.layout.dock(side), &saved);
+            b.dispatch(Msg::SettingsActivate(action)).unwrap();
+            b.dispatch(Msg::SettingsChoicePick(0)).unwrap();
+            assert!(!b.state().config.sidebar.layout.dock(side).visible);
+            assert_eq!(b.state().config.sidebar.layout.dock(side).panel_count, 3);
+            assert_eq!(
+                b.state().config.sidebar.layout.dock(side).panels,
+                saved.panels
+            );
+            assert!(b.state().config.sidebar.layout.dock(side.toggled()).visible);
+            let loaded = rozi::config::load_config();
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert!(!loaded.config.sidebar.layout.dock(side).visible);
+            let restored_panels = loaded.config.sidebar.layout.dock(side).panels.clone();
+            for (restored, original) in restored_panels.iter().zip(&saved.panels) {
+                assert_eq!(restored.weight, original.weight);
+                assert!(restored.tabs.starts_with(&original.tabs));
+            }
+            *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
+            for count in [1, 3] {
+                b.dispatch(Msg::SettingsActivate(action)).unwrap();
+                b.dispatch(Msg::SettingsChoicePick(count)).unwrap();
+                assert!(b.state().config.sidebar.layout.dock(side).visible);
                 assert_eq!(
                     b.state().config.sidebar.layout.dock(side).panel_count,
                     count
+                );
+                assert_eq!(
+                    b.state().config.sidebar.layout.dock(side).panels,
+                    restored_panels
                 );
             }
         }
@@ -570,5 +544,114 @@ fn independent_dock_commands_preserve_the_global_restore_combination() {
             b.dispatch(Msg::RunAction(Action::ToggleSidebar)).unwrap();
             assert_eq!(b.state().sidebar.dock_visible, [true, true]);
         }
+    });
+}
+
+#[test]
+fn sidebar_mode_uses_directional_focus_and_alt_movement_across_visible_docks() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let mut b = backend(140, 36, [3, 3], [true, true]);
+        b.state_mut().sidebar.active_panel = 1;
+        b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();
+        let key = |code, mods| KeyEvent { code, mods };
+        b.send_key(key(KeyCode::Left, KeyMods::CTRL)).unwrap();
+        assert_eq!(
+            b.state().sidebar.active_panel,
+            1,
+            "left from left does not wrap"
+        );
+        b.send_key(key(KeyCode::Right, KeyMods::CTRL)).unwrap();
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
+        assert_eq!(b.state().sidebar.active_panel().unwrap().home, 1);
+        let right = b.state().sidebar.active_panel;
+        b.send_key(key(KeyCode::Right, KeyMods::CTRL)).unwrap();
+        assert_eq!(b.state().sidebar.active_panel, right);
+        b.send_key(key(KeyCode::Left, KeyMods::ALT)).unwrap();
+        assert_eq!(
+            b.state().config.sidebar.layout.location("right2"),
+            Some((Left, 1))
+        );
+        assert_eq!(
+            b.state().sidebar.active_tab(),
+            Some(&SidebarTabId::new("right2"))
+        );
+        b.send_key(key(KeyCode::Down, KeyMods::ALT)).unwrap();
+        assert_eq!(
+            b.state().config.sidebar.layout.location("right2"),
+            Some((Left, 2))
+        );
+        b.send_key(key(KeyCode::Right, KeyMods::ALT)).unwrap();
+        assert_eq!(
+            b.state().config.sidebar.layout.location("right2"),
+            Some((Right, 2))
+        );
+        assert!(b.state().sidebar.focused);
+        b.send_key(key(KeyCode::Left, KeyMods::CTRL)).unwrap();
+        b.dispatch(Msg::RunAction(Action::ToggleRightSidebar))
+            .unwrap();
+        b.send_key(key(KeyCode::Right, KeyMods::CTRL)).unwrap();
+        assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Left);
+        b.send_key(key(KeyCode::Right, KeyMods::ALT)).unwrap();
+        assert!(
+            !b.state().sidebar.dock_visible[1],
+            "arrangement does not enable a dock"
+        );
+        b.send_key(key(KeyCode::Char('?'), KeyMods::SHIFT)).unwrap();
+        let help = b.state().keybindings.as_ref().expect("sidebar help");
+        assert_eq!(help.tab, rozi::state::HelpTab::Modes);
+        assert_eq!(help.query.text(), "sidebar");
+    });
+}
+
+#[test]
+fn sidebar_presets_apply_only_on_confirmation_and_settings_regains_focus() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let mut b = backend(120, 30, [2, 2], [true, false]);
+        let saved = b.state().config.sidebar.layout.clone();
+        let mut preset = saved.clone();
+        preset.left.visible = false;
+        preset.right.visible = true;
+        preset.place("left1", Right, 1);
+        b.state_mut()
+            .config
+            .sidebar
+            .presets
+            .push(rozi::config::SidebarLayoutPreset {
+                name: "extension.review".into(),
+                label: "Review".into(),
+                layout: preset.clone(),
+            });
+        b.state_mut().show_settings = true;
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarLayoutPreset))
+            .unwrap();
+        b.dispatch(Msg::SettingsChoiceSelect(1)).unwrap();
+        assert_eq!(b.state().config.sidebar.layout, saved);
+        b.dispatch(Msg::SettingsChoiceCancel).unwrap();
+        assert_eq!(b.state().config.sidebar.layout, saved);
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarLayoutPreset))
+            .unwrap();
+        b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
+        assert_eq!(b.state().config.sidebar.layout, preset);
+        assert_eq!(b.state().sidebar.dock_visible, [false, true]);
+        assert!(b.state().show_settings);
+        assert!(b.state().settings_choice.is_none());
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarTabs))
+            .unwrap();
+        b.dispatch(Msg::SidebarManagerBack).unwrap();
+        assert!(b.state().show_settings);
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarLayoutPreset))
+            .unwrap();
+        let path = rozi::config::config_path();
+        std::fs::write(path, "[sidebar]\ntabs = [\"panes\"]\n").unwrap();
+        b.dispatch(Msg::ConfigFileChanged).unwrap();
+        assert!(
+            b.state().settings_choice.is_none(),
+            "reload cancels stale preset indices"
+        );
+        let reloaded = b.state().config.sidebar.layout.clone();
+        b.dispatch(Msg::SettingsChoicePick(1)).unwrap();
+        assert_eq!(b.state().config.sidebar.layout, reloaded);
     });
 }

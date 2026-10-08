@@ -453,14 +453,13 @@ fn execute_action_inner(
         Action::ToggleWorkbarPosition => crate::ops::preferences::toggle_workbar_position(ctx),
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
-        Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
         Action::ToggleLeftSidebar => {
             crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Left)
         }
         Action::ToggleRightSidebar => {
             crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Right)
         }
-        Action::ManageSidebarTabs => crate::update::sidebar::open_manager(ctx),
+        Action::SidebarTabs => crate::update::sidebar::open_manager(ctx),
         Action::SidebarOtherDock => crate::update::sidebar::other_dock(ctx, false),
         Action::SidebarMoveToOtherDock => crate::update::sidebar::other_dock(ctx, true),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),

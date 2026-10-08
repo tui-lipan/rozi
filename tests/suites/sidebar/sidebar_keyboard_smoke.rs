@@ -495,7 +495,7 @@ fn left_and_right_do_not_cycle_non_tree_sidebar_tabs() {
 }
 
 #[test]
-fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
+fn alt_left_and_right_reorder_sidebar_tabs() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -512,8 +512,7 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
             let _ = backend.send_key(modified_key(
                 KeyCode::Left,
                 KeyMods {
-                    ctrl: true,
-                    shift: true,
+                    alt: true,
                     ..KeyMods::NONE
                 },
             ));
@@ -526,8 +525,7 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
             let _ = backend.send_key(modified_key(
                 KeyCode::Right,
                 KeyMods {
-                    ctrl: true,
-                    shift: true,
+                    alt: true,
                     ..KeyMods::NONE
                 },
             ));
@@ -540,63 +538,6 @@ fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
         .expect("spawn tab reorder thread")
         .join()
         .expect("tab reorder completes");
-}
-
-#[test]
-fn s_toggles_sidebar_split_while_focused() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-
-            // The default sidebar is already split, so the first press collapses it.
-            assert!((backend.state().config.sidebar.layout.left.panel_count > 1));
-            assert_eq!(
-                backend
-                    .state()
-                    .sidebar
-                    .panels
-                    .iter()
-                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
-                    .count(),
-                2
-            );
-
-            let _ = backend.send_key(key(KeyCode::Char('s')));
-            settle(&mut backend);
-            assert_eq!(backend.state().config.sidebar.layout.left.panel_count, 1);
-            assert_eq!(
-                backend
-                    .state()
-                    .sidebar
-                    .panels
-                    .iter()
-                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
-                    .count(),
-                1
-            );
-
-            let _ = backend.send_key(key(KeyCode::Char('s')));
-            settle(&mut backend);
-            assert!((backend.state().config.sidebar.layout.left.panel_count > 1));
-            assert_eq!(
-                backend
-                    .state()
-                    .sidebar
-                    .panels
-                    .iter()
-                    .filter(|p| p.dock == rozi::config::SidebarPosition::Left)
-                    .count(),
-                2
-            );
-        })
-        .expect("spawn focused split thread")
-        .join()
-        .expect("focused split completes");
 }
 
 #[test]

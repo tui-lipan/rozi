@@ -91,7 +91,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenAlerts
         | Action::OpenThemePicker
         | Action::OpenLayoutPicker
-        | Action::ManageSidebarTabs
+        | Action::SidebarTabs
         | Action::SidebarOtherDock
         | Action::SidebarMoveToOtherDock => {}
         Action::SaveProfile
@@ -384,6 +384,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleSidebarTabStyle
         | LeftSidebarPanels
         | RightSidebarPanels
+        | SidebarLayoutPreset
         | CycleWorkbarStyle
         | CycleWorkbarBadgeStyle
         | CycleWorkbarTabStyle
@@ -423,20 +424,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ToggleSidebarGap => {
             execute_action(ctx, Action::ToggleSidebarGap);
         }
-        ManageSidebarTabs => {
+        SidebarTabs => {
             return crate::update::sidebar::open_manager(ctx);
-        }
-        ToggleRightSidebarStartup => {
-            let _ = crate::update::sidebar::toggle_startup_dock(
-                ctx,
-                crate::config::SidebarPosition::Right,
-            );
-        }
-        ToggleLeftSidebarStartup => {
-            let _ = crate::update::sidebar::toggle_startup_dock(
-                ctx,
-                crate::config::SidebarPosition::Left,
-            );
         }
         ToggleSidebarBackground => {
             execute_action(ctx, Action::ToggleSidebarBackground);
@@ -755,8 +744,22 @@ fn apply_settings_choice(
         } else {
             crate::config::SidebarPosition::Right
         };
-        crate::update::sidebar::set_panel_count(ctx, side, index + 1);
+        let visible = index != 0;
+        if !ctx.state.sidebar_visible {
+            ctx.state.sidebar.dock_visible = [false, false];
+        }
+        ctx.state.sidebar.dock_visible
+            [usize::from(side == crate::config::SidebarPosition::Right)] = visible;
+        ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
+        if visible {
+            crate::update::sidebar::set_panel_count(ctx, side, index);
+        } else {
+            crate::update::sidebar::save_layout(ctx);
+        }
         let _ = crate::update::sidebar::visibility_changed(ctx);
+    }
+    if persist && action == crate::state::SettingsAction::SidebarLayoutPreset {
+        crate::update::sidebar::apply_layout_preset(ctx, index);
     }
     if persist {
         persist_applied_settings_choice(ctx, action);
@@ -1573,7 +1576,7 @@ mod tests {
                 .find(|line| line.contains("Search keybindings"))
                 .expect("help search row");
             assert!(placeholder.contains("│ Search keybindings…"));
-            assert!(placeholder.contains("57/57 │"));
+            assert!(placeholder.contains("56/56 │"), "{placeholder}");
 
             help_state(&mut backend).query = TextInput::new("here i am quite long");
             backend.render();

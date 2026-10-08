@@ -154,6 +154,16 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // visibility is client-local view chrome, so the file must not reach in and open or close a
     // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
     ctx.state.sidebar.reconcile(&new_config.sidebar);
+    // Dynamic preset indices belong to the configuration the choice dialog was opened from.
+    if ctx
+        .state
+        .settings_choice
+        .as_ref()
+        .is_some_and(|editor| editor.action == crate::state::SettingsAction::SidebarLayoutPreset)
+    {
+        ctx.state.settings_choice = None;
+        ctx.request_focus(crate::view::settings_palette_key());
+    }
     // Every reload invalidates scheduled/running results, including interval-only and
     // command-shell-only changes. Keep matching in-flight guards until their old results arrive so
     // the replacement polls cannot overlap them.

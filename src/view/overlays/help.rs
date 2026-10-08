@@ -151,19 +151,26 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         HelpRow::direct(SIDEBAR, "Enter", "Activate", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "x", "Close the selected row", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Tab / Shift+Tab", "Cycle tabs", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "Ctrl+← / Ctrl+h", "Focus left dock", SIDEBAR_EXTRA),
+        HelpRow::direct(
+            SIDEBAR,
+            "Ctrl+→ / Ctrl+l",
+            "Focus right dock",
+            SIDEBAR_EXTRA,
+        ),
         HelpRow::direct(SIDEBAR, "← / h", "Collapse directory", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "→ / l", "Expand directory", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Space", "Toggle directory", SIDEBAR_EXTRA),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+← / Ctrl+Shift+h",
-            "Reorder tab left",
+            "Alt+← / Alt+h",
+            "Move tab left / to left dock",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+→ / Ctrl+Shift+l",
-            "Reorder tab right",
+            "Alt+→ / Alt+l",
+            "Move tab right / to right dock",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
@@ -180,13 +187,13 @@ fn direct_mode_rows() -> Vec<HelpRow> {
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+↑ / Ctrl+Shift+k",
+            "Alt+↑ / Alt+k",
             "Move tab to upper panel",
             SIDEBAR_EXTRA,
         ),
         HelpRow::direct(
             SIDEBAR,
-            "Ctrl+Shift+↓ / Ctrl+Shift+j",
+            "Alt+↓ / Alt+j",
             "Move tab to lower panel",
             SIDEBAR_EXTRA,
         ),
@@ -214,7 +221,7 @@ fn direct_mode_rows() -> Vec<HelpRow> {
             "Move panel split down",
             SIDEBAR_EXTRA,
         ),
-        HelpRow::direct(SIDEBAR, "s", "Toggle panels", SIDEBAR_EXTRA),
+        HelpRow::direct(SIDEBAR, "?", "Keybindings…", SIDEBAR_EXTRA),
         HelpRow::direct(SIDEBAR, "Esc", "Return to pane", SIDEBAR_EXTRA),
         HelpRow::direct(HELP, "type", "Filter", HELP_EXTRA),
         HelpRow::direct(HELP, "← / →, Tab / Shift+Tab", "Switch tabs", HELP_EXTRA),
@@ -1522,12 +1529,7 @@ mod palette_alias_tests {
             aliases.iter().any(|alias| alias.as_ref() == "sidebar"),
             "toggle-sidebar must keep an exact sidebar alias for Hybrid ranking"
         );
-        for id in [
-            "toggle-sidebar-split",
-            "focus-sidebar",
-            "sidebar-next-tab",
-            "sidebar-prev-tab",
-        ] {
+        for id in ["focus-sidebar", "sidebar-next-tab", "sidebar-prev-tab"] {
             assert!(
                 command_palette_aliases(id).is_empty(),
                 "{id} needs no redundant sidebar alias"
@@ -1640,7 +1642,7 @@ mod palette_alias_tests {
             HelpRow::global("Panes", "Shift+Enter", "New floating pane"),
             HelpRow::direct(
                 "Sidebar focused · DIRECT",
-                "Ctrl+Shift+←",
+                "Alt+←",
                 "Reorder the active tab",
                 "direct sidebar focused",
             ),
@@ -1648,7 +1650,7 @@ mod palette_alias_tests {
         ];
         let floating = filtered_help_groups(rows.clone(), HelpTab::Global, "shift enter");
         assert_eq!(floating[0].1[0].label, "New floating pane");
-        let sidebar = filtered_help_groups(rows.clone(), HelpTab::Modes, "ctrl shift left");
+        let sidebar = filtered_help_groups(rows.clone(), HelpTab::Modes, "alt left");
         assert_eq!(sidebar[0].1[0].label, "Reorder the active tab");
         let unbound = filtered_help_groups(rows, HelpTab::Unbound, "unbound");
         assert_eq!(unbound[0].1[0].label, "Open config file");
@@ -1670,9 +1672,9 @@ mod palette_alias_tests {
         }
         let reorder = rows
             .iter()
-            .find(|row| row.label == "Reorder tab left")
+            .find(|row| row.label == "Move tab left / to left dock")
             .unwrap();
-        assert_eq!(reorder.keys, "Ctrl+Shift+← / Ctrl+Shift+h");
+        assert_eq!(reorder.keys, "Alt+← / Alt+h");
     }
 
     #[test]

@@ -378,13 +378,37 @@ pub(crate) fn row_hover(
 pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
     let side = super::active_side(ctx).toggled();
     let index = usize::from(side == crate::config::SidebarPosition::Right);
-    ctx.state.sidebar.dock_visible[index] = true;
-    ctx.state.sidebar_visible = true;
-    let Some(target) = ctx.state.sidebar.panels.iter().position(|p| p.dock == side) else {
+    if !ctx.state.sidebar_visible || !ctx.state.sidebar.dock_visible[index] {
+        return Update::none();
+    }
+    let home = ctx
+        .state
+        .sidebar
+        .active_panel()
+        .map(|p| p.home)
+        .unwrap_or(0)
+        .min(ctx.state.config.sidebar.layout.dock(side).panel_count - 1);
+    let Some(target) = ctx
+        .state
+        .sidebar
+        .panels
+        .iter()
+        .position(|p| p.dock == side && p.home == home)
+    else {
         return Update::none();
     };
     if transfer && let Some(id) = ctx.state.sidebar.active_tab().cloned() {
-        ctx.state.config.sidebar.layout.place(id.as_str(), side, 0);
+        ctx.state
+            .config
+            .sidebar
+            .layout
+            .place(id.as_str(), side, home);
+        // Enter the destination at its inner edge: first on the right, last on the left.
+        if side == crate::config::SidebarPosition::Right {
+            let tabs = &mut ctx.state.config.sidebar.layout.dock_mut(side).panels[home].tabs;
+            tabs.retain(|tab| tab != id.as_str());
+            tabs.insert(0, id.as_str().to_string());
+        }
         ctx.state
             .sidebar
             .apply_configured_panels(&ctx.state.config.sidebar);
@@ -398,4 +422,33 @@ pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {
     }
     refocus_body(ctx);
     update
+}
+
+/// Directional focus never opens a disabled dock or wraps away from the requested direction.
+pub(crate) fn focus_dock(ctx: &mut Context<AppRoot>, right: bool) -> Update {
+    if (super::active_side(ctx) == crate::config::SidebarPosition::Right) == right {
+        return Update::none();
+    }
+    other_dock(ctx, false)
+}
+
+/// Arrange tabs horizontally; at the inner edge, continue into the other visible dock.
+pub(crate) fn move_tab_horizontal(ctx: &mut Context<AppRoot>, right: bool) -> Update {
+    let Some(panel) = ctx.state.sidebar.active_panel() else {
+        return Update::none();
+    };
+    let Some(at) = panel
+        .tabs
+        .iter()
+        .position(|id| Some(id) == panel.active_tab.as_ref())
+    else {
+        return Update::none();
+    };
+    if (right && at + 1 < panel.tabs.len()) || (!right && at > 0) {
+        return reorder_active_tab(ctx, right);
+    }
+    if (panel.dock == crate::config::SidebarPosition::Right) == right {
+        return Update::none();
+    }
+    other_dock(ctx, true)
 }

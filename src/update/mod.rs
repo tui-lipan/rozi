@@ -245,11 +245,6 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
                 handle_msg_inner(_app, *event, ctx)
             }
         }
-        Msg::SidebarManagerPresets => {
-            ctx.state.sidebar_manager_presets = true;
-            ctx.request_focus("sidebar-manager-presets");
-            Update::full()
-        }
         Msg::SidebarManagerBack => sidebar::manager_back(ctx),
         Msg::SidebarManagerActivate(value) => sidebar::manager_activate(ctx, value),
         Msg::SidebarDockPanelsResized { side, event } => {

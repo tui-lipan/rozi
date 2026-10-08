@@ -237,6 +237,16 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 fn settings_all_keeps_every_control_available() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
+        backend
+            .state_mut()
+            .config
+            .sidebar
+            .presets
+            .push(rozi::config::SidebarLayoutPreset {
+                name: "extension.review".into(),
+                label: "Review".into(),
+                layout: rozi::config::SidebarDockLayout::default(),
+            });
         let frame = rendered_rows(&mut backend);
         let rows = SettingsAction::all().len();
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
@@ -323,13 +333,7 @@ fn settings_all_keeps_every_control_available() {
         setting_row(workbar, "Style");
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
-        for label in [
-            "Left dock at startup",
-            "Right dock at startup",
-            "Left panels",
-            "Right panels",
-            "Manage Sidebar Tabs",
-        ] {
+        for label in ["Left sidebar…", "Right sidebar…", "Sidebar tabs…"] {
             setting_row(sidebar, label);
         }
         setting_row(sidebar, "Background follows canvas");
@@ -520,7 +524,7 @@ fn settings_reports_sidebar_values() {
         );
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         assert!(
-            setting_row(sidebar, "Right dock at startup").contains("Enabled"),
+            setting_row(sidebar, "Right sidebar…").contains("1 panel"),
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(
@@ -1144,7 +1148,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
         for (tab, count, expected) in [
             (SettingsTab::General, 19, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
-            (SettingsTab::Bars, 16, "Position"),
+            (SettingsTab::Bars, 14, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
             (SettingsTab::Sessions, 6, "Open Sessions on"),
         ] {

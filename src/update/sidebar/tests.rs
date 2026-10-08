@@ -2116,7 +2116,7 @@ fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
 }
 
 /// Every modified arrow in the sidebar has an `hjkl` twin. Shifted letters arrive uppercase with
-/// `shift` set, and Ctrl+Shift letters in either case, so both spellings are exercised.
+/// `shift` set; Alt directions use the same spatial arrangement as the arrows.
 #[test]
 fn modified_vim_keys_mirror_the_modified_arrows() {
     on_test_thread(|| {
@@ -2127,9 +2127,8 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
             2,
             "two panels"
         );
-        let ctrl_shift = KeyMods {
-            ctrl: true,
-            shift: true,
+        let alt = KeyMods {
+            alt: true,
             ..KeyMods::NONE
         };
 
@@ -2173,24 +2172,24 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
         );
 
         let activity = SidebarTab::Activity.id();
-        send_sidebar_key(&mut backend, KeyCode::Char('L'), ctrl_shift);
+        send_sidebar_key(&mut backend, KeyCode::Char('l'), alt);
         assert_eq!(
             backend.state().sidebar.panels[0].tabs.get(1),
             Some(&activity),
-            "Ctrl+Shift+l reorders right"
+            "Alt+l reorders right"
         );
-        send_sidebar_key(&mut backend, KeyCode::Char('h'), ctrl_shift);
+        send_sidebar_key(&mut backend, KeyCode::Char('h'), alt);
         assert_eq!(
             backend.state().sidebar.panels[0].tabs.first(),
             Some(&activity),
-            "Ctrl+Shift+h reorders left"
+            "Alt+h reorders left"
         );
 
-        send_sidebar_key(&mut backend, KeyCode::Char('J'), ctrl_shift);
+        send_sidebar_key(&mut backend, KeyCode::Char('j'), alt);
         assert_eq!(backend.state().sidebar.active_panel, 1);
         assert!(
             backend.state().sidebar.panels[1].tabs.contains(&activity),
-            "Ctrl+Shift+j moves the tab to the lower panel"
+            "Alt+j moves the tab to the lower panel"
         );
         assert!(backend.state().sidebar.focused);
     });

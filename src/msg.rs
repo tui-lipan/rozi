@@ -170,7 +170,6 @@ pub enum Msg {
         epoch: u64,
         event: Box<Msg>,
     },
-    SidebarManagerPresets,
     SidebarManagerBack,
     SidebarManagerActivate(String),
     SidebarDockPanelsResized {

@@ -132,11 +132,10 @@ pub enum SettingsAction {
     CyclePaneOpenAnimation,
     CyclePaneCloseAnimation,
     ToggleSidebarBackgroundFollowsCanvas,
-    ToggleLeftSidebarStartup,
-    ToggleRightSidebarStartup,
     LeftSidebarPanels,
     RightSidebarPanels,
-    ManageSidebarTabs,
+    SidebarTabs,
+    SidebarLayoutPreset,
     ToggleSidebarGap,
     ToggleSidebarBackground,
     CycleSidebarTabStyle,
@@ -221,11 +220,10 @@ impl SettingsAction {
             Self::CycleWorkbarTabStyle,
             Self::ToggleWorkbarPowerline,
             // Sidebar
-            Self::ToggleLeftSidebarStartup,
-            Self::ToggleRightSidebarStartup,
             Self::LeftSidebarPanels,
             Self::RightSidebarPanels,
-            Self::ManageSidebarTabs,
+            Self::SidebarTabs,
+            Self::SidebarLayoutPreset,
             Self::ToggleSidebarBackgroundFollowsCanvas,
             Self::ToggleSidebarGap,
             Self::ToggleSidebarBackground,
@@ -391,26 +389,37 @@ impl SettingsAction {
                 config.animations.pane_close_style,
                 PaneAnimationStyle::label,
             )),
-            Self::LeftSidebarPanels => Some(choice_ring(
-                "Left sidebar panels",
-                &[1_usize, 2, 3],
-                config.sidebar.layout.left.panel_count,
-                |n| match n {
-                    1 => "1",
-                    2 => "2",
-                    _ => "3",
-                },
-            )),
-            Self::RightSidebarPanels => Some(choice_ring(
-                "Right sidebar panels",
-                &[1_usize, 2, 3],
-                config.sidebar.layout.right.panel_count,
-                |n| match n {
-                    1 => "1",
-                    2 => "2",
-                    _ => "3",
-                },
-            )),
+            Self::LeftSidebarPanels | Self::RightSidebarPanels => {
+                let (title, dock) = if self == Self::LeftSidebarPanels {
+                    ("Left sidebar", &config.sidebar.layout.left)
+                } else {
+                    ("Right sidebar", &config.sidebar.layout.right)
+                };
+                Some(choice_ring(
+                    title,
+                    &[0_usize, 1, 2, 3],
+                    if dock.visible { dock.panel_count } else { 0 },
+                    |n| match n {
+                        0 => "Disabled",
+                        1 => "1 panel",
+                        2 => "2 panels",
+                        _ => "3 panels",
+                    },
+                ))
+            }
+            Self::SidebarLayoutPreset => Some(SettingsChoiceRing {
+                title: "Sidebar layout preset",
+                options: std::iter::once("Default layout".to_string())
+                    .chain(
+                        config
+                            .sidebar
+                            .presets
+                            .iter()
+                            .map(|preset| preset.label.clone()),
+                    )
+                    .collect(),
+                index: 0,
+            }),
             Self::CycleSidebarTabStyle => Some(choice_ring(
                 "Sidebar tab style",
                 badge_cap_styles(),
@@ -464,8 +473,10 @@ impl SettingsAction {
     /// lists more than two options, so Enter is visible on the row; two-option toggles stay
     /// unmarked.
     pub fn shows_choice_ellipsis(self, config: &Config) -> bool {
-        self.choice_ring(config)
-            .is_some_and(|ring| ring.options.len() > 2)
+        matches!(self, Self::SidebarTabs | Self::SidebarLayoutPreset)
+            || self
+                .choice_ring(config)
+                .is_some_and(|ring| ring.options.len() > 2)
     }
 
     /// Preview only static appearance choices; behavior and event-driven effects need confirmation.
@@ -583,16 +594,22 @@ impl SettingsAction {
                 index,
                 &mut config.animations.pane_close_style,
             ),
-            Self::LeftSidebarPanels => assign_choice(
-                &[1_usize, 2, 3],
-                index,
-                &mut config.sidebar.layout.left.panel_count,
-            ),
-            Self::RightSidebarPanels => assign_choice(
-                &[1_usize, 2, 3],
-                index,
-                &mut config.sidebar.layout.right.panel_count,
-            ),
+            Self::LeftSidebarPanels | Self::RightSidebarPanels => {
+                if index > 3 {
+                    return false;
+                }
+                let dock = if self == Self::LeftSidebarPanels {
+                    &mut config.sidebar.layout.left
+                } else {
+                    &mut config.sidebar.layout.right
+                };
+                dock.visible = index != 0;
+                if index != 0 {
+                    dock.panel_count = index;
+                }
+                true
+            }
+            Self::SidebarLayoutPreset => index <= config.sidebar.presets.len(),
             Self::CycleSidebarTabStyle => {
                 assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)
             }
@@ -708,7 +725,7 @@ impl SettingsAction {
 #[derive(Clone, Debug)]
 pub struct SettingsChoiceRing {
     pub title: &'static str,
-    pub options: Vec<&'static str>,
+    pub options: Vec<String>,
     pub index: usize,
 }
 
@@ -734,6 +751,7 @@ fn titlebar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing 
         title: "Layout",
         options: ["Hidden", "Bar", "Border", "Integrated", "Inset"]
             .into_iter()
+            .map(str::to_string)
             .collect(),
         index,
     }
@@ -749,7 +767,10 @@ fn workbar_choice_ring(pane: &crate::config::PaneConfig) -> SettingsChoiceRing {
     };
     SettingsChoiceRing {
         title: "Position",
-        options: vec!["Hidden", "Top", "Bottom"],
+        options: ["Hidden", "Top", "Bottom"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         index,
     }
 }
@@ -803,7 +824,11 @@ fn choice_ring<T: Copy + PartialEq>(
         .unwrap_or(0);
     SettingsChoiceRing {
         title,
-        options: all.iter().copied().map(label).collect(),
+        options: all
+            .iter()
+            .copied()
+            .map(|value| label(value).to_string())
+            .collect(),
         index,
     }
 }
@@ -889,7 +914,7 @@ impl SettingsChoiceSnapshot {
 pub struct SettingsChoiceEditor {
     pub action: SettingsAction,
     pub title: &'static str,
-    pub options: Vec<&'static str>,
+    pub options: Vec<String>,
     pub index: usize,
     pub original_index: usize,
     pub snapshot: SettingsChoiceSnapshot,

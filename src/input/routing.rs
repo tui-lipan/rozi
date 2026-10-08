@@ -117,9 +117,8 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     if key.is(KeyCode::Esc) && ctx.state.sidebar.explorer_entered_from_tree {
         return None;
     }
-    // Every modified arrow has an `hjkl` twin, as in resize mode. A shifted letter arrives as its
-    // uppercase character with `shift` set, and Ctrl+Shift+letter arrives as either case depending
-    // on the keyboard protocol, so the modified branches match the lowercase spelling.
+    // Ctrl focuses, Alt moves tabs, Shift resizes. Directional keys have hjkl equivalents.
+    // Normalize shifted letters because keyboard protocols differ in their case reporting.
     let direction = match key.code {
         KeyCode::Left => Some(Direction::Left),
         KeyCode::Down => Some(Direction::Down),
@@ -134,23 +133,28 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
         },
         _ => None,
     };
-    if key.mods.ctrl && key.mods.shift {
+    if key.mods.alt && !key.mods.ctrl && !key.mods.shift {
         return match direction? {
-            Direction::Left => Some(sidebar::reorder_active_tab(ctx, false)),
-            Direction::Right => Some(sidebar::reorder_active_tab(ctx, true)),
+            Direction::Left => Some(sidebar::move_tab_horizontal(ctx, false)),
+            Direction::Right => Some(sidebar::move_tab_horizontal(ctx, true)),
             Direction::Up => Some(sidebar::move_active_tab_to_panel(ctx, false)),
             Direction::Down => Some(sidebar::move_active_tab_to_panel(ctx, true)),
         };
     }
-    if key.mods.ctrl {
+    if key.mods.ctrl && !key.mods.shift && !key.mods.alt {
         return match direction? {
-            Direction::Left | Direction::Right => Some(sidebar::other_dock(ctx, false)),
+            Direction::Left => Some(sidebar::focus_dock(ctx, false)),
+            Direction::Right => Some(sidebar::focus_dock(ctx, true)),
             Direction::Up => Some(sidebar::focus_panel(ctx, false)),
             Direction::Down => Some(sidebar::focus_panel(ctx, true)),
         };
     }
     // `G` is Shift+g, so it falls through to the unmodified keys below rather than being taken here.
-    if key.mods.shift && key.code != KeyCode::Char('G') {
+    if key.mods.shift
+        && !key.mods.ctrl
+        && !key.mods.alt
+        && (direction.is_some() || matches!(key.code, KeyCode::Tab | KeyCode::BackTab))
+    {
         if matches!(key.code, KeyCode::BackTab | KeyCode::Tab) {
             return Some(sidebar::cycle_tab(ctx, false));
         }
@@ -163,11 +167,18 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     }
     match key.code {
         KeyCode::Esc => return Some(sidebar::blur_body(ctx)),
+        KeyCode::Char('?') => {
+            let update = crate::actions::execute_action(ctx, Action::ToggleHelp);
+            if let Some(help) = &mut ctx.state.keybindings {
+                help.tab = crate::state::HelpTab::Modes;
+                help.query = TextInput::new("sidebar");
+            }
+            return Some(update);
+        }
         // Tab cycles sidebar tabs rather than the focus ring. FileTree owns bare Left/Right for
         // directory navigation; h/l and Space retain the equivalent tree operations.
         KeyCode::Tab => return Some(sidebar::cycle_tab(ctx, true)),
         KeyCode::BackTab => return Some(sidebar::cycle_tab(ctx, false)),
-        KeyCode::Char('s') => return Some(sidebar::toggle_split(ctx)),
         _ => {}
     }
     if tree_tab_active(ctx) {

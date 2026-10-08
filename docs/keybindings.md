@@ -215,13 +215,13 @@ After the `B` command key focuses the sidebar:
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle file-tree directories |
-| `Ctrl+Shift+Left/Right`, `Ctrl+Shift+h/l` | Reorder the active tab |
+| `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
 | `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
-| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the other dock |
-| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab between panels |
+| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
+| `Alt+Up/Down`, `Alt+k/j` | Move the active tab between panels |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
-| `s` | Collapse or restore dock panels |
+| `?` | Open Keybindings… |
 | `Esc` | Return focus to the pane |
 
 See [Sidebar](sidebar.md) for what each tab shows.

@@ -370,7 +370,7 @@
 # Widths share the terminal budget, preserving at least 20 columns for the workspace.
 # Saved panels beyond panel_count fold into the last displayed panel and return when expanded.
 # Hidden tabs keep both their definition and their placement.
-#layout = { left = { visible = false, width = 32, panel_count = 2, expanded_panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] }, right = { visible = false, width = 32, panel_count = 1, expanded_panel_count = 2, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
+#layout = { left = { visible = false, width = 32, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] }, right = { visible = false, width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 # Catalog of available tabs. Built-ins: activity, panes, sessions, files, git.
 #tabs = ["activity", "panes", "sessions", "files", "git"]
 # A tab may also be a table, which is how built-ins take options and how custom tabs are

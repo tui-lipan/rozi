@@ -297,13 +297,7 @@ pub(crate) fn set_panel_count(
     count: usize,
 ) {
     let dock = ctx.state.config.sidebar.layout.dock_mut(side);
-    if dock.panel_count > 1 {
-        dock.expanded_panel_count = dock.panel_count;
-    }
     dock.panel_count = count.clamp(1, 3);
-    if dock.panel_count > 1 {
-        dock.expanded_panel_count = dock.panel_count;
-    }
     dock.panels.resize_with(
         dock.panels.len().max(dock.panel_count),
         crate::config::SidebarDockPanel::default,
@@ -359,39 +353,6 @@ pub(crate) fn toggle_dock(
     ctx.state.sidebar.dock_visible[index] = !ctx.state.sidebar.dock_visible[index];
     ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
     visibility_changed(ctx)
-}
-
-/// Settings edits a startup preference and applies it to this client. Runtime commands use
-/// `toggle_dock` and never change the shared configuration file.
-pub(crate) fn toggle_startup_dock(
-    ctx: &mut Context<AppRoot>,
-    side: crate::config::SidebarPosition,
-) -> Update {
-    let dock = ctx.state.config.sidebar.layout.dock_mut(side);
-    dock.visible = !dock.visible;
-    let visible = dock.visible;
-    if !ctx.state.sidebar_visible {
-        ctx.state.sidebar.dock_visible = [false, false];
-    }
-    ctx.state.sidebar.dock_visible[usize::from(side == crate::config::SidebarPosition::Right)] =
-        visible;
-    ctx.state.sidebar_visible = ctx.state.sidebar.dock_visible.iter().any(|v| *v);
-    save_layout(ctx);
-    visibility_changed(ctx)
-}
-
-pub(crate) fn toggle_split(ctx: &mut Context<AppRoot>) -> Update {
-    let side = active_side(ctx);
-    let dock = ctx.state.config.sidebar.layout.dock(side);
-    let count = if dock.panel_count == 1 {
-        dock.expanded_panel_count
-    } else {
-        1
-    };
-    set_panel_count(ctx, side, count);
-    let update = visibility_changed(ctx);
-    refocus_body(ctx);
-    update
 }
 
 pub(crate) fn resize_width(ctx: &mut Context<AppRoot>, handle_right: bool) -> Update {

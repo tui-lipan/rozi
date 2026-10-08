@@ -371,6 +371,8 @@ export default defineConfig({
           { text: "Release process", link: "/release-process" },
           { text: "Benchmarks and profiling", link: "/benchmarks" },
           { text: "Performance audit archive", link: "/performance/" },
+          { text: "Active TUI CPU investigation", link: "/performance/audits/2026-10-07-active-tui" },
+          { text: "Active TUI CPU improvements", link: "/performance/audits/2026-10-08-active-tui-improvements" },
           { text: "Performance audit playbook", link: "/performance/audit-playbook" },
         ],
       },

@@ -5,6 +5,7 @@ use rozi::pane::TerminalPane;
 use std::hint::black_box;
 
 fn snapshot_rebuild(c: &mut Criterion) {
+    sparse_tui_updates(c);
     let mut group = c.benchmark_group("snapshot_rebuild");
     for (cols, rows) in [(80, 24), (200, 60), (320, 90)] {
         group.throughput(Throughput::Bytes(u64::from(cols) * u64::from(rows)));
@@ -74,6 +75,54 @@ fn snapshot_rebuild(c: &mut Criterion) {
                 );
             },
         );
+    }
+    group.finish();
+}
+
+// A fullscreen TUI commonly changes just its status line. Keep a populated viewport alive across
+// iterations so this measures steady updates, rather than screen construction or history growth.
+fn sparse_tui_updates(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sparse_tui_update");
+    for (cols, rows) in [(80, 24), (200, 60), (320, 90)] {
+        for alternate in [false, true] {
+            let mode = if alternate { "alternate" } else { "primary" };
+            for snapshot in [false, true] {
+                let boundary = if snapshot { "snapshot" } else { "ingest" };
+                group.bench_function(
+                    BenchmarkId::new(format!("{mode}/{boundary}"), format!("{cols}x{rows}")),
+                    |b| {
+                        let mut pane = TerminalPane::new(5_000);
+                        pane.apply_server_resize(cols, rows);
+                        if alternate {
+                            pane.process_server_output(b"\x1b[?1049h");
+                        }
+                        for row in 1..=rows {
+                            pane.process_server_output(
+                                format!(
+                                    "\x1b[{row};1H\x1b[32m{:width$}\x1b[0m",
+                                    "body",
+                                    width = usize::from(cols - 1)
+                                )
+                                .as_bytes(),
+                            );
+                        }
+                        black_box(pane.snapshot());
+                        let updates = [
+                            format!("\x1b[{rows};1H| working\x1b[K").into_bytes(),
+                            format!("\x1b[{rows};1H/ working\x1b[K").into_bytes(),
+                        ];
+                        let mut tick = 0;
+                        b.iter(|| {
+                            black_box(pane.process_server_output(black_box(&updates[tick % 2])));
+                            tick += 1;
+                            if snapshot {
+                                black_box(pane.snapshot());
+                            }
+                        });
+                    },
+                );
+            }
+        }
     }
     group.finish();
 }

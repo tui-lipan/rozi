@@ -50,6 +50,7 @@ Arguments after `--` select Criterion benchmark IDs or a target-specific evidenc
 ```bash
 cargo bench --bench terminal_ingest -- 'sgr_heavy/200x60'
 cargo bench --bench snapshot_rebuild -- terminal_pane_process_server_output
+cargo bench --bench snapshot_rebuild -- sparse_tui_update
 cargo bench --bench protocol_framing -- control_frame_serde
 cargo bench --bench session_pipeline -- session_pipeline_memory/4096
 cargo bench --bench app_render -- 'app_render/view_layout/(8|16)|sidebar_render|inbound_drain'
@@ -72,7 +73,7 @@ cargo bench --bench terminal_ingest -- --list
 | --- | --- |
 | `terminal_ingest` | `TerminalScreen::process_bytes` throughput for generated plain lines, SGR-heavy output, scroll regions and cursor movement, wide Unicode, and long sparse-escape lines at fixed viewport sizes. |
 | `terminal_history` | Starts with 5,000 populated history rows and ingests repeated 10,000- and 100,000-line bursts into the same terminal. Separately measures snapshot construction at the live view, a mixed scroll offset, and deep scrollback, plus history text scanning, selection export, streaming replay, and height, narrow, and wide resizes. |
-| `snapshot_rebuild` | `render_snapshot()` by viewport, server-output processing by message size, and the difference between rebuilding after every message and once per output burst. |
+| `snapshot_rebuild` | `render_snapshot()` by viewport, server-output processing by message size, the difference between rebuilding after every message and once per output burst, and steady status-line updates in populated primary and alternate screens (ingest alone versus ingest plus snapshot). |
 | `protocol_framing` | Pane-output frame encode and decode round trips, and serde for generated large control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuilding. Unix also includes a socket-pair case. |
 | `app_render` | Whole-application view expansion and layout by pane count, with empty and populated terminals; fixed sidebar states; repository-size fixtures; per-message update overhead; and real inbound-mailbox draining for round-robin multi-pane output after pane-aware coalescing. |
@@ -105,6 +106,18 @@ Snapshot cases render a fresh populated 253×64 viewport with 5,000 history rows
 offset 0, `render_mix` at offset 32, and `render_deep` at offset 5,000. Scroll positioning, fixture
 setup, and snapshot destruction stay outside those timers. They do not measure backend drawing or
 cached unchanged snapshots. Use `scrollback_search` for rozi's complete search path.
+
+### `snapshot_rebuild` sparse TUI cases
+
+`sparse_tui_update` keeps one pane alive with 5,000 lines of scrollback capacity and a populated
+viewport. Setup and the first snapshot are outside timing. Each iteration alternates one spinner
+character on the last row, with cursor positioning and erase-to-end-of-line, without scrolling.
+`ingest` measures client parsing and output metadata handling; `snapshot` adds the snapshot read
+that the live terminal widget performs before drawing. Both primary and alternate screens use the
+same workload at 80×24, 200×60, and 320×90.
+
+These cases exclude UI tree rebuilding, painting, frame diffing, transport, and host-terminal work.
+They do not measure CPU usage of a running Codex session or the impact of animated window titles.
 
 ### `app_render` cases
 
@@ -198,6 +211,27 @@ prepared frame constants. Both paths composite the same 200×60 cells against a 
 view/layout, renderer traversal, and terminal I/O. Run on the same idle machine and profile;
 the result is not whole-client CPU usage. The ordinary reveal tests compare both paths cell
 for cell and verify pane and session masks advance without calling the component's `view()`.
+
+## Linux active TUI CPU probe
+
+`tools/tui-cpu-probe.py` measures one release client and its session server separately using
+Linux `/proc` CPU ticks. Every run creates private HOME/XDG directories, an owned session, and a
+`script`-hosted client; it does not attach to your running sessions. The guest alternates a status
+character at 10 Hz, with a fixed title, animated OSC title, or both. A dense case rewrites every
+terminal row. The script repeats body-only mode to check drift, at 200×60 and 475×116.
+
+```sh
+cargo build --locked --release
+python3 tools/tui-cpu-probe.py target/release/rozi
+# Run the same command with a saved before binary for comparison.
+```
+
+Output is JSON lines with CPU percentages of one core, not the whole machine. The default sample
+window is 15 seconds per case; `--seconds` changes it. Animations, shell integration, autosave, and
+resurrection are disabled. Host output goes to a scratch file, so the probe excludes graphical
+terminal rendering. Run before and after serially, without Cargo or other heavy work during the
+measurements. `--keep-scratch` retains synthetic logs for diagnosis; otherwise the owned session,
+clients, and scratch files are cleaned up.
 
 ## Linux process-memory harness
 

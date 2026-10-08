@@ -72,6 +72,74 @@ fn settle_command_link(backend: &mut TestBackend<crate::AppRoot>) {
 }
 
 #[test]
+fn animated_titles_update_live_labels_and_preserve_full_refresh_fallbacks() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().sidebar_visible = false;
+            backend.state().sidebar_slide.set(0.0);
+            let epoch = backend.state().runtime_epoch;
+            let target = backend.state().current().focused_pane.unwrap();
+            let generation = 42;
+            let source = {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(target, generation);
+                pane.terminal.process_server_output(b"\x1b]2;old\x07");
+                pane.logging = true;
+                pane.live_title
+                    .bind("icon ", "old [log]", None)
+                    .source
+                    .unwrap()
+            };
+            let message = |title: &str| Msg::SessionOutput {
+                epoch,
+                pane_id: target,
+                local: false,
+                generation,
+                bytes: format!("\x1b]2;{title}\x07").into_bytes(),
+            };
+            assert_eq!(
+                backend.update_level(message("new title")).unwrap(),
+                tui_lipan::UpdateLevel::TerminalPaint
+            );
+            let title: String = source
+                .snapshot()
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert!(title.starts_with("icon new title"), "{title}");
+            assert!(title.ends_with(" [log]"), "{title}");
+            backend.state_mut().sidebar_visible = true;
+            assert_eq!(
+                backend.update_level(message("sidebar sees this")).unwrap(),
+                tui_lipan::UpdateLevel::Full
+            );
+            backend.state_mut().sidebar_visible = false;
+            backend.state().sidebar_slide.set(0.5);
+            assert_eq!(
+                backend.update_level(message("closing sidebar")).unwrap(),
+                tui_lipan::UpdateLevel::Full
+            );
+            backend.state().sidebar_slide.set(0.0);
+            crate::pane::lifecycle::find_pane(backend.state(), target)
+                .unwrap()
+                .live_title
+                .bound
+                .set(false);
+            assert_eq!(
+                backend.update_level(message("border title")).unwrap(),
+                tui_lipan::UpdateLevel::Full
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

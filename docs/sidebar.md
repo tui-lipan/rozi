@@ -28,6 +28,11 @@ Open **Settings… → Bars → Left sidebar…** or **Right sidebar…** to cho
 saves it. Escape cancels. Disabled preserves panel assignments, counts, weights, and width for
 later use. The global `b` command temporarily hides or restores the current dock combination.
 
+<CaptureGallery title="Sidebar settings" mode="steps">
+<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left sidebar, Right sidebar, and Sidebar tabs entries" data-label="Settings" data-caption="Choose each sidebar independently from Settings.">
+<img src="./assets/captures/sidebar-panels.webp" alt="Left sidebar choices: Disabled, 1 panel, 2 panels, and 3 panels" data-label="Panels" data-caption="Enter applies a panel count; Escape cancels without rearranging the workspace.">
+</CaptureGallery>
+
 Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
 part of the normal `Tab` focus order.
 

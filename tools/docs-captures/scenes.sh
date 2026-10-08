@@ -76,14 +76,20 @@ PROFILE=api scene which-key "$focus" 4000 "key:ctrl+a; wait:800"
 PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:600"
 
-# Independent docks and the searchable manager, using the same saved placement.
+# Independent docks and visibility controls, using the same saved placement.
 # Static captures skip the session portal; its paint-only progress needs a live terminal.
 sidebar_docks='[sidebar]
 layout = { left = { visible = true, width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }, { weight = 1.0, tabs = ["activity"] }] }, right = { visible = true, width = 36, panel_count = 3, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }, { weight = 1.0, tabs = ["worktrees"] }] } }
 [animations]
 session = "off"'
 PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
-PROFILE=web scene sidebar-manager "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:Manage Sidebar Tabs; key:enter; wait:500" "$sidebar_docks"
+sidebar_visibility=${sidebar_docks/left =/hidden = [\"sessions\", \"git\", \"worktrees\"], left =}
+PROFILE=web scene sidebar-manager "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-manager-compact 80x24 4500 "key:ctrl+a; type:p; wait:300; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-panels "$focus" 4500 "$open_settings; type:left sidebar; key:enter; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-commands "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-keys "$focus" 4500 "key:ctrl+a; key:shift+b; type:?; wait:400" "$sidebar_visibility"
 
 
 # Recording indicators. Animations are off so the blinking dots hold steady; the long wait lets

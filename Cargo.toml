@@ -57,7 +57,7 @@ exclude = [
 # sidebar's project branches and worktree status rail.
 # Temporary review dependency for https://github.com/tui-lipan/tui-lipan/pull/322.
 # Replace with its released minor version before merging; the new TextSource API is unreleased.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "b4ed6e379e7bf6d15cb8b5833274d6c102d5cf59", features = [
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "a3e71ef1423aafbdaec483a4304a8363ed7ccbd0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

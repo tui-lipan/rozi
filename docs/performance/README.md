@@ -4,7 +4,7 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest report is [Compact scrollback in Alacritty, 2026-09-15](audits/2026-09-15-alacritty-port.md).
+The latest report is [Active TUI improvements, 2026-10-08](audits/2026-10-08-active-tui-improvements.md).
 
 Use the [benchmark guide](../benchmarks.md) for permanent harness commands and definitions. Use the
 [audit playbook](audit-playbook.md) to run and record a new audit.
@@ -13,6 +13,9 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-10-08 | `b5996d8d`; selected comparison with `v0.0.29` | 139 timing cases, 109 memory scenarios, allocation/effect probes, replay-memory checks, and saturation recovery passed; no material regression in eight compared cases | [Full benchmark baseline on Ryzen 7 9700X](audits/2026-10-08.md) |
+| 2026-10-08 | `8d7c82a8` plus local framework and rozi changes | 475×116 body + title client CPU drops 2.3% to 0.2% of one core; sparse snapshot time drops 87–96%; framework release pending | [Active TUI improvements](audits/2026-10-08-active-tui-improvements.md) |
+| 2026-10-07 | `8d7c82a8` plus benchmark and documentation additions | investigation: animated titles force full UI rebuilds; sparse snapshots still scale with viewport area; runtime unchanged | [Active TUI panes and animated titles](audits/2026-10-07-active-tui.md) |
 | 2026-09-15 | Alacritty `d692748d` plus archived port `e8e5aee6` | opt-in port halves Alacritty PSS with short-line history and is faster on short lines; other vtebench within 3%; upstream closed the proposal; not adopted | [Compact scrollback in Alacritty](audits/2026-09-15-alacritty-port.md) |
 | 2026-09-14 | `52cccdc` plus archived experiment | application ingest cost within noise for short lines, +7% for full-width styled logs; 55-122 MiB application PSS saved; technical go, adoption waits on an engine-fork decision; found two tui-lipan hang-up exit bugs | [Compact history ingest decision](audits/2026-09-14-ingest.md) |
 | 2026-09-14 | `cedd4a6` plus sibling tui-lipan worktree | attr-keyed runs cut realistic snapshots ~46-49%; live compact gap gone at the new baseline; ready to ship in tui-lipan, compact still blocked on ingest | [Attr-keyed terminal spans](audits/2026-09-14-attr.md) |

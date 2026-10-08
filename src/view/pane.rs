@@ -600,17 +600,7 @@ struct TitleParts {
 /// away underneath it. The markers exist for panes that stay: `[pane] hold_on_exit` keeps a
 /// naturally exited pane in the layout to be respawned, and that one does need to say so.
 fn status_title(ctx: &Context<AppRoot>, pane: &Pane) -> String {
-    let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
-    if pane.closing {
-        return title;
-    }
-    if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
-        title.push_str(&format!(" [exited {code}]"));
-    }
-    if pane.logging {
-        title.push_str(" [log]");
-    }
-    title
+    pane.status_title(ctx.state.current().remote_target.is_some())
 }
 
 fn title_parts(ctx: &Context<AppRoot>, pane: &Pane, focused_pane: Option<PaneId>) -> TitleParts {
@@ -1001,6 +991,7 @@ pub(crate) fn pane_element(
     hide_frame_border: bool,
     fade: animation::Fade,
 ) -> Element {
+    pane.live_title.bound.set(false);
     let theme = &ctx.state.theme;
     let id = pane.id;
     let focused = effective_focus == Some(id);
@@ -1107,15 +1098,18 @@ pub(crate) fn pane_element(
     // row and the body frame each paint their own background, covering the full rect anyway.
     let mut window_stack = VStack::new().align(Align::Stretch);
     if show_titles && titlebar == PaneTitlebarMode::Bar {
-        let title_text: Element = Text::from_spans(title_spans(
-            &icon_lead(icon),
-            title.as_ref().expect("visible titlebar has a title"),
-        ))
-        .style(title_bar_text_style)
-        .overflow(Overflow::Ellipsis)
-        .width(Length::Flex(1))
-        .height(Length::Px(1))
-        .into();
+        let title_text: Element = pane
+            .live_title
+            .bind(
+                &icon_lead(icon),
+                title.as_ref().expect("visible titlebar has a title"),
+                title_marker,
+            )
+            .style(title_bar_text_style)
+            .overflow(Overflow::Ellipsis)
+            .width(Length::Flex(1))
+            .height(Length::Px(1))
+            .into();
         let badge_text = title_trailer(
             ctx,
             pane,
@@ -1348,15 +1342,18 @@ pub(crate) fn pane_element(
                 body = body.header(labels);
             }
             PaneTitlebarMode::Integrated if !merge.title_outside_frame() => {
-                let title_text: Element = Text::from_spans(title_spans(
-                    &format!("{icon}  "),
-                    title.as_ref().expect("visible titlebar has a title"),
-                ))
-                .style(title_bar_text_style)
-                .overflow(Overflow::Ellipsis)
-                .width(Length::Flex(1))
-                .height(Length::Px(1))
-                .into();
+                let title_text: Element = pane
+                    .live_title
+                    .bind(
+                        &format!("{icon}  "),
+                        title.as_ref().expect("visible titlebar has a title"),
+                        title_marker,
+                    )
+                    .style(title_bar_text_style)
+                    .overflow(Overflow::Ellipsis)
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .into();
                 let badge_text = title_trailer(
                     ctx,
                     pane,
@@ -1415,15 +1412,18 @@ pub(crate) fn pane_element(
             // makes this the quiet layout - so the one cell of left padding is what lines the icon
             // up with where `border` puts it, just a row lower.
             PaneTitlebarMode::Inset => {
-                let title_text: Element = Text::from_spans(title_spans(
-                    &icon_lead(icon),
-                    title.as_ref().expect("visible titlebar has a title"),
-                ))
-                .style(border_title_text_style)
-                .overflow(Overflow::Ellipsis)
-                .width(Length::Flex(1))
-                .height(Length::Px(1))
-                .into();
+                let title_text: Element = pane
+                    .live_title
+                    .bind(
+                        &icon_lead(icon),
+                        title.as_ref().expect("visible titlebar has a title"),
+                        title_marker,
+                    )
+                    .style(border_title_text_style)
+                    .overflow(Overflow::Ellipsis)
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .into();
                 let mut title_row = HStack::new()
                     .padding((0, 1))
                     .width(Length::Flex(1))

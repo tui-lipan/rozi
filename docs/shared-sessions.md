@@ -29,8 +29,10 @@ middle of its history.
 
 - The server queues at most 4 MiB of pane history for a joining client at a time. There is no limit
   on the total history sent.
-- If more than 8 MiB of live output builds up behind a slow join, the server disconnects that
-  client. Clients that are already attached are not delayed.
+- Live output retained behind a slow join is capped at 8 MiB. When it would exceed the cap, the
+  server drops queued output for the busiest pane and replays its latest screen when the client
+  catches up. Other clients continue receiving output. The same recovery applies to an attached
+  client that falls behind.
 - Pane history up to 256 KiB is sent from memory. Larger history is written to an unnamed file in
   rozi's private cache directory, sent in 256 KiB pieces, and deleted afterwards. If the cache is
   unavailable, rozi sends it from memory instead.

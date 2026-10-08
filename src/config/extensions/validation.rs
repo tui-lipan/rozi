@@ -425,20 +425,20 @@ pub(super) fn validate_sidebar_tab(
             entries
                 .into_iter()
                 .map(|mut entry| {
-                    entry.run = entry.run.map(&expand);
-                    entry.send = entry.send.map(&expand);
-                    entry.popup = entry.popup.map(&expand);
+                    entry.run = entry.run.map(expand);
+                    entry.send = entry.send.map(expand);
+                    entry.popup = entry.popup.map(expand);
                     entry
                 })
                 .collect()
         }),
-        command: raw.command.map(&expand),
+        command: raw.command.map(expand),
         interval: raw.interval,
         on_click: raw.on_click.map(|mut action| {
-            action.run = action.run.map(&expand);
-            action.send = action.send.map(&expand);
-            action.popup = action.popup.map(&expand);
-            action.exec = action.exec.map(&expand);
+            action.run = action.run.map(expand);
+            action.send = action.send.map(expand);
+            action.popup = action.popup.map(expand);
+            action.exec = action.exec.map(expand);
             action
         }),
         group_prefix: raw.group_prefix,

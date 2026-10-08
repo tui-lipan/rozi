@@ -556,8 +556,8 @@ impl TerminalPane {
                 .and_then(shell_title_parts)
                 .and_then(|(user, _)| user.map(str::to_string));
         }
-        // The titlebar renders both of these, so a chunk that moves either has to be answered with a
-        // frame that runs the view - unlike the screen itself, which the widget reads for itself.
+        // These change pane chrome. The caller can refresh a bound live title for a title-only
+        // change; readiness transitions still need the view to compose the new pane state.
         let chrome_changed =
             self.title != title || !matches!(self.status, ManagedTerminalStatus::Ready);
         self.title = title;

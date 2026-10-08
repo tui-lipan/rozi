@@ -156,7 +156,7 @@ impl RuntimeConnection {
     pub fn delivered(&self) {
         let _ = self
             .undelivered
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_sub(1)
             });
     }

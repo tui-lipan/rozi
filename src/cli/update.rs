@@ -54,10 +54,10 @@ fn unmanaged_channel_clause() -> String {
         None if source == InstallSource::SystemPackage => {
             "this rozi is owned by a system package manager, which owns its updates".to_string()
         }
-        None => format!(
-            "this rozi was not installed by its managed installer - see {}",
-            env!("CARGO_PKG_HOMEPAGE")
-        ),
+        None => {
+            "this rozi was not installed by its managed installer - see https://rozi.tui-lipan.dev"
+                .to_string()
+        }
     }
 }
 

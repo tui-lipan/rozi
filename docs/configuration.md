@@ -783,13 +783,97 @@ text. An invalid rule is skipped; an invalid definition is dropped.
 
 See [Agent definitions](agents.md).
 
+## `[[links.handlers]]`
+
+Choose what happens when you `Ctrl`-click a link or select a hint with an uppercase final
+label character. The first handler matching the URI scheme wins. Unmatched URLs keep the
+system opener, which supports `http`, `https`, and `mailto`; other schemes require a handler.
+A `file` handler also enables opening plain path hints. Installed extensions can contribute
+handlers automatically. User handlers run first; extension handlers follow in installation-directory
+name order, and declaration order within each extension. Disable an extension in **Extensions…**
+to remove its handlers.
+
+```toml
+[[links.handlers]]
+schemes = ["http", "https"]
+run = 'terminal-browser open "$ROZI_URL"'
+keep_open = false
+
+[[links.handlers]]
+schemes = ["file"]
+run = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
+keep_open = false
+```
+
+To reuse a terminal-browser, replace `run` with `exec = 'terminal-browser new-tab "$ROZI_URL"'`.
+Its pane discovery and splitting must support the terminal environment you use. With multiple
+browsers, terminal-browser requires a `--browser` key; a wrapper script can choose one using
+`terminal-browser ls --json`.
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `schemes` | string array | required | Nonempty URI schemes, matched without case sensitivity. |
+| `command` | string | unset | Stable configured or extension command ID. Preserves the command's settings, environment, generation, and placement. Cannot be combined with inline action fields. |
+| `run` | string | unset | Shell command in a new pane. Set exactly one of `command`, `run`, `popup`, or `exec`. |
+| `popup` | string | unset | Shell command in a floating popup. |
+| `exec` | string | unset | Shell command without a pane, with output discarded. |
+| `keep_open` | bool | `true` | Preserve output after `run` or `popup` exits. |
+
+To use a command supplied by an extension, name its public ID:
+
+```toml
+[[links.handlers]]
+schemes = ["http", "https"]
+command = "terminal-browser.open"
+```
+
+The [terminal-browser extension](https://github.com/tui-lipan/rozi-terminal-browser) contributes
+HTTP and HTTPS handlers on installation, handles browser reuse and selection, and requires no
+handler configuration. Explicit command references are useful for overriding its default behavior.
+A missing, disabled, or non-process command reports an error rather than falling through to another
+handler. References resolve against the current commands after each config/extension reload.
+
+Commands receive the following variables. Quote their expansions in shell commands; for PowerShell,
+use `$env:ROZI_URL`, `$env:ROZI_FILE`, and so on. The examples above use POSIX shell syntax.
+
+| Variable | Value |
+| --- | --- |
+| `ROZI_URL` | Original URI; empty for plain path hints and custom hint actions. |
+| `ROZI_FILE` | Decoded file-URI path, or a plain path hint without its numeric `:line[:column]` suffix; otherwise empty. |
+| `ROZI_LINE`, `ROZI_COLUMN` | Numeric position suffix from a plain path hint, or empty. |
+| `ROZI_HINT` | Full original clicked URI or selected hint, including any position suffix. |
+| `ROZI_SOURCE_PANE` | Pane containing the clicked link or selected hint. |
+| `ROZI_SOURCE_SESSION` | Opaque session-server instance ID containing the source pane. |
+| `ROZI_REMOTE_HOST` | Remote session host, or empty for local sessions. |
+
+Referenced commands run at their declared placement; `active-session` commands receive the same
+link context on the session host. `send` commands cannot be used as handlers. Custom hint actions
+can also reference commands, for example `on_open = { command = "my-extension.inspect" }`.
+
+`run` and `popup` execute on the session host in the source pane's working directory.
+`exec` executes on the client; it inherits the source directory only for a local session and
+receives `ROZI_PANE` identifying the source pane. Remote file paths are not fetched or translated.
+File URIs must be representable as paths on the client platform; foreign authorities that cannot
+be converted produce an error. A filename ending in `:123` is interpreted as a hint position;
+use a file URI to preserve that suffix as part of the filename.
+
 ## `[[hints]]`
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `pattern` | string | required | Nonempty `regex-lite` pattern. Invalid patterns are skipped. |
-| `open` | bool | `false` | Lets the uppercase hint label open the match. |
+| `open` | bool | `false` | Lets the uppercase hint label open the match through link handlers. |
+| `on_open` | command table | unset | `command`, `run`, `popup`, or `exec` action for an uppercase label; enables the action even when `open = false`. Inline actions may set `keep_open`, which defaults to `true`. |
 
+Custom hint actions receive `ROZI_HINT` containing the match:
+
+```toml
+[[hints]]
+pattern = '\bISSUE-[0-9]+\b'
+on_open = { exec = 'issue-viewer "$ROZI_HINT"' }
+```
+
+Lowercase labels always copy. Git SHA hints remain copy-only.
 The built-in URL, path, and Git SHA hints run first and win where matches overlap. See
 [Copy, search, and hints](terminal.md#copy-search-and-hints).
 

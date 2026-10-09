@@ -122,6 +122,7 @@ struct FileConfig {
     agents: Vec<crate::agent_detection::AgentSpec>,
     rules: Vec<RuleFileConfig>,
     hints: Vec<HintFileConfig>,
+    links: super::links::LinksFileConfig,
     hooks: Vec<HookFileConfig>,
     commands: Vec<NamedCommandFileConfig>,
     services: Vec<ServiceFileConfig>,
@@ -582,6 +583,7 @@ impl Default for RuleFileConfig {
 pub(super) struct HintFileConfig {
     pub(super) pattern: String,
     pub(super) open: bool,
+    pub(super) on_open: Option<super::links::OpenActionFileConfig>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -823,6 +825,7 @@ fn load_config_from_text_with_extensions(
         let suggested_keybindings = contributions.suggested_keybindings;
         warnings.extend(contributions.warnings);
         config.commands = contributions.commands;
+        config.link_handlers = contributions.link_handlers;
         config.active_extensions = contributions.active_ids;
         config.installed_extensions = contributions.installed_ids;
         config.extension_problems = contributions.problem_count;
@@ -1329,6 +1332,8 @@ fn load_config_from_text_with_extensions(
     );
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hints = build_hints(parsed.hints, &mut warnings);
+    config.link_handlers = super::links::build_handlers(parsed.links, &mut warnings);
+    config.link_handlers.extend(contributions.link_handlers);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     config.commands = build_named_commands(parsed.commands, &mut warnings);
     config.active_extensions = contributions.active_ids;
@@ -2354,6 +2359,82 @@ mod file_tests {
         assert_eq!(loaded.config.sounds.player.as_deref(), Some("play"));
     }
 
+    #[test]
+    fn link_handlers_and_hint_actions_load_with_validation() {
+        let loaded = load_config_from_text(
+            r#"
+[[links.handlers]]
+schemes = ["HTTP", "https"]
+run = 'terminal-browser open "$ROZI_URL"'
+keep_open = false
+[[links.handlers]]
+schemes = ["file"]
+popup = 'nvim "$ROZI_FILE"'
+[[hints]]
+pattern = '\bISSUE-[0-9]+\b'
+on_open = { exec = 'lookup "$ROZI_HINT"' }
+"#,
+            Path::new("test.toml"),
+        );
+        assert!(!loaded.rejected);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.link_handlers[0].schemes, ["http", "https"]);
+        assert!(matches!(
+            loaded.config.link_handlers[0].action,
+            LinkAction::Inline(UserCommandAction::Run {
+                keep_open: false,
+                ..
+            })
+        ));
+        assert!(loaded.config.hints[0].on_open.is_some());
+
+        let loaded = load_config_from_text(
+            r#"
+[[links.handlers]]
+schemes = ["bad:"]
+exec = "true"
+[[links.handlers]]
+schemes = ["https"]
+run = "true"
+exec = "true"
+[[links.handlers]]
+schemes = ["file"]
+exec = "true"
+typo = true
+[[hints]]
+pattern = "foo"
+on_open = { send = "danger\n" }
+"#,
+            Path::new("test.toml"),
+        );
+        assert_eq!(loaded.config.link_handlers.len(), 1);
+        assert!(loaded.config.hints.is_empty());
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("typo"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("cannot use `send`"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("conflicting"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("valid URI schemes"))
+        );
+    }
+
     const REFERENCE_EXAMPLE: &str = include_str!("../../examples/config.toml");
 
     /// Strips the comment marker from `examples/config.toml` setting lines, which are written as
@@ -2727,6 +2808,48 @@ mod file_tests {
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("extension.toml"), manifest).unwrap();
         super::super::extensions::scan_extensions_in(temp)
+    }
+
+    #[test]
+    fn extension_link_handlers_follow_user_handlers_and_disappear_when_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = r#"[extension]
+id = "browser"
+api = 1
+[[commands]]
+id = "open"
+shell = "echo browser"
+[[link_handlers]]
+schemes = ["http", "https"]
+command = "open"
+"#;
+        for (text, expected) in [
+            ("", 1),
+            (
+                "[[links.handlers]]\nschemes = [\"https\"]\nexec = \"echo custom\"\n",
+                2,
+            ),
+            ("[extensions]\ndisabled = [\"browser\"]\n", 0),
+        ] {
+            let loaded = load_config_from_text_with_extensions(
+                text,
+                Path::new("config.toml"),
+                scan_with(temp.path(), manifest),
+                Vec::new(),
+            );
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.config.link_handlers.len(), expected);
+            if expected == 2 {
+                assert!(matches!(
+                    loaded.config.link_handlers[0].action,
+                    LinkAction::Inline(_)
+                ));
+                assert_eq!(
+                    loaded.config.link_handlers[1].action,
+                    LinkAction::Command("browser.open".into())
+                );
+            }
+        }
     }
 
     const NAVIGATION_MANIFEST: &str = "[extension]\nid = \"vim-rozi\"\napi = 1\n\

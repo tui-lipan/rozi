@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::config::UserCommandAction;
-use crate::state::PaneIdentity;
+use crate::state::{PaneId, PaneIdentity};
 
 pub(crate) fn execute(ctx: &mut Context<AppRoot>, action: &UserCommandAction) -> Update {
     execute_with_env(ctx, action, Vec::new())
@@ -19,6 +19,34 @@ pub(crate) fn execute_with_env(
     action: &UserCommandAction,
     env: Vec<(String, String)>,
 ) -> Update {
+    execute_with_env_from_pane(ctx, action, env, None)
+}
+
+pub(crate) fn execute_with_env_from_pane(
+    ctx: &mut Context<AppRoot>,
+    action: &UserCommandAction,
+    env: Vec<(String, String)>,
+    source: Option<PaneId>,
+) -> Update {
+    let spawn_cwd = match source {
+        Some(id) => crate::pane::lifecycle::find_pane(&ctx.state, id)
+            .and_then(|pane| {
+                if ctx.state.current().remote_host.is_some() {
+                    pane.server_cwd_ref()
+                } else {
+                    pane.local_cwd_ref()
+                }
+            })
+            .map(str::to_string),
+        None => crate::pane::lifecycle::focused_spawn_cwd(&ctx.state),
+    };
+    let local_cwd = match source {
+        Some(_) if ctx.state.current().remote_host.is_some() => None,
+        Some(id) => crate::pane::lifecycle::find_pane(&ctx.state, id)
+            .and_then(|pane| pane.local_cwd_ref())
+            .map(str::to_string),
+        None => crate::pane::lifecycle::focused_local_cwd(&ctx.state),
+    };
     match action {
         // `Exec` needs no session: it starts no PTY, so there is nothing for a session to own.
         UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. } => {}
@@ -42,7 +70,7 @@ pub(crate) fn execute_with_env(
                 keep_open: *keep_open,
                 // `cargo build` means "build the project I am looking at"; without this the command
                 // runs wherever the session server was started.
-                cwd: crate::pane::lifecycle::focused_spawn_cwd(&ctx.state),
+                cwd: spawn_cwd,
                 env,
                 ..PaneIdentity::default()
             };
@@ -73,12 +101,12 @@ pub(crate) fn execute_with_env(
             }
             Update::full()
         }
-        UserCommandAction::Exec { command } => exec_shell(ctx, command, env),
-        UserCommandAction::ExecDirect { argv } => exec_direct(ctx, argv, env),
+        UserCommandAction::Exec { command } => exec_shell(ctx, command, env, local_cwd),
+        UserCommandAction::ExecDirect { argv } => exec_direct(ctx, argv, env, local_cwd),
         UserCommandAction::Popup { command, keep_open } => crate::ops::popup::open(
             ctx,
             command.clone(),
-            None,
+            spawn_cwd,
             None,
             None,
             None,
@@ -97,7 +125,12 @@ pub(crate) fn execute_with_env(
 /// Spawned like a hook - one thread, `command_shell`, null stdio - but unlike a hook it is waited
 /// on, so a non-zero exit can raise a toast. A binding that quietly does nothing when its command
 /// is missing is indistinguishable from a binding that is not wired up at all.
-fn exec_shell(ctx: &mut Context<AppRoot>, command: &str, env: Vec<(String, String)>) -> Update {
+fn exec_shell(
+    ctx: &mut Context<AppRoot>,
+    command: &str,
+    env: Vec<(String, String)>,
+    cwd: Option<String>,
+) -> Update {
     let runner = crate::platform::command::resolve_command_shell(
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -105,15 +138,27 @@ fn exec_shell(ctx: &mut Context<AppRoot>, command: &str, env: Vec<(String, Strin
     let mut argv = vec![runner.program];
     argv.extend(runner.args);
     argv.push(command.to_string());
-    exec_argv(ctx, argv, crate::config::truncate_for_label(command), env)
+    exec_argv(
+        ctx,
+        argv,
+        crate::config::truncate_for_label(command),
+        env,
+        cwd,
+    )
 }
 
-fn exec_direct(ctx: &mut Context<AppRoot>, argv: &[String], env: Vec<(String, String)>) -> Update {
+fn exec_direct(
+    ctx: &mut Context<AppRoot>,
+    argv: &[String],
+    env: Vec<(String, String)>,
+    cwd: Option<String>,
+) -> Update {
     exec_argv(
         ctx,
         argv.to_vec(),
         crate::config::truncate_for_label(&argv.join(" ")),
         env,
+        cwd,
     )
 }
 
@@ -122,6 +167,7 @@ fn exec_argv(
     argv: Vec<String>,
     label: String,
     env: Vec<(String, String)>,
+    cwd: Option<String>,
 ) -> Update {
     let Some((program, args)) = argv.split_first() else {
         crate::pane::pty_events::notify_error(
@@ -135,8 +181,36 @@ fn exec_argv(
     // gets the focused pane's directory only when that pane is local too. Under `--remote` the
     // pane's path names a directory on the session host; handed to a local spawn it would either
     // fail or, where the same path exists here, run in the wrong directory without a word.
-    let cwd = crate::pane::lifecycle::focused_local_cwd(&ctx.state);
-    let mut environment = vec![("ROZI".to_string(), "1".to_string())];
+    let mut environment = vec![
+        (
+            "ROZI_SOURCE_PANE".to_string(),
+            ctx.state
+                .focused_pane()
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "ROZI_SOURCE_SESSION".to_string(),
+            ctx.state
+                .current()
+                .session_instance
+                .as_ref()
+                .map(|instance| instance.as_str().to_string())
+                .unwrap_or_default(),
+        ),
+        ("ROZI".to_string(), "1".to_string()),
+        (
+            "ROZI_PANE".to_string(),
+            ctx.state
+                .focused_pane()
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "ROZI_REMOTE_HOST".to_string(),
+            ctx.state.current().remote_host.clone().unwrap_or_default(),
+        ),
+    ];
     if let Some(path) = ctx.state.control_socket_path.as_deref() {
         environment.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }

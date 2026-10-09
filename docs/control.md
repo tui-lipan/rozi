@@ -241,6 +241,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-ui",
     "capture-wait",
     "command-visibility",
+    "extension-link-handlers",
     "layout-control",
     "pane-control",
     "pane-reveal",
@@ -257,6 +258,9 @@ protocol version, and capabilities of the installed binary. It does not connect 
 
 `schema` is the version of the JSON schema and changes independently of `session_protocol`, which
 only concerns how two rozi binaries talk to each other.
+
+`extension-link-handlers` means installed extensions can contribute
+[link handlers](extensions.md#link-handlers) through their manifest.
 
 `remote-extension-runtime` means the binary can run
 [placed extension processes](extensions.md#run-on-the-session-host), as a client and as a host. Both

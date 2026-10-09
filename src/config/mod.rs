@@ -4,6 +4,7 @@ mod extensions;
 mod file;
 mod input;
 mod keymap;
+mod links;
 mod persist;
 mod rules;
 mod schema;
@@ -20,11 +21,11 @@ pub use extensions::placement::{
 };
 pub use extensions::{
     EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument,
-    ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic, ExtensionListDocument,
-    ExtensionNavigationTargetDiagnostic, ExtensionProvenance, ExtensionServiceDiagnostic,
-    ExtensionSettingValue, ExtensionSettings, ExtensionStatus,
-    ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus, GENERATION_ENV,
-    SETTINGS_ENV,
+    ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic,
+    ExtensionLinkHandlerDiagnostic, ExtensionListDocument, ExtensionNavigationTargetDiagnostic,
+    ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettingValue, ExtensionSettings,
+    ExtensionStatus, ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus,
+    GENERATION_ENV, SETTINGS_ENV,
 };
 pub(crate) use extensions::{
     ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig,

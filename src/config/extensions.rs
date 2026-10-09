@@ -102,6 +102,7 @@ pub struct ExtensionInfo {
     pub status: ExtensionStatus,
     pub commands: Vec<String>,
     pub services: Vec<String>,
+    pub link_handlers: Vec<ExtensionLinkHandlerDiagnostic>,
     /// Public ids of the agent definitions this extension contributes.
     pub agents: Vec<String>,
     /// Namespaced ids of the sidebar tabs this extension contributes.
@@ -123,6 +124,12 @@ pub struct ExtensionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ExtensionLinkHandlerDiagnostic {
+    pub schemes: Vec<String>,
+    pub command: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -228,6 +235,7 @@ impl ExtensionInfo {
 pub(crate) struct DiscoveredExtension {
     pub(crate) info: ExtensionInfo,
     commands: Vec<NamedCommand>,
+    link_handlers: Vec<super::LinkHandler>,
     services: Vec<ServiceConfig>,
     agents: Vec<crate::agent_detection::AgentDefinition>,
     sidebar_tabs: Vec<super::schema::SidebarTab>,
@@ -399,6 +407,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         enabled: false,
         status: ExtensionStatus::Invalid,
         commands: Vec::new(),
+        link_handlers: Vec::new(),
         services: Vec::new(),
         agents: Vec::new(),
         sidebar_tabs: Vec::new(),
@@ -427,6 +436,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
@@ -446,6 +456,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
@@ -466,6 +477,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
@@ -551,6 +563,41 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut commands,
             &mut placed,
         );
+    }
+    let mut link_handlers = Vec::new();
+    for raw in manifest.link_handlers {
+        let schemes: Vec<_> = raw
+            .schemes
+            .into_iter()
+            .map(|scheme| scheme.trim().to_ascii_lowercase())
+            .collect();
+        let command_id = format!("{validation_id}.{}", raw.command);
+        if schemes.is_empty()
+            || schemes
+                .iter()
+                .any(|scheme| !super::links::valid_scheme(scheme))
+        {
+            info.errors
+                .push("link handler needs nonempty valid URI schemes".into());
+            continue;
+        }
+        if !commands.iter().any(|command| {
+            command.id == command_id && !matches!(command.action, UserCommandAction::Send(_))
+        }) {
+            info.errors.push(format!(
+                "link handler command `{}` must name this extension's process command",
+                raw.command
+            ));
+            continue;
+        }
+        info.link_handlers.push(ExtensionLinkHandlerDiagnostic {
+            schemes: schemes.clone(),
+            command: command_id.clone(),
+        });
+        link_handlers.push(super::LinkHandler {
+            schemes,
+            action: super::LinkAction::Command(command_id),
+        });
     }
     let declared_settings = settings::declared(manifest.settings, &mut info.errors);
     info.settings = declared_settings.clone();
@@ -684,6 +731,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     });
     if !id_valid {
         info.commands.clear();
+        info.link_handlers.clear();
         info.services.clear();
         info.agents.clear();
         info.sidebar_tabs.clear();
@@ -738,6 +786,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             info.errors.insert(0, error);
         }
         commands.clear();
+        link_handlers.clear();
         services.clear();
         agents.clear();
         sidebar_tabs.clear();
@@ -779,9 +828,14 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 client_unsupported: platform_error,
             }
         });
+    link_handlers.retain(|handler| match &handler.action {
+        super::LinkAction::Command(id) => commands.iter().any(|command| &command.id == id),
+        _ => false,
+    });
     DiscoveredExtension {
         info,
         commands,
+        link_handlers,
         services,
         agents,
         sidebar_tabs,
@@ -2616,6 +2670,45 @@ mod tests {
         assert_eq!(status("client"), ExtensionStatus::Invalid);
         assert_eq!(status("placed"), ExtensionStatus::Loaded);
     }
+    #[test]
+    fn link_handlers_are_namespaced_process_commands_and_validate_atomically() {
+        let temp = tempfile::tempdir().unwrap();
+        let text = format!(
+            r#"{}
+[[commands]]
+id = "open"
+shell = "echo browser"
+[[commands]]
+id = "send"
+send = "echo danger"
+[[link_handlers]]
+schemes = ["HTTP", "https"]
+command = "open"
+"#,
+            manifest("browser", "1")
+        );
+        let directory = write_manifest(temp.path(), "browser", &text);
+        let scan = scan_extensions_in(temp.path());
+        let info = &scan.entries()[0];
+        assert_eq!(info.status, ExtensionStatus::Loaded);
+        assert_eq!(info.link_handlers[0].schemes, ["http", "https"]);
+        assert_eq!(info.link_handlers[0].command, "browser.open");
+        for invalid in [
+            text.replace("command = \"open\"", "command = \"missing\""),
+            text.replace("command = \"open\"", "command = \"send\""),
+            text.replace("command = \"open\"", "command = \"other.open\""),
+            text.replace("[\"HTTP\", \"https\"]", "[\"bad:\"]"),
+            text.replace("[\"HTTP\", \"https\"]", "[]"),
+        ] {
+            std::fs::write(directory.join("extension.toml"), invalid).unwrap();
+            let contributions =
+                scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
+            assert_eq!(contributions.problem_count, 1);
+            assert!(contributions.commands.is_empty());
+            assert!(contributions.link_handlers.is_empty());
+        }
+    }
+
     #[test]
     fn docking_contributions_are_declarative_namespaced_and_atomic() {
         let temp = tempfile::tempdir().unwrap();

@@ -48,6 +48,21 @@ fn screen(backend: &mut TestBackend<AppRoot>) -> String {
     backend.capture_frame().plain_text()
 }
 
+fn disable_background_commands(backend: &mut TestBackend<AppRoot>) {
+    // Consume CommandLinkReady before clearing the link, so late startup cannot launch host
+    // monitors against the fake hosts these picker tests install.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while backend.state().command_link.is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "startup did not finish"
+        );
+        backend.pump().unwrap();
+        std::thread::yield_now();
+    }
+    backend.state_mut().command_link = None;
+}
+
 #[test]
 fn nothing_to_pick_puts_the_scratch_session_on_enter() {
     on_a_big_stack(|| {
@@ -471,8 +486,7 @@ fn search_filters_only_the_selected_host_or_all() {
     on_a_big_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
-        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
-        backend.state_mut().command_link = None;
+        disable_background_commands(&mut backend);
         {
             let state = backend.state_mut();
             state.config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
@@ -648,8 +662,7 @@ fn colliding_remote_targets_have_distinct_session_tabs_rows_search_and_creation(
             w: 180,
             h: 30,
         });
-        backend.dispatch(Msg::RefreshPaintLayers).unwrap();
-        backend.state_mut().command_link = None;
+        disable_background_commands(&mut backend);
         let alias = RemoteTarget::Alias("workbox".into());
         let url = RemoteTarget::Url {
             user: None,

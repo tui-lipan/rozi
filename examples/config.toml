@@ -527,6 +527,23 @@
 #state = "working"
 #title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }
 
+# Link handlers apply to Ctrl-click and uppercase hint selections. The first matching
+# scheme wins; unmatched links use the system opener. run opens a pane, popup a
+# floating viewer, and exec runs without a pane. Match data is passed in environment
+# variables, never substituted into the shell command.
+[[links.handlers]]
+#schemes = ["http", "https"]
+#run = 'terminal-browser open "$ROZI_URL"'
+#keep_open = false
+# An installed extension can supply this handler automatically. To name its command,
+# replace run with: command = "terminal-browser.open"
+# To reuse a browser, replace run with: exec = 'terminal-browser new-tab "$ROZI_URL"'
+
+[[links.handlers]]
+#schemes = ["file"]
+#run = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
+#keep_open = false
+
 # Extra hint-mode patterns, appended to the built-in URL, path, and Git-SHA detectors.
 # Built-ins win on overlap. Invalid patterns warn and are skipped.
 [[hints]]
@@ -534,6 +551,8 @@
 #pattern = '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
 # Open the match on an uppercase final label character, like a URL.
 #open = false
+# Custom action on an uppercase label; ROZI_HINT contains the full match.
+#on_open = { exec = 'notify-send "Hint" "$ROZI_HINT"' }
 
 [[hints]]
 # UUIDs.

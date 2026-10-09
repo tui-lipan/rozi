@@ -1120,6 +1120,17 @@ pub(crate) fn run_command(
     placed: &crate::config::PlacedCommand,
     extra_env: Vec<(String, String)>,
 ) -> Update {
+    run_command_from_pane(ctx, command, placements, placed, extra_env, None)
+}
+
+pub(crate) fn run_command_from_pane(
+    ctx: &mut Context<AppRoot>,
+    command: &NamedCommand,
+    placements: SharedPlacements,
+    placed: &crate::config::PlacedCommand,
+    extra_env: Vec<(String, String)>,
+    source: Option<crate::state::PaneId>,
+) -> Update {
     let label = command.label.clone().unwrap_or_else(|| command.id.clone());
     let Some(binding) = active_binding(&ctx.state) else {
         crate::pane::pty_events::notify_error(
@@ -1142,7 +1153,20 @@ pub(crate) fn run_command(
             label: label.clone(),
         },
         launch: placed.launch.clone(),
-        cwd: session_cwd(&ctx.state),
+        cwd: match source {
+            Some(id) => crate::pane::lifecycle::find_pane(&ctx.state, id)
+                .and_then(|pane| {
+                    if ctx.state.current().remote_host.is_some() {
+                        pane.server_cwd_ref()
+                    } else {
+                        pane.local_cwd_ref()
+                    }
+                })
+                .map_or(SpawnCwd::Inherit, |path| SpawnCwd::Host {
+                    path: path.to_string(),
+                }),
+            None => session_cwd(&ctx.state),
+        },
         env,
         capture: None,
     };

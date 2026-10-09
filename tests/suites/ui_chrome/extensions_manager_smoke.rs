@@ -1059,6 +1059,7 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
         enabled: true,
         status: rozi::config::ExtensionStatus::Loaded,
         commands: Vec::new(),
+        link_handlers: Vec::new(),
         services: Vec::new(),
         agents: Vec::new(),
         sidebar_tabs: Vec::new(),

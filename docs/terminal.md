@@ -129,7 +129,9 @@ When the pane prints new output, an open search runs again so its results stay a
 The `u` command key starts hint mode. It labels visible URLs, paths with optional line numbers, Git
 commit ids, and your `[[hints]]` patterns, including ones that wrap across lines. Type a lowercase
 label to copy the target, or end the label with an uppercase character to open it when it can be
-opened.
+opened. URL hints use the same handlers as clicked links. A configured `file` handler enables
+path hints; custom patterns can define `on_open` commands. See
+[Link handlers](configuration.md#links-handlers).
 
 ### Copy the last command output
 
@@ -139,9 +141,10 @@ opened.
 
 ## Open links
 
-Hold `Ctrl` and click a visible URL to open it with the system handler. Links that programs mark
+Hold `Ctrl` and click a visible URL to open it with a [configured link handler](configuration.md#links-handlers),
+or the system handler when none matches. Links that programs mark
 explicitly (OSC 8 hyperlinks) also work, and take precedence over URLs detected in plain text.
-rozi shows an error for an unsupported destination instead of passing it to the operating system.
+File URLs and other schemes need a configured handler. rozi shows an error for unsupported destinations.
 
 ## Scrollback
 

@@ -11,6 +11,7 @@ use super::{
 #[derive(Debug, Default)]
 pub(crate) struct ExtensionContributions {
     pub(crate) commands: Vec<NamedCommand>,
+    pub(crate) link_handlers: Vec<crate::config::LinkHandler>,
     pub(crate) services: Vec<ServiceConfig>,
     pub(crate) agents: Vec<crate::agent_detection::AgentDefinition>,
     pub(crate) sidebar_tabs: Vec<SidebarTab>,
@@ -37,6 +38,7 @@ pub(super) fn build(
 ) -> ExtensionContributions {
     scan.apply_disabled(disabled);
     let mut commands = Vec::new();
+    let mut link_handlers = Vec::new();
     let mut services = Vec::new();
     let mut agents = Vec::new();
     let mut sidebar_tabs = Vec::new();
@@ -106,6 +108,7 @@ pub(super) fn build(
                 active_ids.insert(id);
             }
             commands.extend(extension_commands);
+            link_handlers.extend(extension.link_handlers);
             services.extend(extension_services);
             agents.extend(extension.agents);
             sidebar_tabs.extend(extension_tabs);
@@ -136,6 +139,7 @@ pub(super) fn build(
     }
     ExtensionContributions {
         commands,
+        link_handlers,
         services,
         agents,
         sidebar_tabs,

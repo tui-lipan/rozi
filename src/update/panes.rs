@@ -240,14 +240,12 @@ pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) ->
     update
 }
 
-pub(super) fn pane_link_activate(ctx: &mut Context<AppRoot>, event: TerminalLinkEvent) -> Update {
-    match tui_lipan::utils::open_url(&event.uri) {
-        Ok(()) => Update::none(),
-        Err(error) => {
-            crate::pane::pty_events::notify_error(ctx, "Could not open link", error.to_string());
-            Update::full()
-        }
-    }
+pub(super) fn pane_link_activate(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    uri: std::sync::Arc<str>,
+) -> Update {
+    crate::ops::links::open(ctx, id, &uri)
 }
 
 pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Update {

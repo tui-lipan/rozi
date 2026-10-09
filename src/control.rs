@@ -109,6 +109,7 @@ impl ApiDescription {
                 CAPTURE_UI_CAPABILITY,
                 CAPTURE_WAIT_CAPABILITY,
                 COMMAND_VISIBILITY_CAPABILITY,
+                "extension-link-handlers",
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PANE_REVEAL_CAPABILITY,

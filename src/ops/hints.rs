@@ -39,11 +39,15 @@ pub fn scan_snapshot_with_custom(
     scan.scan_wrapped(text, wrapped_rows)
 }
 
-fn can_open(kind: HintKind, custom: &[crate::config::HintConfig]) -> bool {
+fn can_open(kind: HintKind, config: &crate::config::Config) -> bool {
     match kind {
         HintKind::Url => true,
-        HintKind::Custom(tag) => custom.get(usize::from(tag)).is_some_and(|hint| hint.open),
-        HintKind::Path | HintKind::GitSha => false,
+        HintKind::Custom(tag) => config
+            .hints
+            .get(usize::from(tag))
+            .is_some_and(|hint| hint.open || hint.on_open.is_some()),
+        HintKind::Path => super::links::handler(&config.link_handlers, "file").is_some(),
+        HintKind::GitSha => false,
     }
 }
 
@@ -129,17 +133,40 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
         return (true, Update::full());
     }
     let matched = state.matches[selected].clone();
-    let open = ch.is_ascii_uppercase() && can_open(matched.kind, &ctx.state.config.hints);
-    let result = if open {
-        tui_lipan::utils::open_url(&matched.text).map_err(|err| err.to_string())
-    } else {
-        ctx.clipboard()
-            .copy(&matched.text)
-            .map_err(|err| err.to_string())
-    };
-    let copied = result.is_ok() && !open;
+    let open =
+        (ch.is_ascii_uppercase() || key.mods.shift) && can_open(matched.kind, &ctx.state.config);
+    if open {
+        // Leave hint mode before launching: a new pane or popup must retain its new focus.
+        let mut update = exit(ctx);
+        let opened = match matched.kind {
+            HintKind::Custom(tag) => {
+                let action = ctx
+                    .state
+                    .config
+                    .hints
+                    .get(usize::from(tag))
+                    .and_then(|hint| hint.on_open.clone());
+                match action {
+                    Some(action) => {
+                        super::links::execute(ctx, target, &action, &matched.text, None, None)
+                    }
+                    None => super::links::open(ctx, target, &matched.text),
+                }
+            }
+            HintKind::Path => super::links::open_path(ctx, target, &matched.text),
+            _ => super::links::open(ctx, target, &matched.text),
+        };
+        // exit() only requests redraw/focus synchronously; preserve the opening command.
+        update.command = opened.command;
+        return (true, update);
+    }
+    let result = ctx
+        .clipboard()
+        .copy(&matched.text)
+        .map_err(|err| err.to_string());
+    let copied = result.is_ok();
     match result {
-        // Success needs no toast: an opened URL raises the browser and a copy flashes below.
+        // A successful copy flashes below.
         Ok(()) => {}
         Err(error) => {
             crate::pane::pty_events::notify_error(ctx, "Hint failed", error);
@@ -229,6 +256,7 @@ mod tests {
         let custom = [crate::config::HintConfig {
             pattern: regex_lite::Regex::new(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b").unwrap(),
             open: true,
+            on_open: None,
         }];
         let found = scan_snapshot_with_custom(
             "see 10.0.0.1 then https://example.com and deadbeef",

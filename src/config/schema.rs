@@ -1273,6 +1273,7 @@ pub struct Config {
     pub sidebar: SidebarConfig,
     pub rules: Vec<RuleConfig>,
     pub hints: Vec<HintConfig>,
+    pub link_handlers: Vec<LinkHandler>,
     pub hooks: Vec<HookConfig>,
     pub commands: Vec<NamedCommand>,
     pub services: Vec<ServiceConfig>,
@@ -1545,15 +1546,30 @@ impl FloatPosition {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkHandler {
+    pub schemes: Vec<String>,
+    pub action: LinkAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkAction {
+    Inline(UserCommandAction),
+    Command(String),
+}
+
 #[derive(Clone, Debug)]
 pub struct HintConfig {
     pub pattern: regex_lite::Regex,
     pub open: bool,
+    pub on_open: Option<LinkAction>,
 }
 
 impl PartialEq for HintConfig {
     fn eq(&self, other: &Self) -> bool {
-        self.open == other.open && self.pattern.as_str() == other.pattern.as_str()
+        self.open == other.open
+            && self.on_open == other.on_open
+            && self.pattern.as_str() == other.pattern.as_str()
     }
 }
 
@@ -2235,6 +2251,7 @@ impl Default for Config {
             sidebar: SidebarConfig::default(),
             rules: Vec::new(),
             hints: Vec::new(),
+            link_handlers: Vec::new(),
             hooks: Vec::new(),
             commands: Vec::new(),
             services: Vec::new(),

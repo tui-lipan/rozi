@@ -66,6 +66,15 @@ key = "b"
 # when it applies, and takes it out with `rozi hide-command`.
 hidden = false
 
+# Optional: open clicked links and uppercase hints through a process command.
+[[commands]]
+id = "open-url"
+exec = ["python", "{extension_dir}/bin/git_tools.py", "open-url"]
+
+[[link_handlers]]
+schemes = ["http", "https"]
+command = "open-url"
+
 # Optional: settings this extension understands, at their defaults. Users override them in
 # [extensions.git-tools]; the merged result arrives as JSON in ROZI_EXTENSION_CONFIG.
 [settings]
@@ -114,6 +123,11 @@ entries = [
 - Use `shell = "…"` only when shell syntax is intentional. Never put a shell command string in
   `exec`.
 - A command declares exactly one of `exec`, `shell`, or `send`.
+- `[[link_handlers]]` takes nonempty URI `schemes` and a local `command` ID naming a process
+  command in the same manifest. It invokes that command with the context in
+  `docs/configuration.md#links-handlers`, retaining settings, generation, and placement.
+  User handlers precede extension declarations. Invalid handlers invalidate the whole extension.
+  This requires the `extension-link-handlers` capability from `rozi api describe`.
 - A service declares exactly one of `exec` or `shell`; restart is `on-failure` (default), `always`,
   or `never`.
 - `{extension_dir}` is the only substitution in direct argv, and it is also substituted into a

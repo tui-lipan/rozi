@@ -104,10 +104,19 @@ pub(super) fn build_hints(raw: Vec<HintFileConfig>, warnings: &mut Vec<String>) 
                 warnings.push("Ignored hint with an empty pattern".to_string());
                 return None;
             }
+            let on_open = match hint.on_open {
+                Some(table) => Some(super::links::parse_open_action(
+                    table,
+                    &format!("hint `{pattern}` on_open"),
+                    warnings,
+                )?),
+                None => None,
+            };
             match Regex::new(&pattern) {
                 Ok(regex) => Some(HintConfig {
                     pattern: regex,
                     open: hint.open,
+                    on_open,
                 }),
                 Err(err) => {
                     warnings.push(format!(

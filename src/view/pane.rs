@@ -1266,9 +1266,12 @@ pub(crate) fn pane_element(
                     .key_handler(move |key| Some(Msg::PaneKey(id, key))),
             );
         if !hinting {
-            terminal_widget = terminal_widget
-                .on_link_activate(ctx.link().callback(Msg::PaneLinkActivate))
-                .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+            terminal_widget =
+                terminal_widget
+                    .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {
+                        Msg::PaneLinkActivate(id, event.uri)
+                    }))
+                    .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
         }
     }
     if let Some(selection) = copy_mode_selection(ctx, id) {

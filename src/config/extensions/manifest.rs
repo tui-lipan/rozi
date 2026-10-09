@@ -9,6 +9,8 @@ pub(super) struct ExtensionManifestFile {
     #[serde(default)]
     pub(super) commands: Vec<ExtensionCommandFile>,
     #[serde(default)]
+    pub(super) link_handlers: Vec<ExtensionLinkHandlerFile>,
+    #[serde(default)]
     pub(super) services: Vec<ExtensionServiceFile>,
     /// Agent definitions this extension teaches Rozi. Same format as `config.toml`'s
     /// `[[agents]]`; ids are namespaced `<extension>.<id>` like commands and services are.
@@ -125,4 +127,11 @@ pub(crate) struct UserExtensionConfig {
     pub(crate) disabled: Vec<String>,
     #[serde(flatten)]
     pub(crate) settings: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtensionLinkHandlerFile {
+    pub(super) schemes: Vec<String>,
+    pub(super) command: String,
 }

@@ -30,6 +30,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "agents",
     "rules",
     "hints",
+    "links",
     "hooks",
     "commands",
     "services",
@@ -288,7 +289,30 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_sidebar(table, unknown);
     collect_workbar(table, unknown);
     collect_array_tables(table, "", "rules", RULE_KEYS, unknown);
-    collect_array_tables(table, "", "hints", &["pattern", "open"], unknown);
+    collect_array_tables(table, "", "hints", &["pattern", "open", "on_open"], unknown);
+    if let Some(hints) = table.get("hints").and_then(toml::Value::as_array) {
+        for (index, hint) in hints.iter().enumerate() {
+            if let Some(hint) = hint.as_table() {
+                collect_named_table(
+                    hint,
+                    &format!("hints[{index}]"),
+                    "on_open",
+                    &["command", "run", "popup", "exec", "keep_open"],
+                    unknown,
+                );
+            }
+        }
+    }
+    collect_named_table(table, "", "links", &["handlers"], unknown);
+    if let Some(links) = named_table(table, "links") {
+        collect_array_tables(
+            links,
+            "links",
+            "handlers",
+            &["schemes", "command", "run", "popup", "exec", "keep_open"],
+            unknown,
+        );
+    }
     collect_array_tables(table, "", "hooks", &["event", "run"], unknown);
     collect_array_tables(table, "", "commands", COMMAND_KEYS, unknown);
     collect_services(table, unknown);

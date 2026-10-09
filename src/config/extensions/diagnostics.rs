@@ -162,6 +162,14 @@ pub(crate) fn report_sections(
     );
     push_section(
         &mut sections,
+        "Link handlers",
+        info.link_handlers
+            .iter()
+            .map(|handler| info_row(&handler.schemes.join(", "), handler.command.clone()))
+            .collect(),
+    );
+    push_section(
+        &mut sections,
         "Navigation targets",
         info.navigation_targets
             .iter()
@@ -359,6 +367,7 @@ mod tests {
             enabled: true,
             status: ExtensionStatus::Loaded,
             commands: vec!["tasks.run".to_string()],
+            link_handlers: Vec::new(),
             services: vec!["tasks.watch".to_string()],
             agents: vec!["tasks.worker".to_string()],
             sidebar_tabs: vec!["tasks.list".to_string()],

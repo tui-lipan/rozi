@@ -1,7 +1,7 @@
 # Extensions
 
 An extension adds features to `rozi` without changing `rozi` itself. It can contribute commands,
-long-running services, sidebar tabs, coding-agent definitions, and suggested keybindings, and it
+long-running services, link handlers, sidebar tabs, coding-agent definitions, and suggested keybindings, and it
 takes settings from your `config.toml`. The first half of this page is for installing and managing
 extensions; the second half is for writing them.
 
@@ -32,6 +32,18 @@ paths. It does not make untrusted code safe.
 
 `rozi` never loads extensions from a project-local directory such as `.rozi/extensions`, so opening
 a checkout does not run its code.
+
+### Open links through an extension
+
+An extension may supply link handlers that take effect when it loads. The
+[terminal-browser extension](https://github.com/tui-lipan/rozi-terminal-browser) opens HTTP and HTTPS
+links in a browser pane and can reuse browsers in the current session. Install it through the CLI
+or the extension install prompt; no link-handler configuration is required.
+
+`Ctrl`-clicks and uppercase hint labels use the same handlers. Your explicit
+[`[[links.handlers]]`](configuration.md#links-handlers) take precedence. Disabling or removing an
+extension removes its handlers along with its commands. The extension report lists its schemes
+and command IDs so you can review which links it handles before installation.
 
 ### Discover public extensions
 
@@ -813,6 +825,35 @@ An extension can include `[[agents]]` entries in the same format as
 state. Each agent ID is namespaced as `<extension-id>.<id>`, so an extension can add an agent but
 cannot replace a built-in one.
 
+### Link handlers
+
+Declare `[[link_handlers]]` to route terminal clicks and uppercase hint selections to one of your
+extension's commands:
+
+```toml
+[[commands]]
+id = "open"
+exec = ["python3", "{extension_dir}/bin/open.py"]
+
+[[link_handlers]]
+schemes = ["http", "https"]
+command = "open"
+```
+
+`command` is the local command ID, not a namespaced ID. It must name a process command in this
+manifest; `send` commands and commands belonging to another extension are invalid. Empty or invalid
+URI schemes invalidate the whole extension. Matching ignores case. User handlers precede extension
+handlers; extensions are ordered by installation directory name and handlers by declaration order.
+
+The command receives the link context documented in [Link handlers](configuration.md#links-handlers),
+including `ROZI_URL`, `ROZI_FILE`, `ROZI_HINT`, `ROZI_SOURCE_PANE`, and `ROZI_SOURCE_SESSION`.
+Its ordinary extension settings and generation fencing still apply. A command placed on the active
+session receives the same context on that host and starts in the source pane's directory.
+Command references resolve at invocation time, so disabling, removal, or invalid-manifest reload
+cannot leave a callable stale handler. These are static declarations; no extension runs on mouse
+movement or terminal rendering. Check `rozi api describe` for `extension-link-handlers` before
+relying on this additive extension API 1 feature.
+
 ### Runtime environment
 
 Every extension command and service receives:
@@ -821,6 +862,7 @@ Every extension command and service receives:
 | --- | --- |
 | `ROZI_EXTENSION` | The extension's manifest ID. |
 | `ROZI_EXTENSION_DIR` | Absolute installation directory. |
+| `ROZI_SOURCE_PANE`, `ROZI_SOURCE_SESSION` | Source pane and session instance for a client command; link handlers also receive the [link context](configuration.md#links-handlers). |
 | `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object; `{}` when none are declared. |
 | `ROZI_EXTENSION_GENERATION` | Opaque token identifying the currently loaded extension. |
 | `ROZI_BIN` | The running `rozi` executable, when available. |

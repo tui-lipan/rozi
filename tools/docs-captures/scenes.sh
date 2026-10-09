@@ -99,7 +99,8 @@ sleep:700
 mouse:drag,130,20
 sleep:700
 mouse:up,130,20
-sleep:700" "$sidebar_visibility"
+sleep:700
+run:rozi capture-ui --render png --output '$preview/sidebar-body-transfer-release.png' >/dev/null" "$sidebar_visibility"
 PROFILE=web scene sidebar-manager "$focus" 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-manager-compact 80x24 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"

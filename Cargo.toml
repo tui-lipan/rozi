@@ -237,3 +237,11 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
+
+[patch.crates-io]
+# Temporary until the next tui-lipan release includes the terminal focus-report fix.
+# Session replay can enable focus reporting after the pane already owns keyboard focus.
+# Pin the reviewed upstream fix so CI and installed Git builds send focus-in without a click.
+# Replace this patch with the released version before publishing rozi to crates.io, where
+# Cargo removes patches, and remove the matching deny.toml Git source allowance.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "b1bd62448d28edfce8fb1cf38767b6d004981521" }

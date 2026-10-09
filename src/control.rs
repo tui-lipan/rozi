@@ -1776,6 +1776,9 @@ pub struct SpanImage {
     /// it first, so this can be less than what the program sent.
     pub pixel_width: u32,
     pub pixel_height: u32,
+    /// Stretch pixels to their cell box, preserving terminal tile coverage across capture fonts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fill_cell_box: bool,
     /// Absent when the image shows in every cell of its area. Otherwise one entry per row of the
     /// area, each the `[x, width]` column ranges of that row still showing it; whatever is drawn
     /// over an image, such as an overlay or another pane, hides it.

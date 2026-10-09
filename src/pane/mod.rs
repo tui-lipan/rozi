@@ -171,10 +171,10 @@ use tui_lipan::prelude::*;
 
 /// Decoded Kitty graphics retained by one pane parser.
 ///
-/// `tui-lipan` defaults to 96 MiB per screen, which is appropriate for a standalone terminal but
-/// multiplies by pane count across the session server and attached clients in Rozi. Thirty-two MiB
-/// keeps several full-screen plots while bounding each parser independently.
-pub(crate) const PANE_IMAGE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+/// Partial-frame producers retain a base image, toolbar tiles, and overlapping patches.
+/// Match terminal-browser's 200 MiB retention budget so it can compact its own patches before
+/// the parser evicts images the producer still expects on screen. Allocation remains on demand.
+pub(crate) const PANE_IMAGE_BUDGET_BYTES: usize = 200 * 1024 * 1024;
 
 /// Build a terminal grid without crossing Alacritty's next history allocation boundary.
 ///
@@ -1347,8 +1347,42 @@ mod tests {
     }
 
     #[test]
+    fn partial_frame_images_keep_the_base_and_toolbar_until_the_producer_compacts() {
+        use base64::Engine as _;
+
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, 2048, 2048);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_compression(png::Compression::Fast);
+        encoder.set_filter(png::Filter::NoFilter);
+        let mut writer = encoder.write_header().expect("png header");
+        writer
+            .write_image_data(&[0, 0, 0, 255].repeat(2048 * 2048))
+            .expect("png data");
+        writer.finish().expect("png end");
+        let payload = base64::engine::general_purpose::STANDARD.encode(png);
+        let mut pane = TerminalPane::new(100);
+        pane.process_server_output(b"\x1b_Ga=T,f=32,s=1,v=1,i=100000,z=1,C=1,q=2;AAAA/w==\x1b\\");
+        for (id, z) in [(1, 0), (2, 2)] {
+            pane.process_server_output(
+                format!("\x1b_Ga=T,f=100,i={id},z={z},C=1,q=2;{payload}\x1b\\").as_bytes(),
+            );
+        }
+        let ids: Vec<_> = pane
+            .snapshot()
+            .images
+            .iter()
+            .map(|placement| placement.image_id)
+            .collect();
+        assert_eq!(
+            ids,
+            [1, 100000, 2],
+            "the 32 MiB limit used to evict the persistent toolbar tile"
+        );
+    }
+
+    #[test]
     fn client_image_budget_survives_server_backend_rebinds() {
-        assert_eq!(PANE_IMAGE_BUDGET_BYTES, 32 * 1024 * 1024);
         let mut pane = TerminalPane::new(100);
         pane.set_image_budget(4);
 

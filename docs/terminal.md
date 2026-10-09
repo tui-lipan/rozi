@@ -186,8 +186,9 @@ Limits:
 
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate it.
-- The session server and each attached client keep up to 32 MiB of image data per pane, evicting
-  old images when needed. A client that attaches receives the retained images.
+- The session server and each attached client keep up to 200 MiB of image data per pane, allocated as needed,
+  evicting old images when needed. This allows programs that update parts of a frame to retain
+  their base image, toolbar tiles, and patches. A client that attaches receives the retained images.
 - Remote panes send image data inline, because the local client cannot read a file path on the
   server.
 - In a session that may have several clients, rozi refuses image transfers through temporary files

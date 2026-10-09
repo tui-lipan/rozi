@@ -267,11 +267,15 @@ fn an_image_is_stored_once_however_many_frames_show_it() {
     while let Some(step) = replay.step().unwrap() {
         if let ReplayStep::Frame { .. } = step {
             frames += 1;
+            assert!(replay.frame().unwrap().images[0].fill_cell_box);
             let id = replay.frame().unwrap().images[0].id.clone().unwrap();
             assert_eq!(id, stored[0].id);
             let decoded = &replay.frame_images().unwrap()[&id];
             assert_eq!((decoded.width, decoded.height), (20, 20));
             assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
+            let recorded = replay.frame().unwrap().clone();
+            let captured = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+            assert!(captured.images[0].fill_cell_box);
         }
     }
     assert_eq!(frames, 5);
@@ -981,6 +985,7 @@ fn the_images_of_one_frame_decode_within_one_budget() {
             height: 1,
             pixel_width: 64,
             pixel_height: 64,
+            fill_cell_box: false,
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),
@@ -1029,6 +1034,7 @@ fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
             height: 1,
             pixel_width: 1,
             pixel_height: 1,
+            fill_cell_box: false,
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),

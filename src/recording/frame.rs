@@ -111,6 +111,7 @@ pub fn captured_frame(frame: &SpanFrame, images: &HashMap<String, DecodedImage>)
             };
             let mut captured =
                 CapturedImage::new(area, pixels.width, pixels.height, pixels.rgba.clone());
+            captured.fill_cell_box = image.fill_cell_box;
             if let Some(visible) = &image.visible {
                 captured.visible.fill(false);
                 for (row, ranges) in visible.iter().enumerate().take(usize::from(image.height)) {

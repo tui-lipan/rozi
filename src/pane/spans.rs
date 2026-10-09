@@ -237,6 +237,7 @@ fn span_image(
         height: area.h,
         pixel_width: image.width,
         pixel_height: image.height,
+        fill_cell_box: image.fill_cell_box,
         visible,
         png_base64,
         id: None,
@@ -277,8 +278,14 @@ fn shown_pixels(image: &CapturedImage, (frame_w, frame_h): (u16, u16)) -> Option
     // As tui-lipan fits an image: the largest size that keeps its shape, rounded, at least a pixel.
     let (box_w, box_h) = (u64::from(area.w) * cell_w, u64::from(area.h) * cell_h);
     let ratio = (box_w as f64 / width as f64).min(box_h as f64 / height as f64);
-    let fitted_w = ((width as f64 * ratio).round() as u64).clamp(1, box_w);
-    let fitted_h = ((height as f64 * ratio).round() as u64).clamp(1, box_h);
+    let (fitted_w, fitted_h) = if image.fill_cell_box {
+        (box_w, box_h)
+    } else {
+        (
+            ((width as f64 * ratio).round() as u64).clamp(1, box_w),
+            ((height as f64 * ratio).round() as u64).clamp(1, box_h),
+        )
+    };
     // The cells source pixel `at` of `source` covers once drawn `drawn` wide, in cells of `cell`.
     let cells = |at: u64, source: u64, drawn: u64, cell: u64, count: u16| {
         let first = at * drawn / source / cell;

@@ -222,13 +222,13 @@ segment.
 
 The sidebar holds tabs for agent activity, panes, sessions, files, Git changes, and worktrees.
 Toggle it with `Ctrl+A`, then `b`. rozi remembers its width, tab order, and panel split when you
-change them with the mouse or keys. To choose where it sits and whether it opens at startup:
+change them with the mouse or keys. It remembers the last shown dock combination on exit.
+Enable automatic opening of that combination at startup, or leave it hidden until you toggle it:
 
 ```toml
 [sidebar]
-visible = true
-position = "right"
-width = 36
+startup = true
+layout = { right = { width = 36, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
 tab_style = "round"
 ```
 
@@ -340,9 +340,8 @@ right = ["layout", "clock", "session"]
 clock_format = "%H:%M"
 
 [sidebar]
-visible = true
-position = "right"
-width = 34
+startup = true
+layout = { right = { width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
 tab_style = "round"
 
 [animations]

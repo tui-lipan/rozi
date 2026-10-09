@@ -77,7 +77,7 @@ fn animated_titles_update_live_labels_and_preserve_full_refresh_fallbacks() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = TestBackend::new(crate::AppRoot::default());
-            backend.state_mut().sidebar_visible = false;
+            backend.state_mut().sidebar.hide_all();
             backend.state().sidebar_slide.set(0.0);
             let epoch = backend.state().runtime_epoch;
             let target = backend.state().current().focused_pane.unwrap();
@@ -112,12 +112,12 @@ fn animated_titles_update_live_labels_and_preserve_full_refresh_fallbacks() {
                 .collect();
             assert!(title.starts_with("icon new title"), "{title}");
             assert!(title.ends_with(" [log]"), "{title}");
-            backend.state_mut().sidebar_visible = true;
+            backend.state_mut().sidebar.shown = [true, false];
             assert_eq!(
                 backend.update_level(message("sidebar sees this")).unwrap(),
                 tui_lipan::UpdateLevel::Full
             );
-            backend.state_mut().sidebar_visible = false;
+            backend.state_mut().sidebar.hide_all();
             backend.state().sidebar_slide.set(0.5);
             assert_eq!(
                 backend.update_level(message("closing sidebar")).unwrap(),

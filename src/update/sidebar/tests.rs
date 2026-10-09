@@ -12,18 +12,6 @@ fn row(text: &str) -> SidebarCommandRow {
     }
 }
 
-#[test]
-fn unsplit_reorder_keeps_the_saved_panel_boundary() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let configured = vec![vec![id("agents")], vec![id("panes"), id("sessions")]];
-    let displayed = vec![vec![id("panes"), id("agents"), id("sessions")]];
-
-    assert_eq!(
-        persisted_panel_ids(displayed, &configured, false),
-        vec![vec![id("panes")], vec![id("agents"), id("sessions")]]
-    );
-}
-
 /// A command tab describes the project in front of you, so it has to notice a `cd`. Waiting out the
 /// poll interval would leave it describing the previous directory for up to half a minute, and a
 /// poll already running was launched against the old one.
@@ -34,7 +22,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
         let id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.config.sidebar.tabs = vec![SidebarTab::Command {
                 name: id.clone(),
                 label: "Rows".to_string(),
@@ -166,65 +154,6 @@ fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
     });
 }
 
-/// A tab whose extension is still installed keeps its spot even though this load has no such tab:
-/// disabling an extension, or shipping a broken update, must not quietly rewrite the arrangement
-/// the user dragged into place.
-#[test]
-fn persisting_keeps_placements_for_installed_extensions_and_drops_removed_ones() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
-    let configured = vec![
-        vec![id("panes")],
-        vec![
-            id("git-tools.agents"),
-            id("sessions"),
-            id("gone-tools.tasks"),
-        ],
-    ];
-    // What is on screen this run: neither extension tab exists, one because it is disabled and one
-    // because the extension was deleted.
-    let displayed = vec![vec![id("panes")], vec![id("sessions")]];
-
-    assert_eq!(
-        retain_absent_extension_tabs(displayed, &configured, &installed),
-        vec![
-            vec![id("panes")],
-            // Reinserted at the index it held, so re-enabling puts the tab back where it was.
-            vec![id("git-tools.agents"), id("sessions")]
-        ]
-    );
-}
-
-/// Collapsing the split leaves fewer panels than the saved layout had; a retained tab folds into the
-/// last one rather than being dropped with the panel that used to hold it.
-#[test]
-fn retained_placements_survive_a_panel_disappearing() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let installed: std::collections::HashSet<_> = ["git-tools".to_string()].into_iter().collect();
-    let configured = vec![vec![id("panes")], vec![id("git-tools.agents")]];
-
-    assert_eq!(
-        retain_absent_extension_tabs(vec![vec![id("panes")]], &configured, &installed),
-        vec![vec![id("panes"), id("git-tools.agents")]]
-    );
-}
-
-/// Only namespaced ids are retained. A bare name that no longer resolves is a user's own stale tab,
-/// and rearranging the sidebar is the right moment to let it go.
-#[test]
-fn a_bare_unknown_tab_is_not_retained() {
-    let id = |name: &str| crate::config::SidebarTabId::new(name);
-    let configured = vec![vec![id("panes"), id("removed")]];
-    assert_eq!(
-        retain_absent_extension_tabs(
-            vec![vec![id("panes")]],
-            &configured,
-            &std::collections::HashSet::new()
-        ),
-        vec![vec![id("panes")]]
-    );
-}
-
 fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
     crate::session::discovery::DiscoveredSession {
         name: name.to_string(),
@@ -274,7 +203,7 @@ fn show_files_tab(backend: &mut TestBackend<AppRoot>) {
     };
     let id = tab.id();
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].tabs = vec![id.clone()];
     state.sidebar.panels[0].active_tab = Some(id);
     state.config.sidebar.tabs = vec![tab];
@@ -328,7 +257,7 @@ fn tree_refresh_loop_arms_once_and_disarms_when_hidden() {
             "repeated updates do not fork the chain"
         );
 
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
         backend
             .dispatch(crate::Msg::SidebarTreeRefresh { epoch })
             .expect("hidden tick dispatches");
@@ -357,7 +286,7 @@ fn open_sessions_tab_unswept(backend: &mut TestBackend<AppRoot>, epoch: u64) {
         "settle the mount with `settled_backend` before disarming the loop"
     );
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
     state.sidebar.sessions_epoch = epoch;
     state.command_link = None;
@@ -814,13 +743,13 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             state.sidebar.sessions_epoch = 10;
         }
         let stale = vec![discovered("old")];
 
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
         backend.state_mut().sidebar.invalidate_sessions();
         backend
             .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -831,7 +760,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
             .expect("stale close result");
         assert!(backend.state().sidebar.sessions.is_empty());
 
-        backend.state_mut().sidebar_visible = true;
+        backend.state_mut().sidebar.shown = [true, false];
         backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         backend.state_mut().sidebar.invalidate_sessions();
         backend
@@ -1021,7 +950,7 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let id = backend
@@ -1092,7 +1021,7 @@ fn new_pane_row_spawns_on_the_named_workspace() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             // Empty but active, so the group still lists (heading + New pane) and the spawn has
             // nothing to split from.
@@ -1152,7 +1081,7 @@ fn a_sidebar_spawn_ends_a_split_drag_first() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let index = backend
@@ -1179,7 +1108,7 @@ fn a_sidebar_close_ends_a_split_drag_first() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let index = backend
@@ -1219,7 +1148,7 @@ fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         }
         let pane_row = 1;
@@ -1324,7 +1253,7 @@ fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             // Simulate a session switch: epoch advanced, old loop's armed epoch left behind.
             state.sidebar.sessions_epoch = 99;
@@ -1363,7 +1292,7 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
                 "winvm".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
         }
         backend
@@ -1433,7 +1362,7 @@ fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
         }
         backend
@@ -1457,7 +1386,7 @@ fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
             // Hide the sidebar so the recurring sweep stops replacing this fixed row list with
             // whatever sessions happen to be running on the machine the test runs on. Row
             // activation reads the active tab, not visibility, so the rows still resolve.
-            state.sidebar_visible = false;
+            state.sidebar.hide_all();
         }
 
         // The ✕ on the current session's row: arm, then confirm.
@@ -1506,7 +1435,7 @@ fn a_connected_host_is_still_swept_after_a_probe_fails() {
                 "winvm".to_string(),
                 crate::config::RemoteHostConfig::default(),
             );
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             state.sidebar.sessions_epoch = 7;
         }
@@ -1986,7 +1915,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
         let id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(id.clone());
             state.sidebar.command_epoch = 8;
             state.sidebar.command_in_flight.insert(id.clone(), 7);
@@ -2035,7 +1964,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
         }
         for (visible, epoch, active) in [(false, 6, "rows"), (true, 5, "rows"), (true, 6, "other")]
         {
-            backend.state_mut().sidebar_visible = visible;
+            backend.state_mut().sidebar.shown = [visible, false];
             backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new(active));
             backend
                 .dispatch(crate::Msg::SidebarCommandPoll {
@@ -2047,7 +1976,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
         }
 
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.sidebar.panels[0].active_tab = Some(id.clone());
         state.sidebar.command_in_flight.insert(id.clone(), 5);
         backend
@@ -2057,7 +1986,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
             })
             .expect("overlap guard");
         assert_eq!(backend.state().sidebar.command_in_flight.get(&id), Some(&5));
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
     });
 }
 
@@ -2069,7 +1998,7 @@ fn sessions_and_command_panels_refresh_together() {
         let command_id = SidebarTabId::new("rows");
         {
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.config.sidebar.tabs = vec![
                 SidebarTab::Sessions,
                 SidebarTab::Panes,
@@ -2090,6 +2019,7 @@ fn sessions_and_command_panels_refresh_together() {
                     ..Default::default()
                 },
                 crate::state::SidebarPanelState {
+                    home: 1,
                     tabs: vec![SidebarTabId::new("panes"), command_id.clone()],
                     active_tab: Some(SidebarTabId::new("panes")),
                     ..Default::default()
@@ -2113,7 +2043,7 @@ fn sessions_and_command_panels_refresh_together() {
                     .contains_key(&command_id),
             "the command panel must start even while Sessions is visible"
         );
-        backend.state_mut().sidebar_visible = false;
+        backend.state_mut().sidebar.hide_all();
     });
 }
 
@@ -2134,7 +2064,7 @@ fn focused_sidebar_backend(tabs: Vec<SidebarTab>) -> TestBackend<AppRoot> {
     session.connection = crate::state::ConnectionState::Connected;
     session.pending_session_attach = None;
     state.config.animations.enabled = false;
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.sidebar.panels[0].tabs = tabs.iter().map(SidebarTab::id).collect();
     state.sidebar.panels[0].active_tab = tabs.first().map(SidebarTab::id);
     state.config.sidebar.tabs = tabs;
@@ -2186,77 +2116,80 @@ fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
 }
 
 /// Every modified arrow in the sidebar has an `hjkl` twin. Shifted letters arrive uppercase with
-/// `shift` set, and Ctrl+Shift letters in either case, so both spellings are exercised.
+/// `shift` set; Alt directions use the same spatial arrangement as the arrows.
 #[test]
 fn modified_vim_keys_mirror_the_modified_arrows() {
     on_test_thread(|| {
         let _config = crate::test_support::lock_config_file();
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Activity, SidebarTab::Panes]);
-        assert_eq!(backend.state().sidebar.panels.len(), 2, "two panels");
-        let ctrl_shift = KeyMods {
-            ctrl: true,
-            shift: true,
+        assert_eq!(
+            backend.state().config.sidebar.layout.left.panel_count,
+            2,
+            "two panels"
+        );
+        let alt = KeyMods {
+            alt: true,
             ..KeyMods::NONE
         };
 
-        let width = backend.state().config.sidebar.width;
+        let width = backend.state().config.sidebar.layout.left.width;
         send_sidebar_key(&mut backend, KeyCode::Char('L'), KeyMods::SHIFT);
         assert_eq!(
-            backend.state().config.sidebar.width,
+            backend.state().config.sidebar.layout.left.width,
             width + 2,
             "Shift+l widens"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('H'), KeyMods::SHIFT);
         assert_eq!(
-            backend.state().config.sidebar.width,
+            backend.state().config.sidebar.layout.left.width,
             width,
             "Shift+h narrows"
         );
 
-        let ratio = backend.state().config.sidebar.split_ratio;
+        let ratio = backend.state().config.sidebar.layout.left.panels[0].weight;
         send_sidebar_key(&mut backend, KeyCode::Char('J'), KeyMods::SHIFT);
         assert!(
-            backend.state().config.sidebar.split_ratio > ratio,
+            backend.state().config.sidebar.layout.left.panels[0].weight > ratio,
             "Shift+j moves the split down"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('K'), KeyMods::SHIFT);
         assert!(
-            (backend.state().config.sidebar.split_ratio - ratio).abs() < 0.001,
+            (backend.state().config.sidebar.layout.left.panels[0].weight - ratio).abs() < 0.001,
             "Shift+k moves it back"
         );
 
         send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::CTRL);
         assert_eq!(
-            backend.state().sidebar.active_panel,
+            backend.state().sidebar.active_panel_index(),
             1,
             "Ctrl+j focuses the lower panel"
         );
         send_sidebar_key(&mut backend, KeyCode::Char('k'), KeyMods::CTRL);
         assert_eq!(
-            backend.state().sidebar.active_panel,
+            backend.state().sidebar.active_panel_index(),
             0,
             "Ctrl+k focuses the upper panel"
         );
 
         let activity = SidebarTab::Activity.id();
-        send_sidebar_key(&mut backend, KeyCode::Char('L'), ctrl_shift);
+        send_sidebar_key(&mut backend, KeyCode::Char('l'), alt);
         assert_eq!(
             backend.state().sidebar.panels[0].tabs.get(1),
             Some(&activity),
-            "Ctrl+Shift+l reorders right"
+            "Alt+l reorders right"
         );
-        send_sidebar_key(&mut backend, KeyCode::Char('h'), ctrl_shift);
+        send_sidebar_key(&mut backend, KeyCode::Char('h'), alt);
         assert_eq!(
             backend.state().sidebar.panels[0].tabs.first(),
             Some(&activity),
-            "Ctrl+Shift+h reorders left"
+            "Alt+h reorders left"
         );
 
-        send_sidebar_key(&mut backend, KeyCode::Char('J'), ctrl_shift);
-        assert_eq!(backend.state().sidebar.active_panel, 1);
+        send_sidebar_key(&mut backend, KeyCode::Char('j'), alt);
+        assert_eq!(backend.state().sidebar.active_panel_index(), 1);
         assert!(
             backend.state().sidebar.panels[1].tabs.contains(&activity),
-            "Ctrl+Shift+j moves the tab to the lower panel"
+            "Alt+j moves the tab to the lower panel"
         );
         assert!(backend.state().sidebar.focused);
     });
@@ -2284,5 +2217,145 @@ fn shift_g_still_jumps_to_the_last_row() {
         send_sidebar_key(&mut backend, KeyCode::Char('G'), KeyMods::SHIFT);
         assert_eq!(backend.state().sidebar.panels[0].cursor, last);
         assert!(backend.state().sidebar.focused);
+    });
+}
+
+#[test]
+fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change() {
+    on_test_thread(|| {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::{ClientMessage, WireDirEntry};
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        show_files_tab(&mut backend);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.sidebar.shown = [true, false];
+            for panel in state.sidebar.panels.iter_mut().skip(1) {
+                panel.tabs.clear();
+                panel.active_tab = None;
+            }
+            state.current_mut().remote_host = Some("tree-host".into());
+            state.current_mut().session_client = Some(client);
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/repo".into());
+        }
+        // Synchronize the source before mounting the provided tree, without draining callbacks.
+        backend
+            .update_level(crate::Msg::SidebarPointerMoved(0))
+            .unwrap();
+        backend.render();
+        let epoch = backend.state().sidebar.layout_epoch;
+        assert!(backend.state().sidebar.tree_pending.is_empty());
+        assert!(outbound.try_iter().all(|message| !matches!(
+            message,
+            ClientOutbound::Control(ClientMessage::ListDirectory { .. })
+        )));
+        let tree_key = "rozi-sidebar-body-left-0-files-/remote/repo-tree".into();
+        assert!(
+            backend.focus_key(&tree_key),
+            "the original tree is mounted: {}",
+            backend.capture_ui_snapshot().to_markdown()
+        );
+        let mounted = backend.focused();
+        // Process the dock command before the directory callback already queued by FileTree.
+        backend
+            .update_level(crate::Msg::RunAction(
+                crate::input::Action::ToggleRightSidebar,
+            ))
+            .unwrap();
+        backend.render();
+        assert_ne!(backend.state().sidebar.layout_epoch, epoch);
+        assert_eq!(backend.focused(), mounted, "the tree was not remounted");
+        backend.pump().unwrap();
+        let requests: Vec<_> = outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests, ["/remote/repo"]);
+        assert!(
+            backend
+                .state()
+                .sidebar
+                .tree_pending
+                .contains("/remote/repo")
+        );
+        backend
+            .dispatch(crate::Msg::SessionDirectoryListing {
+                epoch: backend.state().runtime_epoch,
+                path: "/remote/repo".into(),
+                entries: vec![WireDirEntry {
+                    name: "loaded.rs".into(),
+                    is_dir: false,
+                    is_symlink: false,
+                    symlink_target: None,
+                    ignored: false,
+                    git_staged: None,
+                    git_unstaged: None,
+                }],
+                error: None,
+            })
+            .unwrap();
+        assert!(
+            backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .any(|line| line.contains("loaded.rs"))
+        );
+        assert!(
+            !backend
+                .state()
+                .sidebar
+                .tree_pending
+                .contains("/remote/repo")
+        );
+    });
+}
+
+#[test]
+fn remote_directory_requests_reject_old_sessions_but_survive_configuration_changes() {
+    on_test_thread(|| {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().remote_host = Some("tree-host".into());
+        backend.state_mut().current_mut().session_client = Some(client);
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .dispatch(crate::Msg::SidebarTreeEntryRequest {
+                epoch: epoch.wrapping_add(1),
+                path: "/stale".into(),
+            })
+            .unwrap();
+        assert!(!backend.state().sidebar.tree_pending.contains("/stale"));
+        assert!(outbound.try_iter().all(|message| !matches!(
+            message,
+            ClientOutbound::Control(ClientMessage::ListDirectory { .. })
+        )));
+        backend.state_mut().sidebar.config_epoch += 1;
+        for _ in 0..2 {
+            backend
+                .dispatch(crate::Msg::SidebarTreeEntryRequest {
+                    epoch,
+                    path: "/current".into(),
+                })
+                .unwrap();
+        }
+        let paths: Vec<_> = outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, ["/current"], "valid requests remain deduplicated");
     });
 }

@@ -28,6 +28,7 @@ pub(crate) mod scrollback;
 pub(crate) mod search;
 pub(crate) mod services;
 pub(crate) mod session;
+pub(crate) mod sidebar_memory;
 pub(crate) mod sound;
 pub(crate) mod theme;
 pub(crate) mod ui_recording;

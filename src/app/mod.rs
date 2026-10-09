@@ -41,6 +41,8 @@ pub struct AppRoot {
     want_startup_picker: bool,
     /// Session name the startup picker should land on, from a `last` that could not reopen.
     startup_last_session: Option<String>,
+    /// Loaded once; never synchronized into another running client.
+    sidebar_memory: Option<[bool; 2]>,
     /// Whether to install the process-global terminal-hangup handler
     /// ([`platform::server_lifecycle::on_hangup`]) at startup. Only the real [`run`] wants this:
     /// a `TestBackend`-driven test constructs its app through [`Default`], and a test process must
@@ -84,6 +86,7 @@ impl Default for AppRoot {
             remote: None,
             want_startup_picker: false,
             startup_last_session: None,
+            sidebar_memory: None,
             watch_hangup: false,
             startup_tasks: false,
             update_checks: false,
@@ -100,7 +103,7 @@ impl AppRoot {
         initial_theme: Theme,
         initial_system_theme: Option<Theme>,
         startup_profile: Option<StartupProfile>,
-        startup_messages: Vec<String>,
+        mut startup_messages: Vec<String>,
         control_listener: Option<crate::platform::ipc::IpcListener>,
         control_guard: Option<control::ControlSocketGuard>,
         attach_session: Option<String>,
@@ -111,6 +114,10 @@ impl AppRoot {
         want_startup_picker: bool,
         startup_last_session: Option<String>,
     ) -> Self {
+        let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
+            startup_messages.push(format!("Could not read remembered sidebars: {error}"));
+            None
+        });
         Self {
             config,
             initial_theme,
@@ -127,6 +134,7 @@ impl AppRoot {
             remote,
             want_startup_picker,
             startup_last_session,
+            sidebar_memory,
             watch_hangup: true,
             startup_tasks: true,
             update_checks: true,
@@ -289,6 +297,14 @@ impl Component for AppRoot {
         } else {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
+        if let Some(remembered) = self.sidebar_memory {
+            state
+                .sidebar
+                .initialize_visibility(state.config.sidebar.startup, Some(remembered));
+            state
+                .sidebar_slide
+                .set(if state.sidebar.shown[0] { 1.0 } else { 0.0 });
+        }
         if let Some(cwd) = &self.startup_cwd {
             match cwd.seed(&self.config) {
                 Some((attachment, _)) => state.attachment = attachment,
@@ -435,6 +451,94 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    #[test]
+    fn client_startup_reads_dock_memory_once_and_startup_only_controls_showing_it() {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let _persist = crate::test_support::lock_persisted_state();
+                let file = ops::sidebar_memory::tests::MemoryFile::new();
+                let root = |config| {
+                    AppRoot::new(
+                        config,
+                        Theme::default(),
+                        None,
+                        None,
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        false,
+                        false,
+                        None,
+                        false,
+                        None,
+                    )
+                };
+                let mut config = Config::default();
+                config
+                    .sidebar
+                    .layout
+                    .place("files", config::SidebarPosition::Right, 0);
+                for startup in [false, true] {
+                    config.sidebar.startup = startup;
+                    for remembered in [[true, false], [false, true], [true, true]] {
+                        ops::sidebar_memory::save(Some(remembered)).unwrap();
+                        let client = root(config.clone());
+                        let mut state = client.create_state(&());
+                        assert_eq!(
+                            state.sidebar.shown,
+                            if startup { remembered } else { [false, false] }
+                        );
+                        assert_eq!(state.sidebar.restore, remembered);
+                        assert_eq!(
+                            state.sidebar_slide.get(),
+                            if startup && remembered[0] { 1.0 } else { 0.0 }
+                        );
+                        assert_eq!(
+                            state.sidebar.right_slide.get(),
+                            if startup && remembered[1] { 1.0 } else { 0.0 }
+                        );
+                        // Another client's exit is only observed by the next new client.
+                        ops::sidebar_memory::save(Some([!remembered[0], true])).unwrap();
+                        if !startup {
+                            state.sidebar.show_restored();
+                        }
+                        assert_eq!(state.sidebar.shown, remembered);
+                        let again = client.create_state(&());
+                        assert_eq!(again.sidebar.restore, remembered);
+                    }
+                }
+                std::fs::remove_file(&file.path).unwrap();
+                config.sidebar.startup = true;
+                let first = root(config.clone()).create_state(&());
+                assert_eq!(first.sidebar.shown, [true, true]);
+                config.sidebar.migrated_docks = Some([false, true]);
+                let migrated = root(config.clone()).create_state(&());
+                assert_eq!(migrated.sidebar.shown, [false, true]);
+                ops::sidebar_memory::save(Some([true, false])).unwrap();
+                let remembered = root(config.clone()).create_state(&());
+                assert_eq!(
+                    remembered.sidebar.shown,
+                    [true, false],
+                    "local memory overrides migration seeds"
+                );
+                std::fs::write(&file.path, "broken memory").unwrap();
+                let client = root(config);
+                assert!(
+                    client
+                        .startup_messages
+                        .iter()
+                        .any(|message| message.contains("remembered sidebars"))
+                );
+                assert_eq!(client.create_state(&()).sidebar.shown, [false, true]);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn requested_startup_picker_opens_even_without_candidates() {
@@ -775,8 +879,8 @@ mod tests {
                         .into_iter()
                         .filter(|line| {
                             [
-                                "Enable sidebar",
-                                "Disable sidebar",
+                                "Show sidebar",
+                                "Hide sidebar",
                                 "sidebar split",
                                 "Focus sidebar",
                                 "Next sidebar",
@@ -787,9 +891,9 @@ mod tests {
                         })
                         .collect();
                     let expected = if initially_visible {
-                        "Disable sidebar"
+                        "Hide sidebar"
                     } else {
-                        "Enable sidebar"
+                        "Show sidebar"
                     };
                     assert!(
                         rows.first().is_some_and(|row| row.contains(expected)),
@@ -802,7 +906,7 @@ mod tests {
                             mods: KeyMods::NONE,
                         })
                         .expect("activate sidebar toggle");
-                    assert_eq!(backend.state().sidebar_visible, !initially_visible);
+                    assert_eq!(backend.state().sidebar_shown(), !initially_visible);
                     assert!(!backend.state().show_palette);
                 }
             })

@@ -1785,7 +1785,9 @@ mod tests {
                 .unwrap()
                 .retry_at = Some(past);
             state.extension_runtime.wake_at = Some(past);
-            backend.dispatch(crate::Msg::PlacementTick).unwrap();
+            // Inspect the tick itself before draining asynchronous runtime replies. Dispatch may
+            // already consume Hello and service exits, making Connecting a timing-dependent state.
+            backend.update_level(crate::Msg::PlacementTick).unwrap();
 
             let state = backend.state();
             let runtime = &state.extension_runtime.hosts[&HostKey::Local];

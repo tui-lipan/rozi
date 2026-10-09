@@ -238,6 +238,18 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SidebarTabSelected { panel, index } => sidebar::tab_selected(ctx, panel, index),
         Msg::SidebarTabReordered { panel, event } => sidebar::tab_reordered(ctx, panel, event),
         Msg::SidebarTabTransferred(event) => sidebar::tab_transferred(ctx, event),
+        Msg::SidebarUiEvent { epoch, event } => {
+            if epoch != ctx.state.sidebar.layout_epoch {
+                Update::none()
+            } else {
+                handle_msg_inner(_app, *event, ctx)
+            }
+        }
+        Msg::SidebarManagerBack => sidebar::manager_back(ctx),
+        Msg::SidebarManagerActivate(value) => sidebar::manager_activate(ctx, value),
+        Msg::SidebarDockPanelsResized { side, event } => {
+            sidebar::dock_panels_resized(ctx, side, event)
+        }
         Msg::SidebarPanelsResized(event) => sidebar::panels_resized(ctx, event),
         Msg::SidebarViewportChanged {
             panel,
@@ -277,7 +289,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             path,
             expanded,
         } => sidebar::tree_toggle(ctx, tab_id, path, expanded),
-        Msg::SidebarTreeEntryRequest { path } => sidebar::tree_entry_request(ctx, path),
+        Msg::SidebarTreeEntryRequest { epoch, path } => {
+            sidebar::tree_entry_request(ctx, epoch, path)
+        }
         Msg::SessionDirectoryListing {
             epoch,
             path,

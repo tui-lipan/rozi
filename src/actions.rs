@@ -453,8 +453,15 @@ fn execute_action_inner(
         Action::ToggleWorkbarPosition => crate::ops::preferences::toggle_workbar_position(ctx),
         Action::ToggleWorkbarPowerline => crate::ops::preferences::toggle_workbar_powerline(ctx),
         Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
-        Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
-        Action::ToggleSidebarPosition => crate::ops::preferences::toggle_sidebar_position(ctx),
+        Action::ToggleLeftSidebar => {
+            crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Left)
+        }
+        Action::ToggleRightSidebar => {
+            crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Right)
+        }
+        Action::SidebarTabs => crate::update::sidebar::open_manager(ctx),
+        Action::SidebarOtherDock => crate::update::sidebar::other_dock(ctx, false),
+        Action::SidebarMoveToOtherDock => crate::update::sidebar::other_dock(ctx, true),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsCanvas => {
@@ -463,14 +470,14 @@ fn execute_action_inner(
         Action::CycleSidebarTabStyle => crate::ops::preferences::cycle_sidebar_tab_style(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
-            if ctx.state.sidebar_visible {
+            if ctx.state.sidebar_shown() {
                 crate::update::sidebar::cycle_tab(ctx, true)
             } else {
                 Update::none()
             }
         }
         Action::SidebarPrevTab => {
-            if ctx.state.sidebar_visible {
+            if ctx.state.sidebar_shown() {
                 crate::update::sidebar::cycle_tab(ctx, false)
             } else {
                 Update::none()
@@ -832,9 +839,9 @@ mod tests {
                 backend
                     .dispatch(Msg::RunAction(Action::ToggleSidebar))
                     .expect("toggle controller sidebar");
-                assert!(backend.state().sidebar_visible);
+                assert!(backend.state().sidebar_shown());
                 // Toggling is client-local: it must not write the config default back.
-                assert!(!backend.state().config.sidebar.visible);
+                assert!(!backend.state().config.sidebar.startup);
                 assert_eq!(
                     backend
                         .state()
@@ -867,7 +874,7 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     state.current_mut().session_client = Some(follower_client);
-                    state.sidebar_visible = false;
+                    state.sidebar.hide_all();
                     state.current_mut().shared.as_mut().unwrap().controller = Some(2);
                 }
                 backend

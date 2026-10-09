@@ -113,10 +113,15 @@ in [Sessions](sessions.md#leave-rozi).
 | Command | Command key |
 | --- | --- |
 | Toggle sidebar | `b` |
-| Toggle one or two panels | `\` |
+| Collapse or restore dock panels | `\` |
 | Focus sidebar | `B` |
 | Next sidebar tab | `PageDown` |
 | Previous sidebar tab | `PageUp` |
+
+Left and right sidebar toggles are available in the command palette and can be bound through
+`toggle-left-sidebar` and `toggle-right-sidebar`; neither has a default key. The global `b` command
+hides the current combination and restores the same docks. Panel counts and startup visibility
+are configured separately in Settings.
 
 See [Sidebar keys](#sidebar-keys) for the keys that work once the sidebar has focus.
 
@@ -215,12 +220,13 @@ After the `B` command key focuses the sidebar:
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle file-tree directories |
-| `Ctrl+Shift+Left/Right`, `Ctrl+Shift+h/l` | Reorder the active tab |
-| `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the other panel |
-| `Ctrl+Shift+Up/Down`, `Ctrl+Shift+k/j` | Move the active tab between panels |
+| `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
+| `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
+| `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
+| `Alt+Up/Down`, `Alt+k/j` | Move the active tab between panels |
 | `Shift+Left/Right`, `Shift+h/l` | Resize the sidebar |
 | `Shift+Up/Down`, `Shift+k/j` | Resize the panel split |
-| `s` | Toggle one or two panels |
+| `?` | Open Keybindings… |
 | `Esc` | Return focus to the pane |
 
 See [Sidebar](sidebar.md) for what each tab shows.

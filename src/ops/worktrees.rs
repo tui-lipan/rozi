@@ -2040,7 +2040,7 @@ mod tests {
             use crate::session::protocol::WorktreeRequest;
             let (mut backend, outbound) = reads_backend();
             let state = backend.state_mut();
-            state.sidebar_visible = true;
+            state.sidebar.shown = [true, false];
             state.config.sidebar.tabs = vec![SidebarTab::Worktrees];
             state.sidebar.panels[0].tabs = vec![SidebarTabId::new("worktrees")];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("worktrees"));

@@ -114,13 +114,6 @@ pub(crate) fn toggle_workbar_background(ctx: &mut Context<AppRoot>) -> Update {
     toggle_pane_flag!(ctx, workbar_background)
 }
 
-pub(crate) fn toggle_sidebar_position(ctx: &mut Context<AppRoot>) -> Update {
-    let next = ctx.state.config.sidebar.position.toggled();
-    ctx.state.config.sidebar.position = next;
-    persist_sidebar_string_or_toast(ctx, "position", next.id());
-    Update::full()
-}
-
 pub(crate) fn toggle_sidebar_gap(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.config.sidebar.gap = !ctx.state.config.sidebar.gap;
     persist_sidebar_toggle(ctx, "gap", ctx.state.config.sidebar.gap);

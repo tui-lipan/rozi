@@ -90,12 +90,12 @@ fn published_row(
 /// Give the Activity tab the whole sidebar: these assertions are about grouping and row order, so
 /// the default two-panel split would only halve the rows they can see.
 fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     // Revealing the sidebar after the first frame is a real toggle, so it runs the real
     // slide. These tests assert on the settled column, not on a frame part-way through it.
     state.config.animations.sidebar = false;
     state.config.sidebar.tabs = vec![SidebarTab::Activity];
-    state.config.sidebar.split = false;
+    state.config.sidebar.layout.left.panel_count = 1;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
     state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
 }

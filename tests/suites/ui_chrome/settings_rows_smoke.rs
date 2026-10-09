@@ -237,6 +237,16 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 fn settings_all_keeps_every_control_available() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
+        backend
+            .state_mut()
+            .config
+            .sidebar
+            .presets
+            .push(rozi::config::SidebarLayoutPreset {
+                name: "extension.review".into(),
+                label: "Review".into(),
+                layout: rozi::config::SidebarDockLayout::default(),
+            });
         let frame = rendered_rows(&mut backend);
         let rows = SettingsAction::all().len();
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
@@ -323,7 +333,14 @@ fn settings_all_keeps_every_control_available() {
         setting_row(workbar, "Style");
         setting_row(workbar, "Tab style");
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
-        setting_row(sidebar, "Position");
+        for label in [
+            "Left panels…",
+            "Right panels…",
+            "Open sidebars at startup",
+            "Sidebar tabs…",
+        ] {
+            setting_row(sidebar, label);
+        }
         setting_row(sidebar, "Background follows canvas");
         setting_row(sidebar, "Gap");
         setting_row(sidebar, "Tab style");
@@ -496,7 +513,9 @@ fn settings_reports_sidebar_values() {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
-            state.config.sidebar.position = rozi::config::SidebarPosition::Right;
+            state.sidebar.shown = [true, false];
+            state.sidebar.hide_all();
+            state.config.sidebar.startup = true;
             state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
@@ -510,7 +529,8 @@ fn settings_reports_sidebar_values() {
         );
         let sidebar = group_rows(&frame, "Sidebar", "Alerts");
         assert!(
-            setting_row(sidebar, "Position").contains("Right"),
+            setting_row(sidebar, "Right panels…").contains("1 panel")
+                && setting_row(sidebar, "Open sidebars at startup").contains("Enabled"),
             "sidebar position row is misbound:\n{frame}"
         );
         assert!(
@@ -770,7 +790,7 @@ fn settings_searches_globally_and_escape_restores_browse_selection() {
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
         backend.render();
-        type_query(&mut backend, "startup");
+        type_query(&mut backend, "startup mode");
         let frame = rendered_rows(&mut backend);
         assert!(
             frame.contains("Sessions") && frame.contains("Startup mode"),
@@ -840,7 +860,7 @@ fn settings_tabs_remember_their_highlighted_row() {
         backend
             .dispatch(rozi::Msg::SettingsTabSelected(SettingsTab::Panes))
             .unwrap();
-        type_query(&mut backend, "startup");
+        type_query(&mut backend, "startup mode");
         assert_eq!(
             backend.state().settings_selected,
             Some(SettingsAction::CycleStartupMode)
@@ -1134,7 +1154,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
         for (tab, count, expected) in [
             (SettingsTab::General, 19, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
-            (SettingsTab::Bars, 12, "Position"),
+            (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
             (SettingsTab::Sessions, 6, "Open Sessions on"),
         ] {
@@ -1157,12 +1177,12 @@ fn deleting_the_query_restores_category_and_selection() {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
-        type_query(&mut backend, "startup");
+        type_query(&mut backend, "startup mode");
         assert_eq!(
             backend.state().settings_selected,
             Some(SettingsAction::CycleStartupMode)
         );
-        for _ in 0..7 {
+        for _ in 0.."startup mode".len() {
             key(&mut backend, KeyCode::Backspace);
         }
         assert_eq!(backend.state().settings_navigation.tab, SettingsTab::Panes);

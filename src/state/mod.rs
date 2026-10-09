@@ -215,11 +215,10 @@ pub struct State {
     /// How many half periods have passed since [`Self::alert_pulse_armed_at`], as of the latest
     /// tick. The phases follow from it.
     pub alert_pulse_turns: u32,
-    pub sidebar_visible: bool,
     /// How far the sidebar has slid in: `0.0` fully retracted, `1.0` fully deployed. Recorded by the
     /// view each frame, because the transition driving it lives there.
     ///
-    /// Layout reads this rather than [`Self::sidebar_visible`], so the columns the sidebar reserves
+    /// Layout reads this rather than [`Self::sidebar_shown`], so the columns the sidebar reserves
     /// grow and shrink with the animation and the pane column is genuinely resized to make room -
     /// the same way the tile beside a spawning pane is. Seeded from the config so a `State` that has
     /// never been rendered reports settled geometry.
@@ -236,6 +235,7 @@ pub struct State {
     pub command_palette_handoff_epoch: u64,
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,
+    pub sidebar_manager: bool,
     pub show_settings: bool,
     /// Highlighted settings row. Drives the choice card and
     /// `initial_selected_item_index` while the overlay is open.
@@ -549,7 +549,6 @@ impl State {
         let (extension_generations, retired) =
             crate::config::reconcile_generations(None, &mut config, &HashMap::new());
         debug_assert!(retired.is_empty());
-        let sidebar_visible = config.sidebar.visible;
         let sidebar = SidebarState::new(&config.sidebar);
         let attachment = fresh_default_attachment(&config);
 
@@ -596,8 +595,7 @@ impl State {
             alert_pulse_armed_at: std::time::Duration::ZERO,
             alert_pulse_half: std::time::Duration::ZERO,
             alert_pulse_turns: 0,
-            sidebar_visible,
-            sidebar_slide: Cell::new(if sidebar_visible { 1.0 } else { 0.0 }),
+            sidebar_slide: Cell::new(if sidebar.shown[0] { 1.0 } else { 0.0 }),
             sidebar,
             workbar: WorkbarState::default(),
             show_palette: false,
@@ -605,6 +603,7 @@ impl State {
             command_palette_handoff: None,
             command_palette_handoff_epoch: 0,
             keybindings: None,
+            sidebar_manager: false,
             show_settings: false,
             settings_selected: None,
             settings_navigation: SettingsNavigation::default(),
@@ -1164,6 +1163,7 @@ impl State {
             (self.show_theme_picker, "theme-picker"),
             (self.keybindings.is_some(), "help"),
             (self.extensions.is_some(), "extensions"),
+            (self.sidebar_manager, "sidebar-manager"),
             (self.show_settings, "settings"),
             (self.show_palette, "palette"),
         ]
@@ -1305,66 +1305,100 @@ impl State {
     /// The price is the price every geometry animation in rozi pays: the panes resize as they move,
     /// so each PTY takes a `pty.resize` per debounce window for the length of the slide. Set
     /// `[animations] sidebar = false` to skip straight to the settled width.
-    pub fn effective_sidebar_width(&self, terminal_viewport: Rect) -> u16 {
-        let deployed = self.sidebar_slide_width(terminal_viewport);
-        let reserved = (f32::from(deployed) * self.sidebar_slide.get().clamp(0.0, 1.0)).round();
-        let reserved = reserved as u16;
-        // A single column is all splitter handle with no panel behind it, and the splitter's own
-        // minimum would quietly hand it a second one - leaving the pane column a column narrower
-        // than this says, with its far border pushed off the screen. Skip the width that cannot be
-        // honoured rather than report one that is wrong.
+    pub fn effective_sidebar_width(&self, viewport: Rect) -> u16 {
+        self.dock_reserved_width(viewport, crate::config::SidebarPosition::Left)
+            + self.dock_reserved_width(viewport, crate::config::SidebarPosition::Right)
+    }
+
+    pub fn dock_deployed_widths(&self, viewport: Rect) -> [u16; 2] {
+        let layout = &self.config.sidebar.layout;
+        // Include a retracting dock in the budget until its animation ends.
+        let live = [
+            self.sidebar.shown[0] || self.sidebar_slide.get() > 0.0,
+            self.sidebar.shown[1] || self.sidebar.right_slide.get() > 0.0,
+        ];
+        let wanted = [
+            if live[0] {
+                self.sidebar.width_preview.unwrap_or(layout.left.width)
+            } else {
+                0
+            },
+            if live[1] {
+                self.sidebar
+                    .right_width_preview
+                    .unwrap_or(layout.right.width)
+            } else {
+                0
+            },
+        ];
+        let budget = if viewport.w > crate::layout::geometry::MIN_CANVAS_COLS {
+            viewport.w - crate::layout::geometry::MIN_CANVAS_COLS
+        } else {
+            viewport.w / 2
+        };
+        let total = u32::from(wanted[0]) + u32::from(wanted[1]);
+        if total <= u32::from(budget) {
+            return wanted;
+        }
+        if total == 0 {
+            return [0, 0];
+        }
+        // Satisfy the smaller request first; split the remaining budget fairly. Resizing one dock
+        // never scales a smaller requested width below what the available space can honour.
+        let mut left = wanted[0].min(budget / 2);
+        let right = wanted[1].min(budget - left);
+        left = wanted[0].min(budget - right);
+        [left, right]
+    }
+
+    pub fn dock_reserved_width(&self, viewport: Rect, side: crate::config::SidebarPosition) -> u16 {
+        let progress = match side {
+            crate::config::SidebarPosition::Left => self.sidebar_slide.get(),
+            crate::config::SidebarPosition::Right => self.sidebar.right_slide.get(),
+        };
+        let reserved = (f32::from(
+            self.dock_deployed_widths(viewport)
+                [usize::from(side == crate::config::SidebarPosition::Right)],
+        ) * progress.clamp(0.0, 1.0))
+        .round() as u16;
         if reserved <= 1 { 0 } else { reserved }
     }
 
-    /// What the sidebar's configured width bounds leave the shell splitter's sidebar pane right
-    /// now: the window [`set_width`](crate::update) clamps to, put through the terminal's cap and
-    /// the slide the same way [`effective_sidebar_width`](Self::effective_sidebar_width) is, less
-    /// the column the splitter spends on its own handle.
-    ///
-    /// The splitter drags against these, so the handle stops where the sidebar stops. A drag that
-    /// ran past them would leave the panel drawn at its clamped width inside a wider allocation -
-    /// an empty strip beside the sidebar - and hand the pane column a rect narrower than the width
-    /// its panes were laid out for, clipping them.
-    pub fn sidebar_pane_bounds(&self, terminal_viewport: Rect) -> (u16, u16) {
-        let slide = self.sidebar_slide.get().clamp(0.0, 1.0);
-        let reserve = |width: u16| {
-            let deployed =
-                crate::layout::geometry::effective_sidebar_width(terminal_viewport.w, width, true);
-            let reserved = (f32::from(deployed) * slide).round() as u16;
-            reserved.saturating_sub(1)
-        };
-        (
-            reserve(crate::config::SIDEBAR_MIN_WIDTH),
-            reserve(crate::config::SIDEBAR_MAX_WIDTH),
-        )
+    /// Width available to this tab in its own dock, including temporary viewport compaction.
+    pub fn sidebar_tab_width(&self, id: &crate::config::SidebarTabId) -> u16 {
+        let side = self
+            .config
+            .sidebar
+            .layout
+            .location(id.as_str())
+            .map(|(side, _)| side)
+            .unwrap_or(crate::config::SidebarPosition::Left);
+        self.last_viewport
+            .get()
+            .map(|viewport| {
+                self.dock_deployed_widths(viewport)
+                    [usize::from(side == crate::config::SidebarPosition::Right)]
+            })
+            .unwrap_or(self.config.sidebar.layout.dock(side).width)
     }
-
-    /// The width the sidebar occupies once deployed, whether or not it is currently visible or
-    /// settled.
-    ///
-    /// The panel is always drawn at this width and clipped, never squeezed into the part of it the
-    /// layout has reserved so far - squeezing would reflow its tabs and rows on every frame.
-    pub fn sidebar_slide_width(&self, terminal_viewport: Rect) -> u16 {
-        crate::layout::geometry::effective_sidebar_width(
-            terminal_viewport.w,
-            self.sidebar_requested_width(),
-            true,
-        )
+    pub fn terminal_content_left_offset(&self, viewport: Rect) -> u16 {
+        self.dock_reserved_width(viewport, crate::config::SidebarPosition::Left)
     }
-
-    pub fn sidebar_requested_width(&self) -> u16 {
+    pub fn sidebar_shown(&self) -> bool {
+        self.sidebar.any_shown()
+    }
+    pub fn sidebar_panel_visible(&self, panel: usize) -> bool {
+        self.sidebar.panels.get(panel).is_some_and(|p| {
+            self.sidebar.shown[usize::from(p.dock == crate::config::SidebarPosition::Right)]
+        })
+    }
+    pub fn visible_sidebar_tabs(&self) -> impl Iterator<Item = &crate::config::SidebarTabId> {
         self.sidebar
-            .width_preview
-            .unwrap_or(self.config.sidebar.width)
-    }
-
-    /// Terminal-space x offset of app content. Nested Canvas placements remain content-local.
-    pub fn terminal_content_left_offset(&self, terminal_viewport: Rect) -> u16 {
-        if self.config.sidebar.position == crate::config::SidebarPosition::Left {
-            self.effective_sidebar_width(terminal_viewport)
-        } else {
-            0
-        }
+            .panels
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.sidebar_panel_visible(*i))
+            .filter_map(|(_, p)| p.active_tab.as_ref())
     }
 }
 

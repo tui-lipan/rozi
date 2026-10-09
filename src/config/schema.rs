@@ -1631,7 +1631,7 @@ pub const SIDEBAR_MIN_SPLIT_RATIO: f32 = 0.15;
 pub const SIDEBAR_MAX_SPLIT_RATIO: f32 = 0.85;
 pub const SIDEBAR_MIN_COMMAND_INTERVAL_SECS: u64 = 5;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SidebarPosition {
     #[default]
     Left,
@@ -1854,18 +1854,246 @@ impl SidebarTab {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SidebarTabLocation {
+    pub dock: String,
+    /// One-based panel number, matching Settings and the tab manager.
+    pub panel: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SidebarLayoutPreset {
+    pub name: String,
+    pub label: String,
+    pub layout: SidebarDockLayout,
+}
+
+/// Durable docking preferences. Panel storage is never truncated when panel_count shrinks.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SidebarDock {
+    pub width: u16,
+    pub panel_count: usize,
+    pub panels: Vec<SidebarDockPanel>,
+}
+
+impl Default for SidebarDock {
+    fn default() -> Self {
+        Self {
+            width: 32,
+            panel_count: 1,
+            panels: vec![SidebarDockPanel::default()],
+        }
+    }
+}
+
+impl SidebarDock {
+    /// Combine dormant panels for display without changing any saved proportion.
+    pub fn displayed_weights(&self) -> Vec<f32> {
+        let mut weights = vec![0.0_f64; self.panel_count];
+        for (index, panel) in self.panels.iter().enumerate() {
+            weights[index.min(self.panel_count - 1)] += f64::from(panel.weight);
+        }
+        let total: f64 = weights.iter().sum();
+        weights
+            .into_iter()
+            .map(|weight| ((weight / total) as f32).max(f32::MIN_POSITIVE))
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SidebarDockPanel {
+    pub weight: f32,
+    pub tabs: Vec<String>,
+}
+
+impl Default for SidebarDockPanel {
+    fn default() -> Self {
+        Self {
+            weight: 1.0,
+            tabs: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct SidebarDockLayout {
+    pub left: SidebarDock,
+    pub right: SidebarDock,
+    pub hidden: Vec<String>,
+}
+
+impl Default for SidebarDockLayout {
+    fn default() -> Self {
+        Self {
+            left: SidebarDock {
+                panel_count: 2,
+                panels: vec![
+                    SidebarDockPanel {
+                        weight: 0.4,
+                        tabs: vec!["activity".into(), "panes".into(), "sessions".into()],
+                    },
+                    SidebarDockPanel {
+                        weight: 0.6,
+                        tabs: vec!["files".into(), "git".into(), "worktrees".into()],
+                    },
+                ],
+                ..SidebarDock::default()
+            },
+            right: SidebarDock::default(),
+            hidden: Vec::new(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default, deny_unknown_fields)]
+        struct DockPatch {
+            width: Option<u16>,
+            panel_count: Option<usize>,
+            panels: Option<Vec<SidebarDockPanel>>,
+        }
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default, deny_unknown_fields)]
+        struct LayoutPatch {
+            left: Option<DockPatch>,
+            right: Option<DockPatch>,
+            hidden: Vec<String>,
+        }
+        let patch = LayoutPatch::deserialize(deserializer)?;
+        let mut layout = Self {
+            hidden: patch.hidden,
+            ..Self::default()
+        };
+        let explicit: [HashSet<String>; 2] = [&patch.left, &patch.right].map(|dock| {
+            dock.as_ref()
+                .and_then(|dock| dock.panels.as_ref())
+                .into_iter()
+                .flatten()
+                .flat_map(|panel| panel.tabs.iter().cloned())
+                .collect()
+        });
+        for (index, (side, patch)) in [
+            (SidebarPosition::Left, patch.left),
+            (SidebarPosition::Right, patch.right),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let dock = layout.dock_mut(side);
+            let explicit_panels = patch.as_ref().is_some_and(|p| p.panels.is_some());
+            if let Some(patch) = patch {
+                if let Some(width) = patch.width {
+                    dock.width = width;
+                }
+                if let Some(count) = patch.panel_count {
+                    dock.panel_count = count;
+                }
+                if let Some(panels) = patch.panels {
+                    dock.panels = panels;
+                }
+            }
+            // An explicit assignment overrides a fallback placement on the opposite dock.
+            if !explicit_panels {
+                for panel in &mut dock.panels {
+                    panel.tabs.retain(|id| !explicit[1 - index].contains(id));
+                }
+            }
+        }
+        Ok(layout)
+    }
+}
+
+impl SidebarDockLayout {
+    pub fn dock(&self, side: SidebarPosition) -> &SidebarDock {
+        match side {
+            SidebarPosition::Left => &self.left,
+            SidebarPosition::Right => &self.right,
+        }
+    }
+    pub fn dock_mut(&mut self, side: SidebarPosition) -> &mut SidebarDock {
+        match side {
+            SidebarPosition::Left => &mut self.left,
+            SidebarPosition::Right => &mut self.right,
+        }
+    }
+    pub fn location(&self, id: &str) -> Option<(SidebarPosition, usize)> {
+        [SidebarPosition::Left, SidebarPosition::Right]
+            .into_iter()
+            .find_map(|side| {
+                self.dock(side)
+                    .panels
+                    .iter()
+                    .position(|panel| panel.tabs.iter().any(|tab| tab == id))
+                    .map(|panel| (side, panel))
+            })
+    }
+    pub fn place(&mut self, id: &str, side: SidebarPosition, panel: usize) {
+        for side in [SidebarPosition::Left, SidebarPosition::Right] {
+            for panel in &mut self.dock_mut(side).panels {
+                panel.tabs.retain(|tab| tab != id);
+            }
+        }
+        let dock = self.dock_mut(side);
+        dock.panels
+            .resize_with(dock.panels.len().max(panel + 1), SidebarDockPanel::default);
+        dock.panels[panel].tabs.push(id.to_string());
+    }
+    pub fn validate(&mut self, warnings: &mut Vec<String>) {
+        let mut seen = HashSet::new();
+        for side in [SidebarPosition::Left, SidebarPosition::Right] {
+            let dock = self.dock_mut(side);
+            let count = dock.panel_count.clamp(1, 3);
+            if count != dock.panel_count {
+                warnings.push(format!(
+                    "sidebar.layout.{} panel_count must be 1–3; clamped",
+                    side.id()
+                ));
+            }
+            dock.panel_count = count;
+            dock.width = dock.width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+            dock.panels
+                .resize_with(dock.panels.len().max(count), SidebarDockPanel::default);
+            for panel in &mut dock.panels {
+                if !panel.weight.is_finite() || panel.weight <= 0.0 {
+                    warnings.push(format!(
+                        "sidebar.layout.{} panel weight must be finite and positive; using 1",
+                        side.id()
+                    ));
+                    panel.weight = 1.0;
+                }
+                panel.tabs.retain(|id| {
+                    let keep = !id.trim().is_empty() && seen.insert(id.clone());
+                    if !keep {
+                        warnings.push(format!(
+                            "Duplicate or empty sidebar placement `{id}`; skipped"
+                        ));
+                    }
+                    keep
+                });
+            }
+        }
+        self.hidden.sort();
+        self.hidden.dedup();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
-    pub visible: bool,
-    pub width: u16,
-    pub position: SidebarPosition,
+    pub startup: bool,
+    /// Legacy visibility used only to seed startup memory when no local memory exists.
+    pub migrated_docks: Option<[bool; 2]>,
+    pub presets: Vec<SidebarLayoutPreset>,
+    pub layout: SidebarDockLayout,
     pub tabs: Vec<SidebarTab>,
-    /// Durable tab placement for the top and optional bottom panel.
-    pub panels: Vec<Vec<SidebarTabId>>,
-    /// Whether the saved panel placement is rendered as a vertical split.
-    pub split: bool,
-    /// Fraction of the split sidebar height assigned to the top panel.
-    pub split_ratio: f32,
     /// Paints the sidebar with the canvas backdrop instead of the elevated panel fill.
     pub background_follows_canvas: bool,
     /// Keeps one row between each panel's tab bar and its list.
@@ -1891,26 +2119,11 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
         ];
         Self {
-            visible: false,
-            width: 32,
-            position: SidebarPosition::Left,
-            panels: vec![
-                vec![
-                    SidebarTab::Activity.id(),
-                    SidebarTab::Panes.id(),
-                    SidebarTab::Sessions.id(),
-                ],
-                vec![
-                    SidebarTabId::new(SidebarTreeView::Files.id()),
-                    SidebarTabId::new(SidebarTreeView::Changes.id()),
-                    SidebarTab::Worktrees.id(),
-                ],
-            ],
+            startup: false,
+            migrated_docks: None,
+            layout: SidebarDockLayout::default(),
+            presets: Vec::new(),
             tabs,
-            split: true,
-            // The bottom panel starts larger: a repository has far more rows to show than a
-            // session has agents and panes.
-            split_ratio: 0.4,
             background_follows_canvas: false,
             gap: true,
             background: true,

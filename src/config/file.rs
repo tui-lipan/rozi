@@ -258,9 +258,41 @@ pub(super) struct UserCommandTableSpec {
     pub(super) keep_open: Option<bool>,
 }
 
+/// File-only migration boundary for the previous dock startup flags.
+#[derive(Debug)]
+pub(super) struct SidebarFileLayout {
+    pub(super) layout: super::schema::SidebarDockLayout,
+    pub(super) migrated_docks: Option<[bool; 2]>,
+}
+
+impl<'de> Deserialize<'de> for SidebarFileLayout {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut value = toml::Value::deserialize(deserializer)?;
+        let mut visible = [false, false];
+        let mut migrated = false;
+        for (index, side) in ["left", "right"].into_iter().enumerate() {
+            if let Some(dock) = value.get_mut(side).and_then(toml::Value::as_table_mut)
+                && let Some(old) = dock.remove("visible")
+            {
+                visible[index] = old
+                    .as_bool()
+                    .ok_or_else(|| D::Error::custom("sidebar dock visible must be a boolean"))?;
+                migrated = true;
+            }
+        }
+        Ok(Self {
+            layout: value.try_into().map_err(D::Error::custom)?,
+            migrated_docks: migrated.then_some(visible),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct SidebarFileConfig {
+    pub(super) layout: Option<SidebarFileLayout>,
+    pub(super) startup: Option<bool>,
     pub(super) visible: Option<bool>,
     pub(super) width: Option<u16>,
     pub(super) position: Option<String>,
@@ -807,6 +839,8 @@ fn load_config_from_text_with_extensions(
             &mut config.sidebar,
             SidebarFileConfig::default(),
             contributions.sidebar_tabs,
+            contributions.sidebar_locations,
+            contributions.sidebar_presets,
             &mut warnings,
         );
         let resolved = super::extensions::resolve_suggested_keybindings(
@@ -1289,6 +1323,8 @@ fn load_config_from_text_with_extensions(
         &mut config.sidebar,
         parsed.sidebar,
         contributions.sidebar_tabs,
+        contributions.sidebar_locations,
+        contributions.sidebar_presets,
         &mut warnings,
     );
     config.rules = build_rules(parsed.rules, &mut warnings);
@@ -1888,7 +1924,7 @@ mod file_tests {
         );
         assert!(!loaded.rejected);
         assert_eq!(loaded.config.theme.name, "catppuccin");
-        assert_eq!(loaded.config.sidebar.width, 42);
+        assert_eq!(loaded.config.sidebar.layout.left.width, 42);
         assert!(
             loaded
                 .warnings
@@ -3244,10 +3280,12 @@ mod file_tests {
             loaded
                 .config
                 .sidebar
+                .layout
+                .left
                 .panels
                 .iter()
-                .flatten()
-                .any(|placed| *placed == id)
+                .flat_map(|p| &p.tabs)
+                .any(|placed| placed == id.as_str())
         );
         assert!(loaded.config.installed_extensions.contains("git-tools"));
     }
@@ -3258,11 +3296,18 @@ mod file_tests {
             .expect("sidebar example parses");
         let mut sidebar = SidebarConfig::default();
         let mut warnings = Vec::new();
-        apply_sidebar_config(&mut sidebar, parsed.sidebar, Vec::new(), &mut warnings);
+        apply_sidebar_config(
+            &mut sidebar,
+            parsed.sidebar,
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+            &mut warnings,
+        );
 
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(sidebar.tabs.len(), 10);
-        assert_eq!(sidebar.panels.len(), 2);
+        assert_eq!(sidebar.layout.left.panel_count, 2);
     }
 
     #[test]

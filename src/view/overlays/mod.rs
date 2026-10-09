@@ -82,3 +82,6 @@ pub(in crate::view::overlays) use prompts::{
     prompt_detail_row, prompt_highlight_row, prompt_overlay,
 };
 pub(in crate::view::overlays) use settings::action_search_palette;
+
+mod sidebar_manager;
+pub(crate) use sidebar_manager::sidebar_manager_overlay;

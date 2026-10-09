@@ -14,6 +14,8 @@ pub(crate) struct ExtensionContributions {
     pub(crate) services: Vec<ServiceConfig>,
     pub(crate) agents: Vec<crate::agent_detection::AgentDefinition>,
     pub(crate) sidebar_tabs: Vec<SidebarTab>,
+    pub(crate) sidebar_locations: BTreeMap<String, crate::config::SidebarTabLocation>,
+    pub(crate) sidebar_presets: Vec<crate::config::SidebarLayoutPreset>,
     pub(crate) navigation_targets: Vec<NavigationTargetContribution>,
     pub(crate) suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     pub(crate) active_ids: HashSet<String>,
@@ -38,6 +40,8 @@ pub(super) fn build(
     let mut services = Vec::new();
     let mut agents = Vec::new();
     let mut sidebar_tabs = Vec::new();
+    let mut sidebar_locations = BTreeMap::new();
+    let mut sidebar_presets = Vec::new();
     let mut navigation_targets = Vec::new();
     let mut suggested_keybindings = Vec::new();
     let mut active_ids = HashSet::new();
@@ -105,6 +109,8 @@ pub(super) fn build(
             services.extend(extension_services);
             agents.extend(extension.agents);
             sidebar_tabs.extend(extension_tabs);
+            sidebar_locations.extend(extension.sidebar_locations);
+            sidebar_presets.extend(extension.sidebar_presets);
             navigation_targets.extend(extension.navigation_targets);
             suggested_keybindings.extend(extension.suggested_keybindings);
         } else if extension.info.status != ExtensionStatus::Disabled {
@@ -133,6 +139,8 @@ pub(super) fn build(
         services,
         agents,
         sidebar_tabs,
+        sidebar_locations,
+        sidebar_presets,
         navigation_targets,
         suggested_keybindings,
         active_ids,

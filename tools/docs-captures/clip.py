@@ -10,6 +10,7 @@ STEPS are separated by newlines:
 
   key:NAME      one key in tmux's notation: Enter, Escape, C-a, M-l, Up
   type:TEXT     literal text, one character every 45 ms
+  mouse:KIND,X,Y  left-button down, drag, or up at zero-based terminal cells
   sleep:MS      wait
   run:COMMAND   run a shell command, such as `rozi record start ui`, and wait for it
 """
@@ -46,6 +47,15 @@ def main() -> None:
                 for ch in arg:
                     tmux("send-keys", "-l", ch)
                     time.sleep(TYPE_DELAY)
+            elif kind == "mouse":
+                action, col, row = arg.split(",")
+                col, row = int(col), int(row)
+                if col < 0 or row < 0 or action not in {"down", "drag", "up"}:
+                    sys.exit(f"clip.py: invalid mouse step {step!r}")
+                code = 32 if action == "drag" else 0
+                suffix = "m" if action == "up" else "M"
+                sequence = f"\x1b[<{code};{col + 1};{row + 1}{suffix}"
+                tmux("send-keys", "-H", *(f"{byte:02x}" for byte in sequence.encode()))
             elif kind == "sleep":
                 time.sleep(int(arg) / 1000)
             elif kind == "run":

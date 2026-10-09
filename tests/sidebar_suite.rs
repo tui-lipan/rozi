@@ -6,6 +6,8 @@ mod sidebar_appearance_smoke;
 mod sidebar_close_smoke;
 #[path = "suites/sidebar/sidebar_dialog_dim_smoke.rs"]
 mod sidebar_dialog_dim_smoke;
+#[path = "suites/sidebar/sidebar_docking_smoke.rs"]
+mod sidebar_docking_smoke;
 #[path = "suites/sidebar/sidebar_keyboard_smoke.rs"]
 mod sidebar_keyboard_smoke;
 #[path = "suites/sidebar/sidebar_sessions_smoke.rs"]

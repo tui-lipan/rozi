@@ -50,10 +50,12 @@ right = ["layout", "clock", "session"]
 clock_format = "%H:%M"
 
 [sidebar]
-visible = true
-position = "right"
-width = 34
-tab_style = "round"'
+startup = true
+layout = { right = { width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
+tab_style = "round"
+
+[animations]
+session = "off"'
 
 # Layouts, from the same five panes.
 for layout in dwindle master grid columns scrollable monocle; do
@@ -74,6 +76,44 @@ PROFILE=api scene settings-theme-preview "$focus" 4000 "$open_settings; key:ente
 PROFILE=api scene which-key "$focus" 4000 "key:ctrl+a; wait:800"
 PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:600"
+
+# Independent docks and visibility controls, using the same saved placement.
+# Static captures skip the session portal; its paint-only progress needs a live terminal.
+sidebar_docks='[sidebar]
+startup = true
+layout = { left = { width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }, { weight = 1.0, tabs = ["activity"] }] }, right = { width = 36, panel_count = 3, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }, { weight = 1.0, tabs = ["worktrees"] }] } }
+[animations]
+session = "off"'
+PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
+sidebar_visibility=${sidebar_docks/left =/hidden = [\"sessions\", \"git\", \"worktrees\"], left =}
+# A panel body accepts a tab even when its bar is empty.
+PROFILE=web clip sidebar-body-transfer "$wide" 4500 "mouse:down,5,0
+mouse:drag,5,20
+sleep:700
+mouse:drag,130,20
+sleep:700
+mouse:drag,5,5
+sleep:700
+mouse:drag,130,35
+sleep:700
+mouse:drag,130,20
+sleep:700
+mouse:up,130,20
+sleep:700
+run:rozi capture-ui --render png --output '$preview/sidebar-body-transfer-release.png' >/dev/null" "$sidebar_visibility"
+PROFILE=web scene sidebar-manager "$focus" 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-manager-compact 80x24 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
+PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-panels "$focus" 4500 "$open_settings; type:left panels; key:enter; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-startup "$focus" 4500 "$open_settings; type:open sidebars at startup; key:enter; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-commands "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-keys "$focus" 4500 "key:ctrl+a; key:shift+b; type:?; wait:400" "$sidebar_visibility"
+# Focus Right, return to the pane, hide Right, then focus the still-shown Left dock.
+PROFILE=web scene sidebar-focus-visible "$wide" 4500 "key:ctrl+a; key:shift+b; wait:300; key:ctrl+right; wait:300; click:60,15; wait:300; key:ctrl+a; type:p; wait:300; type:right sidebar; key:enter; wait:300; key:ctrl+a; key:shift+b; wait:600" "$sidebar_visibility"
+# Hide each dock separately, then restore only the one that was visible last.
+PROFILE=web scene sidebar-restore "$wide" 4500 "key:ctrl+a; type:p; type:right sidebar; key:enter; wait:300; key:ctrl+a; type:p; type:left sidebar; key:enter; wait:300; key:ctrl+a; type:b; wait:600" "$sidebar_visibility"
+
+
 
 # Recording indicators. Animations are off so the blinking dots hold steady; the long wait lets
 # each start's toast expire.

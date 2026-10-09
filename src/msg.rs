@@ -166,6 +166,16 @@ pub enum Msg {
         event: DraggableTabReorderEvent,
     },
     SidebarTabTransferred(DraggableTabTransferEvent),
+    SidebarUiEvent {
+        epoch: u64,
+        event: Box<Msg>,
+    },
+    SidebarManagerBack,
+    SidebarManagerActivate(String),
+    SidebarDockPanelsResized {
+        side: crate::config::SidebarPosition,
+        event: SplitterResizeEvent,
+    },
     SidebarPanelsResized(SplitterResizeEvent),
     SidebarViewportChanged {
         panel: usize,
@@ -827,6 +837,7 @@ pub enum Msg {
     },
     /// The file tree needs a directory it does not have yet (emitted by the widget).
     SidebarTreeEntryRequest {
+        epoch: u64,
         path: String,
     },
     SessionError {

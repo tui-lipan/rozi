@@ -39,9 +39,9 @@ pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_activ
 
 use tui_lipan::prelude::*;
 
+use crate::AppRoot;
 use crate::layout::geometry::{empty_workspace_rect, viewport_bounds};
 use crate::state::WORKBAR_HEIGHT;
-use crate::{AppRoot, Msg};
 
 pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id, settings_query_selection};
 
@@ -157,10 +157,17 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // visible starts settled rather than sliding in at launch.
     let sidebar_progress = ctx.transition::<f32>(
         "rozi-sidebar-progress",
-        if ctx.state.sidebar_visible { 1.0 } else { 0.0 },
+        if ctx.state.sidebar.shown[0] { 1.0 } else { 0.0 },
         crate::layout::anim::sidebar_transition(ctx.state.config.animations),
     );
     ctx.state.sidebar_slide.set(sidebar_progress);
+    let right_progress = ctx.transition::<f32>(
+        "rozi-sidebar-right-progress",
+        if ctx.state.sidebar.shown[1] { 1.0 } else { 0.0 },
+        crate::layout::anim::sidebar_transition(ctx.state.config.animations),
+    );
+    ctx.state.sidebar.right_slide.set(right_progress);
+
     let content_viewport = ctx.state.content_viewport(viewport);
     let top_offset = ctx.state.content_top_offset();
     ctx.state.last_viewport.set(Some(viewport));
@@ -443,6 +450,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_palette {
         root = root.child(palette_overlay(ctx));
     }
+    if ctx.state.sidebar_manager {
+        root = root.child(overlays::sidebar_manager_overlay(ctx));
+    }
     if ctx.state.show_settings {
         root = root.child(settings_overlay(ctx));
     }
@@ -571,113 +581,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let content: Element = root.into();
     // Grows and shrinks with the slide, so the pane column resizes to make room rather than being
     // pushed off the far edge of the screen.
-    let sidebar_width = ctx.state.effective_sidebar_width(viewport);
-    // Nothing reserved, nothing to wrap - which covers both a hidden sidebar and either end of its
-    // slide, where there is not yet enough width to put a panel in.
-    let shell: Element = if sidebar_width == 0 {
-        content
-    } else {
-        // A modal dialog covers the whole shell, so the sidebar dims with it exactly like the
-        // workspace layer - otherwise a bright column stays beside the dialog. The wrapper is
-        // always mounted so the sidebar's keyed splitter/tab state keeps the same parent as the
-        // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
-        // never covers the sidebar.
-        let sidebar_fade = animation::layer_fade(dialog_dim, theme.surface.backdrop, ui_flash);
-        // The splitter spends one column on its own handle, so both the panel's settled width and
-        // the window currently clipping it are one short of their reservations.
-        let panel_width = ctx.state.sidebar_slide_width(viewport).saturating_sub(1);
-        let sidebar_pane_width = sidebar_width.saturating_sub(1);
-        let docked_right =
-            ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right;
-        // The panel is laid out at its settled width and rides inside a clip window that grows with
-        // the slide, anchored to the dock edge - so it arrives whole, sliding in, rather than being
-        // re-laid-out narrower on every frame. Only the pane column beside it actually resizes.
-        let sidebar: Element = Canvas::new()
-            .child_at(
-                FloatRect {
-                    x: crate::layout::anim::sidebar_slide_offset(
-                        sidebar_pane_width,
-                        panel_width,
-                        docked_right,
-                    ),
-                    y: 0.0,
-                    w: f32::from(panel_width),
-                    h: f32::from(viewport.h),
-                }
-                .to_rect(),
-                sidebar::sidebar(ctx, panel_width),
-            )
-            .key("rozi-sidebar-clip");
-        // The dim wraps the clip rather than the panel, so it applies to the sidebar column as it is
-        // seen and leaves the panel's own allocation at its settled width.
-        let sidebar: Element = sidebar_fade
-            .apply(Animated::new(sidebar))
-            .height(Length::Flex(1))
-            .into();
-        // Whatever the sidebar has not reserved. It shrinks as the panel arrives, which is what
-        // keeps the pane column's far edge pinned to the far edge of the screen while its near edge
-        // travels: the column gives up the space rather than sliding out of it.
-        let content_width = viewport.w.saturating_sub(sidebar_width);
-        // The splitter paints its own handle column outside both children, so it has to be dimmed
-        // by hand to keep the seam from staying lit between two dimmed panes.
-        let divider_target =
-            sidebar::fill_color(theme, ctx.state.config.sidebar.background_follows_canvas)
-                .blend_toward(sidebar_fade.color, 1.0 - sidebar_fade.opacity);
-        let divider_bg = ctx.animated_color_with_frame_rate(
-            "rozi-sidebar-divider",
-            divider_target,
-            sidebar_fade.transition,
-            ctx.state.runtime_frame_rate(),
-        );
-        let divider_style = Style::new()
-            .fg(divider_bg)
-            .bg(divider_bg)
-            .transform_fg(ColorTransform::elevate(0.15));
-        // The same window `set_width` clamps to, handed to the splitter so the drag stops there
-        // too. Without it the handle follows the pointer past the widest sidebar rozi will draw,
-        // and the columns between the panel and the pane column belong to nobody: an empty strip
-        // beside the sidebar, with the pane column clipped because it was laid out for the width
-        // it was denied.
-        let (min_pane, max_pane) = ctx.state.sidebar_pane_bounds(viewport);
-        let sidebar_limits = SplitterPaneLimits::range(min_pane, max_pane);
-        let pane_limits = if docked_right {
-            vec![SplitterPaneLimits::UNBOUNDED, sidebar_limits]
-        } else {
-            vec![sidebar_limits, SplitterPaneLimits::UNBOUNDED]
-        };
-        let mut splitter = Splitter::vertical()
-            .pane_limits(pane_limits)
-            .split_id("rozi-sidebar-shell")
-            .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
-                viewport.w,
-                sidebar_width,
-                docked_right,
-            ))
-            .min_size(1)
-            .handle_symbol('│')
-            .handle_style(divider_style)
-            .handle_hover_style(divider_style)
-            .handle_active_style(
-                Style::new()
-                    .fg(ctx.state.theme.border_active)
-                    .bg(divider_bg)
-                    .bold(),
-            )
-            .on_resize_live(ctx.link().callback(Msg::SidebarWidthResizing))
-            .on_resize(ctx.link().callback(Msg::SidebarWidthResized));
-        splitter = if docked_right {
-            splitter
-                .weights(vec![content_width as f32, sidebar_pane_width as f32])
-                .child(content)
-                .child(sidebar)
-        } else {
-            splitter
-                .weights(vec![sidebar_pane_width as f32, content_width as f32])
-                .child(sidebar)
-                .child(content)
-        };
-        splitter.into()
-    };
+    let shell = sidebar::docking_shell(ctx, viewport, content, dialog_dim, ui_flash);
 
     ThemeProvider::new(ctx.state.theme.clone())
         .child(shell)

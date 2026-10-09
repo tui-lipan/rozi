@@ -24,7 +24,7 @@ fn apply_current_pane_output(
     // Sidebar rows and modal pickers can derive labels from the raw terminal title too. Their
     // composition stays on the full refresh path until they also bind live sources.
     let title_is_local =
-        !state.sidebar_visible && state.sidebar_slide.get() == 0.0 && !state.has_modal_overlay();
+        !state.sidebar_shown() && state.sidebar_slide.get() == 0.0 && !state.has_modal_overlay();
     let remote_attached = state.current().remote_target.is_some();
     let show_titles = state.config.pane.show_titles;
     let bell_notifications = state.config.notifications.bell;

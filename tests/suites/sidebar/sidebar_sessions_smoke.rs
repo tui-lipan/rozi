@@ -85,7 +85,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 // Revealing the sidebar after the first frame is a real toggle, so it runs the
                 // real slide; these assertions are about the settled column, not a frame
                 // part-way through it.
@@ -93,7 +93,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                 // The hierarchy needs every row on screen, so collapse the default split and give
                 // the Sessions tab the whole sidebar.
                 state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.config.sidebar.split = false;
+                state.config.sidebar.layout.left.panel_count = 1;
                 state.sidebar.apply_configured_panels(&state.config.sidebar);
                 state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state
@@ -226,11 +226,11 @@ fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
+                state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
                 state.config.nerd_icons = false;
                 state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.config.sidebar.split = false;
+                state.config.sidebar.layout.left.panel_count = 1;
                 state.sidebar.apply_configured_panels(&state.config.sidebar);
                 state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state.current_mut().session_name = Some("dev".into());
@@ -280,10 +280,10 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
         h: 30,
     });
     let state = backend.state_mut();
-    state.sidebar_visible = true;
+    state.sidebar.shown = [true, false];
     state.config.animations.sidebar = false;
     state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-    state.config.sidebar.split = false;
+    state.config.sidebar.layout.left.panel_count = 1;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
     state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
     state

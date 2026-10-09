@@ -40,7 +40,13 @@
           "description": "Operating systems this extension runs on. Omit for all of them.",
           "type": "array",
           "items": {
-            "enum": ["linux", "macos", "windows", "freebsd", "netbsd"]
+            "enum": [
+              "linux",
+              "macos",
+              "windows",
+              "freebsd",
+              "netbsd"
+            ]
           }
         },
         "homepage": {
@@ -556,6 +562,27 @@
             ],
             "default": "client",
             "description": "Command tabs only. Where the listing command and an on_click exec run."
+          },
+          "suggested_location": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dock",
+              "panel"
+            ],
+            "properties": {
+              "dock": {
+                "enum": [
+                  "left",
+                  "right"
+                ]
+              },
+              "panel": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              }
+            }
           }
         },
         "oneOf": [
@@ -596,6 +623,112 @@
             }
           }
         ]
+      }
+    },
+    "sidebar_presets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "label",
+          "layout"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "layout": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "left": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "width": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 80
+                  },
+                  "panel_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3
+                  },
+                  "panels": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "weight": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "tabs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "uniqueItems": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "right": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "width": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 80
+                  },
+                  "panel_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3
+                  },
+                  "panels": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "weight": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "tabs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "uniqueItems": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "hidden": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -18,6 +18,8 @@ pub(super) struct ExtensionManifestFile {
     /// accepts, under namespaced ids so an extension can only ever add a tab.
     #[serde(default)]
     pub(super) sidebar_tabs: Vec<ExtensionSidebarTabFile>,
+    #[serde(default)]
+    pub(super) sidebar_presets: Vec<crate::config::SidebarLayoutPreset>,
     /// Settings this extension understands, with the value each one takes when the user says
     /// nothing. Declaring them is what makes a user override checkable and what gives
     /// `extensions check` something to show; an undeclared key is not a setting.
@@ -38,6 +40,7 @@ pub(super) struct ExtensionManifestFile {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ExtensionSidebarTabFile {
+    pub(super) suggested_location: Option<crate::config::SidebarTabLocation>,
     pub(super) name: Option<String>,
     pub(super) label: Option<String>,
     pub(super) entries: Option<Vec<super::super::file::SidebarLauncherEntrySpec>>,

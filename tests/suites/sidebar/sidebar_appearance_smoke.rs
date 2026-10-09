@@ -16,10 +16,10 @@ fn sidebar_backend() -> TestBackend<AppRoot> {
     });
     {
         let state = backend.state_mut();
-        state.sidebar_visible = true;
+        state.sidebar.shown = [true, false];
         state.config.animations.sidebar = false;
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
-        state.config.sidebar.split = false;
+        state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.apply_configured_panels(&state.config.sidebar);
         state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
     }

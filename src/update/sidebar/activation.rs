@@ -63,7 +63,7 @@ fn with_cursor_row(
     ctx: &mut Context<AppRoot>,
     then: fn(&mut Context<AppRoot>, usize, usize) -> Update,
 ) -> Update {
-    let panel = ctx.state.sidebar.active_panel;
+    let panel = ctx.state.sidebar.active_panel_index();
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };

@@ -699,7 +699,8 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow) -> Row {
                 match row.subpath.as_deref() {
                     Some(subpath) => {
                         let budget = subpath_budget(
-                            ctx.state.sidebar_requested_width(),
+                            ctx.state
+                                .sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
                             &row.title,
                             duration.as_deref(),
                             &workspace,
@@ -732,7 +733,10 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow) -> Row {
         content = content.detail(label, Style::new().fg(color));
     }
     if let Some(activity) = row.activity.as_deref() {
-        let budget = activity_budget(ctx.state.sidebar_requested_width());
+        let budget = activity_budget(
+            ctx.state
+                .sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
+        );
         content = content.detail(
             row::truncate(activity, budget),
             super::super::fg_only(&ctx.state.theme.muted).dim(),

@@ -263,7 +263,7 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     state.command_link = None;
-                    state.sidebar_visible = false;
+                    state.sidebar.hide_all();
                     state.remote.hosts.seed(
                         &state.config.remote,
                         std::slice::from_ref(&target),
@@ -298,7 +298,7 @@ mod tests {
                     })
                     .unwrap();
                 assert_eq!(backend.state().remote.live_sessions, vec![row.clone()]);
-                assert!(!backend.state().sidebar_visible);
+                assert!(!backend.state().sidebar_shown());
                 backend
                     .dispatch(Msg::HostMetadata {
                         agents: Vec::new(),

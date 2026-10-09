@@ -15,7 +15,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
     let pane = &ctx.state.config.pane;
     let animations = &ctx.state.config.animations;
     let alert = &ctx.state.config.workbar.alert;
-    vec![
+    let mut groups = vec![
         settings_group(
             "General",
             vec![
@@ -246,10 +246,22 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             "Sidebar",
             vec![
                 (
-                    "Position",
-                    ctx.state.config.sidebar.position.label().to_string(),
-                    ToggleSidebarPosition,
+                    "Left panels",
+                    sidebar_dock_status(&ctx.state.config.sidebar.layout.left),
+                    LeftSidebarPanels,
                 ),
+                (
+                    "Right panels",
+                    sidebar_dock_status(&ctx.state.config.sidebar.layout.right),
+                    RightSidebarPanels,
+                ),
+                (
+                    "Open sidebars at startup",
+                    enabled_status(ctx.state.config.sidebar.startup),
+                    ToggleSidebarStartup,
+                ),
+                ("Sidebar tabs", String::new(), SidebarTabs),
+                ("Sidebar layout preset", String::new(), SidebarLayoutPreset),
                 (
                     "Background follows canvas",
                     enabled_status(ctx.state.config.sidebar.background_follows_canvas),
@@ -425,7 +437,13 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                 ),
             ],
         ),
-    ]
+    ];
+    if ctx.state.config.sidebar.presets.is_empty() {
+        for (_, entries) in &mut groups {
+            entries.retain(|entry| !matches!(entry, SearchEntry::Item(item) if item.value.0 == SidebarLayoutPreset));
+        }
+    }
+    groups
 }
 
 fn setting_category(group: &str) -> crate::state::SettingsTab {
@@ -1002,8 +1020,10 @@ pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
         .iter()
         .enumerate()
         .map(|(index, label)| {
-            let mut entry = SearchEntry::item(*label, index);
-            if index == editor.original_index {
+            let mut entry = SearchEntry::item(label.clone(), index);
+            if index == editor.original_index
+                && editor.action != SettingsAction::SidebarLayoutPreset
+            {
                 entry = entry.description(picker_description("current"));
             }
             entry
@@ -1037,9 +1057,8 @@ pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
 fn choice_status(ctx: &Context<AppRoot>, action: SettingsAction) -> String {
     action
         .choice_ring(&ctx.state.config)
-        .and_then(|ring| ring.options.get(ring.index).copied())
-        .unwrap_or("")
-        .to_string()
+        .and_then(|ring| ring.options.get(ring.index).cloned())
+        .unwrap_or_default()
 }
 
 fn enabled_status(enabled: bool) -> String {
@@ -1145,4 +1164,12 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         palette,
         60,
     )
+}
+
+fn sidebar_dock_status(dock: &crate::config::SidebarDock) -> String {
+    if dock.panel_count == 1 {
+        "1 panel".into()
+    } else {
+        format!("{} panels", dock.panel_count)
+    }
 }

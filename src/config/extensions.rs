@@ -231,6 +231,8 @@ pub(crate) struct DiscoveredExtension {
     services: Vec<ServiceConfig>,
     agents: Vec<crate::agent_detection::AgentDefinition>,
     sidebar_tabs: Vec<super::schema::SidebarTab>,
+    sidebar_locations: BTreeMap<String, super::schema::SidebarTabLocation>,
+    sidebar_presets: Vec<super::schema::SidebarLayoutPreset>,
     navigation_targets: Vec<super::schema::NavigationTargetContribution>,
     suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     settings: ExtensionSettings,
@@ -428,6 +430,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                sidebar_locations: BTreeMap::new(),
+                sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
@@ -445,6 +449,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                sidebar_locations: BTreeMap::new(),
+                sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
@@ -463,6 +469,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 services: Vec::new(),
                 agents: Vec::new(),
                 sidebar_tabs: Vec::new(),
+                sidebar_locations: BTreeMap::new(),
+                sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
                 settings: ExtensionSettings::new(),
@@ -547,8 +555,20 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     let declared_settings = settings::declared(manifest.settings, &mut info.errors);
     info.settings = declared_settings.clone();
     let mut sidebar_tabs = Vec::new();
+    let mut sidebar_locations = BTreeMap::new();
     let mut seen_sidebar_tabs = HashSet::new();
     for raw in manifest.sidebar_tabs {
+        if let Some(location) = raw.suggested_location.clone() {
+            if super::schema::SidebarPosition::parse(&location.dock).is_none()
+                || !(1..=3).contains(&location.panel)
+            {
+                info.errors.push(
+                    "sidebar suggested_location requires dock left/right and panel 1–3".into(),
+                );
+            } else if let Some(name) = &raw.name {
+                sidebar_locations.insert(format!("{validation_id}.{name}"), location);
+            }
+        }
         validate_sidebar_tab(
             raw,
             &validation_id,
@@ -559,6 +579,36 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut sidebar_tabs,
             &mut placed,
         );
+    }
+    let mut sidebar_presets = manifest.sidebar_presets;
+    let mut preset_names = HashSet::new();
+    for preset in &mut sidebar_presets {
+        if !super::commands::valid_command_segment(&preset.name)
+            || !preset_names.insert(preset.name.clone())
+            || preset.label.trim().is_empty()
+        {
+            info.errors
+                .push("sidebar preset needs a unique name and nonempty label".into());
+        }
+        preset.name = format!("{validation_id}.{}", preset.name);
+        for side in [
+            super::schema::SidebarPosition::Left,
+            super::schema::SidebarPosition::Right,
+        ] {
+            for panel in &mut preset.layout.dock_mut(side).panels {
+                for id in &mut panel.tabs {
+                    if seen_sidebar_tabs.contains(id) {
+                        *id = format!("{validation_id}.{id}");
+                    }
+                }
+            }
+        }
+        for id in &mut preset.layout.hidden {
+            if seen_sidebar_tabs.contains(id) {
+                *id = format!("{validation_id}.{id}");
+            }
+        }
+        preset.layout.validate(&mut info.errors);
     }
     let mut seen_services = HashSet::new();
     for raw in manifest.services {
@@ -691,6 +741,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         services.clear();
         agents.clear();
         sidebar_tabs.clear();
+        sidebar_locations.clear();
+        sidebar_presets.clear();
         navigation_targets.clear();
         suggested_keybindings.clear();
     } else {
@@ -733,6 +785,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         services,
         agents,
         sidebar_tabs,
+        sidebar_locations,
+        sidebar_presets,
         navigation_targets,
         suggested_keybindings,
         settings: declared_settings,
@@ -2170,6 +2224,7 @@ mod tests {
                 "navigation_targets",
                 "services",
                 "settings",
+                "sidebar_presets",
                 "sidebar_tabs",
                 "suggested_keybindings"
             ]
@@ -2229,7 +2284,8 @@ mod tests {
                 "label",
                 "name",
                 "on_click",
-                "placement"
+                "placement",
+                "suggested_location"
             ]
         );
         assert_eq!(
@@ -2559,5 +2615,54 @@ mod tests {
         };
         assert_eq!(status("client"), ExtensionStatus::Invalid);
         assert_eq!(status("placed"), ExtensionStatus::Loaded);
+    }
+    #[test]
+    fn docking_contributions_are_declarative_namespaced_and_atomic() {
+        let temp = tempfile::tempdir().unwrap();
+        let text = format!(
+            r#"{}
+[[sidebar_tabs]]
+name = "jobs"
+label = "Jobs"
+entries = []
+suggested_location = {{ dock = "right", panel = 3 }}
+[[sidebar_presets]]
+name = "review"
+label = "Review"
+layout = {{ right = {{ panel_count = 2, panels = [{{ tabs = ["jobs", "files"], weight = 1.0 }}] }}, hidden = ["jobs"] }}
+"#,
+            manifest("tools", "1")
+        );
+        let directory = write_manifest(temp.path(), "tools", &text);
+        let contributions =
+            scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
+        assert_eq!(contributions.sidebar_locations["tools.jobs"].panel, 3);
+        assert_eq!(contributions.sidebar_presets.len(), 1);
+        let preset = &contributions.sidebar_presets[0];
+        assert_eq!(preset.name, "tools.review");
+        assert_eq!(
+            preset.layout.location("tools.jobs"),
+            Some((crate::config::SidebarPosition::Right, 0))
+        );
+        assert_eq!(
+            preset.layout.location("files"),
+            Some((crate::config::SidebarPosition::Right, 0))
+        );
+        assert_eq!(preset.layout.hidden, ["tools.jobs"]);
+        let disabled = scan_extensions_in(temp.path())
+            .into_contributions(&["tools".into()], &Default::default());
+        assert!(disabled.sidebar_locations.is_empty());
+        assert!(disabled.sidebar_presets.is_empty());
+        assert!(disabled.sidebar_tabs.is_empty());
+        std::fs::write(
+            directory.join("extension.toml"),
+            text.replace("panel = 3", "panel = 0"),
+        )
+        .unwrap();
+        let invalid = scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
+        assert!(invalid.sidebar_tabs.is_empty());
+        assert!(invalid.sidebar_presets.is_empty());
+        assert!(invalid.sidebar_locations.is_empty());
+        assert_eq!(invalid.problem_count, 1);
     }
 }

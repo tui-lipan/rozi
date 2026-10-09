@@ -56,7 +56,8 @@ readable at page width. Review the PNG in `/tmp/rzc-preview` before embedding th
 
 Call `clip NAME VIEWPORT SETTLE_MS STEPS [EXTRA_CONFIG]` in `scenes.sh`. It writes `NAME.mp4` and
 `NAME-poster.webp`. `STEPS` has one step per line and runs in real time, not on the virtual clock
-scenes use:
+scenes use. `mouse:down,5,0`, `mouse:drag,130,20`, and `mouse:up,130,20` send a held
+left-button drag at zero-based terminal cells, including several moves before release:
 
 | Step | Effect |
 | --- | --- |

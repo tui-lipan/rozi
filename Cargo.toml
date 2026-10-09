@@ -244,4 +244,4 @@ opt-level = 3
 # Pin the reviewed upstream fix so CI and installed Git builds send focus-in without a click.
 # Replace this patch with the released version before publishing rozi to crates.io, where
 # Cargo removes patches, and remove the matching deny.toml Git source allowance.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "b1bd62448d28edfce8fb1cf38767b6d004981521" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "7de59c8915c11be890afeb71fc69fa61f32c0df3" }

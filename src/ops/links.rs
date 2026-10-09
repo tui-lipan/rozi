@@ -327,7 +327,10 @@ mod tests {
             assert_eq!(lines[0], uri);
             assert_eq!(lines[2], text);
             assert_eq!(lines[3], source.to_string());
-            assert_eq!(lines[4], scratch.path().display().to_string());
+            assert_eq!(
+                std::fs::canonicalize(lines[4]).unwrap(),
+                scratch.path().canonicalize().unwrap()
+            );
             if text.starts_with("file:") {
                 assert_eq!(
                     lines[1],

@@ -862,7 +862,6 @@ Every extension command and service receives:
 | --- | --- |
 | `ROZI_EXTENSION` | The extension's manifest ID. |
 | `ROZI_EXTENSION_DIR` | Absolute installation directory. |
-| `ROZI_SOURCE_PANE`, `ROZI_SOURCE_SESSION` | Source pane and session instance for a client command; link handlers also receive the [link context](configuration.md#links-handlers). |
 | `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object; `{}` when none are declared. |
 | `ROZI_EXTENSION_GENERATION` | Opaque token identifying the currently loaded extension. |
 | `ROZI_BIN` | The running `rozi` executable, when available. |
@@ -878,6 +877,11 @@ differences:
 | `ROZI_SOCKET` | The host's extension runtime, which relays requests to your client. |
 | `ROZI_EXTENSION_CREDENTIAL` | The process's own credential. Never pass it on or log it. |
 | `ROZI_SERVICE` | The service's public ID, for a placed service. |
+
+Client `exec` commands receive `ROZI_SOURCE_PANE` and `ROZI_SOURCE_SESSION` for the focused pane
+and its session instance. Link handlers receive these variables for the source pane, along with
+the [link context](configuration.md#links-handlers), for both client and placed commands.
+Ordinary `run` and `popup` commands and services do not receive these variables automatically.
 
 A service's `env` cannot override the four `ROZI_EXTENSION*` variables, and the runtime replaces
 any `ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.

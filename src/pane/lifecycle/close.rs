@@ -371,6 +371,9 @@ pub(crate) fn prune_closed_pane(
         if let Some(pane) = removed {
             clear_pane_local_state(&mut ctx.state, id);
             ctx.state.current_mut().retire_pane(pane, timeout);
+            // Wake once more after the correction window: an idle client otherwise keeps the
+            // retired screen until another user action reaches post-update expiry.
+            return Update::with_command(prune_closed_command(epoch, id, generation, timeout));
         }
     }
     Update::full()

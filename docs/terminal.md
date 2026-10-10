@@ -194,6 +194,22 @@ Limits:
 - In a session that may have several clients, rozi refuses image transfers through temporary files
   or shared memory, which can be read only once.
 
+For a browser that sends complete frames, rozi can retain immutable frame files and let a local
+Kitty host load them directly. This avoids decoded frame buffers and patch composition in rozi.
+Captures, overlapping patches, modal dimming and other host protocols still read the pixels when
+needed. Frame files use filesystem cache even when they add little to rozi's resident memory.
+
+To try complete frames with terminal-browser in a local pane:
+
+```sh
+TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge
+```
+
+This is an experimental performance path. Compare responsiveness as well as memory usage; full
+frames move more pixels than patches. The existing 32 MiB single-upload limit still applies, so
+large panes may need terminal-browser's default presentation mode. Remote sessions retain the
+ordinary graphics path.
+
 ## Take a screenshot
 
 To save a PNG of what rozi shows, run one of these from the command palette, or bind its id under

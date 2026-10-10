@@ -188,13 +188,15 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
 
     let rows = rows.max(1);
     let cols = cols.max(1);
-    if scrollback.is_multiple_of(HISTORY_ALLOCATION_ROWS) && rows < u16::MAX {
+    let mut screen = if scrollback.is_multiple_of(HISTORY_ALLOCATION_ROWS) && rows < u16::MAX {
         let mut screen = TerminalScreen::new(rows + 1, cols, scrollback);
         screen.resize(rows, cols);
         screen
     } else {
         TerminalScreen::new(rows, cols, scrollback)
-    }
+    };
+    screen.set_image_file_storage_enabled(true);
+    screen
 }
 
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes

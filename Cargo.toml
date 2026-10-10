@@ -238,7 +238,7 @@ opt-level = 3
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
 
-# Required for Kitty pixel offsets and cached patch composition until tui-lipan releases the fix.
+# Required for Kitty patch composition and file-backed frames until tui-lipan releases the fix.
 # Replace this patch with the released dependency before publishing Rozi.
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "a5d90dcb31821e12500596bc00e80d5165165f3a" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "f3458e72ed1e62135ba058c9ae9968d06f4b28ad" }

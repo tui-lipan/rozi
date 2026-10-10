@@ -241,4 +241,4 @@ opt-level = 3
 # Required for Kitty patch composition and file-backed frames until tui-lipan releases the fix.
 # Replace this patch with the released dependency before publishing Rozi.
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "8aa4736eea00c864bc3d040780e4befd8624a415" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "2baf313cf20d1a8393bdc5e01ee5303aaf5690e3" }

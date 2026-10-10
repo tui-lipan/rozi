@@ -238,3 +238,8 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
+
+# Renderer-aware underlay redaction is not yet released. Replace this patch with the released
+# dependency carrying CapturedFrame::visible_image_underlays before publishing Rozi.
+[patch.crates-io]
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "1c3fbe8c9b4e68df4eed40a4c576a31ad61436e4" }

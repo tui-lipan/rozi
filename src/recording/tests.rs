@@ -267,14 +267,275 @@ fn an_image_is_stored_once_however_many_frames_show_it() {
     while let Some(step) = replay.step().unwrap() {
         if let ReplayStep::Frame { .. } = step {
             frames += 1;
+            assert!(replay.frame().unwrap().images[0].fill_cell_box);
             let id = replay.frame().unwrap().images[0].id.clone().unwrap();
             assert_eq!(id, stored[0].id);
             let decoded = &replay.frame_images().unwrap()[&id];
             assert_eq!((decoded.width, decoded.height), (20, 20));
             assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
+            let recorded = replay.frame().unwrap().clone();
+            let captured = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+            assert!(captured.images[0].fill_cell_box);
         }
     }
     assert_eq!(frames, 5);
+}
+
+#[test]
+fn negative_image_planes_round_trip_beneath_recorded_glyphs() {
+    image_planes_round_trip(-1, 255);
+}
+
+#[test]
+fn translucent_image_planes_round_trip_over_recorded_glyphs() {
+    image_planes_round_trip(1, 160);
+}
+
+#[test]
+fn opaque_image_planes_round_trip_without_disclosing_occluded_text() {
+    image_planes_round_trip(1, 255);
+}
+
+fn image_planes_round_trip(z_index: i32, alpha: u8) {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut expected = Vec::new();
+    let opaque = z_index >= 0 && alpha == 255;
+    let texts = if opaque {
+        ["SECR", "HIDE"]
+    } else {
+        ["A界", "B界"]
+    };
+    for (t, text) in [(0, texts[0]), (10, texts[1])] {
+        let mut screen = TerminalScreen::new(4, 20, 100);
+        screen.set_cell_size(TerminalCellSize {
+            width: 8,
+            height: 16,
+        });
+        screen.process_bytes(format!("\x1b[?25l\x1b[31;44;1;4m{text}\x1b[1;1H").as_bytes());
+        if opaque {
+            screen.process_bytes(format!("\x1b[2;1H{t}\x1b[1;1H").as_bytes());
+        }
+        let pixels = [20, 100, 220, alpha].repeat(32 * 16);
+        screen.process_bytes(
+            format!(
+                "\x1b_Ga=T,f=32,s=32,v=16,t=d,i=1,c=4,r=1,z={z_index},C=1;{}\x1b\\",
+                base64::engine::general_purpose::STANDARD.encode(pixels)
+            )
+            .as_bytes(),
+        );
+        let captured = screen.capture_frame();
+        assert_eq!(captured.images[0].z_index, z_index);
+        assert!(
+            captured.images[0]
+                .underlying_cells
+                .iter()
+                .flatten()
+                .any(|cell| cell.symbol.starts_with(text.chars().next().unwrap()))
+        );
+        if opaque {
+            let spans = crate::pane::spans::span_frame(&captured, screen.palette(), true).unwrap();
+            assert_eq!(spans.version, 2);
+            assert!(spans.images[0].underlying_cells.is_empty());
+            assert!(!serde_json::to_string(&spans).unwrap().contains(text));
+            assert!(spans.rows[0].iter().all(|run| !run.text.contains(text)));
+        }
+        assert!(recorder.push_frame(t, captured.clone(), screen.palette()));
+        expected.push((captured, screen.palette()));
+    }
+    let outcome = finish(recorder, 20, EndReason::Stopped);
+    assert_eq!(
+        outcome.totals.images, 1,
+        "only metadata changes between frames"
+    );
+    assert_eq!(
+        outcome.totals.deltas, 1,
+        "layer metadata survives deltas too"
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    if opaque {
+        let stored = String::from_utf8(bytes.clone()).unwrap();
+        let header: RecordingHeader = serde_json::from_str(stored.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            header.spans_version, 2,
+            "old players must refuse these frames"
+        );
+        for text in texts {
+            assert!(
+                !stored.contains(text),
+                "occluded text leaked into the recording"
+            );
+        }
+    }
+    let mut replay = Replay::new(BufReader::new(bytes.as_slice())).unwrap();
+    let mut frames = 0;
+    while let Some(step) = replay.step().unwrap() {
+        if !matches!(step, ReplayStep::Frame { .. }) {
+            continue;
+        }
+        let recorded = replay.frame().unwrap().clone();
+        let reconstructed = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+        let (original, palette) = &expected[frames];
+        assert_same_image_png(original, &reconstructed, *palette);
+        frames += 1;
+    }
+    assert_eq!(frames, expected.len());
+}
+
+fn assert_same_image_png(
+    original: &tui_lipan::CapturedFrame,
+    reconstructed: &tui_lipan::CapturedFrame,
+    palette: TerminalColorPalette,
+) {
+    for text_renderer in [
+        tui_lipan::PngTextRenderer::Bitmap,
+        tui_lipan::PngTextRenderer::Font,
+    ] {
+        let options = tui_lipan::PngOptions {
+            default_fg: palette.foreground.unwrap_or(Color::White),
+            default_bg: palette.background.unwrap_or(Color::Black),
+            ansi_palette: palette.ansi,
+            text_renderer,
+            ..Default::default()
+        };
+        assert!(
+            original.to_png(&options).unwrap() == reconstructed.to_png(&options).unwrap(),
+            "PNG pixels changed through capture/spans/recording/replay for renderer={text_renderer:?}"
+        );
+    }
+}
+
+#[test]
+fn opaque_base_and_translucent_patch_hide_original_text() {
+    stacked_images_round_trip(0, 6, "SECRET", true, false);
+}
+
+#[test]
+fn image_stacks_hide_both_halves_of_a_fully_occluded_wide_glyph() {
+    stacked_images_round_trip(0, 2, "界", true, false);
+}
+
+#[test]
+fn image_stacks_preserve_the_visible_half_of_a_wide_glyph() {
+    stacked_images_round_trip(0, 1, "界", false, false);
+}
+
+#[test]
+fn opaque_negative_base_preserves_text_beneath_a_translucent_patch() {
+    stacked_images_round_trip(-1, 6, "SECRET", false, false);
+}
+
+#[test]
+fn image_stacks_preserve_wide_glyphs_across_tile_boundaries() {
+    stacked_images_round_trip(0, 1, "界", false, true);
+}
+
+fn stacked_images_round_trip(
+    base_z: i32,
+    opaque_columns: usize,
+    text: &str,
+    hidden: bool,
+    split_wide: bool,
+) {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut expected = Vec::new();
+    for t in [0, 10] {
+        let mut screen = TerminalScreen::new(4, 20, 100);
+        screen.set_cell_size(TerminalCellSize {
+            width: 8,
+            height: 16,
+        });
+        screen.process_bytes(
+            format!("\x1b[?25l\x1b[31;44;1;4m{text}\x1b[2;1H{t}\x1b[1;1H").as_bytes(),
+        );
+        let width = if split_wide { 8 } else { 48 };
+        let columns = width / 8;
+        let base: Vec<u8> = (0..width * 16)
+            .flat_map(|pixel| {
+                [
+                    20,
+                    100,
+                    220,
+                    if pixel % width < opaque_columns * 8 {
+                        255
+                    } else {
+                        0
+                    },
+                ]
+            })
+            .collect();
+        for (id, z, pixels) in [
+            (1, base_z, base),
+            (2, 1, [240, 40, 80, 160].repeat(width * 16)),
+        ] {
+            if split_wide && id == 2 {
+                screen.process_bytes(b"\x1b[1;2H");
+            }
+            screen.process_bytes(
+                format!(
+                    "\x1b_Ga=T,f=32,s={width},v=16,t=d,i={id},c={columns},r=1,z={z},C=1;{}\x1b\\",
+                    base64::engine::general_purpose::STANDARD.encode(pixels),
+                )
+                .as_bytes(),
+            );
+        }
+        let captured = screen.capture_frame();
+        assert_eq!(captured.images.len(), 2, "exercise separate z-planes");
+        let spans = crate::pane::spans::span_frame(&captured, screen.palette(), true).unwrap();
+        assert_stack_text_visibility(&serde_json::to_string(&spans).unwrap(), text, hidden);
+        assert!(recorder.push_frame(t, captured.clone(), screen.palette()));
+        expected.push((captured, screen.palette()));
+    }
+    let outcome = finish(recorder, 20, EndReason::Stopped);
+    assert_eq!(outcome.totals.images, 2);
+    assert_eq!(outcome.totals.deltas, 1);
+    let bytes = std::fs::read(path).unwrap();
+    assert_stack_text_visibility(std::str::from_utf8(&bytes).unwrap(), text, hidden);
+    let mut replay = Replay::new(BufReader::new(bytes.as_slice())).unwrap();
+    let mut frames = 0;
+    while let Some(step) = replay.step().unwrap() {
+        if !matches!(step, ReplayStep::Frame { .. }) {
+            continue;
+        }
+        let recorded = replay.frame().unwrap().clone();
+        let reconstructed = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+        let (original, palette) = &expected[frames];
+        assert_same_image_png(original, &reconstructed, *palette);
+        frames += 1;
+    }
+    assert_eq!(frames, expected.len());
+}
+
+fn assert_stack_text_visibility(serialized: &str, text: &str, hidden: bool) {
+    let captured_text: String = serialized
+        .lines()
+        .map(|line| serialized_cell_text(&serde_json::from_str(line).unwrap()))
+        .collect();
+    assert_eq!(
+        captured_text
+            .chars()
+            .any(|character| text.contains(character)),
+        !hidden,
+        "original characters have the wrong visibility in serialized cell text"
+    );
+}
+
+fn serialized_cell_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(fields) => fields
+            .iter()
+            .map(|(key, value)| {
+                if key == "text" {
+                    value.as_str().unwrap_or_default().to_string()
+                } else {
+                    serialized_cell_text(value)
+                }
+            })
+            .collect(),
+        serde_json::Value::Array(values) => values.iter().map(serialized_cell_text).collect(),
+        _ => String::new(),
+    }
 }
 
 #[test]
@@ -853,6 +1114,18 @@ fn refusal(events: &[serde_json::Value]) -> String {
 }
 
 #[test]
+fn a_reader_refuses_image_metadata_outside_its_cell_area() {
+    let mut screen = TerminalScreen::new(1, 2, 0);
+    screen.process_bytes(b"\x1b_Ga=T,f=32,s=1,v=1,t=d,i=1,C=1;AAAA/w==\x1b\\");
+    let mut frame = span(&mut screen);
+    let image = &mut frame.images[0];
+    assert!(!image.underlying_cells.is_empty());
+    image.underlying_cells.push(None);
+    let error = refusal(&[serde_json::to_value(RecordingEvent::Keyframe { t: 0, frame }).unwrap()]);
+    assert!(error.contains("underlying cells"), "{error}");
+}
+
+#[test]
 fn a_reader_refuses_a_line_frame_or_image_too_large_to_hold() {
     // A line past the ceiling is refused before it is parsed, or even held whole.
     let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
@@ -981,6 +1254,9 @@ fn the_images_of_one_frame_decode_within_one_budget() {
             height: 1,
             pixel_width: 64,
             pixel_height: 64,
+            fill_cell_box: false,
+            z_index: 0,
+            underlying_cells: Vec::new(),
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),
@@ -1029,6 +1305,9 @@ fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
             height: 1,
             pixel_width: 1,
             pixel_height: 1,
+            fill_cell_box: false,
+            z_index: 0,
+            underlying_cells: Vec::new(),
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),

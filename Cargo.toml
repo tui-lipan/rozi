@@ -56,7 +56,9 @@ exclude = [
 # sidebar's project branches and worktree status rail.
 # 0.21.0: sparse terminal snapshots and live TextSource labels avoid full UI rebuilds.
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
-tui-lipan = { version = "0.21.1", features = [
+# 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
+# Also reports focus after late replay and when a focused terminal binds a replacement screen.
+tui-lipan = { version = "0.22.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -237,11 +239,3 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
-
-[patch.crates-io]
-# Temporary until the next tui-lipan release includes the terminal focus-report fix.
-# Session replay can enable focus reporting after the pane already owns keyboard focus.
-# Pin the reviewed upstream fix so CI and installed Git builds send focus-in without a click.
-# Replace this patch with the released version before publishing rozi to crates.io, where
-# Cargo removes patches, and remove the matching deny.toml Git source allowance.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "7de59c8915c11be890afeb71fc69fa61f32c0df3" }

@@ -186,12 +186,29 @@ Limits:
 
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate it.
-- The session server and each attached client keep up to 32 MiB of image data per pane, evicting
-  old images when needed. A client that attaches receives the retained images.
+- The session server and each attached client keep up to 200 MiB of image data per pane, allocated as needed,
+  evicting old images when needed. This allows programs that update parts of a frame to retain
+  their base image, toolbar tiles, and patches. A client that attaches receives the retained images.
 - Remote panes send image data inline, because the local client cannot read a file path on the
   server.
 - In a session that may have several clients, rozi refuses image transfers through temporary files
   or shared memory, which can be read only once.
+
+For a browser that sends complete frames, rozi can retain immutable frame files and let a local
+Kitty host load them directly. This avoids decoded frame buffers and patch composition in rozi.
+Captures, overlapping patches, modal dimming and other host protocols still read the pixels when
+needed. Frame files use filesystem cache even when they add little to rozi's resident memory.
+
+To try complete frames with terminal-browser in a local pane:
+
+```sh
+TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge
+```
+
+This is an experimental performance path. Compare responsiveness as well as memory usage; full
+frames move more pixels than patches. The existing 32 MiB single-upload limit still applies, so
+large panes may need terminal-browser's default presentation mode. Remote sessions retain the
+ordinary graphics path.
 
 ## Take a screenshot
 

@@ -243,9 +243,11 @@ answers `capture-ui`.
 ### Spans frames
 
 A `spans` capture's `frame` describes the visible grid. It has its own `format`, always
-`"rozi-spans"`, and an integer `version`, currently `1`, apart from the control API's versions.
-The version changes only when a field changes meaning or is removed; fields are added without a
-change, so a consumer must ignore fields it does not know. The frame is `SpanFrame` in the
+`"rozi-spans"`, and an integer `version`, currently `2`, apart from the control API's versions.
+Consumers must reject versions newer than they support. The version changes when older readers
+cannot preserve frame semantics, including additions required for correct rendering. Version 2
+preserves image stacking and underlying glyphs. Consumers may ignore other unknown fields.
+The frame is `SpanFrame` in the
 [JSON Schema](control.md#json-schema).
 
 | Field | Contents |
@@ -280,15 +282,28 @@ A color stays symbolic rather than being resolved to RGB, in one of three forms:
 
 An image has `x`, `y`, `width`, and `height`, the cells it is laid out over, and `pixel_width` and
 `pixel_height`, the size of its pixels as captured. An image that runs past the grid is cropped to
-it first. The cells under a visible image hold `▀` half blocks in its top and bottom colors, so the
-runs there describe a coarse copy of the picture. `visible` is absent when the image shows in every
-cell of its area; otherwise it has one entry per row of the area, each an array of `[x, width]`
-column ranges still showing the image. `png_base64` holds the pixels as a PNG, with alpha, when the
-request set `image_pixels`. Pixels on a cell that does not show the image, because something covers
-it or it is off the grid, are fully transparent, so the PNG never reveals what the capture hides.
-Pixels are placed on cells as a `png` capture draws them: fitted inside the image's cells from the
-top-left corner, keeping their shape, in cells twice as tall as they are wide. A pixel that
-straddles a hidden cell is cleared.
+it first. `fill_cell_box: true` stretches pixels to the cell box instead of keeping the source
+aspect ratio. `z_index` preserves Kitty stacking order: negative planes draw beneath glyphs and
+non-negative planes draw over them. Missing `z_index` defaults to zero.
+
+Cells covered by an image may hold `▀` half-block approximations in the rows. `underlying_cells`
+preserves the original cells beneath these stand-ins so PNG replay can draw glyphs and their
+backgrounds before blending image pixels. It is a row-major array over the image's cell area,
+with null entries for hidden or offscreen cells and text fully covered by opaque non-negative
+image planes. Each non-null entry uses the same text and style
+fields as a run, with `width: 1` and `x` relative to the image's left edge. Wide glyph continuation
+cells keep empty `text`. The array is absent when no original cells were captured.
+Coverage is checked across the complete image stack: a translucent patch cannot expose text
+already hidden by an opaque image below it. A wide glyph's metadata remains when either half
+can contribute to the final frame.
+
+`visible` is absent when the image shows in every cell of its area; otherwise it has one entry
+per row of the area, each an array of `[x, width]` column ranges still showing the image.
+`png_base64` holds the pixels as a PNG, with alpha, when the request set `image_pixels`. Pixels on
+a cell that does not show the image, because something covers it or it is off the grid, are fully
+transparent, so the PNG never reveals what the capture hides. Pixels are fitted from the top-left
+corner into cells twice as tall as they are wide, or stretched when `fill_cell_box` is true. A
+pixel that straddles a hidden cell is cleared.
 
 ### Pane recordings
 

@@ -56,7 +56,8 @@ exclude = [
 # sidebar's project branches and worktree status rail.
 # 0.21.0: sparse terminal snapshots and live TextSource labels avoid full UI rebuilds.
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
-tui-lipan = { version = "0.21.1", features = [
+# 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
+tui-lipan = { version = "0.22.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -237,3 +238,8 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
+
+# Renderer-aware underlay redaction is not yet released. Replace this patch with the released
+# dependency carrying CapturedFrame::visible_image_underlays before publishing Rozi.
+[patch.crates-io]
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "1c3fbe8c9b4e68df4eed40a4c576a31ad61436e4" }

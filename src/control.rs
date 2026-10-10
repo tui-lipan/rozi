@@ -37,8 +37,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, version 15 with
 /// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, version 16 with
 /// `command-visibility`, and version 17 with a request's `credential`, the `not-permitted` and
-/// `out-of-scope` error codes, and `extension-runtime-status`.
-pub const API_SCHEMA_VERSION: u32 = 17;
+/// `out-of-scope` error codes, and `extension-runtime-status`, and version 18 with image capture
+/// `fill_cell_box`, `z_index`, and `underlying_cells`.
+pub const API_SCHEMA_VERSION: u32 = 18;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -1608,9 +1609,9 @@ pub enum CaptureContent {
 
 /// [`SpanFrame::format`]: what a consumer checks before reading the rest.
 pub const SPAN_FRAME_FORMAT: &str = "rozi-spans";
-/// [`SpanFrame::version`]. It moves only when a field changes meaning or goes away, not when one is
-/// added: a consumer ignores fields it does not know.
-pub const SPAN_FRAME_VERSION: u32 = 1;
+/// [`SpanFrame::version`]. Bump when older consumers cannot preserve frame semantics, including
+/// required additive fields. Version 2 preserves image stacking and underlying glyphs.
+pub const SPAN_FRAME_VERSION: u32 = 2;
 
 /// The visible grid as styled runs, from a `spans` capture.
 ///
@@ -1621,7 +1622,7 @@ pub const SPAN_FRAME_VERSION: u32 = 1;
 pub struct SpanFrame {
     /// Always `"rozi-spans"`.
     pub format: String,
-    /// The frame format's version, currently 1.
+    /// The frame format's version, currently 2.
     pub version: u32,
     /// The grid's size in cells.
     pub width: u16,
@@ -1761,8 +1762,8 @@ pub enum SpanCursorShape {
 
 /// An image a program displayed, such as through the Kitty graphics protocol.
 ///
-/// The cells it shows in hold a stand-in, `▀` in the image's top and bottom colors, so the runs
-/// there describe a coarse copy of the picture rather than text.
+/// Covered cells may hold a stand-in, `▀` in the image's top and bottom colors. Negative planes
+/// preserve glyphs above the image; underlying cells retain the text replaced by stand-ins.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SpanImage {
@@ -1776,6 +1777,22 @@ pub struct SpanImage {
     /// it first, so this can be less than what the program sent.
     pub pixel_width: u32,
     pub pixel_height: u32,
+    /// Stretch pixels to their cell box, preserving terminal tile coverage across capture fonts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fill_cell_box: bool,
+    /// Kitty stacking order. Negative values draw beneath text; defaults to zero.
+    #[serde(default)]
+    pub z_index: i32,
+    /// Original cells beneath image stand-ins, row-major in the image's cell area. Each entry
+    /// uses a run's text and style, with width 1 and x relative to the image's left edge. A wide
+    /// glyph's continuation is a separate entry with empty text. Hidden/offscreen cells and text
+    /// fully covered by opaque non-negative image planes are null.
+    /// Glyph room and visible block cursors can keep text contributing beyond an opaque cell.
+    /// Other cursor shapes retain anonymous whitespace with the original span and styles.
+    /// Absent when no original cells were captured. Required to reconstruct glyphs and their
+    /// backgrounds before compositing translucent images in PNG exports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub underlying_cells: Vec<Option<SpanRun>>,
     /// Absent when the image shows in every cell of its area. Otherwise one entry per row of the
     /// area, each the `[x, width]` column ranges of that row still showing it; whatever is drawn
     /// over an image, such as an overlay or another pane, hides it.

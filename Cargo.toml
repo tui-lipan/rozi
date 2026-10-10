@@ -57,6 +57,7 @@ exclude = [
 # 0.21.0: sparse terminal snapshots and live TextSource labels avoid full UI rebuilds.
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
 # 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
+# Also reports focus after late replay and when a focused terminal binds a replacement screen.
 tui-lipan = { version = "0.22.0", features = [
   "terminal",
   "terminal-images",

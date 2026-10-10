@@ -241,4 +241,4 @@ opt-level = 3
 # Required for Kitty pixel offsets and cached patch composition until tui-lipan releases the fix.
 # Replace this patch with the released dependency before publishing Rozi.
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "c9a41affee6a9f334e0a1efbae41ad8c4b097762" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "a5d90dcb31821e12500596bc00e80d5165165f3a" }

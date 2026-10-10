@@ -282,6 +282,87 @@ fn an_image_is_stored_once_however_many_frames_show_it() {
 }
 
 #[test]
+fn negative_image_planes_round_trip_beneath_recorded_glyphs() {
+    image_planes_round_trip(-1, 255);
+}
+
+#[test]
+fn translucent_image_planes_round_trip_over_recorded_glyphs() {
+    image_planes_round_trip(1, 160);
+}
+
+fn image_planes_round_trip(z_index: i32, alpha: u8) {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut expected = Vec::new();
+    for (t, text) in [(0, "A界"), (10, "B界")] {
+        let mut screen = TerminalScreen::new(4, 20, 100);
+        screen.set_cell_size(TerminalCellSize {
+            width: 8,
+            height: 16,
+        });
+        screen.process_bytes(format!("\x1b[?25l\x1b[31;44;1;4m{text}\x1b[1;1H").as_bytes());
+        let pixels = [20, 100, 220, alpha].repeat(32 * 16);
+        screen.process_bytes(
+            format!(
+                "\x1b_Ga=T,f=32,s=32,v=16,t=d,i=1,c=4,r=1,z={z_index},C=1;{}\x1b\\",
+                base64::engine::general_purpose::STANDARD.encode(pixels)
+            )
+            .as_bytes(),
+        );
+        let captured = screen.capture_frame();
+        assert_eq!(captured.images[0].z_index, z_index);
+        assert!(
+            captured.images[0]
+                .underlying_cells
+                .iter()
+                .flatten()
+                .any(|cell| cell.symbol.starts_with(text.chars().next().unwrap()))
+        );
+        assert!(recorder.push_frame(t, captured.clone(), screen.palette()));
+        expected.push((captured, screen.palette()));
+    }
+    let outcome = finish(recorder, 20, EndReason::Stopped);
+    assert_eq!(
+        outcome.totals.images, 1,
+        "only metadata changes between frames"
+    );
+    assert_eq!(
+        outcome.totals.deltas, 1,
+        "layer metadata survives deltas too"
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let mut replay = Replay::new(BufReader::new(bytes.as_slice())).unwrap();
+    let mut frames = 0;
+    while let Some(step) = replay.step().unwrap() {
+        if !matches!(step, ReplayStep::Frame { .. }) {
+            continue;
+        }
+        let recorded = replay.frame().unwrap().clone();
+        let reconstructed = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+        let (original, palette) = &expected[frames];
+        for text_renderer in [
+            tui_lipan::PngTextRenderer::Bitmap,
+            tui_lipan::PngTextRenderer::Font,
+        ] {
+            let options = tui_lipan::PngOptions {
+                default_fg: palette.foreground.unwrap_or(Color::White),
+                default_bg: palette.background.unwrap_or(Color::Black),
+                ansi_palette: palette.ansi,
+                text_renderer,
+                ..Default::default()
+            };
+            assert!(
+                original.to_png(&options).unwrap() == reconstructed.to_png(&options).unwrap(),
+                "PNG pixels changed through capture/spans/recording/replay for z={z_index}, frame={frames}, renderer={text_renderer:?}"
+            );
+        }
+        frames += 1;
+    }
+    assert_eq!(frames, expected.len());
+}
+
+#[test]
 fn a_stalled_writer_keeps_the_newest_state_and_counts_what_it_dropped() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
@@ -857,6 +938,18 @@ fn refusal(events: &[serde_json::Value]) -> String {
 }
 
 #[test]
+fn a_reader_refuses_image_metadata_outside_its_cell_area() {
+    let mut screen = TerminalScreen::new(1, 2, 0);
+    screen.process_bytes(b"\x1b_Ga=T,f=32,s=1,v=1,t=d,i=1,C=1;AAAA/w==\x1b\\");
+    let mut frame = span(&mut screen);
+    let image = &mut frame.images[0];
+    assert!(!image.underlying_cells.is_empty());
+    image.underlying_cells.push(None);
+    let error = refusal(&[serde_json::to_value(RecordingEvent::Keyframe { t: 0, frame }).unwrap()]);
+    assert!(error.contains("underlying cells"), "{error}");
+}
+
+#[test]
 fn a_reader_refuses_a_line_frame_or_image_too_large_to_hold() {
     // A line past the ceiling is refused before it is parsed, or even held whole.
     let mut file = serde_json::to_vec(&header(2, 1)).unwrap();
@@ -986,6 +1079,8 @@ fn the_images_of_one_frame_decode_within_one_budget() {
             pixel_width: 64,
             pixel_height: 64,
             fill_cell_box: false,
+            z_index: 0,
+            underlying_cells: Vec::new(),
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),
@@ -1035,6 +1130,8 @@ fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
             pixel_width: 1,
             pixel_height: 1,
             fill_cell_box: false,
+            z_index: 0,
+            underlying_cells: Vec::new(),
             visible: None,
             png_base64: None,
             id: Some(id.to_string()),

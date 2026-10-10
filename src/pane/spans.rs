@@ -4,7 +4,10 @@ use base64::Engine as _;
 use std::sync::Arc;
 use tui_lipan::prelude::*;
 
-use tui_lipan::{CapturedFrame, CapturedImage, CellRun, CursorShape, PngOptions, UnderlineStyle};
+use tui_lipan::{
+    CapturedCell, CapturedFrame, CapturedImage, CellModifiers, CellRun, CursorShape, PngOptions,
+    UnderlineStyle,
+};
 
 use crate::control::{
     AnsiColorName, ControlResponse, SPAN_FRAME_FORMAT, SPAN_FRAME_VERSION, SpanColor, SpanCursor,
@@ -107,14 +110,33 @@ fn same_style(a: &SpanRun, b: &SpanRun) -> bool {
 }
 
 fn span_run(run: &CellRun) -> SpanRun {
-    let modifiers = &run.modifiers;
+    styled_span(
+        run.x,
+        run.width,
+        run.text.clone(),
+        run.fg,
+        run.bg,
+        run.underline_color,
+        &run.modifiers,
+    )
+}
+
+fn styled_span(
+    x: u16,
+    width: u16,
+    text: String,
+    fg: Color,
+    bg: Color,
+    underline_color: Color,
+    modifiers: &CellModifiers,
+) -> SpanRun {
     SpanRun {
-        x: run.x,
-        width: run.width,
-        text: run.text.clone(),
-        fg: span_color(run.fg),
-        bg: span_color(run.bg),
-        underline_color: span_color(run.underline_color),
+        x,
+        width,
+        text,
+        fg: span_color(fg),
+        bg: span_color(bg),
+        underline_color: span_color(underline_color),
         bold: modifiers.bold,
         dim: modifiers.dim,
         italic: modifiers.italic,
@@ -238,10 +260,53 @@ fn span_image(
         pixel_width: image.width,
         pixel_height: image.height,
         fill_cell_box: image.fill_cell_box,
+        z_index: image.z_index,
+        underlying_cells: image_underlying_cells(image, frame_size),
         visible,
         png_base64,
         id: None,
     })
+}
+
+fn image_underlying_cells(image: &CapturedImage, frame_size: (u16, u16)) -> Vec<Option<SpanRun>> {
+    let mut cells: Vec<_> = image
+        .underlying_cells
+        .iter()
+        .enumerate()
+        .map(|(offset, cell)| {
+            if !image_cell_visible(image, offset, frame_size) {
+                return None;
+            }
+            cell.as_ref()
+                .map(|cell| span_cell(cell, (offset % usize::from(image.area.w)) as u16))
+        })
+        .collect();
+    if cells.iter().all(Option::is_none) {
+        cells.clear();
+    }
+    cells
+}
+
+fn image_cell_visible(image: &CapturedImage, offset: usize, (width, height): (u16, u16)) -> bool {
+    let columns = usize::from(image.area.w.max(1));
+    let x = i32::from(image.area.x) + (offset % columns) as i32;
+    let y = i32::from(image.area.y) + (offset / columns) as i32;
+    (0..i32::from(width)).contains(&x)
+        && (0..i32::from(height)).contains(&y)
+        && image.visible.get(offset).copied().unwrap_or(false)
+        && image.area.w > 0
+}
+
+fn span_cell(cell: &CapturedCell, x: u16) -> SpanRun {
+    styled_span(
+        x,
+        1,
+        cell.symbol.clone(),
+        cell.fg,
+        cell.bg,
+        cell.underline_color,
+        &cell.modifiers,
+    )
 }
 
 /// `image`'s pixels with every one that lands on a cell not showing it made transparent, or `None`
@@ -328,6 +393,40 @@ mod tests {
             text: text.to_string(),
             ..SpanRun::default()
         }
+    }
+
+    #[test]
+    fn image_underlying_cells_do_not_expose_hidden_or_offscreen_text() {
+        let mut image = CapturedImage::new(
+            Rect {
+                x: -1,
+                y: 0,
+                w: 4,
+                h: 1,
+            },
+            1,
+            1,
+            Arc::from([255, 0, 0, 160]),
+        );
+        image.underlying_cells = ["secret-left", "A", "secret-covered", "secret-right"]
+            .map(|symbol| {
+                Some(CapturedCell {
+                    symbol: symbol.to_string(),
+                    fg: Color::Red,
+                    bg: Color::Blue,
+                    underline_color: Color::Reset,
+                    modifiers: CellModifiers::default(),
+                })
+            })
+            .to_vec();
+        image.visible[2] = false;
+        let span = span_image(&image, (2, 1), false).unwrap();
+        assert_eq!(span.underlying_cells.len(), 4);
+        assert_eq!(span.underlying_cells[1].as_ref().unwrap().text, "A");
+        for offset in [0, 2, 3] {
+            assert!(span.underlying_cells[offset].is_none());
+        }
+        assert!(!serde_json::to_string(&span).unwrap().contains("secret"));
     }
 
     #[test]
@@ -514,7 +613,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&plain.images).unwrap(),
             serde_json::json!([{
-                "x": 1, "y": 0, "width": 4, "height": 2, "pixel_width": 3, "pixel_height": 2
+                "x": 1, "y": 0, "width": 4, "height": 2, "pixel_width": 3, "pixel_height": 2,
+                "z_index": 0
             }]),
             "a fully visible image lists no cells and no pixels"
         );

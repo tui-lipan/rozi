@@ -1352,6 +1352,8 @@ mod tests {
     fn partial_frame_images_keep_the_base_and_toolbar_until_the_producer_compacts() {
         use base64::Engine as _;
 
+        assert_eq!(PANE_IMAGE_BUDGET_BYTES, 200 * 1024 * 1024);
+
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(&mut png, 2048, 2048);
         encoder.set_color(png::ColorType::Rgba);
@@ -1364,6 +1366,7 @@ mod tests {
         writer.finish().expect("png end");
         let payload = base64::engine::general_purpose::STANDARD.encode(png);
         let mut pane = TerminalPane::new(100);
+        assert_eq!(pane.image_budget_bytes, PANE_IMAGE_BUDGET_BYTES);
         pane.process_server_output(b"\x1b_Ga=T,f=32,s=1,v=1,i=100000,z=1,C=1,q=2;AAAA/w==\x1b\\");
         for (id, z) in [(1, 0), (2, 2)] {
             pane.process_server_output(

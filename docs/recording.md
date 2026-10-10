@@ -357,3 +357,6 @@ A recording is line-delimited JSON in the `rozi-recording` format: a header line
 line, with frames in the [`rozi-spans`](control-protocol.md#spans-frames) format. It is documented
 in [Recording format](control-protocol.md#recording-format) and described by the
 [JSON schema](control.md#json-schema), so other tools can read it.
+
+Image frames preserve stacking order and the original cells beneath image approximations. PNG
+exports therefore keep images behind text and blend translucent images over the original glyphs.

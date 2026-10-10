@@ -230,7 +230,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 17,
+  "schema": 18,
   "session_protocol": 26,
   "capabilities": [
     "agent-waits",

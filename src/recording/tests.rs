@@ -291,17 +291,31 @@ fn translucent_image_planes_round_trip_over_recorded_glyphs() {
     image_planes_round_trip(1, 160);
 }
 
+#[test]
+fn opaque_image_planes_round_trip_without_disclosing_occluded_text() {
+    image_planes_round_trip(1, 255);
+}
+
 fn image_planes_round_trip(z_index: i32, alpha: u8) {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
     let mut expected = Vec::new();
-    for (t, text) in [(0, "A界"), (10, "B界")] {
+    let opaque = z_index >= 0 && alpha == 255;
+    let texts = if opaque {
+        ["SECR", "HIDE"]
+    } else {
+        ["A界", "B界"]
+    };
+    for (t, text) in [(0, texts[0]), (10, texts[1])] {
         let mut screen = TerminalScreen::new(4, 20, 100);
         screen.set_cell_size(TerminalCellSize {
             width: 8,
             height: 16,
         });
         screen.process_bytes(format!("\x1b[?25l\x1b[31;44;1;4m{text}\x1b[1;1H").as_bytes());
+        if opaque {
+            screen.process_bytes(format!("\x1b[2;1H{t}\x1b[1;1H").as_bytes());
+        }
         let pixels = [20, 100, 220, alpha].repeat(32 * 16);
         screen.process_bytes(
             format!(
@@ -319,6 +333,13 @@ fn image_planes_round_trip(z_index: i32, alpha: u8) {
                 .flatten()
                 .any(|cell| cell.symbol.starts_with(text.chars().next().unwrap()))
         );
+        if opaque {
+            let spans = crate::pane::spans::span_frame(&captured, screen.palette(), true).unwrap();
+            assert_eq!(spans.version, 2);
+            assert!(spans.images[0].underlying_cells.is_empty());
+            assert!(!serde_json::to_string(&spans).unwrap().contains(text));
+            assert!(spans.rows[0].iter().all(|run| !run.text.contains(text)));
+        }
         assert!(recorder.push_frame(t, captured.clone(), screen.palette()));
         expected.push((captured, screen.palette()));
     }
@@ -332,6 +353,20 @@ fn image_planes_round_trip(z_index: i32, alpha: u8) {
         "layer metadata survives deltas too"
     );
     let bytes = std::fs::read(&path).unwrap();
+    if opaque {
+        let stored = String::from_utf8(bytes.clone()).unwrap();
+        let header: RecordingHeader = serde_json::from_str(stored.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            header.spans_version, 2,
+            "old players must refuse these frames"
+        );
+        for text in texts {
+            assert!(
+                !stored.contains(text),
+                "occluded text leaked into the recording"
+            );
+        }
+    }
     let mut replay = Replay::new(BufReader::new(bytes.as_slice())).unwrap();
     let mut frames = 0;
     while let Some(step) = replay.step().unwrap() {

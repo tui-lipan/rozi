@@ -243,9 +243,11 @@ answers `capture-ui`.
 ### Spans frames
 
 A `spans` capture's `frame` describes the visible grid. It has its own `format`, always
-`"rozi-spans"`, and an integer `version`, currently `1`, apart from the control API's versions.
-The version changes only when a field changes meaning or is removed; fields are added without a
-change, so a consumer must ignore fields it does not know. The frame is `SpanFrame` in the
+`"rozi-spans"`, and an integer `version`, currently `2`, apart from the control API's versions.
+Consumers must reject versions newer than they support. The version changes when older readers
+cannot preserve frame semantics, including additions required for correct rendering. Version 2
+preserves image stacking and underlying glyphs. Consumers may ignore other unknown fields.
+The frame is `SpanFrame` in the
 [JSON Schema](control.md#json-schema).
 
 | Field | Contents |
@@ -287,7 +289,8 @@ non-negative planes draw over them. Missing `z_index` defaults to zero.
 Cells covered by an image may hold `▀` half-block approximations in the rows. `underlying_cells`
 preserves the original cells beneath these stand-ins so PNG replay can draw glyphs and their
 backgrounds before blending image pixels. It is a row-major array over the image's cell area,
-with null entries for hidden or offscreen cells. Each non-null entry uses the same text and style
+with null entries for hidden or offscreen cells and text fully covered by opaque non-negative
+image planes. Each non-null entry uses the same text and style
 fields as a run, with `width: 1` and `x` relative to the image's left edge. Wide glyph continuation
 cells keep empty `text`. The array is absent when no original cells were captured.
 

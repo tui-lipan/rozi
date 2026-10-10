@@ -274,17 +274,71 @@ fn image_underlying_cells(image: &CapturedImage, frame_size: (u16, u16)) -> Vec<
         .iter()
         .enumerate()
         .map(|(offset, cell)| {
-            if !image_cell_visible(image, offset, frame_size) {
+            let cell = cell.as_ref()?;
+            if !image_cell_visible(image, offset, frame_size)
+                || !image_underlay_contributes(image, offset, frame_size)
+            {
                 return None;
             }
-            cell.as_ref()
-                .map(|cell| span_cell(cell, (offset % usize::from(image.area.w)) as u16))
+            Some(span_cell(cell, (offset % usize::from(image.area.w)) as u16))
         })
         .collect();
     if cells.iter().all(Option::is_none) {
         cells.clear();
     }
     cells
+}
+
+fn image_underlay_contributes(
+    image: &CapturedImage,
+    offset: usize,
+    frame_size: (u16, u16),
+) -> bool {
+    // Aspect-fitted images can leave glyphs visible when a capture font changes the cell ratio.
+    if image.z_index < 0 || !image.fill_cell_box || !image_cell_opaque(image, offset) {
+        return true;
+    }
+    wide_glyph_underlay_contributes(image, offset, frame_size)
+}
+
+fn wide_glyph_underlay_contributes(
+    image: &CapturedImage,
+    offset: usize,
+    frame_size: (u16, u16),
+) -> bool {
+    let columns = usize::from(image.area.w.max(1));
+    let col = offset % columns;
+    let continuation = |at: usize| {
+        image
+            .underlying_cells
+            .get(at)
+            .and_then(Option::as_ref)
+            .is_some_and(|cell| cell.symbol.is_empty())
+    };
+    let contributes =
+        |at| image_cell_visible(image, at, frame_size) && !image_cell_opaque(image, at);
+    // A wide glyph can contribute through its other cell even if this half is opaque.
+    (col > 0 && continuation(offset) && contributes(offset - 1))
+        || (col + 1 < columns && continuation(offset + 1) && contributes(offset + 1))
+}
+
+fn image_cell_opaque(image: &CapturedImage, offset: usize) -> bool {
+    let columns = u64::from(image.area.w.max(1));
+    let rows = u64::from(image.area.h.max(1));
+    let col = offset as u64 % columns;
+    let row = offset as u64 / columns;
+    let width = u64::from(image.width);
+    let height = u64::from(image.height);
+    let left = col * width / columns;
+    let right = ((col + 1) * width).div_ceil(columns);
+    let top = row * height / rows;
+    let bottom = ((row + 1) * height).div_ceil(rows);
+    if left == right || top == bottom {
+        return false;
+    }
+    (top..bottom).all(|y| {
+        (left..right).all(|x| image.rgba.get(((y * width + x) * 4 + 3) as usize) == Some(&255))
+    })
 }
 
 fn image_cell_visible(image: &CapturedImage, offset: usize, (width, height): (u16, u16)) -> bool {
@@ -430,6 +484,96 @@ mod tests {
     }
 
     #[test]
+    fn opaque_cells_omit_underlays_but_wide_glyphs_keep_their_visible_half() {
+        let mut image = CapturedImage::new(
+            Rect {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 1,
+            },
+            2,
+            1,
+            Arc::from([20, 100, 220, 255, 20, 100, 220, 160]),
+        );
+        image.fill_cell_box = true;
+        image.z_index = 1;
+        let cell = |symbol: &str| {
+            Some(CapturedCell {
+                symbol: symbol.to_string(),
+                fg: Color::Red,
+                bg: Color::Blue,
+                underline_color: Color::Reset,
+                modifiers: CellModifiers::default(),
+            })
+        };
+        image.underlying_cells = vec![cell("secret"), cell("A")];
+        let span = span_image(&image, (2, 1), true).unwrap();
+        assert!(span.underlying_cells[0].is_none());
+        assert_eq!(span.underlying_cells[1].as_ref().unwrap().text, "A");
+        assert!(!serde_json::to_string(&span).unwrap().contains("secret"));
+
+        image.underlying_cells = vec![cell("界"), cell("")];
+        let span = span_image(&image, (2, 1), true).unwrap();
+        assert_eq!(span.underlying_cells[0].as_ref().unwrap().text, "界");
+        assert_eq!(span.underlying_cells[1].as_ref().unwrap().text, "");
+        image.visible[1] = false;
+        assert!(
+            span_image(&image, (2, 1), true)
+                .unwrap()
+                .underlying_cells
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_opaque_image_over_secret_text_exports_only_visible_pixels() {
+        let mut screen = TerminalScreen::new(1, 6, 0);
+        screen.set_cell_size(TerminalCellSize {
+            width: 8,
+            height: 16,
+        });
+        screen.process_bytes(b"\x1b[?25lSECRET\x1b[1;1H");
+        screen.process_bytes(
+            format!(
+                "\x1b_Ga=T,f=32,s=48,v=16,t=d,i=1,c=6,r=1,z=1,C=1;{}\x1b\\",
+                base64::engine::general_purpose::STANDARD
+                    .encode([20, 100, 220, 255].repeat(48 * 16)),
+            )
+            .as_bytes(),
+        );
+        let captured = screen.capture_frame();
+        let frame = span_frame(&captured, screen.palette(), true).unwrap();
+        assert!(frame.images[0].underlying_cells.is_empty());
+        assert!(
+            frame
+                .rows
+                .iter()
+                .flatten()
+                .all(|run| !run.text.contains("SECRET"))
+        );
+        assert!(!serde_json::to_string(&frame).unwrap().contains("SECRET"));
+        let options = PngOptions {
+            cell_width: 8,
+            cell_height: 16,
+            text_renderer: tui_lipan::PngTextRenderer::Bitmap,
+            ..Default::default()
+        };
+        let png = captured.to_png(&options).unwrap();
+        let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+            .read_info()
+            .unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Rgb);
+        assert!(
+            pixels[..info.buffer_size()]
+                .chunks_exact(3)
+                .all(|pixel| pixel == [20, 100, 220])
+        );
+    }
+
+    #[test]
     fn a_styled_row_keeps_what_differs_from_the_default_and_drops_trailing_blanks() {
         let mut screen = TerminalScreen::new(3, 20, 100);
         screen.process_bytes(
@@ -437,7 +581,7 @@ mod tests {
         );
         let frame = spans(&mut screen);
 
-        assert_eq!((frame.format.as_str(), frame.version), ("rozi-spans", 1));
+        assert_eq!((frame.format.as_str(), frame.version), ("rozi-spans", 2));
         assert_eq!((frame.width, frame.height), (20, 3));
         assert_eq!(
             frame.rows[0],

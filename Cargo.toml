@@ -56,7 +56,8 @@ exclude = [
 # sidebar's project branches and worktree status rail.
 # 0.21.0: sparse terminal snapshots and live TextSource labels avoid full UI rebuilds.
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
-tui-lipan = { version = "0.21.1", features = [
+# 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
+tui-lipan = { version = "0.22.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -237,8 +238,3 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
-
-# Required for Kitty patch composition and file-backed frames until tui-lipan releases the fix.
-# Replace this patch with the released dependency before publishing Rozi.
-[patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "c39ef4e8aa6c2866666fed826956c6f10bc1f366" }

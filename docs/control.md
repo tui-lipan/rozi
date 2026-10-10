@@ -721,7 +721,7 @@ the reply as `data.frame`. A frame looks like this, shortened:
 ```json
 {
   "format": "rozi-spans",
-  "version": 1,
+  "version": 2,
   "width": 40,
   "height": 3,
   "palette": {"foreground": "#cdd6f4", "background": "#1e1e2e", "ansi": ["#45475a", "#f38ba8", "…"]},

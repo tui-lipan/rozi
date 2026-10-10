@@ -1609,9 +1609,9 @@ pub enum CaptureContent {
 
 /// [`SpanFrame::format`]: what a consumer checks before reading the rest.
 pub const SPAN_FRAME_FORMAT: &str = "rozi-spans";
-/// [`SpanFrame::version`]. It moves only when a field changes meaning or goes away, not when one is
-/// added: a consumer ignores fields it does not know.
-pub const SPAN_FRAME_VERSION: u32 = 1;
+/// [`SpanFrame::version`]. Bump when older consumers cannot preserve frame semantics, including
+/// required additive fields. Version 2 preserves image stacking and underlying glyphs.
+pub const SPAN_FRAME_VERSION: u32 = 2;
 
 /// The visible grid as styled runs, from a `spans` capture.
 ///
@@ -1622,7 +1622,7 @@ pub const SPAN_FRAME_VERSION: u32 = 1;
 pub struct SpanFrame {
     /// Always `"rozi-spans"`.
     pub format: String,
-    /// The frame format's version, currently 1.
+    /// The frame format's version, currently 2.
     pub version: u32,
     /// The grid's size in cells.
     pub width: u16,
@@ -1785,7 +1785,8 @@ pub struct SpanImage {
     pub z_index: i32,
     /// Original cells beneath image stand-ins, row-major in the image's cell area. Each entry
     /// uses a run's text and style, with width 1 and x relative to the image's left edge. A wide
-    /// glyph's continuation is a separate entry with empty text. Hidden/offscreen cells are null.
+    /// glyph's continuation is a separate entry with empty text. Hidden/offscreen cells and text
+    /// fully covered by opaque non-negative image planes are null.
     /// Absent when no original cells were captured. Required to reconstruct glyphs and their
     /// backgrounds before compositing translucent images in PNG exports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

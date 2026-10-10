@@ -293,6 +293,9 @@ with null entries for hidden or offscreen cells and text fully covered by opaque
 image planes. Each non-null entry uses the same text and style
 fields as a run, with `width: 1` and `x` relative to the image's left edge. Wide glyph continuation
 cells keep empty `text`. The array is absent when no original cells were captured.
+Coverage is checked across the complete image stack: a translucent patch cannot expose text
+already hidden by an opaque image below it. A wide glyph's metadata remains when either half
+can contribute to the final frame.
 
 `visible` is absent when the image shows in every cell of its area; otherwise it has one entry
 per row of the area, each an array of `[x, width]` column ranges still showing the image.

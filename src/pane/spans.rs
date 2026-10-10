@@ -42,10 +42,12 @@ pub(crate) fn span_frame(
     palette: TerminalColorPalette,
     image_pixels: bool,
 ) -> std::result::Result<SpanFrame, ControlResponse> {
+    let frame_size = (frame.width, frame.height);
+    let occluded = opaque_frame_cells(&frame.images, frame_size);
     let images = frame
         .images
         .iter()
-        .map(|image| span_image(image, (frame.width, frame.height), image_pixels))
+        .map(|image| span_image(image, frame_size, image_pixels, &occluded))
         .collect::<std::result::Result<_, _>>()?;
     Ok(SpanFrame {
         format: SPAN_FRAME_FORMAT.to_string(),
@@ -215,6 +217,7 @@ fn span_image(
     image: &CapturedImage,
     frame_size: (u16, u16),
     pixels: bool,
+    occluded: &[bool],
 ) -> std::result::Result<SpanImage, ControlResponse> {
     let area = image.area;
     let visible = (!image.visible.iter().all(|&shown| shown)).then(|| {
@@ -261,14 +264,18 @@ fn span_image(
         pixel_height: image.height,
         fill_cell_box: image.fill_cell_box,
         z_index: image.z_index,
-        underlying_cells: image_underlying_cells(image, frame_size),
+        underlying_cells: image_underlying_cells(image, frame_size, occluded),
         visible,
         png_base64,
         id: None,
     })
 }
 
-fn image_underlying_cells(image: &CapturedImage, frame_size: (u16, u16)) -> Vec<Option<SpanRun>> {
+fn image_underlying_cells(
+    image: &CapturedImage,
+    frame_size: (u16, u16),
+    occluded: &[bool],
+) -> Vec<Option<SpanRun>> {
     let mut cells: Vec<_> = image
         .underlying_cells
         .iter()
@@ -276,7 +283,7 @@ fn image_underlying_cells(image: &CapturedImage, frame_size: (u16, u16)) -> Vec<
         .map(|(offset, cell)| {
             let cell = cell.as_ref()?;
             if !image_cell_visible(image, offset, frame_size)
-                || !image_underlay_contributes(image, offset, frame_size)
+                || !image_cell_unoccluded(image, offset, frame_size, occluded)
             {
                 return None;
             }
@@ -289,37 +296,83 @@ fn image_underlying_cells(image: &CapturedImage, frame_size: (u16, u16)) -> Vec<
     cells
 }
 
-fn image_underlay_contributes(
-    image: &CapturedImage,
-    offset: usize,
-    frame_size: (u16, u16),
-) -> bool {
-    // Aspect-fitted images can leave glyphs visible when a capture font changes the cell ratio.
-    if image.z_index < 0 || !image.fill_cell_box || !image_cell_opaque(image, offset) {
-        return true;
+/// Glyphs are drawn before every non-negative plane. Any opaque plane in that stack prevents
+/// their contribution, even when a later translucent plane carries the same original cells.
+fn opaque_frame_cells(images: &[CapturedImage], frame_size: (u16, u16)) -> Vec<bool> {
+    let mut occluded = vec![false; usize::from(frame_size.0) * usize::from(frame_size.1)];
+    // Aspect-fitted images can reveal text when a capture font changes the cell ratio.
+    for image in images
+        .iter()
+        .filter(|image| image.z_index >= 0 && image.fill_cell_box)
+    {
+        for offset in 0..image.visible.len() {
+            if !image_cell_visible(image, offset, frame_size) {
+                continue;
+            }
+            let index = image_frame_offset(image, offset, frame_size).unwrap();
+            occluded[index] = occluded[index] || image_cell_opaque(image, offset);
+        }
     }
-    wide_glyph_underlay_contributes(image, offset, frame_size)
+    preserve_wide_underlays(images, frame_size, &mut occluded);
+    occluded
 }
 
-fn wide_glyph_underlay_contributes(
+fn preserve_wide_underlays(
+    images: &[CapturedImage],
+    frame_size: (u16, u16),
+    occluded: &mut [bool],
+) {
+    let (visible, continuations) = original_frame_cells(images, frame_size);
+    for index in 1..occluded.len() {
+        if continuations[index] && visible[index - 1] && visible[index] {
+            let hidden = occluded[index - 1] && occluded[index];
+            occluded[index - 1] = hidden;
+            occluded[index] = hidden;
+        }
+    }
+}
+
+fn original_frame_cells(
+    images: &[CapturedImage],
+    frame_size: (u16, u16),
+) -> (Vec<bool>, Vec<bool>) {
+    let count = usize::from(frame_size.0) * usize::from(frame_size.1);
+    let mut visible = vec![false; count];
+    let mut continuations = vec![false; count];
+    for image in images {
+        for (offset, cell) in image.underlying_cells.iter().enumerate() {
+            let Some(cell) = cell else { continue };
+            if !image_cell_visible(image, offset, frame_size) {
+                continue;
+            }
+            let index = image_frame_offset(image, offset, frame_size).unwrap();
+            visible[index] = true;
+            continuations[index] |=
+                cell.symbol.is_empty() && !index.is_multiple_of(usize::from(frame_size.0));
+        }
+    }
+    (visible, continuations)
+}
+
+fn image_cell_unoccluded(
     image: &CapturedImage,
     offset: usize,
     frame_size: (u16, u16),
+    occluded: &[bool],
 ) -> bool {
+    image_cell_visible(image, offset, frame_size)
+        && image_frame_offset(image, offset, frame_size).is_some_and(|index| !occluded[index])
+}
+
+fn image_frame_offset(
+    image: &CapturedImage,
+    offset: usize,
+    (width, height): (u16, u16),
+) -> Option<usize> {
     let columns = usize::from(image.area.w.max(1));
-    let col = offset % columns;
-    let continuation = |at: usize| {
-        image
-            .underlying_cells
-            .get(at)
-            .and_then(Option::as_ref)
-            .is_some_and(|cell| cell.symbol.is_empty())
-    };
-    let contributes =
-        |at| image_cell_visible(image, at, frame_size) && !image_cell_opaque(image, at);
-    // A wide glyph can contribute through its other cell even if this half is opaque.
-    (col > 0 && continuation(offset) && contributes(offset - 1))
-        || (col + 1 < columns && continuation(offset + 1) && contributes(offset + 1))
+    let x = u16::try_from(i32::from(image.area.x) + (offset % columns) as i32).ok()?;
+    let y = u16::try_from(i32::from(image.area.y) + (offset / columns) as i32).ok()?;
+    (x < width && y < height).then_some(usize::from(y) * usize::from(width) + usize::from(x))
 }
 
 fn image_cell_opaque(image: &CapturedImage, offset: usize) -> bool {
@@ -341,12 +394,8 @@ fn image_cell_opaque(image: &CapturedImage, offset: usize) -> bool {
     })
 }
 
-fn image_cell_visible(image: &CapturedImage, offset: usize, (width, height): (u16, u16)) -> bool {
-    let columns = usize::from(image.area.w.max(1));
-    let x = i32::from(image.area.x) + (offset % columns) as i32;
-    let y = i32::from(image.area.y) + (offset / columns) as i32;
-    (0..i32::from(width)).contains(&x)
-        && (0..i32::from(height)).contains(&y)
+fn image_cell_visible(image: &CapturedImage, offset: usize, frame_size: (u16, u16)) -> bool {
+    image_frame_offset(image, offset, frame_size).is_some()
         && image.visible.get(offset).copied().unwrap_or(false)
         && image.area.w > 0
 }
@@ -432,6 +481,19 @@ fn shown_pixels(image: &CapturedImage, (frame_w, frame_h): (u16, u16)) -> Option
 mod tests {
     use super::*;
     use crate::control::{CaptureContent, CaptureRender};
+
+    fn span_image(
+        image: &CapturedImage,
+        frame_size: (u16, u16),
+        pixels: bool,
+    ) -> std::result::Result<SpanImage, ControlResponse> {
+        super::span_image(
+            image,
+            frame_size,
+            pixels,
+            &opaque_frame_cells(std::slice::from_ref(image), frame_size),
+        )
+    }
 
     fn spans(screen: &mut TerminalScreen) -> SpanFrame {
         match super::super::capture_screen(screen, None, CaptureRender::Spans, None, false) {

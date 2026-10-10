@@ -360,6 +360,7 @@ in [Recording format](control-protocol.md#recording-format) and described by the
 
 Image frames preserve stacking order and the original cells beneath image approximations. PNG
 exports therefore keep images behind text and blend translucent images over the original glyphs.
-Text fully covered by opaque image cells is omitted. New recordings declare `rozi-spans` version
+Text fully covered by opaque image cells anywhere in the non-negative image stack is omitted,
+including beneath later translucent patches. New recordings declare `rozi-spans` version
 2, so older players refuse them instead of silently changing image layering. This rozi still reads
 version 1 recordings.

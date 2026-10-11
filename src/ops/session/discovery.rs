@@ -102,8 +102,34 @@ pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<Discovere
         &ctx.state.remote.session_cache,
         &[],
     );
+    retain_tabbed_rows(&ctx.state, &mut rows);
     sort_session_rows(&mut rows);
     rows
+}
+
+/// Drop remembered (`last seen`) rows whose host has no tab in the Sessions picker. Sessions lists
+/// what is reachable through its own tabs, so All is the union of them; remembered sessions of a
+/// host nothing is connected to stay in Remote hosts and the sidebar rather than reading as current
+/// inventory.
+pub(super) fn retain_tabbed_rows(state: &crate::state::State, rows: &mut Vec<DiscoveredSession>) {
+    if rows.iter().all(|row| {
+        !matches!(
+            row.status,
+            crate::session::discovery::DiscoveredSessionStatus::LastSeen { .. }
+        )
+    }) {
+        return;
+    }
+    let tabs = super::session_picker_tabs(state);
+    rows.retain(|row| {
+        !matches!(
+            row.status,
+            crate::session::discovery::DiscoveredSessionStatus::LastSeen { .. }
+        ) || row
+            .remote_target
+            .as_ref()
+            .is_none_or(|target| tabs.iter().any(|tab| tab.remote_target() == Some(target)))
+    });
 }
 
 /// Apply a batch of freshly discovered sessions from the auto-refresh watcher, then re-arm the next
@@ -163,7 +189,8 @@ pub(crate) fn apply_discovered_sessions(
 }
 
 /// Share selection preservation and confirmation invalidation between local sweeps and host pushes.
-pub(crate) fn replace_picker_rows(ctx: &mut Context<AppRoot>, rows: Vec<DiscoveredSession>) {
+pub(crate) fn replace_picker_rows(ctx: &mut Context<AppRoot>, mut rows: Vec<DiscoveredSession>) {
+    retain_tabbed_rows(&ctx.state, &mut rows);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         let selected_identity = picker
             .entries

@@ -39,4 +39,5 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# Temporary transparent-overlay fix from tui-lipan #329; remove with the registry upgrade.
+allow-git = ["https://github.com/tui-lipan/tui-lipan"]

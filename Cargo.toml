@@ -214,6 +214,12 @@ codegen-units = 1
 # panic hook, which still fires under abort.
 panic = "abort"
 
+# 0.22.2 lets positive-z Kitty placements cover transparent portal text. Pin the pushed fix in
+# tui-lipan #329 until a registry release includes it, then remove this patch and deny.toml's
+# Git allow-list entry. Do not publish rozi to crates.io with this patch: Cargo strips patches.
+[patch.crates-io]
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "6ecae2a6fbd67942b91b169af1def14afb50ba6d" }
+
 [profile.release-debug]
 inherits = "release"
 debug = true

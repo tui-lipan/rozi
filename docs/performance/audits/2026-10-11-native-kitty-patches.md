@@ -5,6 +5,24 @@ to the host. The framework retains the producer's images for captures, recording
 The first measurements cover generated graphics traffic; a separate Raffles follow-up measures
 the placement lookup fix on a real page.
 
+Review follow-up: these generated-workload measurements used files rewritten in place. A delayed
+named-file reader could observe a newer or partial frame, so the producer did not guarantee
+identical input under backpressure. The current workload uses immutable paths with bounded
+retention. The numbers below retain their original revisions and have not been rerun with that
+corrected workload. The framework implementation subsequently shipped in 0.22.2.
+
+The transparent-overlay review regression is fixed in
+[tui-lipan #329](https://github.com/tui-lipan/tui-lipan/pull/329), revision `6ecae2a6`.
+Eligibility includes separate overlay subtrees, and clipping stops at overlay roots rather than
+their zero-sized portal placeholders. A backdrop-free transparent modal over a `z=2` patch selects
+composition. The real backend test checks host text bytes, final cells and surviving image output;
+restoring the released renderer fails because positive-z native placements cover the text.
+In isolated 980 × 720 logical Ghostty windows at monitor scale 1.6 and 8 pt JetBrainsMono Nerd Font,
+the corrected scene matches forced composition across the entire 1568 × 1152 physical capture,
+with zero differing pixels. Its output contains zero native placements; the image-only control
+still emits native placements. All owned test windows and fixture processes were closed.
+These checks add correctness evidence and do not replace the performance samples below.
+
 ## Setup
 
 - Machine: Intel Core Ultra 5 338H, 12 logical CPUs, Linux.

@@ -285,6 +285,13 @@ a retained background, a toolbar, a small opaque patch and a moving translucent 
 offsets. Resize the pane to rebuild the background. `--full` instead sends changing full frames.
 The two workloads are distinct; compare each workload across rendering modes.
 
+Every transfer uses an immutable file retained for at least `--retain-seconds` after transmission,
+including backgrounds rebuilt on resize. The default is two seconds, with a 256 MiB retained-file
+budget set by `--max-file-mib`. The producer waits when the budget fills instead of deleting young
+files. Set a longer retention period for slow readers and record both settings and the actual
+frame rate. Named-file transport has no reader acknowledgement, so readers delayed beyond that
+period can miss a file. The workload also waits for the retention period before exit cleanup.
+
 Use the same release binary, host font and pane pixel size. Launch one client normally and another
 with `TUI_LIPAN_TERMINAL_IMAGES=composed`; run them serially. Sample client, server and graphical
 host separately after warm-up, without compilation during sampling. Capture the actual host window

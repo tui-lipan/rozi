@@ -78,56 +78,33 @@ fn screen(backend: &mut TestBackend<AppRoot>) -> String {
 }
 
 #[test]
-fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
+fn remembered_rows_are_listed_in_all_only_for_hosts_that_have_a_tab() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("laptop".into());
+        // The host was opened explicitly, so it has a tab; its remembered row shows there and in
+        // All. Without a tab the row never reaches the picker (see `retain_tabbed_rows`).
         let mut backend = picker_showing(vec![last_seen("backend", 3, &target)]);
-        backend.state_mut().session_picker = Some(SessionPickerState::new(vec![last_seen(
-            "backend", 3, &target,
-        )]));
+        backend.update_level(Msg::SessionPickerTab(0)).unwrap();
         let local = screen(&mut backend);
         let tabs = local
             .lines()
             .find(|line| line.contains("Local") && line.contains("All"))
-            .expect("All is distinct from Local even without an active remote host");
-        assert!(!tabs.contains("laptop"), "{local}");
+            .expect("the tab strip is drawn");
+        assert!(tabs.contains("laptop"), "{local}");
         assert!(
             !local.contains("backend@laptop"),
-            "Local excludes cached remote sessions: {local}"
+            "Local excludes remembered remote sessions: {local}"
         );
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Tab,
-                mods: KeyMods::NONE,
-            })
-            .unwrap();
+        backend.update_level(Msg::SessionPickerTab(2)).unwrap();
         let all = screen(&mut backend);
-        assert_eq!(
-            backend.state().session_picker.as_ref().unwrap().tab,
-            rozi::state::SessionPickerTab::All
-        );
         assert!(
             all.contains("backend@laptop") && all.contains("last seen"),
             "{all}"
         );
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Tab,
-                mods: KeyMods::NONE,
-            })
-            .unwrap();
-        assert_eq!(
-            backend.state().session_picker.as_ref().unwrap().tab,
-            rozi::state::SessionPickerTab::Host(None),
-            "no hidden historical host tab in keyboard navigation"
-        );
-        backend
-            .state_mut()
-            .session_picker
-            .as_mut()
-            .unwrap()
-            .entries
-            .clear();
+        let picker = backend.state_mut().session_picker.as_mut().unwrap();
+        picker.entries.clear();
+        picker.opened_host = None;
+        backend.update_level(Msg::SessionPickerTab(0)).unwrap();
         let empty = screen(&mut backend);
         assert!(
             !empty

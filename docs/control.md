@@ -230,7 +230,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 17,
+  "schema": 18,
   "session_protocol": 26,
   "capabilities": [
     "agent-waits",
@@ -721,7 +721,7 @@ the reply as `data.frame`. A frame looks like this, shortened:
 ```json
 {
   "format": "rozi-spans",
-  "version": 1,
+  "version": 2,
   "width": 40,
   "height": 3,
   "palette": {"foreground": "#cdd6f4", "background": "#1e1e2e", "ansi": ["#45475a", "#f38ba8", "…"]},
@@ -750,7 +750,8 @@ the reply as `data.frame`. A frame looks like this, shortened:
   `underline`, or `bar`), whether it blinks, and its color when the program set one. A pane's
   cursor is a blinking block until its program asks for another.
 - **Images.** Each image a program displayed lists the cells it is laid out over and its size in
-  pixels. The cells under an image hold `▀` half blocks in its colors, so the runs there are a
+  pixels. `fill_cell_box: true` means its pixels fill those cells, preserving terminal tile
+  coverage even when a screenshot uses a different font. The cells under an image hold `▀` half blocks in its colors, so the runs there are a
   coarse copy of the picture, not text. When something covers part of an image, `visible` lists,
   row by row, the column ranges still showing it. `--image-pixels` adds each image's pixels as a
   base64 PNG, with the covered parts transparent, so it shows no more than a `png` capture does.

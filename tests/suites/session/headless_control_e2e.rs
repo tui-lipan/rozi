@@ -284,7 +284,7 @@ fn a_detached_session_captures_its_screen_as_ansi_png_and_spans() {
     assert_eq!(spans["render"], serde_json::json!("spans"));
     let frame = &spans["frame"];
     assert_eq!(frame["format"], serde_json::json!("rozi-spans"));
-    assert_eq!(frame["version"], serde_json::json!(1));
+    assert_eq!(frame["version"], serde_json::json!(2));
     let red = frame["rows"]
         .as_array()
         .expect("rows")

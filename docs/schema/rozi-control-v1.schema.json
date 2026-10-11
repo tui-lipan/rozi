@@ -5866,7 +5866,7 @@
           "type": "array"
         },
         "version": {
-          "description": "The frame format's version, currently 1.",
+          "description": "The frame format's version, currently 2.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -5890,8 +5890,12 @@
       "type": "object"
     },
     "SpanImage": {
-      "description": "An image a program displayed, such as through the Kitty graphics protocol.\n\nThe cells it shows in hold a stand-in, `▀` in the image's top and bottom colors, so the runs\nthere describe a coarse copy of the picture rather than text.",
+      "description": "An image a program displayed, such as through the Kitty graphics protocol.\n\nCovered cells may hold a stand-in, `▀` in the image's top and bottom colors. Negative planes\npreserve glyphs above the image; underlying cells retain the text replaced by stand-ins.",
       "properties": {
+        "fill_cell_box": {
+          "description": "Stretch pixels to their cell box, preserving terminal tile coverage across capture fonts.",
+          "type": "boolean"
+        },
         "height": {
           "format": "uint16",
           "maximum": 65535,
@@ -5922,6 +5926,20 @@
             "string",
             "null"
           ]
+        },
+        "underlying_cells": {
+          "description": "Original cells beneath image stand-ins, row-major in the image's cell area. Each entry\nuses a run's text and style, with width 1 and x relative to the image's left edge. A wide\nglyph's continuation is a separate entry with empty text. Hidden/offscreen cells and text\nfully covered by opaque non-negative image planes are null.\nGlyph room and visible block cursors can keep text contributing beyond an opaque cell.\nOther cursor shapes retain anonymous whitespace with the original span and styles.\nAbsent when no original cells were captured. Required to reconstruct glyphs and their\nbackgrounds before compositing translucent images in PNG exports.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SpanRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
         },
         "visible": {
           "description": "Absent when the image shows in every cell of its area. Otherwise one entry per row of the\narea, each the `[x, width]` column ranges of that row still showing it; whatever is drawn\nover an image, such as an overlay or another pane, hides it.",
@@ -5969,6 +5987,12 @@
           "format": "int16",
           "maximum": 32767,
           "minimum": -32768,
+          "type": "integer"
+        },
+        "z_index": {
+          "default": 0,
+          "description": "Kitty stacking order. Negative values draw beneath text; defaults to zero.",
+          "format": "int32",
           "type": "integer"
         }
       },
@@ -6283,5 +6307,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 17
+  "x-rozi-schema-version": 18
 }

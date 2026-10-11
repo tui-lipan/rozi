@@ -13,7 +13,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::control::{
-    AnsiColorName, SpanColor, SpanCursorShape, SpanFrame, SpanPalette, SpanRun, SpanUnderline,
+    AnsiColorName, SpanColor, SpanCursorShape, SpanFrame, SpanImage, SpanPalette, SpanRun,
+    SpanUnderline,
 };
 
 /// An image's pixels, decoded once from its `image` event.
@@ -101,32 +102,7 @@ pub fn captured_frame(frame: &SpanFrame, images: &HashMap<String, DecodedImage>)
     let images = frame
         .images
         .iter()
-        .filter_map(|image| {
-            let pixels = images.get(image.id.as_deref()?)?;
-            let area = Rect {
-                x: image.x,
-                y: image.y,
-                w: image.width,
-                h: image.height,
-            };
-            let mut captured =
-                CapturedImage::new(area, pixels.width, pixels.height, pixels.rgba.clone());
-            if let Some(visible) = &image.visible {
-                captured.visible.fill(false);
-                for (row, ranges) in visible.iter().enumerate().take(usize::from(image.height)) {
-                    for &(x, w) in ranges {
-                        for col in 0..w {
-                            let col = i32::from(x) + i32::from(col) - i32::from(image.x);
-                            if (0..i32::from(image.width)).contains(&col) {
-                                captured.visible[row * usize::from(image.width) + col as usize] =
-                                    true;
-                            }
-                        }
-                    }
-                }
-            }
-            Some(captured)
-        })
+        .filter_map(|image| captured_image(image, images))
         .collect();
     CapturedFrame {
         viewport: Rect {
@@ -143,29 +119,63 @@ pub fn captured_frame(frame: &SpanFrame, images: &HashMap<String, DecodedImage>)
     }
 }
 
+fn captured_image(
+    image: &SpanImage,
+    images: &HashMap<String, DecodedImage>,
+) -> Option<CapturedImage> {
+    let pixels = images.get(image.id.as_deref()?)?;
+    let area = Rect {
+        x: image.x,
+        y: image.y,
+        w: image.width,
+        h: image.height,
+    };
+    let mut captured = CapturedImage::new(area, pixels.width, pixels.height, pixels.rgba.clone());
+    captured.fill_cell_box = image.fill_cell_box;
+    captured.z_index = image.z_index;
+    restore_image_cells(&mut captured, &image.underlying_cells);
+    if let Some(visible) = &image.visible {
+        restore_image_visibility(&mut captured, visible);
+    }
+    Some(captured)
+}
+
+fn restore_image_cells(captured: &mut CapturedImage, originals: &[Option<SpanRun>]) {
+    for (offset, original) in originals
+        .iter()
+        .enumerate()
+        .take(captured.underlying_cells.len())
+    {
+        if let Some(original) = original {
+            let cell = captured_cell(original);
+            captured.backgrounds[offset] = cell.bg;
+            captured.underlying_cells[offset] = Some(cell);
+        }
+    }
+}
+
+fn restore_image_visibility(captured: &mut CapturedImage, visible: &[Vec<(i16, u16)>]) {
+    captured.visible.fill(false);
+    for (row, ranges) in visible
+        .iter()
+        .enumerate()
+        .take(usize::from(captured.area.h))
+    {
+        for &(x, width) in ranges {
+            for col in 0..width {
+                let col = i32::from(x) + i32::from(col) - i32::from(captured.area.x);
+                if (0..i32::from(captured.area.w)).contains(&col) {
+                    captured.visible[row * usize::from(captured.area.w) + col as usize] = true;
+                }
+            }
+        }
+    }
+}
+
 /// Lay one run's graphemes into its columns. A wide glyph takes two cells, the second left empty
 /// the way a terminal capture leaves it.
 fn place_run(line: &mut [CapturedCell], run: &SpanRun) {
-    let style = CapturedCell {
-        symbol: String::new(),
-        fg: run.fg.as_ref().map_or(Color::Reset, color),
-        bg: run.bg.as_ref().map_or(Color::Reset, color),
-        underline_color: run.underline_color.as_ref().map_or(Color::Reset, color),
-        modifiers: CellModifiers {
-            bold: run.bold,
-            dim: run.dim,
-            italic: run.italic,
-            underline: run.underline.map(|underline| match underline {
-                SpanUnderline::Single => UnderlineStyle::Single,
-                SpanUnderline::Double => UnderlineStyle::Double,
-                SpanUnderline::Curly => UnderlineStyle::Curly,
-                SpanUnderline::Dotted => UnderlineStyle::Dotted,
-                SpanUnderline::Dashed => UnderlineStyle::Dashed,
-            }),
-            reverse: run.reverse,
-            strikethrough: run.strikethrough,
-        },
-    };
+    let style = captured_style(run);
     let end = usize::from(run.x.saturating_add(run.width)).min(line.len());
     let mut x = usize::from(run.x);
     for grapheme in run.text.graphemes(true) {
@@ -188,6 +198,36 @@ fn place_run(line: &mut [CapturedCell], run: &SpanRun) {
             symbol: " ".to_string(),
             ..style.clone()
         };
+    }
+}
+
+fn captured_cell(run: &SpanRun) -> CapturedCell {
+    CapturedCell {
+        symbol: run.text.clone(),
+        ..captured_style(run)
+    }
+}
+
+fn captured_style(run: &SpanRun) -> CapturedCell {
+    CapturedCell {
+        symbol: String::new(),
+        fg: run.fg.as_ref().map_or(Color::Reset, color),
+        bg: run.bg.as_ref().map_or(Color::Reset, color),
+        underline_color: run.underline_color.as_ref().map_or(Color::Reset, color),
+        modifiers: CellModifiers {
+            bold: run.bold,
+            dim: run.dim,
+            italic: run.italic,
+            underline: run.underline.map(|underline| match underline {
+                SpanUnderline::Single => UnderlineStyle::Single,
+                SpanUnderline::Double => UnderlineStyle::Double,
+                SpanUnderline::Curly => UnderlineStyle::Curly,
+                SpanUnderline::Dotted => UnderlineStyle::Dotted,
+                SpanUnderline::Dashed => UnderlineStyle::Dashed,
+            }),
+            reverse: run.reverse,
+            strikethrough: run.strikethrough,
+        },
     }
 }
 

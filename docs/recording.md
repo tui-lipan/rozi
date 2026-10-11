@@ -357,3 +357,13 @@ A recording is line-delimited JSON in the `rozi-recording` format: a header line
 line, with frames in the [`rozi-spans`](control-protocol.md#spans-frames) format. It is documented
 in [Recording format](control-protocol.md#recording-format) and described by the
 [JSON schema](control.md#json-schema), so other tools can read it.
+
+Image frames preserve stacking order and the original cells beneath image approximations. PNG
+exports therefore keep images behind text and blend translucent images over the original glyphs.
+Text fully covered by opaque image cells anywhere in the non-negative image stack is omitted,
+including beneath later translucent patches. New recordings declare `rozi-spans` version
+2, so older players refuse them instead of silently changing image layering. This rozi still reads
+version 1 recordings.
+Glyphs remain when they contribute through an uncovered continuation or icon room, or are redrawn
+by a visible block cursor. Other cursor shapes preserve hidden-cell styles without recording its
+text.

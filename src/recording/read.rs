@@ -61,9 +61,16 @@ fn check_frame(frame: &SpanFrame) -> Result<(), String> {
 }
 
 fn check_images(images: &[crate::control::SpanImage]) -> Result<(), String> {
-    images
-        .iter()
-        .try_for_each(|image| check_cells("an image", image.width, image.height))
+    images.iter().try_for_each(check_image)
+}
+
+fn check_image(image: &crate::control::SpanImage) -> Result<(), String> {
+    check_cells("an image", image.width, image.height)?;
+    let count = usize::from(image.width) * usize::from(image.height);
+    if !image.underlying_cells.is_empty() && image.underlying_cells.len() != count {
+        return Err("an image's underlying cells do not match its cell area".to_string());
+    }
+    Ok(())
 }
 
 fn check_cells(what: &str, width: u16, height: u16) -> Result<(), String> {

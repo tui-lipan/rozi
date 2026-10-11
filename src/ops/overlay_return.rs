@@ -96,6 +96,13 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
             opened_host,
             browse_selected,
         } => {
+            // Rebuilding the rows filters remembered ones by which hosts have a tab, and that reads
+            // the picker's tab and explicitly opened host. Seed them first so a disconnected host
+            // opened from Remote hosts keeps its rows instead of losing them until the next sweep.
+            let mut seed = crate::state::SessionPickerState::new(Vec::new());
+            seed.tab = tab.clone();
+            seed.opened_host = opened_host.as_deref().cloned();
+            ctx.state.session_picker = Some(seed);
             let update = crate::ops::session::open_session_picker(ctx);
             if ctx.state.is_launcher()
                 && let crate::state::SessionPickerTab::Host(target) = &tab
@@ -315,6 +322,60 @@ mod tests {
                 backend.state().session_picker.as_ref().unwrap().tab,
                 crate::state::SessionPickerTab::Host(Some(target))
             );
+        });
+    }
+
+    #[test]
+    fn remote_hosts_restores_remembered_rows_of_a_disconnected_opened_host() {
+        with_backend(|backend| {
+            let _persist = crate::test_support::lock_persisted_state();
+            crate::test_support::isolate_user_dirs();
+            let target = crate::session::remote::RemoteTarget::Alias("host-b".into());
+            let cached = |name: &str| crate::session::CachedHostSession {
+                name: name.into(),
+                origin: Default::default(),
+                ephemeral: false,
+                panes: 1,
+            };
+            let state = backend.state_mut();
+            state
+                .config
+                .remote
+                .hosts
+                .insert("host-b".into(), crate::config::RemoteHostConfig::default());
+            state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+            crate::session::set_cached_host_sessions(
+                &mut state.remote.session_cache,
+                &target,
+                vec![cached("alpha"), cached("beta")],
+            );
+            let rows = crate::ops::session::discovery::cached_rows_for_tests(state, &target);
+            let mut picker = SessionPickerState::new(rows).on_tab(Some(target.clone()));
+            picker.input.set_text("a");
+            picker.selected = picker
+                .entries
+                .iter()
+                .position(|entry| entry.name == "beta")
+                .unwrap();
+            state.session_picker = Some(picker);
+            state.show_session_picker = true;
+
+            backend
+                .dispatch(Msg::SessionPickerRemoteHosts)
+                .expect("open remote hosts");
+            backend
+                .dispatch(Msg::CloseRemotePicker)
+                .expect("return to sessions");
+
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(
+                picker.tab,
+                crate::state::SessionPickerTab::Host(Some(target))
+            );
+            assert_eq!(picker.input.text(), "a");
+            let names: Vec<_> = picker.entries.iter().map(|e| e.name.as_str()).collect();
+            assert_eq!(names, ["alpha", "beta"], "no sweep has run yet");
+            assert_eq!(picker.entries[picker.selected].name, "beta");
         });
     }
 

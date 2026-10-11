@@ -67,9 +67,9 @@ Sessions shows **Local**, a tab for each remote host, then **All** below the sea
 The tab strip is hidden when there are no remote host tabs and All contains nothing beyond Local.
 Remote hosts are sorted by name.
 A host gets a tab while a session there is on screen or in the background, while the launcher is
-scoped to it, while it is connected, or after you explicitly open it in this picker. Cached
-`last seen` sessions alone do not create a host tab; they remain listed in **All**. Use **Remote hosts**
-to discover and connect hosts. Sessions opens on the host of the session you are in, the host the
+scoped to it, while it is connected, or after you explicitly open it in this picker. **All** is the
+union of the tabs. Remembered `last seen` sessions of a host without a tab are not listed in Sessions;
+use **Remote hosts** to discover, reconnect to, and open those hosts. Sessions opens on the host of the session you are in, the host the
 launcher is scoped to, or Local.
 To open on **All** every time, choose **Settings → Sessions → Open Sessions on → All sessions**
 or set `session.picker_open_on = "all"`. **Current host** is the default. Opening a host from

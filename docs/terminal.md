@@ -208,7 +208,8 @@ For a controlled comparison, start rozi with `TUI_LIPAN_TERMINAL_IMAGES=composed
 patch placements. To compare terminal-browser's full-frame mode, run
 `TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge` inside a pane.
 Compare responsiveness as well as memory usage. Full frames move more pixels than small patches,
-and the existing 32 MiB single-upload limit still applies.
+and each upload is limited to 64 MiB. Larger inline uploads must use chunks; a single escape
+sequence remains limited to 32 MiB.
 
 ## Take a screenshot
 

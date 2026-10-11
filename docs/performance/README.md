@@ -13,7 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
-| 2026-10-11 | `60742a5a` with framework `f1e6085b` | direct host placement reduces client composition and terminal output; framework release pending | [Native Kitty patch forwarding](audits/2026-10-11-native-kitty-patches.md) |
+| 2026-10-11 | `60742a5a` with framework `f1e6085b` and `81392dec` | direct placement reduces generated-workload composition; Raffles lookup fix reduces client CPU by 55%; framework release pending | [Native Kitty patch forwarding](audits/2026-10-11-native-kitty-patches.md) |
 | 2026-10-08 | `b5996d8d`; selected comparison with `v0.0.29` | 139 timing cases, 109 memory scenarios, allocation/effect probes, replay-memory checks, and saturation recovery passed; no material regression in eight compared cases | [Full benchmark baseline on Ryzen 7 9700X](audits/2026-10-08.md) |
 | 2026-10-08 | `8d7c82a8` plus local framework and rozi changes | 475×116 body + title client CPU drops 2.3% to 0.2% of one core; sparse snapshot time drops 87–96%; framework release pending | [Active TUI improvements](audits/2026-10-08-active-tui-improvements.md) |
 | 2026-10-07 | `8d7c82a8` plus benchmark and documentation additions | investigation: animated titles force full UI rebuilds; sparse snapshots still scale with viewport area; runtime unchanged | [Active TUI panes and animated titles](audits/2026-10-07-active-tui.md) |

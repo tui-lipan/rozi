@@ -2,7 +2,8 @@
 
 Natural-size patches can be uploaded once and placed directly in Ghostty, leaving pixel composition
 to the host. The framework retains the producer's images for captures, recordings and reconnects.
-The measurements below cover generated graphics traffic, not a terminal-browser page benchmark.
+The first measurements cover generated graphics traffic; a separate Raffles follow-up measures
+the placement lookup fix on a real page.
 
 ## Setup
 
@@ -58,6 +59,79 @@ Client CPU falls by about 4.1× in this full-frame sample. Ghostty RSS rises by 
 so the client reduction does not imply lower host memory for every workload. Host-terminal output
 is not instrumented in the full-frame runs. These single samples are a check of a different input
 pattern, not evidence that full frames are preferable to patches.
+
+## Raffles follow-up
+
+The small generated scene above did not expose a CPU regression with a retained browser patch
+stack. In a separate real-page check, the native path spent most sampled client CPU time in string
+searching. `prepare_placed_cell()` searched every pending placement for each outgoing image cell,
+and deletion collection searched the outgoing cells again for every placement. Native forwarding
+keeps more producer planes, so it amplified this existing cost.
+
+Framework revision `8543832d` indexes pending placements by their anchor cell, parses each cell's
+placement commands once into exact-match keys, and collects deletions while preparing the cells
+that actually retain those commands. Hidden anchors still omit uploads
+and placements, and a source whose initial anchor disappears uploads before its first surviving
+row. A regression covers 64 anchors, a second plane at one anchor, hidden anchors, reversed outgoing
+cell order, upload reuse and deletion on the next frame.
+
+The follow-up uses the same retained Raffles browser and session server, with only the client
+reconnected between release binaries. The anonymous page is `https://www.raffles.com`; browser
+GPU rendering is disabled and `render.fps` is fixed at 30 in this owned lab.
+Ghostty opens directly as a 980 × 720 floating Wayland window, with JetBrainsMono Nerd Font
+at 8 pt. The pane reports 147 × 45 cells. Its retained background is 1911 × 1260 source pixels.
+The counter is confined to rozi, and the browser does not inherit it. Warm-up and sampling use the same six-second and 20-second durations as above.
+Compilation is excluded. Two consecutive samples are taken per binary and the table gives their
+means. Native placement rates are checked as well as output bytes, so an unequal amount of work cannot masquerade as a
+CPU improvement. Earlier exploratory samples with inconsistent window geometry are excluded.
+
+| Measurement | Before `f1e6085b` | After `81392dec` |
+| --- | ---: | ---: |
+| Client CPU, % of one core | 31.88 | 14.37 |
+| Client median RSS, MiB | 56.76 | 55.00 |
+| Server CPU, % of one core | 11.13 | 11.04 |
+| Server median RSS, MiB | 50.49 | 50.49 |
+| Ghostty CPU, % of one core | 30.16 | 26.89 |
+| Ghostty median RSS, MiB | 158.07 | 147.74 |
+| Client host-terminal output, KiB/s | 647.21 | 639.88 |
+| Native placements per second | 5279.56 | 5229.52 |
+
+Client CPU falls by 55% for approximately the same placement rate and terminal traffic.
+The server is unchanged, and this comparison does not establish a material RSS reduction.
+
+The generated-workload tables above were measured at `f1e6085b`; the follow-up records the placement
+lookup fix separately. Ordinary placements are still recreated each paint.
+
+A larger-window rendering check found raw frames of 34,059,248 bytes, above the former 32 MiB
+transfer limit. Framework revision `81392dec` raises the named-media and chunked-inline limit
+to 64 MiB, while keeping individual APC sequences bounded to 32 MiB. A sparse file just above
+32 MiB is tested through file retention and inline replay with the original payload intact,
+without populating either decoded-pixel cache. Configured file-retention budgets still apply.
+A fresh patched server and client render the Raffles middle correctly at the larger size in both
+a PNG capture and the live Ghostty window; the lab is then restored to 980 × 720.
+
+### Native versus composition on Raffles
+
+A fresh patched server and the same retained browser are then compared in composed and native
+modes at the same window size and producer limit of 30 updates/s. Each mode has one fresh client
+and Ghostty process, six seconds of warm-up and a 20-second sample. Captures are excluded from
+these client lifetimes to avoid measuring their retained heap allocations. These are single samples;
+producer rate is controlled, but host presentation rate is not measured.
+
+| Measurement | Composed | Native |
+| --- | ---: | ---: |
+| Client CPU, % of one core | 9.82 | 15.39 |
+| Client median RSS, MiB | 86.29 | 43.69 |
+| Server CPU, % of one core | 10.62 | 11.70 |
+| Server median RSS, MiB | 31.79 | 31.85 |
+| Ghostty CPU, % of one core | 100.42 | 27.79 |
+| Ghostty median RSS, MiB | 506.46 | 149.90 |
+| Client host-terminal output, KiB/s | 165.96 | 638.62 |
+
+Native forwarding reduces Ghostty CPU and RSS in this scene, while client CPU and terminal traffic
+increase. Per-row placement recreation costs more than composed tiles here. This remains a limit
+of the current forwarding path; persistent placement diffs are not implemented. The lookup fix
+above improves the native path without establishing that it is cheapest for the client on every page.
 
 ## Rendering and lifetime checks
 

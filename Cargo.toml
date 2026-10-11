@@ -60,7 +60,7 @@ exclude = [
 # 0.22.1: renderer-aware capture underlays preserve glyph room and cursor layers.
 # Temporary integration pin for native Kitty patch forwarding. Replace with the framework
 # release before publishing rozi. Framework PR: https://github.com/tui-lipan/tui-lipan/pull/328.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "f1e6085bae6d046a02b6f6599b5ccf6b01a592a8", features = [
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "81392dec030fad75594d83e932fb807d58ff50ae", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

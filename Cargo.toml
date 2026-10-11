@@ -218,7 +218,7 @@ panic = "abort"
 # tui-lipan #329 until a registry release includes it, then remove this patch and deny.toml's
 # Git allow-list entry. Do not publish rozi to crates.io with this patch: Cargo strips patches.
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "6ecae2a6fbd67942b91b169af1def14afb50ba6d" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "de06078d44f69057caacb1762b11e86e46e40fd7" }
 
 [profile.release-debug]
 inherits = "release"

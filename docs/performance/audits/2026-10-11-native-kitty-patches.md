@@ -23,6 +23,18 @@ with zero differing pixels. Its output contains zero native placements; the imag
 still emits native placements. All owned test windows and fixture processes were closed.
 These checks add correctness evidence and do not replace the performance samples below.
 
+The follow-up review found that Animated ancestors above a portal root could move eligibility
+geometry while leaving the rendered modal in place, and that duplicate portal traversal disabled
+native forwarding for portal-hosted terminals. Framework revision `de06078d` fixes both by using
+the renderer's overlay-aware offsets and checking nodes once in paint order. Both new backend
+regressions fail at `6ecae2a6` on their host-output assertions and pass with the corrections.
+The kept fixture's `p` mode hosts a terminal inside a root portal. At the same isolated Ghostty
+geometry described above, it emits six native placements, shows the image, and matches forced
+composition across the complete capture with zero differing pixels. Both fixture processes exited
+after their windows closed. The translated-ancestor case is verified by host output and final cells,
+without a separate live screenshot. The three workload file-retention regressions also run in
+rozi's Linux CI job.
+
 ## Setup
 
 - Machine: Intel Core Ultra 5 338H, 12 logical CPUs, Linux.

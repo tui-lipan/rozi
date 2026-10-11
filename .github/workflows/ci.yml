@@ -37,6 +37,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Test graphics workload file retention
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: python3 -m unittest discover -s tools -p 'test_graphics_patches.py'
       # `--features windows-launcher` so the gated Windows launcher binary is still type-checked
       # while Clippy lints every target. The release-profile step below leaves it out, which is the
       # point of the gate.

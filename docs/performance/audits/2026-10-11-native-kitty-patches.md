@@ -158,7 +158,11 @@ flush acknowledgement and discarded-output retries. Restoring each of the first 
 implementations makes its regression fail; the fixed implementations pass.
 
 Later overlapping ordinary widgets use composition with individual image-cell anchors.
-Nonpainting Canvas hosts remain eligible, and their children are checked individually.
+Nonpainting Canvas hosts and inactive Animated wrappers remain eligible, and their children
+are checked individually. The wrapper check shares the renderer's deferred-paint decision.
+Unfilled frame borders outside the pane content remain eligible, and overlap checks include
+ancestor clipping. An isolated Rozi smoke test confirms native forwarding beneath its actual
+chrome and empty popup hosts.
 Native placement requires measured host cell dimensions; matching estimated dimensions do
 not enable it.
 

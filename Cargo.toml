@@ -56,7 +56,8 @@ exclude = [
 # sidebar's project branches and worktree status rail.
 # 0.21.0: sparse terminal snapshots and live TextSource labels avoid full UI rebuilds.
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
-# 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
+# 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes. Also reports
+# focus after late replay and when a focused terminal binds a replacement screen.
 # 0.22.1: renderer-aware capture underlays preserve glyph room and cursor layers.
 tui-lipan = { version = "0.22.1", features = [
   "terminal",

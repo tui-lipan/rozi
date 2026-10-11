@@ -14,6 +14,21 @@ rozi chrome, pane movement, or live interaction. Use `tui-lipan-visual` for dete
 headless tui-lipan rendering. Use `tui-lipan-app-builder` for component state, messages, props,
 and application wiring.
 
+## Sized host windows and graphics checks
+
+For a separate Ghostty test window or a controlled terminal benchmark, use the installed
+`ghostty-window-lab` skill at `~/.codex/skills/ghostty-window-lab/SKILL.md`. Its helper applies
+floating geometry before mapping, isolates XDG directories, verifies actual dimensions and
+closes only the owned process. Do not launch fullscreen and shrink afterward for a comparison.
+If the shared skill is unavailable, preserve those invariants in the local lab.
+
+For Kitty patches, host image overlays, reconnects or native/composed comparisons, use
+`kitty-rendering-validation` at `~/.codex/skills/kitty-rendering-validation/SKILL.md`. It retains
+the fixture, outgoing-command checks, lifecycle negative controls and measurement methods.
+A Rozi PNG capture alone does not prove native forwarding. Verify actual host commands and a
+physical screenshot. Use a release binary for performance measurements and stop compilation
+before sampling. Stop an owned detached session before closing its Ghostty window.
+
 ## Read the current control contract
 
 Read `rozi skill print` from the executable you are about to control. Its embedded contract is

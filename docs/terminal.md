@@ -194,21 +194,23 @@ Limits:
 - In a session that may have several clients, rozi refuses image transfers through temporary files
   or shared memory, which can be read only once.
 
-For a browser that sends complete frames, rozi can retain immutable frame files and let a local
-Kitty host load them directly. This avoids decoded frame buffers and patch composition in rozi.
-Captures, overlapping patches, modal dimming and other host protocols still read the pixels when
-needed. Frame files use filesystem cache even when they add little to rozi's resident memory.
+On Kitty hosts such as Ghostty, natural-size patches can go directly to the host as clipped image
+placements. Unchanged images stay uploaded while the host blends new patches. rozi still retains
+the source scene for reconnects and captures. Scaled images, unmeasured host cell sizes,
+same-depth overlaps, modal dimming, and overlapping later widgets use composition.
+Other host protocols keep their existing rendering path.
 
-To try complete frames with terminal-browser in a local pane:
+Local sessions can retain immutable frame files and let a Kitty host load them directly. This
+avoids decoded frame buffers for both full frames and eligible patches. Captures and effects read
+the pixels when needed. Frame files use filesystem cache even when they add little to rozi's
+resident memory.
 
-```sh
-TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge
-```
-
-This is an experimental performance path. Compare responsiveness as well as memory usage; full
-frames move more pixels than patches. The existing 32 MiB single-upload limit still applies, so
-large panes may need terminal-browser's default presentation mode. Remote sessions retain the
-ordinary graphics path.
+For a controlled comparison, start rozi with `TUI_LIPAN_TERMINAL_IMAGES=composed` to disable native
+patch placements. To compare terminal-browser's full-frame mode, run
+`TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge` inside a pane.
+Compare responsiveness as well as memory usage. Full frames move more pixels than small patches,
+and each upload is limited to 64 MiB. Larger inline uploads must use chunks; a single escape
+sequence remains limited to 32 MiB.
 
 ## Take a screenshot
 

@@ -59,7 +59,9 @@ exclude = [
 # 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes. Also reports
 # focus after late replay and when a focused terminal binds a replacement screen.
 # 0.22.1: renderer-aware capture underlays preserve glyph room and cursor layers.
-tui-lipan = { version = "0.22.1", features = [
+# 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
+# 0.22.3: transparent-overlay protection and native forwarding inside portals.
+tui-lipan = { version = "0.22.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

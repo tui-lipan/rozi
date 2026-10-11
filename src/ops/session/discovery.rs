@@ -111,6 +111,23 @@ pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<Discovere
 /// what is reachable through its own tabs, so All is the union of them; remembered sessions of a
 /// host nothing is connected to stay in Remote hosts and the sidebar rather than reading as current
 /// inventory.
+#[cfg(test)]
+pub(crate) fn cached_rows_for_tests(
+    state: &crate::state::State,
+    target: &crate::session::remote::RemoteTarget,
+) -> Vec<DiscoveredSession> {
+    let mut rows = Vec::new();
+    push_cached_known_remote_rows(
+        &mut rows,
+        &state.remote.hosts,
+        &state.remote.session_cache,
+        &[],
+    );
+    rows.retain(|row| row.remote_target.as_ref() == Some(target));
+    sort_session_rows(&mut rows);
+    rows
+}
+
 pub(super) fn retain_tabbed_rows(state: &crate::state::State, rows: &mut Vec<DiscoveredSession>) {
     if rows.iter().all(|row| {
         !matches!(

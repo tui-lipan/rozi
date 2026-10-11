@@ -364,3 +364,6 @@ Text fully covered by opaque image cells anywhere in the non-negative image stac
 including beneath later translucent patches. New recordings declare `rozi-spans` version
 2, so older players refuse them instead of silently changing image layering. This rozi still reads
 version 1 recordings.
+Glyphs remain when they contribute through an uncovered continuation or icon room, or are redrawn
+by a visible block cursor. Other cursor shapes preserve hidden-cell styles without recording its
+text.

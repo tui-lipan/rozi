@@ -43,11 +43,12 @@ pub(crate) fn span_frame(
     image_pixels: bool,
 ) -> std::result::Result<SpanFrame, ControlResponse> {
     let frame_size = (frame.width, frame.height);
-    let occluded = opaque_frame_cells(&frame.images, frame_size);
+    let underlays = frame.visible_image_underlays();
     let images = frame
         .images
         .iter()
-        .map(|image| span_image(image, frame_size, image_pixels, &occluded))
+        .zip(&underlays)
+        .map(|(image, cells)| span_image(image, frame_size, image_pixels, cells))
         .collect::<std::result::Result<_, _>>()?;
     Ok(SpanFrame {
         format: SPAN_FRAME_FORMAT.to_string(),
@@ -217,7 +218,7 @@ fn span_image(
     image: &CapturedImage,
     frame_size: (u16, u16),
     pixels: bool,
-    occluded: &[bool],
+    underlays: &[Option<CapturedCell>],
 ) -> std::result::Result<SpanImage, ControlResponse> {
     let area = image.area;
     let visible = (!image.visible.iter().all(|&shown| shown)).then(|| {
@@ -264,7 +265,7 @@ fn span_image(
         pixel_height: image.height,
         fill_cell_box: image.fill_cell_box,
         z_index: image.z_index,
-        underlying_cells: image_underlying_cells(image, frame_size, occluded),
+        underlying_cells: image_underlying_cells(image, frame_size, underlays),
         visible,
         png_base64,
         id: None,
@@ -274,17 +275,14 @@ fn span_image(
 fn image_underlying_cells(
     image: &CapturedImage,
     frame_size: (u16, u16),
-    occluded: &[bool],
+    underlays: &[Option<CapturedCell>],
 ) -> Vec<Option<SpanRun>> {
-    let mut cells: Vec<_> = image
-        .underlying_cells
+    let mut cells: Vec<_> = underlays
         .iter()
         .enumerate()
         .map(|(offset, cell)| {
             let cell = cell.as_ref()?;
-            if !image_cell_visible(image, offset, frame_size)
-                || !image_cell_unoccluded(image, offset, frame_size, occluded)
-            {
+            if !image_cell_visible(image, offset, frame_size) {
                 return None;
             }
             Some(span_cell(cell, (offset % usize::from(image.area.w)) as u16))
@@ -296,74 +294,6 @@ fn image_underlying_cells(
     cells
 }
 
-/// Glyphs are drawn before every non-negative plane. Any opaque plane in that stack prevents
-/// their contribution, even when a later translucent plane carries the same original cells.
-fn opaque_frame_cells(images: &[CapturedImage], frame_size: (u16, u16)) -> Vec<bool> {
-    let mut occluded = vec![false; usize::from(frame_size.0) * usize::from(frame_size.1)];
-    // Aspect-fitted images can reveal text when a capture font changes the cell ratio.
-    for image in images
-        .iter()
-        .filter(|image| image.z_index >= 0 && image.fill_cell_box)
-    {
-        for offset in 0..image.visible.len() {
-            if !image_cell_visible(image, offset, frame_size) {
-                continue;
-            }
-            let index = image_frame_offset(image, offset, frame_size).unwrap();
-            occluded[index] = occluded[index] || image_cell_opaque(image, offset);
-        }
-    }
-    preserve_wide_underlays(images, frame_size, &mut occluded);
-    occluded
-}
-
-fn preserve_wide_underlays(
-    images: &[CapturedImage],
-    frame_size: (u16, u16),
-    occluded: &mut [bool],
-) {
-    let (visible, continuations) = original_frame_cells(images, frame_size);
-    for index in 1..occluded.len() {
-        if continuations[index] && visible[index - 1] && visible[index] {
-            let hidden = occluded[index - 1] && occluded[index];
-            occluded[index - 1] = hidden;
-            occluded[index] = hidden;
-        }
-    }
-}
-
-fn original_frame_cells(
-    images: &[CapturedImage],
-    frame_size: (u16, u16),
-) -> (Vec<bool>, Vec<bool>) {
-    let count = usize::from(frame_size.0) * usize::from(frame_size.1);
-    let mut visible = vec![false; count];
-    let mut continuations = vec![false; count];
-    for image in images {
-        for (offset, cell) in image.underlying_cells.iter().enumerate() {
-            let Some(cell) = cell else { continue };
-            if !image_cell_visible(image, offset, frame_size) {
-                continue;
-            }
-            let index = image_frame_offset(image, offset, frame_size).unwrap();
-            visible[index] = true;
-            continuations[index] |=
-                cell.symbol.is_empty() && !index.is_multiple_of(usize::from(frame_size.0));
-        }
-    }
-    (visible, continuations)
-}
-
-fn image_cell_unoccluded(
-    image: &CapturedImage,
-    offset: usize,
-    frame_size: (u16, u16),
-    occluded: &[bool],
-) -> bool {
-    image_cell_visible(image, offset, frame_size)
-        && image_frame_offset(image, offset, frame_size).is_some_and(|index| !occluded[index])
-}
-
 fn image_frame_offset(
     image: &CapturedImage,
     offset: usize,
@@ -373,25 +303,6 @@ fn image_frame_offset(
     let x = u16::try_from(i32::from(image.area.x) + (offset % columns) as i32).ok()?;
     let y = u16::try_from(i32::from(image.area.y) + (offset / columns) as i32).ok()?;
     (x < width && y < height).then_some(usize::from(y) * usize::from(width) + usize::from(x))
-}
-
-fn image_cell_opaque(image: &CapturedImage, offset: usize) -> bool {
-    let columns = u64::from(image.area.w.max(1));
-    let rows = u64::from(image.area.h.max(1));
-    let col = offset as u64 % columns;
-    let row = offset as u64 / columns;
-    let width = u64::from(image.width);
-    let height = u64::from(image.height);
-    let left = col * width / columns;
-    let right = ((col + 1) * width).div_ceil(columns);
-    let top = row * height / rows;
-    let bottom = ((row + 1) * height).div_ceil(rows);
-    if left == right || top == bottom {
-        return false;
-    }
-    (top..bottom).all(|y| {
-        (left..right).all(|x| image.rgba.get(((y * width + x) * 4 + 3) as usize) == Some(&255))
-    })
 }
 
 fn image_cell_visible(image: &CapturedImage, offset: usize, frame_size: (u16, u16)) -> bool {
@@ -487,11 +398,33 @@ mod tests {
         frame_size: (u16, u16),
         pixels: bool,
     ) -> std::result::Result<SpanImage, ControlResponse> {
+        let frame = CapturedFrame {
+            viewport: Rect {
+                x: 0,
+                y: 0,
+                w: frame_size.0,
+                h: frame_size.1,
+            },
+            width: frame_size.0,
+            height: frame_size.1,
+            cells: vec![
+                CapturedCell {
+                    symbol: " ".to_string(),
+                    fg: Color::Reset,
+                    bg: Color::Reset,
+                    underline_color: Color::Reset,
+                    modifiers: CellModifiers::default(),
+                };
+                usize::from(frame_size.0) * usize::from(frame_size.1)
+            ],
+            cursor: None,
+            images: vec![image.clone()],
+        };
         super::span_image(
             image,
             frame_size,
             pixels,
-            &opaque_frame_cells(std::slice::from_ref(image), frame_size),
+            &frame.visible_image_underlays()[0],
         )
     }
 
@@ -569,11 +502,15 @@ mod tests {
                 modifiers: CellModifiers::default(),
             })
         };
-        image.underlying_cells = vec![cell("secret"), cell("A")];
+        image.underlying_cells = vec![cell("S"), cell("A")];
         let span = span_image(&image, (2, 1), true).unwrap();
         assert!(span.underlying_cells[0].is_none());
         assert_eq!(span.underlying_cells[1].as_ref().unwrap().text, "A");
-        assert!(!serde_json::to_string(&span).unwrap().contains("secret"));
+        assert!(
+            !serde_json::to_string(&span)
+                .unwrap()
+                .contains("\"text\":\"S\"")
+        );
 
         image.underlying_cells = vec![cell("界"), cell("")];
         let span = span_image(&image, (2, 1), true).unwrap();
@@ -581,7 +518,7 @@ mod tests {
         assert_eq!(span.underlying_cells[1].as_ref().unwrap().text, "");
         image.visible[1] = false;
         assert!(
-            span_image(&image, (2, 1), true)
+            span_image(&image, (1, 1), true)
                 .unwrap()
                 .underlying_cells
                 .is_empty()

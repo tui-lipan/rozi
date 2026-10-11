@@ -75,6 +75,87 @@ fn session_host_tabs_require_a_current_destination_not_cached_rows() {
 }
 
 #[test]
+fn remembered_rows_of_hosts_without_a_tab_are_dropped_from_the_picker() {
+    use crate::session::remote::RemoteTarget;
+    let mut state = State::new(Config::default(), Theme::default());
+    *state.current_mut() = crate::state::Attachment::new();
+    let target = RemoteTarget::Alias("workbox".into());
+    let mut remembered = session_row("dev", Some("workbox"));
+    remembered.status = crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 };
+    let rows = vec![
+        session_row("local", None),
+        session_row("live", Some("other")),
+        remembered,
+    ];
+    let names =
+        |rows: &[DiscoveredSession]| rows.iter().map(|row| row.name.clone()).collect::<Vec<_>>();
+    let mut kept = rows.clone();
+    discovery::retain_tabbed_rows(&state, &mut kept);
+    assert_eq!(names(&kept), ["local", "live"]);
+
+    state.launcher_scope = Some(target);
+    let mut kept = rows;
+    discovery::retain_tabbed_rows(&state, &mut kept);
+    assert_eq!(names(&kept), ["local", "live", "dev"]);
+}
+
+#[test]
+fn opening_the_picker_leaves_a_cached_only_host_out_but_keeps_its_cache() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().command_link = None;
+            let target = crate::session::remote::RemoteTarget::Alias("workbox".into());
+            let state = backend.state_mut();
+            state
+                .config
+                .remote
+                .hosts
+                .insert("workbox".into(), crate::config::RemoteHostConfig::default());
+            state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+            crate::session::set_cached_host_sessions(
+                &mut state.remote.session_cache,
+                &target,
+                vec![crate::session::CachedHostSession {
+                    name: "dev".into(),
+                    origin: Default::default(),
+                    ephemeral: false,
+                    panes: 1,
+                }],
+            );
+            backend
+                .update_level(crate::Msg::RunAction(
+                    crate::input::Action::OpenSessionPicker,
+                ))
+                .unwrap();
+            let state = backend.state();
+            let picker = state.session_picker.as_ref().unwrap();
+            assert!(
+                picker.entries.iter().all(|row| row.remote_target.is_none()),
+                "a cached-only host is not listed in All"
+            );
+            assert_eq!(
+                session_picker_tabs(state),
+                [
+                    crate::state::SessionPickerTab::Host(None),
+                    crate::state::SessionPickerTab::All
+                ]
+            );
+            assert!(
+                crate::session::host_sessions_for(&state.remote.session_cache, &target)
+                    .is_some_and(|sessions| sessions.iter().any(|s| s.name == "dev")),
+                "the remembered session is still cached for Remote hosts"
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn session_picker_opening_preference_uses_context_or_all_without_changing_creation() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -2173,7 +2254,9 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
                         sibling.clone(),
                     ],
                 );
-                state.session_picker = Some(SessionPickerState::new(vec![remembered]));
+                // A remembered row is only listed under a host tab, here the one opened explicitly.
+                state.session_picker =
+                    Some(SessionPickerState::new(vec![remembered]).on_tab(Some(target.clone())));
             }
 
             backend

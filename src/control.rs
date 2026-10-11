@@ -1787,6 +1787,8 @@ pub struct SpanImage {
     /// uses a run's text and style, with width 1 and x relative to the image's left edge. A wide
     /// glyph's continuation is a separate entry with empty text. Hidden/offscreen cells and text
     /// fully covered by opaque non-negative image planes are null.
+    /// Glyph room and visible block cursors can keep text contributing beyond an opaque cell.
+    /// Other cursor shapes retain anonymous whitespace with the original span and styles.
     /// Absent when no original cells were captured. Required to reconstruct glyphs and their
     /// backgrounds before compositing translucent images in PNG exports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

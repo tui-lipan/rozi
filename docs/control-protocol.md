@@ -296,6 +296,9 @@ cells keep empty `text`. The array is absent when no original cells were capture
 Coverage is checked across the complete image stack: a translucent patch cannot expose text
 already hidden by an opaque image below it. A wide glyph's metadata remains when either half
 can contribute to the final frame.
+Glyph spans include image-free continuation cells and private-use icon room in a neighboring
+blank. A block cursor can redraw the glyph above opaque images. Other visible cursor shapes
+preserve needed styles and span as anonymous whitespace when the text itself is hidden.
 
 `visible` is absent when the image shows in every cell of its area; otherwise it has one entry
 per row of the area, each an array of `[x, width]` column ranges still showing the image.

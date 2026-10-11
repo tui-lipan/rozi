@@ -716,15 +716,9 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     if tabs.len() > 1 {
         let active = tabs.iter().position(|tab| *tab == picker.tab).unwrap_or(0);
         let labels = tabs.iter().map(|tab| tab.label(&ctx.state)).collect();
-        let mut overlay_tabs = OverlayTabs::new(labels, active, Msg::SessionPickerTab);
-        // All can contain cached remote sessions even when Local is the only host tab.
-        if picker
-            .entries
-            .iter()
-            .all(|entry| entry.remote_target.is_none())
-        {
-            overlay_tabs = overlay_tabs.with_all();
-        }
+        // All is the union of the host tabs (remembered rows of a host without a tab never reach
+        // the picker), so Local + All alone is redundant and the strip hides.
+        let overlay_tabs = OverlayTabs::new(labels, active, Msg::SessionPickerTab).with_all();
         overlay = overlay.tabs(overlay_tabs);
     }
     if let Some(target) = picker.tab.remote_target() {

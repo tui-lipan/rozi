@@ -396,6 +396,7 @@ fn assert_same_image_png(
             default_bg: palette.background.unwrap_or(Color::Black),
             ansi_palette: palette.ansi,
             text_renderer,
+            font_family: Some("JetBrainsMono Nerd Font".into()),
             ..Default::default()
         };
         assert!(
@@ -428,6 +429,85 @@ fn opaque_negative_base_preserves_text_beneath_a_translucent_patch() {
 #[test]
 fn image_stacks_preserve_wide_glyphs_across_tile_boundaries() {
     stacked_images_round_trip(0, 1, "界", false, true);
+}
+
+#[test]
+fn an_image_over_a_wide_leader_keeps_the_image_free_continuation() {
+    image_underlay_edge_round_trip("界", None, true);
+}
+
+#[test]
+fn an_image_keeps_the_glyph_redrawn_by_a_visible_block_cursor() {
+    image_underlay_edge_round_trip("S", Some(tui_lipan::CursorShape::Block), true);
+}
+
+#[test]
+fn an_image_keeps_a_private_use_icon_spilling_into_an_image_free_blank() {
+    image_underlay_edge_round_trip("\u{f05b2}", None, true);
+}
+
+#[test]
+fn non_block_cursors_keep_styles_without_disclosing_occluded_text() {
+    for shape in [
+        tui_lipan::CursorShape::HollowBlock,
+        tui_lipan::CursorShape::Underline,
+        tui_lipan::CursorShape::Bar,
+    ] {
+        image_underlay_edge_round_trip("S", Some(shape), false);
+    }
+}
+
+fn image_underlay_edge_round_trip(
+    text: &str,
+    cursor: Option<tui_lipan::CursorShape>,
+    text_visible: bool,
+) {
+    let (_dir, path) = scratch();
+    let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
+    let mut expected = Vec::new();
+    for t in [0, 10] {
+        let mut screen = TerminalScreen::new(4, 20, 100);
+        screen.set_cell_size(TerminalCellSize {
+            width: 8,
+            height: 16,
+        });
+        screen
+            .process_bytes(format!("\x1b[?25l\x1b[31;44m{text} \x1b[2;1H{t}\x1b[1;1H").as_bytes());
+        screen.process_bytes(
+            format!(
+                "\x1b_Ga=T,f=32,s=8,v=16,t=d,i=1,c=1,r=1,z=1,C=1;{}\x1b\\",
+                base64::engine::general_purpose::STANDARD
+                    .encode([20, 100, 220, 255].repeat(8 * 16)),
+            )
+            .as_bytes(),
+        );
+        let mut captured = screen.capture_frame();
+        captured.cursor = cursor.map(|shape| tui_lipan::CursorState::new(0, 0).shape(shape));
+        assert_eq!(
+            captured.images[0].area.w, 1,
+            "the next cell has no image metadata"
+        );
+        let spans = crate::pane::spans::span_frame(&captured, screen.palette(), true).unwrap();
+        assert_stack_text_visibility(&serde_json::to_string(&spans).unwrap(), text, !text_visible);
+        assert!(recorder.push_frame(t, captured.clone(), screen.palette()));
+        expected.push((captured, screen.palette()));
+    }
+    finish(recorder, 20, EndReason::Stopped);
+    let bytes = std::fs::read(path).unwrap();
+    assert_stack_text_visibility(std::str::from_utf8(&bytes).unwrap(), text, !text_visible);
+    let mut replay = Replay::new(BufReader::new(bytes.as_slice())).unwrap();
+    let mut frames = 0;
+    while let Some(step) = replay.step().unwrap() {
+        if !matches!(step, ReplayStep::Frame { .. }) {
+            continue;
+        }
+        let recorded = replay.frame().unwrap().clone();
+        let reconstructed = frame::captured_frame(&recorded, replay.frame_images().unwrap());
+        let (original, palette) = &expected[frames];
+        assert_same_image_png(original, &reconstructed, *palette);
+        frames += 1;
+    }
+    assert_eq!(frames, expected.len());
 }
 
 fn stacked_images_round_trip(

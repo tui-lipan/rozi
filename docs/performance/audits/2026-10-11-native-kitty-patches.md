@@ -149,6 +149,29 @@ replacement ID isolation, cross-thread source retirement, and failed/discarded o
 Closing a pane retires both ordinary placements and unreferenced native host image data.
 Captures keep the existing composed path and its PNG-safe underlay semantics.
 
+## Rendering-lifecycle review follow-up
+
+The follow-up fixes static placements disappearing during unrelated pane updates, duplicate
+native-ID uploads after cache eviction, and shared uploads disappearing when placements have
+one anchor. The backend regressions inspect outgoing upload and placement commands, including
+flush acknowledgement and discarded-output retries. Restoring each of the first three old
+implementations makes its regression fail; the fixed implementations pass.
+
+Later overlapping ordinary widgets use composition with individual image-cell anchors.
+Nonpainting Canvas hosts remain eligible, and their children are checked individually.
+Native placement requires measured host cell dimensions; matching estimated dimensions do
+not enable it.
+
+The kept framework `terminal_patch_layers` example checks image-only, opaque text, opaque block,
+return-to-text, resized and restored states in an isolated floating Ghostty window. Its source
+refreshes after cell measurement, and the test requires real native commands in the image-only
+state. Native and composed captures match across all six states, including an empty popup host
+above the image. The comparison covers 396,704 UI pixels at the original window size and
+303,968 at the smaller size. Owned test windows are closed afterward.
+
+These are correctness checks. The performance measurements above retain their original
+framework revisions; no new CPU or bandwidth measurement is claimed for this follow-up.
+
 ## Limits
 
 Native placement requires an unscaled source, matching producer/host cell sizes, a Kitty host and

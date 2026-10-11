@@ -196,8 +196,9 @@ Limits:
 
 On Kitty hosts such as Ghostty, natural-size patches can go directly to the host as clipped image
 placements. Unchanged images stay uploaded while the host blends new patches. rozi still retains
-the source scene for reconnects and captures. Scaled images, same-depth overlaps, and modal dimming
-use composition; other host protocols keep their existing rendering path.
+the source scene for reconnects and captures. Scaled images, unmeasured host cell sizes,
+same-depth overlaps, modal dimming, and overlapping later widgets use composition.
+Other host protocols keep their existing rendering path.
 
 Local sessions can retain immutable frame files and let a Kitty host load them directly. This
 avoids decoded frame buffers for both full frames and eligible patches. Captures and effects read

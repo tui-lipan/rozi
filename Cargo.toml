@@ -58,9 +58,8 @@ exclude = [
 # 0.21.1: panel-body tab drops and continuous transfers between sidebar panels.
 # 0.22.0: Kitty patch composition, file-backed frames, and capture layering fixes.
 # 0.22.1: renderer-aware capture underlays preserve glyph room and cursor layers.
-# Temporary integration pin for native Kitty patch forwarding. Replace with the framework
-# release before publishing rozi. Framework PR: https://github.com/tui-lipan/tui-lipan/pull/328.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "35a984bb83623a1136814e0930eb12c7f1a02aa9", features = [
+# 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
+tui-lipan = { version = "0.22.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

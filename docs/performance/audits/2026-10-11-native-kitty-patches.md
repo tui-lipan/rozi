@@ -35,6 +35,9 @@ after their windows closed. The translated-ancestor case is verified by host out
 without a separate live screenshot. The three workload file-retention regressions also run in
 rozi's Linux CI job.
 
+These overlay fixes shipped in tui-lipan 0.22.3. rozi now uses the registry release,
+with the temporary Git patch and source allowance removed.
+
 ## Setup
 
 - Machine: Intel Core Ultra 5 338H, 12 logical CPUs, Linux.

@@ -78,7 +78,7 @@ fn screen(backend: &mut TestBackend<AppRoot>) -> String {
 }
 
 #[test]
-fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
+fn cached_hosts_get_a_host_tab_and_are_also_listed_in_all() {
     on_a_big_stack(|| {
         let target = RemoteTarget::Alias("laptop".into());
         let mut backend = picker_showing(vec![last_seen("backend", 3, &target)]);
@@ -89,18 +89,34 @@ fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
         let tabs = local
             .lines()
             .find(|line| line.contains("Local") && line.contains("All"))
-            .expect("All is distinct from Local even without an active remote host");
-        assert!(!tabs.contains("laptop"), "{local}");
+            .expect("the tab strip is drawn");
+        assert!(
+            tabs.contains("laptop"),
+            "a cached host has its own tab: {local}"
+        );
         assert!(
             !local.contains("backend@laptop"),
             "Local excludes cached remote sessions: {local}"
         );
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Tab,
-                mods: KeyMods::NONE,
-            })
-            .unwrap();
+        let press_tab = |backend: &mut TestBackend<AppRoot>| {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Tab,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        };
+        press_tab(&mut backend);
+        let host = screen(&mut backend);
+        assert_eq!(
+            backend.state().session_picker.as_ref().unwrap().tab,
+            rozi::state::SessionPickerTab::Host(Some(target.clone()))
+        );
+        assert!(
+            host.contains("backend") && host.contains("last seen"),
+            "{host}"
+        );
+        press_tab(&mut backend);
         let all = screen(&mut backend);
         assert_eq!(
             backend.state().session_picker.as_ref().unwrap().tab,
@@ -110,16 +126,10 @@ fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
             all.contains("backend@laptop") && all.contains("last seen"),
             "{all}"
         );
-        backend
-            .send_key(KeyEvent {
-                code: KeyCode::Tab,
-                mods: KeyMods::NONE,
-            })
-            .unwrap();
+        press_tab(&mut backend);
         assert_eq!(
             backend.state().session_picker.as_ref().unwrap().tab,
-            rozi::state::SessionPickerTab::Host(None),
-            "no hidden historical host tab in keyboard navigation"
+            rozi::state::SessionPickerTab::Host(None)
         );
         backend
             .state_mut()
@@ -133,7 +143,7 @@ fn cached_hosts_are_discoverable_in_all_without_creating_host_tabs() {
             !empty
                 .lines()
                 .any(|line| line.contains("Local") && line.contains("All")),
-            "redundant Local/All navigation hides again: {empty}"
+            "with no rows the redundant Local/All navigation hides again: {empty}"
         );
     });
 }

@@ -116,8 +116,10 @@ fn initial_session_picker_tab(state: &State) -> SessionPickerTab {
 }
 
 /// The Sessions picker's tabs: **Local**, remote hosts by name, then **All**. Hosts come from the
-/// open tab, explicitly opened host, foreground session, launcher scope, connected hosts, and
-/// parked sessions. Cached rows remain discoverable in All without creating historical host tabs.
+/// open tab, explicitly opened host, foreground session, launcher scope, connected hosts, parked
+/// sessions, and any host with a row in the picker, so remembered (last-seen) sessions get a host
+/// tab too rather than being reachable only through All. Cached rows exist only for known hosts,
+/// so this stays bounded; a host with no rows and no live tie has no tab.
 pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
     let picker = state.session_picker.as_ref();
     let candidates = picker
@@ -143,6 +145,12 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
                 .background
                 .values()
                 .filter_map(|attachment| attachment.remote_target.as_ref()),
+        )
+        .chain(
+            picker
+                .into_iter()
+                .flat_map(|picker| picker.entries.iter())
+                .filter_map(|entry| entry.remote_target.as_ref()),
         );
     let mut hosts: Vec<crate::session::remote::RemoteTarget> = Vec::new();
     for target in candidates {

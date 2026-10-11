@@ -23,7 +23,7 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
 }
 
 #[test]
-fn session_host_tabs_require_a_current_destination_not_cached_rows() {
+fn session_host_tabs_cover_hosts_with_cached_rows() {
     use crate::session::remote::RemoteTarget;
     use crate::state::{Attachment, HostProbe, SessionPickerTab};
     let mut state = State::new(Config::default(), Theme::default());
@@ -33,9 +33,15 @@ fn session_host_tabs_require_a_current_destination_not_cached_rows() {
     row.status = crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 1 };
     state.session_picker = Some(SessionPickerState::new(vec![row]));
     let local_all = vec![SessionPickerTab::Host(None), SessionPickerTab::All];
-    assert_eq!(session_picker_tabs(&state), local_all);
-
-    // Known/configured hosts alone are not active destinations either.
+    let host_tabs = vec![
+        SessionPickerTab::Host(None),
+        SessionPickerTab::Host(Some(target.clone())),
+        SessionPickerTab::All,
+    ];
+    // A remembered row gives its host a tab.
+    assert_eq!(session_picker_tabs(&state), host_tabs);
+    // Known/configured hosts with no rows are not destinations.
+    state.session_picker = Some(SessionPickerState::new(Vec::new()));
     state.remote.hosts.seed(
         &state.config.remote,
         std::slice::from_ref(&target),
@@ -43,11 +49,6 @@ fn session_host_tabs_require_a_current_destination_not_cached_rows() {
         &[],
     );
     assert_eq!(session_picker_tabs(&state), local_all);
-    let host_tabs = vec![
-        SessionPickerTab::Host(None),
-        SessionPickerTab::Host(Some(target.clone())),
-        SessionPickerTab::All,
-    ];
     state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Reached;
     assert_eq!(session_picker_tabs(&state), host_tabs);
     state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Idle;

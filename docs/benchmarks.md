@@ -278,6 +278,18 @@ Compare PSS only between runs on the same machine and build. Keep child shell an
 separate from rozi's own memory. Current RSS and PSS after quiescence can show cleanup; `VmHWM`
 cannot, because it never decreases.
 
+## Compare image patches in a real host
+
+Run `python3 tools/graphics-patches.py --fps 20 --duration 60` inside an owned test pane. It generates
+a retained background, a toolbar, a small opaque patch and a moving translucent patch with pixel
+offsets. Resize the pane to rebuild the background. `--full` instead sends changing full frames.
+The two workloads are distinct; compare each workload across rendering modes.
+
+Use the same release binary, host font and pane pixel size. Launch one client normally and another
+with `TUI_LIPAN_TERMINAL_IMAGES=composed`; run them serially. Sample client, server and graphical
+host separately after warm-up, without compilation during sampling. Capture the actual host window
+as well as rozi's PNG output: PNG captures always compose, so they cannot verify native placements.
+
 ## Profiling
 
 The `release-debug` profile keeps release optimization and adds debug symbols:

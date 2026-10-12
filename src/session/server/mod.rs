@@ -417,6 +417,13 @@ pub struct AgentScratch {
     pub probe: Option<AgentProbe>,
     /// When the process sweep last actually ran, for the periodic refresh.
     pub detected_at: Option<std::time::Instant>,
+    /// When the agent now behind this pane was named, if it was named as a fresh launch. Read
+    /// against [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE): a harness's loading
+    /// spinner is not a run.
+    pub launched_at: Option<std::time::Instant>,
+    /// The next agent named here was already running: the definitions changed under it, so naming
+    /// it is not a launch and starts no [`Self::launched_at`] window.
+    pub adopting: bool,
     /// Last sampled foreground process group, shared by split-aware navigation and agent identity.
     /// Keeping it across fast polls avoids re-walking the host process table every 250 ms.
     pub foreground_job: Option<crate::platform::process::ForegroundJob>,

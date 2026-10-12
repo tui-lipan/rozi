@@ -214,6 +214,12 @@ Declaration order does not matter. For example, an approval prompt (`blocked`) w
 subagent view that hides the tool's usual status area. rozi keeps the last observed state instead of
 reporting idle. If nothing confirms that state for a while, it eventually returns to idle.
 
+For the first 8 seconds after rozi recognizes a newly started agent, it reports a `working` screen
+as idle. Many tools show a loading spinner at startup. Without this window, each launch would look
+like a run that finished a moment later. `blocked` is reported immediately, so startup trust prompts
+still show. If the agent is still working when the window ends, such as when you pass a prompt on the
+command line, rozi reports it as working from then on.
+
 ### Common rules
 
 With `base = true`, rozi also applies common rules for approval text, yes/no questions, trust

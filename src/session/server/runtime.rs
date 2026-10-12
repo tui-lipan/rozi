@@ -55,6 +55,19 @@ pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 /// stopped reports it a moment late, which is worth far more than a state that oscillates.
 pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 
+/// How long after an agent is first named that its screen cannot yet say it is working.
+///
+/// Several harnesses animate a spinner while they start - loading config, connecting MCP servers,
+/// restoring a conversation - and it is the same braille glyph at the head of a line that the shared
+/// working rule reads a turn by. Read literally, every launch was a run that ended a moment later:
+/// the clock started, then the "finished" pulse armed for work nobody asked for.
+///
+/// Nothing on screen tells a loading spinner from a turn's spinner, so this goes by when: a run
+/// still spinning once the window is over is reported from then on, and one that stopped inside it
+/// never happened. A prompt passed on the command line therefore reads as working this much late,
+/// and a blocked screen - a trust dialog on launch - is never held back.
+pub(super) const AGENT_STARTUP_GRACE: Duration = Duration::from_secs(8);
+
 /// How long a held agent state survives with no confirming evidence.
 ///
 /// Generous on purpose: this is a backstop for a pane whose agent the scraper permanently lost
@@ -722,6 +735,9 @@ impl SessionServer {
         for pane in self.panes.values_mut() {
             pane.agent.clear_runtime_identity();
             pane.agent.reset_detection();
+            // Whatever is named next was running before this reload; holding back its work as a
+            // launch would end a run in flight.
+            pane.agent.adopting = true;
             pane.runtime.detected_agent = None;
         }
         let mut scan = LazyProcessScan::default();
@@ -976,9 +992,11 @@ fn derive_detected_agent(
         return pane.runtime.detected_agent.clone();
     };
     if process_refreshed {
+        let adopting = std::mem::take(&mut pane.agent.adopting);
         let identity = identify_pane_agent(pane, agents, foreground_program, foreground_job)
             .map(|definition| definition.id().to_string());
         if identity != pane.agent.identity {
+            pane.agent.launched_at = (identity.is_some() && !adopting).then(Instant::now);
             pane.agent.read = None;
             pane.agent.identity = identity;
         }
@@ -1778,7 +1796,33 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
             resolved
         }
     };
+    let resolved = hold_back_startup_work(resolved, pane.agent.launched_at, now);
     settle_state_flicker(resolved, &mut pane.agent.settled, now)
+}
+
+/// Read a `working` screen as idle while the agent is still inside [`AGENT_STARTUP_GRACE`].
+///
+/// Applied after the read cache, so a spinner that is still on screen when the window closes is
+/// reported then without waiting for the next redraw.
+fn hold_back_startup_work(
+    resolved: Option<DetectedAgent>,
+    launched_at: Option<Instant>,
+    now: Instant,
+) -> Option<DetectedAgent> {
+    use crate::session::protocol::DetectedAgentState;
+
+    match resolved {
+        Some(detected)
+            if detected.state == DetectedAgentState::Working
+                && launched_at.is_some_and(|at| now.duration_since(at) < AGENT_STARTUP_GRACE) =>
+        {
+            Some(DetectedAgent {
+                state: DetectedAgentState::Idle,
+                ..detected
+            })
+        }
+        other => other,
+    }
 }
 
 /// How loud a state is, which is the only ordering this settle needs: a pane can go quiet in a
@@ -1897,6 +1941,15 @@ mod tests {
 
     fn catalog() -> AgentCatalog {
         AgentCatalog::builtin()
+    }
+
+    /// Move the pane's agent launch back past [`AGENT_STARTUP_GRACE`], so its work reads as a run.
+    fn past_startup(pane: &mut ServerPane) {
+        let launched = pane
+            .agent
+            .launched_at
+            .expect("the agent was named as a launch");
+        pane.agent.launched_at = Some(launched - AGENT_STARTUP_GRACE);
     }
 
     fn make_pane() -> ServerPane {
@@ -2703,6 +2756,7 @@ mod tests {
             "a pane drawing no run evidence is idle"
         );
 
+        past_startup(&mut pane);
         pane.terminal.process_bytes(b"esc to interrupt\r\n");
         pane.runtime =
             compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
@@ -2946,6 +3000,7 @@ mod tests {
     fn agent_detection_uses_configured_hint_and_is_preserved_between_polls() {
         let mut pane = make_pane();
         pane.env.push(("ROZI_AGENT".into(), "opencode".into()));
+        pane.agent.adopting = true;
         pane.screen_mut().process_bytes(b"esc to interrupt");
 
         let detected = compute_runtime_state(
@@ -3007,6 +3062,7 @@ mod tests {
 
         let mut pane = make_pane();
         pane.env.push(("ROZI_AGENT".into(), "mca".into()));
+        pane.agent.adopting = true;
         pane.screen_mut().process_bytes("  thinking…".as_bytes());
         let detected = compute_runtime_state(
             &mut pane,
@@ -3119,6 +3175,89 @@ mod tests {
             .expect("the agent is still recognized");
         assert_eq!(expired.state, DetectedAgentState::Idle);
         assert!(hold.is_none(), "an expired hold is dropped, not renewed");
+    }
+
+    /// Reduced from harnesses that animate a braille spinner while they load: the shared working
+    /// rule cannot tell it from a turn's, so every launch read as a run that finished seconds
+    /// later and armed the "finished" pulse for work nobody asked for.
+    #[test]
+    fn a_loading_spinner_at_launch_is_not_a_run() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let state = |pane: &ServerPane| pane.runtime.detected_agent.as_ref().map(|d| d.state);
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "pi".into()));
+        let mut scan = LazyProcessScan::default();
+
+        pane.terminal
+            .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(state(&pane), Some(DetectedAgentState::Idle));
+        assert_eq!(pane.runtime.work_started_at, None, "no run clock started");
+
+        pane.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(state(&pane), Some(DetectedAgentState::Idle));
+
+        // The spinner that comes once the window has passed is a turn the user asked for.
+        past_startup(&mut pane);
+        pane.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(state(&pane), Some(DetectedAgentState::Working));
+    }
+
+    /// A prompt given on the command line goes straight from loading into a turn. The window only
+    /// delays it: once it closes, the spinner still on screen is reported without a redraw.
+    #[test]
+    fn a_run_still_spinning_after_startup_is_reported() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let launched = Instant::now();
+        let working = || {
+            Some(DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
+                state: DetectedAgentState::Working,
+            })
+        };
+        let state = |at: Duration| {
+            hold_back_startup_work(working(), Some(launched), launched + at).map(|d| d.state)
+        };
+        assert_eq!(state(Duration::ZERO), Some(DetectedAgentState::Idle));
+        assert_eq!(
+            state(AGENT_STARTUP_GRACE),
+            Some(DetectedAgentState::Working)
+        );
+        assert_eq!(
+            hold_back_startup_work(working(), None, launched).map(|d| d.state),
+            Some(DetectedAgentState::Working),
+            "an adopted agent has no window"
+        );
+    }
+
+    #[test]
+    fn a_dialog_at_launch_is_never_held_back() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "cursor".into()));
+        pane.terminal.process_bytes(
+            "Do you trust the contents of this directory?\r\n▶ [a] Trust this workspace\r\n"
+                .as_bytes(),
+        );
+        pane.runtime = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            Some(&catalog()),
+            &mut LazyProcessScan::default(),
+        );
+        assert!(pane.agent.launched_at.is_some(), "this pane is a launch");
+        assert_eq!(
+            pane.runtime.detected_agent.map(|d| d.state),
+            Some(DetectedAgentState::Blocked)
+        );
     }
 
     /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it

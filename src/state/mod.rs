@@ -102,6 +102,28 @@ pub struct PublisherIdentity {
     pub kind: crate::session::protocol::PublisherKind,
 }
 
+/// Which namespace a publish stream's pane lives in.
+///
+/// Pane ids repeat across sessions, so a stream is bound to the session its pane belongs to when it
+/// opens - the caller's `source_session`, or the session on screen for a caller that names none -
+/// and its rows reach that session whether it is on screen or in the background. A scratch or
+/// popup pane belongs to this client alone. An attachment that has not learned its session's
+/// instance is bound by the attachment itself.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PublishOrigin {
+    Local,
+    Session(crate::session::protocol::SessionInstanceId),
+    Attachment(AttachmentId),
+}
+
+/// A publish stream's place: one publisher identity in one pane of one namespace.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PublishStreamKey {
+    pub origin: PublishOrigin,
+    pub pane: PaneId,
+    pub publisher: String,
+}
+
 pub struct PublishStreamState {
     pub id: u64,
     pub identity: PublisherIdentity,
@@ -379,8 +401,9 @@ pub struct State {
     /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
     /// closes the stream, which is also how a pane's rows are withdrawn. Each value carries a
     /// generation id so a replaced publisher's late rows/close cannot affect its successor. Keyed by
-    /// pane and [`PublisherIdentity::id`]: a pane may have several publishers, each owning its rows.
-    pub publish_streams: std::collections::HashMap<(PaneId, String), PublishStreamState>,
+    /// session, pane, and [`PublisherIdentity::id`]: a pane may have several publishers, each owning
+    /// its rows, and the same pane id in another session is another pane.
+    pub publish_streams: std::collections::HashMap<PublishStreamKey, PublishStreamState>,
     /// Long-lived event subscriptions owned by extension generations.
     pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
     /// Palette visibility extensions chose for their own commands, keyed by public command ID.

@@ -3,7 +3,12 @@ import test from "node:test"
 
 import { EventEmitter } from "node:events"
 
-import { AgentPublisher, AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
+import {
+  AgentPublisher,
+  AgentState,
+  agentStateHooks,
+  reduceAgentEvent,
+} from "./rozi-agent-state.js"
 
 const event = (type, properties) => ({ type, properties })
 const tracker = () => new AgentState()
@@ -253,4 +258,30 @@ test("a publisher outside a pane, or with no answer, publishes nothing", async (
     await new AgentPublisher({ env: paneEnv, connect: silent.connect }).publish(working),
     false,
   )
+})
+
+// Through the plugin's own event path: a stream that drops while a session works is reopened by
+// the next event even when that event changes nothing, because rozi withdrew the row with it.
+test("an unchanged busy event after a dropped stream republishes the row", async () => {
+  const wire = socket()
+  const hooks = await agentStateHooks({ env: paneEnv, connect: wire.connect })
+  const busy = { type: "session.status", properties: { sessionID: "a", status: { type: "busy" } } }
+  await hooks.event({ event: busy })
+  assert.equal(wire.connections.length, 1)
+  assert.deepEqual(
+    wire.connections[0].lines.map((line) => line.rows?.[0]?.status),
+    [undefined, "idle", "working"],
+  )
+  await hooks.event({ event: busy })
+  assert.equal(wire.connections[0].lines.length, 3, "an unchanged state is not resent")
+
+  wire.connections[0].emit("close")
+  await hooks.event({ event: busy })
+  assert.equal(wire.connections.length, 2, "the next event reopens the stream")
+  assert.equal(wire.connections[1].lines.at(-1).rows[0].status, "working")
+
+  await hooks.dispose()
+  assert.equal(wire.connections[1].ended, true)
+  await hooks.event({ event: busy })
+  assert.equal(wire.connections.length, 2, "a disposed plugin opens nothing")
 })

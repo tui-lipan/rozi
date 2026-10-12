@@ -2375,6 +2375,7 @@ fn run_publish_stream(
     link.send(Msg::PublishStreamOpen {
         stream_id,
         requested_pane: open.requested_pane,
+        source_session: open.source_session,
         kind: open.kind,
         name: open.name,
         extension: open.extension,
@@ -2837,6 +2838,7 @@ pub(crate) fn serve_connection(
             crate::ops::published_rows::PublishOpen {
                 stream_id,
                 requested_pane: request.source_pane,
+                source_session: request.source_session.clone(),
                 kind: *kind,
                 name: name.clone(),
                 extension: request.extension.clone(),

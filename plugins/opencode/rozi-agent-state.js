@@ -16,10 +16,18 @@ export class AgentPublisher {
   #ready
   #latest
   #closed = false
+  #onLost
 
-  constructor({ env = process.env, connect = (path) => net.createConnection(path) } = {}) {
+  // `onLost` runs when an open stream drops: rozi has withdrawn the row, so whatever the caller
+  // last published is no longer on screen and must be offered again, changed or not.
+  constructor({
+    env = process.env,
+    connect = (path) => net.createConnection(path),
+    onLost = () => {},
+  } = {}) {
     this.#env = env
     this.#connect = connect
+    this.#onLost = onLost
   }
 
   get pane() {
@@ -62,6 +70,7 @@ export class AgentPublisher {
         clearTimeout(timer)
         resolve(open)
       }
+      let opened = false
       const drop = () => {
         if (this.#connection === connection) {
           this.#connection = undefined
@@ -69,6 +78,10 @@ export class AgentPublisher {
         }
         if (!acknowledged) settle(false)
         acknowledged = true
+        if (opened && !this.#closed) {
+          opened = false
+          this.#onLost()
+        }
       }
       const timer = setTimeout(() => {
         connection.destroy()
@@ -95,6 +108,7 @@ export class AgentPublisher {
             this.#ready = undefined
           }
         }
+        opened = ok
         settle(ok)
       })
       connection.on("error", drop)
@@ -111,10 +125,12 @@ export class AgentPublisher {
   }
 }
 
-export const RoziAgentState = async () => {
+// The plugin's hooks, over an injectable publisher so the event path is testable end to end.
+export async function agentStateHooks(options = {}) {
   const state = new AgentState()
-  const publisher = new AgentPublisher()
-  await publisher.publish({ status: "idle" })
+  // A dropped stream withdrew the row, so the next event republishes even an unchanged state.
+  const publisher = new AgentPublisher({ ...options, onLost: () => state.forget() })
+  if (await publisher.publish({ status: "idle" })) state.settle()
 
   return {
     event: async ({ event }) => {
@@ -128,6 +144,8 @@ export const RoziAgentState = async () => {
     },
   }
 }
+
+export const RoziAgentState = async () => agentStateHooks()
 
 const BLOCKED_REASON = { permission: "permission required", question: "answer required" }
 

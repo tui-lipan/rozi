@@ -468,14 +468,14 @@ fn main_case() {
                 .state()
                 .publish_streams
                 .keys()
-                .any(|(pane, _)| *pane == 1)
+                .any(|key| key.pane == 1)
         },
     );
     backend
         .state()
         .publish_streams
         .iter()
-        .find(|((pane, _), _)| *pane == 1)
+        .find(|(key, _)| key.pane == 1)
         .map(|(_, stream)| stream)
         .unwrap()
         .sender

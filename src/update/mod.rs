@@ -545,6 +545,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PublishStreamOpen {
             stream_id,
             requested_pane,
+            source_session,
             kind,
             name,
             extension,
@@ -556,6 +557,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::published_rows::PublishOpen {
                 stream_id,
                 requested_pane,
+                source_session,
                 kind,
                 name,
                 extension,

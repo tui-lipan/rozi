@@ -12,13 +12,15 @@
 use tui_lipan::prelude::*;
 
 use crate::app::AppRoot;
-use crate::session::protocol::{PublishedRow, PublisherKind, RowKey};
-use crate::state::{PaneId, PublisherIdentity};
+use crate::session::protocol::{PublishedRow, PublisherKind, RowKey, SessionInstanceId};
+use crate::state::{PaneId, PublishOrigin, PublishStreamKey, PublisherIdentity};
 
 /// What a `publish` request asked for, beside the channels that carry its stream.
 pub(crate) struct PublishOpen {
     pub stream_id: u64,
     pub requested_pane: Option<PaneId>,
+    /// The caller's `source_session`: the session its pane runs in, when it said.
+    pub source_session: Option<SessionInstanceId>,
     pub kind: PublisherKind,
     pub name: Option<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -61,6 +63,7 @@ pub(crate) fn stream_opened(
     let PublishOpen {
         stream_id,
         requested_pane,
+        source_session,
         kind,
         name,
         extension,
@@ -121,7 +124,14 @@ pub(crate) fn stream_opened(
         let _ = ack.send(Err(ControlResponse::error("publish requires a live pane")));
         return Update::none();
     };
-    if crate::pane::lifecycle::find_pane(&ctx.state, pane_id).is_none() {
+    let origin = match publish_origin(&ctx.state, pane_id, source_session) {
+        Ok(origin) => origin,
+        Err(response) => {
+            let _ = ack.send(Err(response));
+            return Update::none();
+        }
+    };
+    if target(&ctx.state, &origin, pane_id).is_none() {
         let _ = ack.send(Err(ControlResponse::error_with(
             crate::control::ControlErrorCode::PaneNotFound,
             format!("pane {pane_id} not found"),
@@ -135,6 +145,11 @@ pub(crate) fn stream_opened(
         ),
         kind,
     };
+    let key = PublishStreamKey {
+        origin,
+        pane: pane_id,
+        publisher: identity.id.clone(),
+    };
     // Admission counts open streams, not streams that have published: a stream refused here hears
     // so before its acknowledgement, where a refusal of its rows later could not reach it at all.
     // A publisher replacing its own stream takes no new place.
@@ -142,7 +157,9 @@ pub(crate) fn stream_opened(
         .state
         .publish_streams
         .keys()
-        .filter(|(pane, id)| *pane == pane_id && *id != identity.id)
+        .filter(|other| {
+            other.origin == key.origin && other.pane == pane_id && other.publisher != key.publisher
+        })
         .count();
     if open >= crate::session::protocol::MAX_PANE_PUBLISHERS {
         let _ = ack.send(Err(ControlResponse::error_with(
@@ -155,7 +172,7 @@ pub(crate) fn stream_opened(
         return Update::none();
     }
     ctx.state.publish_streams.insert(
-        (pane_id, identity.id.clone()),
+        key,
         crate::state::PublishStreamState {
             id: stream_id,
             identity,
@@ -168,16 +185,92 @@ pub(crate) fn stream_opened(
     Update::none()
 }
 
+/// The namespace a new stream for `pane_id` belongs to.
+///
+/// A caller that names its session is bound to it, current or in the background, and refused when
+/// that session is not attached here: guessing would put its rows on another session's pane with
+/// the same id. A caller that names none - a supervised service, say - is bound to the session on
+/// screen when it opens, and keeps that session after the user switches away.
+fn publish_origin(
+    state: &crate::state::State,
+    pane_id: PaneId,
+    source_session: Option<SessionInstanceId>,
+) -> std::result::Result<PublishOrigin, crate::control::ControlResponse> {
+    if let Some(instance) = source_session {
+        return if attachment_for_session(state, &instance).is_some() {
+            Ok(PublishOrigin::Session(instance))
+        } else {
+            Err(crate::control::ControlResponse::error_with(
+                crate::control::ControlErrorCode::SessionNotAttached,
+                "the calling pane's session is not attached to this rozi",
+            ))
+        };
+    }
+    if crate::pane::lifecycle::pane_is_local(state, pane_id) {
+        return Ok(PublishOrigin::Local);
+    }
+    Ok(current_origin(state))
+}
+
+/// The namespace of the session on screen.
+fn current_origin(state: &crate::state::State) -> PublishOrigin {
+    match &state.current().session_instance {
+        Some(instance) => PublishOrigin::Session(instance.clone()),
+        None => PublishOrigin::Attachment(state.runtime_epoch),
+    }
+}
+
+fn attachment_for_session<'a>(
+    state: &'a crate::state::State,
+    instance: &SessionInstanceId,
+) -> Option<&'a crate::state::Attachment> {
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .find(|attachment| attachment.session_instance.as_ref() == Some(instance))
+}
+
+/// Where a stream's rows go: the pane's generation, the connection to its session server when
+/// there is one, and whether the pane is this client's own. `None` once the pane or its session is
+/// gone from here.
+fn target(
+    state: &crate::state::State,
+    origin: &PublishOrigin,
+    pane_id: PaneId,
+) -> Option<(u64, Option<crate::session::client::SessionClient>, bool)> {
+    let attachment = match origin {
+        PublishOrigin::Local => {
+            let pane = crate::pane::lifecycle::find_pane_in_namespace(state, pane_id, true)?;
+            return Some((
+                pane.pty_generation,
+                state.pty_client_for_pane(pane_id),
+                true,
+            ));
+        }
+        PublishOrigin::Session(instance) => attachment_for_session(state, instance)?,
+        PublishOrigin::Attachment(epoch) => state.attachment_for_epoch(*epoch)?,
+    };
+    let pane = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == pane_id && !pane.closing)?;
+    Some((
+        pane.pty_generation,
+        attachment.session_client.clone(),
+        false,
+    ))
+}
+
 /// The key of the live stream `stream_id` in `pane_id`, if it has not been replaced or dropped.
 fn live_stream(
     state: &crate::state::State,
     stream_id: u64,
     pane_id: PaneId,
-) -> Option<(PaneId, String)> {
+) -> Option<PublishStreamKey> {
     state
         .publish_streams
         .iter()
-        .find(|((pane, _), stream)| *pane == pane_id && stream.id == stream_id)
+        .find(|(key, stream)| key.pane == pane_id && stream.id == stream_id)
         .map(|(key, _)| key.clone())
 }
 
@@ -201,37 +294,27 @@ pub(crate) fn rows_reported(
         return Update::none();
     }
     let identity = stream.identity.clone();
-    report_rows(&mut ctx.state, pane_id, &identity, rows)
-}
-
-fn report_rows(
-    state: &mut crate::state::State,
-    pane_id: PaneId,
-    publisher: &PublisherIdentity,
-    rows: Vec<PublishedRow>,
-) -> Update {
-    let Some(generation) = crate::pane::lifecycle::find_pane(state, pane_id)
-        .filter(|pane| !pane.closing)
-        .map(|pane| pane.pty_generation)
-    else {
-        return Update::none();
-    };
-    if let Some(client) = state.pty_client_for_pane(pane_id) {
-        client.report_pane_rows(
-            pane_id,
-            generation,
-            crate::pane::lifecycle::pane_is_local(state, pane_id),
-            publisher,
-            rows,
-        );
-    }
+    report_rows(&ctx.state, &key, &identity, rows);
     Update::none()
 }
 
+/// Send one publisher's rows to the session its stream is bound to. A session no longer attached
+/// here gets nothing: the rows must never land on whichever pane shares the id now.
+fn report_rows(
+    state: &crate::state::State,
+    key: &PublishStreamKey,
+    publisher: &PublisherIdentity,
+    rows: Vec<PublishedRow>,
+) {
+    if let Some((generation, Some(client), local)) = target(state, &key.origin, key.pane) {
+        client.report_pane_rows(key.pane, generation, local, publisher, rows);
+    }
+}
+
 /// Drop one stream and withdraw its rows, leaving the pane's other publishers alone.
-fn drop_stream(state: &mut crate::state::State, key: &(PaneId, String)) {
+fn drop_stream(state: &mut crate::state::State, key: &PublishStreamKey) {
     if let Some(stream) = state.publish_streams.remove(key) {
-        report_rows(state, key.0, &stream.identity, Vec::new());
+        report_rows(state, key, &stream.identity, Vec::new());
     }
 }
 
@@ -270,13 +353,22 @@ pub(crate) fn unload_extensions(
     }
 }
 
-/// Ask the publisher that owns `row` to bring it on screen.
+/// Ask the publisher that owns `row`, in a pane on screen, to bring it on screen.
 ///
 /// Best-effort by design: rozi cannot move another program's view itself, and a publisher that
 /// has stopped reading is indistinguishable from one that is slow. The pane is focused either way,
 /// so the click is never a no-op.
 pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneId, row: &RowKey) {
-    let key = (pane_id, row.publisher.clone());
+    let origin = if crate::pane::lifecycle::pane_is_local(state, pane_id) {
+        PublishOrigin::Local
+    } else {
+        current_origin(state)
+    };
+    let key = PublishStreamKey {
+        origin,
+        pane: pane_id,
+        publisher: row.publisher.clone(),
+    };
     let Some(stream) = state.publish_streams.get(&key) else {
         return;
     };
@@ -292,7 +384,10 @@ pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneI
 #[cfg(test)]
 mod tests {
     use crate::session::client::{ClientOutbound, SessionClient};
-    use crate::session::protocol::{ClientMessage, PublishedRow, PublisherKind, RowKey};
+    use crate::session::protocol::{
+        ClientMessage, PublishedRow, PublisherKind, RowKey, SessionInstanceId,
+    };
+    use crate::state::{PublishOrigin, PublishStreamKey};
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
 
@@ -330,13 +425,24 @@ mod tests {
         let state = backend.state_mut();
         state.current_mut().session_attached = true;
         state.current_mut().session_client = Some(client);
+        state.current_mut().session_instance = Some(SessionInstanceId::for_test("session-a"));
         state.current_mut().workspaces[0].panes[0].pty_generation = 4;
         outbound
+    }
+
+    /// The key of `publisher`'s stream in pane 1 of the session `attach` set up.
+    fn key(publisher: &str) -> PublishStreamKey {
+        PublishStreamKey {
+            origin: PublishOrigin::Session(SessionInstanceId::for_test("session-a")),
+            pane: 1,
+            publisher: publisher.to_string(),
+        }
     }
 
     struct Open<'a> {
         stream_id: u64,
         pane: Option<crate::state::PaneId>,
+        session: Option<&'a str>,
         extension: Option<&'a str>,
         kind: PublisherKind,
         name: Option<&'a str>,
@@ -347,6 +453,7 @@ mod tests {
             Open {
                 stream_id,
                 pane: Some(1),
+                session: None,
                 extension: None,
                 kind: PublisherKind::Activity,
                 name: None,
@@ -368,6 +475,7 @@ mod tests {
             .dispatch(crate::Msg::PublishStreamOpen {
                 stream_id: open.stream_id,
                 requested_pane: open.pane,
+                source_session: open.session.map(SessionInstanceId::for_test),
                 kind: open.kind,
                 name: open.name.map(str::to_string),
                 extension,
@@ -587,7 +695,7 @@ mod tests {
                 backend
                     .state()
                     .publish_streams
-                    .contains_key(&(1, "codex-rozi-sessions".to_string()))
+                    .contains_key(&key("codex-rozi-sessions"))
             );
 
             // The agent publisher closing withdraws its own rows and nothing else.
@@ -616,6 +724,7 @@ mod tests {
     #[test]
     fn a_publisher_beyond_the_panes_limit_is_refused_when_it_opens() {
         with_backend(|backend| {
+            let _outbound = attach(backend);
             let names: Vec<String> = (0..crate::session::protocol::MAX_PANE_PUBLISHERS)
                 .map(|index| format!("p{index}"))
                 .collect();
@@ -661,6 +770,88 @@ mod tests {
         });
     }
 
+    /// Pane ids repeat across sessions. A stream opened in session A's pane 1 keeps reporting to
+    /// session A after the user switches to session B, which has a pane 1 of its own; B's publisher
+    /// of the same identity is a different stream; and a caller naming a session that is not
+    /// attached here is refused rather than guessed.
+    #[test]
+    fn a_stream_stays_with_the_session_it_was_opened_in() {
+        with_backend(|backend| {
+            let outbound_a = attach(backend);
+            let (tx_a, _rx_a) = std::sync::mpsc::sync_channel(4);
+            open_stream(
+                backend,
+                Open {
+                    session: Some("session-a"),
+                    ..Open::anonymous(1)
+                },
+                tx_a,
+            );
+
+            // Switch to session B, whose own pane 1 is now the one on screen.
+            let (client_b, outbound_b) = SessionClient::test_channel();
+            let mut b = crate::state::Attachment::new();
+            b.session_attached = true;
+            b.session_client = Some(client_b);
+            b.session_instance = Some(SessionInstanceId::for_test("session-b"));
+            b.workspaces[0].panes.push(crate::state::Pane::new(
+                1,
+                100,
+                tui_lipan::prelude::FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 20.0,
+                    h: 10.0,
+                },
+            ));
+            let state = backend.state_mut();
+            let epoch = state.runtime_epoch;
+            state.park_current(epoch, b);
+            state.runtime_epoch = epoch + 1;
+
+            report(backend, 1, vec![row("a", "working")]);
+            assert_eq!(
+                reports(&outbound_a),
+                [(
+                    "publish:default".into(),
+                    PublisherKind::Activity,
+                    vec!["a".to_string()]
+                )],
+                "rows go to the session the stream was opened in"
+            );
+            assert!(reports(&outbound_b).is_empty(), "never to B's pane 1");
+
+            // B's publisher with the same identity is its own stream and replaces nothing in A.
+            let (tx_b, rx_b) = std::sync::mpsc::sync_channel(4);
+            open_stream(
+                backend,
+                Open {
+                    session: Some("session-b"),
+                    ..Open::anonymous(2)
+                },
+                tx_b,
+            );
+            assert_eq!(backend.state().publish_streams.len(), 2);
+            // An activation from the screen reaches B's stream, the one on screen.
+            super::request_activation(backend.state_mut(), 1, &RowKey::new("publish:default", "b"));
+            assert_eq!(rx_b.try_recv().unwrap().trim(), r#"{"activate":"b"}"#);
+
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            let refused = try_open(
+                backend,
+                Open {
+                    session: Some("session-gone"),
+                    ..Open::anonymous(3)
+                },
+                tx,
+            );
+            assert_eq!(
+                refused.unwrap_err().code,
+                Some(crate::control::ControlErrorCode::SessionNotAttached)
+            );
+        });
+    }
+
     /// A publisher restarting in the same pane replaces its own stale stream, and only that one.
     #[test]
     fn a_restarted_publisher_replaces_only_its_own_stream() {
@@ -688,8 +879,8 @@ mod tests {
                 Err(std::sync::mpsc::TryRecvError::Empty)
             ));
             let streams = &backend.state().publish_streams;
-            assert_eq!(streams[&(1, "publish:default".to_string())].id, 3);
-            assert_eq!(streams[&(1, "publish:ci".to_string())].id, 1);
+            assert_eq!(streams[&key("publish:default")].id, 3);
+            assert_eq!(streams[&key("publish:ci")].id, 1);
             // The replaced stream's late close is ignored.
             backend
                 .dispatch(crate::Msg::PublishStreamClosed {
@@ -729,10 +920,7 @@ mod tests {
                     pane_id: 1,
                 })
                 .expect("stale close");
-            assert_eq!(
-                backend.state().publish_streams[&(1, "dashboard".to_string())].id,
-                2
-            );
+            assert_eq!(backend.state().publish_streams[&key("dashboard")].id, 2);
             assert!(reports(&outbound).is_empty());
 
             report(backend, 2, vec![row("current", "working")]);
@@ -769,7 +957,7 @@ mod tests {
                 backend
                     .state_mut()
                     .publish_streams
-                    .get(&(1, "dashboard".to_string()))
+                    .get(&key("dashboard"))
                     .and_then(|stream| stream.extension.as_ref())
                     .map(|provenance| provenance.id.as_str()),
                 Some("dashboard")
@@ -799,6 +987,7 @@ mod tests {
                 .dispatch(crate::Msg::PublishStreamOpen {
                     stream_id: 1,
                     requested_pane: None,
+                    source_session: None,
                     kind: PublisherKind::Activity,
                     name: None,
                     extension: Some(crate::config::ExtensionProvenance {

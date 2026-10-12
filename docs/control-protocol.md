@@ -944,6 +944,14 @@ identity or the report of an agent in the same pane.
 the moment the stream opens; this lets a supervised service publish, but its rows still belong to
 that pane. To pin a service's rows to a specific pane, give it `ROZI_PANE`.
 
+A stream also belongs to one session, because pane numbers repeat across sessions. With
+`source_session`, which the CLI sends from `ROZI_SESSION_INSTANCE`, it belongs to that session, and
+is refused with `session-not-attached` when that session is not attached to this rozi. Without it,
+the stream belongs to the session on screen when it opens, or to this client for a scratchpad or
+popup pane. Either way its rows keep reaching that session after you switch to another one, and
+never land on the other session's pane with the same number. Activating a row reaches the stream
+of the session on screen.
+
 While an agent publisher has rows in a pane, they are that pane's agents, and rozi stops reading
 the pane's screen for agent state. If rozi has detected an agent in the pane, the rows carry its
 identity, and the agent's displayed state is derived from them: blocked first, then any status
@@ -976,8 +984,10 @@ A publisher's identity in its pane is:
 | An extension process | `<extension>`, or `<extension>.<name>` with `name` |
 | Any other process | `publish:default`, or `publish:<name>` with `name` |
 
-A stream that opens with the same identity in the same pane replaces the earlier one, so a
-publisher that restarts takes over its own stale stream and nobody else's. Give each publisher of
+A stream that opens with the same identity in the same pane of the same session replaces the
+earlier one, so a publisher that restarts takes over its own stale stream and nobody else's. A
+stream beyond the pane's 16 publishers is refused with `conflict` when it opens, before its
+`{"ok":true}`. Give each publisher of
 one caller in a pane its own `name`.
 
 `active` is a rule per publisher, so a pane can have several active rows. The pane's active row,

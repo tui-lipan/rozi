@@ -952,6 +952,12 @@ popup pane. Either way its rows keep reaching that session after you switch to a
 never land on the other session's pane with the same number. Activating a row reaches the stream
 of the session on screen.
 
+A [placed extension process](extensions.md#what-a-placed-process-may-do) is the exception: like
+its other pane commands, its stream opens only into the session on screen, and only when that
+session lies within its placement, whatever `source_session` it names; otherwise it is refused
+with `out-of-scope`. Its rows are delivered only while that same session is on screen, and are
+dropped, not redirected, while another session is.
+
 While an agent publisher has rows in a pane, they are that pane's agents, and rozi stops reading
 the pane's screen for agent state. If rozi has detected an agent in the pane, the rows carry its
 identity, and the agent's displayed state is derived from them: blocked first, then any status

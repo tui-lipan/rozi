@@ -131,6 +131,18 @@ pub(crate) fn stream_opened(
             return Update::none();
         }
     };
+    // A placed worker's binding covers where its rows land, not just the session on screen when it
+    // asked: a caller-named session could otherwise be another session, even on another host.
+    if binding
+        .as_ref()
+        .is_some_and(|binding| !worker_may_publish(&ctx.state, binding, &origin))
+    {
+        let _ = ack.send(Err(ControlResponse::error_with(
+            crate::control::ControlErrorCode::OutOfScope,
+            "a placed process may only publish into the session on screen within its placement",
+        )));
+        return Update::none();
+    }
     if target(&ctx.state, &origin, pane_id).is_none() {
         let _ = ack.send(Err(ControlResponse::error_with(
             crate::control::ControlErrorCode::PaneNotFound,
@@ -212,6 +224,28 @@ fn publish_origin(
     Ok(current_origin(state))
 }
 
+/// Whether a placed worker's rows may land in `origin`.
+///
+/// A placed process acts on a session only while that session is on screen and within its
+/// placement, the rule every pane command it sends follows. So the destination must be the session
+/// on screen, and the session on screen must lie within the binding - checked against where the
+/// stream is bound, never just against whatever is showing, so neither a caller-named background
+/// session nor a later switch to another in-scope session redirects its rows.
+fn worker_may_publish(
+    state: &crate::state::State,
+    binding: &crate::state::WorkerBinding,
+    origin: &PublishOrigin,
+) -> bool {
+    let on_screen = match origin {
+        PublishOrigin::Local => false,
+        PublishOrigin::Session(instance) => {
+            state.current().session_instance.as_ref() == Some(instance)
+        }
+        PublishOrigin::Attachment(epoch) => *epoch == state.runtime_epoch,
+    };
+    on_screen && crate::ops::extension_workers::in_scope(state, binding)
+}
+
 /// The namespace of the session on screen.
 fn current_origin(state: &crate::state::State) -> PublishOrigin {
     match &state.current().session_instance {
@@ -289,7 +323,7 @@ pub(crate) fn rows_reported(
     if stream
         .binding
         .as_ref()
-        .is_some_and(|binding| !crate::ops::extension_workers::in_scope(&ctx.state, binding))
+        .is_some_and(|binding| !worker_may_publish(&ctx.state, binding, &key.origin))
     {
         return Update::none();
     }
@@ -849,6 +883,113 @@ mod tests {
                 refused.unwrap_err().code,
                 Some(crate::control::ControlErrorCode::SessionNotAttached)
             );
+        });
+    }
+
+    /// A placed worker bound to host B cannot reach session A, on another host, by naming A's
+    /// instance; its stream opened in B stays with B, and its rows are dropped rather than
+    /// redirected while another session is on screen.
+    #[test]
+    fn a_placed_worker_publishes_only_within_its_placement_on_screen() {
+        use crate::session::remote::RemoteTarget;
+        use crate::state::{HostKey, WorkerBinding, WorkerKind, WorkerRuntime};
+        with_backend(|backend| {
+            let host = |name: &str| HostKey::Remote(RemoteTarget::Alias(name.to_string()));
+            let pane = || {
+                crate::state::Pane::new(
+                    1,
+                    100,
+                    tui_lipan::prelude::FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 20.0,
+                        h: 10.0,
+                    },
+                )
+            };
+            // Session A on host `alpha`, parked in the background with its own pane 1.
+            let outbound_a = attach(backend);
+            backend.state_mut().current_mut().remote_target =
+                Some(RemoteTarget::Alias("alpha".to_string()));
+            // Session B on host `beta`, on screen, also with a pane 1.
+            let (client_b, outbound_b) = SessionClient::test_channel();
+            let mut b = crate::state::Attachment::new();
+            b.session_attached = true;
+            b.session_client = Some(client_b);
+            b.remote_target = Some(RemoteTarget::Alias("beta".to_string()));
+            b.session_instance = Some(SessionInstanceId::for_test("session-b"));
+            b.workspaces[0].panes.push(pane());
+            let state = backend.state_mut();
+            let epoch = state.runtime_epoch;
+            state.park_current(epoch, b);
+            state.runtime_epoch = epoch + 1;
+            state
+                .extension_generations
+                .insert("probe".to_string(), "g1".to_string());
+            let worker = state
+                .extension_workers
+                .issue(
+                    crate::config::ExtensionProvenance {
+                        id: "probe".to_string(),
+                        generation: "g1".to_string(),
+                    },
+                    crate::config::Placement::EachHost,
+                    WorkerBinding {
+                        host: host("beta"),
+                        session: None,
+                    },
+                    WorkerRuntime(1),
+                    WorkerKind::Service {
+                        name: "probe.watch".to_string(),
+                    },
+                )
+                .id;
+            let open_as_worker = |backend: &mut TestBackend<crate::AppRoot>,
+                                  stream_id: u64,
+                                  session: Option<&str>| {
+                let (tx, _rx) = std::sync::mpsc::sync_channel(4);
+                let (ack, reply) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::PublishStreamOpen {
+                        stream_id,
+                        requested_pane: Some(1),
+                        source_session: session.map(SessionInstanceId::for_test),
+                        kind: PublisherKind::Agent,
+                        name: None,
+                        extension: Some(crate::config::ExtensionProvenance {
+                            id: "probe".to_string(),
+                            generation: "g1".to_string(),
+                        }),
+                        sender: tx,
+                        ack,
+                        worker: Some(worker),
+                    })
+                    .expect("dispatch stream open");
+                reply.recv().unwrap()
+            };
+
+            let refused = open_as_worker(backend, 1, Some("session-a"));
+            assert_eq!(
+                refused.unwrap_err().code,
+                Some(crate::control::ControlErrorCode::OutOfScope),
+                "naming A's instance must not reach A on another host"
+            );
+            assert!(backend.state().publish_streams.is_empty());
+
+            assert_eq!(open_as_worker(backend, 2, None), Ok(1));
+            report(backend, 2, vec![row("r", "working")]);
+            assert_eq!(
+                reports(&outbound_b),
+                [("probe".into(), PublisherKind::Agent, vec!["r".to_string()])]
+            );
+
+            // A is brought on screen: B's stream keeps its binding and says nothing to A.
+            let state = backend.state_mut();
+            let current = state.runtime_epoch;
+            state.runtime_epoch = state.unpark(epoch, current).expect("switch back to A");
+            report(backend, 2, vec![row("r", "idle")]);
+            assert!(reports(&outbound_a).is_empty(), "never into A");
+            assert!(reports(&outbound_b).is_empty(), "B is not on screen");
         });
     }
 

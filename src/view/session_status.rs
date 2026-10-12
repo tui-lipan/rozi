@@ -395,6 +395,7 @@ mod tests {
             label: label.into(),
             state: state.into(),
             changed_at: 0,
+            launch: 0,
         }
     }
 

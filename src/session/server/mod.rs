@@ -426,6 +426,11 @@ pub struct AgentScratch {
     /// The next agent named here was already running: the definitions changed under it, so naming
     /// it is not a launch and starts no [`Self::startup`].
     pub adopting: bool,
+    /// How many agent launches this pane has seen, published as
+    /// [`protocol::PaneRuntimeState::agent_launch`]. Survives
+    /// [`Self::reset_detection`](super::AgentScratch::reset_detection): a count that went back to
+    /// an earlier value would let a client mistake a new process for one it has already seen.
+    pub launches: u64,
     /// Last sampled foreground process group, shared by split-aware navigation and agent identity.
     /// Keeping it across fast polls avoids re-walking the host process table every 250 ms.
     pub foreground_job: Option<crate::platform::process::ForegroundJob>,

@@ -7,6 +7,10 @@ fn boxed_strings_are_empty(values: &[String]) -> bool {
     values.is_empty()
 }
 
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WirePalette {
     pub foreground: Option<Color>,
@@ -363,6 +367,13 @@ pub struct PaneRuntimeState {
     pub status: Option<PaneStatus>,
     #[serde(default)]
     pub detected_agent: Option<DetectedAgent>,
+    /// Which launch of the pane's screen-detected agent [`Self::detected_agent`] describes, counted
+    /// per pane. A new agent process - a supervisor restarting one under the same name, say - is a
+    /// new lifecycle rather than a state change, so a client compares this before reading an edge:
+    /// a run that died with its process did not finish, and the restart's loading screen reading
+    /// idle must not say it did.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub agent_launch: u64,
     /// Unix timestamp for the current active agent run. It is retained while an agent is blocked
     /// or reports another non-quiescent status, so clients can show one continuous run age after a
     /// block/resume transition and after detach/reattach.

@@ -376,6 +376,7 @@ mod tests {
                     label: "Codex".into(),
                     state: "blocked".into(),
                     changed_at: 0,
+                    launch: 0,
                 }],
             );
             backend
@@ -414,6 +415,7 @@ mod tests {
                         label: "Codex".into(),
                         state: "blocked".into(),
                         changed_at: 0,
+                        launch: 0,
                     }],
                 });
             backend
@@ -444,6 +446,7 @@ mod tests {
             label: label.into(),
             state: status.into(),
             changed_at: 0,
+            launch: 0,
         };
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {

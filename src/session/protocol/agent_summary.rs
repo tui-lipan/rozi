@@ -33,6 +33,15 @@ pub struct AgentSummary {
     pub state: String,
     /// Unix milliseconds when this pane's semantic agent state last changed.
     pub changed_at: u64,
+    /// Which launch of the pane's agent this is; see
+    /// [`super::PaneRuntimeState::agent_launch`]. Identifying, like [`Self::generation`]: a
+    /// restarted agent process is a new agent, and its loading screen is not the old run finishing.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub launch: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl AgentSummary {
@@ -43,7 +52,33 @@ impl AgentSummary {
         self.session == other.session
             && self.pane == other.pane
             && self.generation == other.generation
+            && self.launch == other.launch
             && self.row == other.row
             && self.agent == other.agent
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host monitor matches each agent to its previous summary before reading an edge. A
+    /// restarted process matched to its predecessor read `working` -> `idle` as a finished run and
+    /// notified for it; matched to nothing, its first summary is a baseline.
+    #[test]
+    fn a_relaunched_agent_is_a_different_agent() {
+        let summary = |launch, state: &str| AgentSummary {
+            session: "dev".into(),
+            pane: 1,
+            generation: 1,
+            row: None,
+            agent: "pi".into(),
+            label: "Pi".into(),
+            state: state.into(),
+            changed_at: 0,
+            launch,
+        };
+        assert!(summary(1, "working").same_agent(&summary(1, "idle")));
+        assert!(!summary(1, "working").same_agent(&summary(2, "idle")));
     }
 }

@@ -224,8 +224,10 @@ that finished a moment later. The agent counts as ready when any of these happen
 - 8 seconds have passed since it started.
 
 If the agent is still working when the 8 seconds end, such as when you pass a prompt on the command
-line, rozi reports it as working from then on. A restarted agent process starts this again, even
-under the same name.
+line, rozi reports it as working from then on.
+
+A restarted agent process starts this again, even under the same name. rozi treats it as a new
+agent, so a run that was in progress when the old process stopped is not reported as finished.
 
 ### Common rules
 

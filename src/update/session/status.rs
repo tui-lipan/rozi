@@ -103,6 +103,15 @@ pub(crate) fn apply_pane_runtime_state(
     // Sampled before the incoming runtime state overwrites the status it dates.
     let previous_age = pane.terminal.status_age();
     let previous_blocked = pane.terminal.is_blocked();
+    // A new agent process is a new lifecycle, not the old one changing state: its loading screen
+    // reading idle is not the previous run finishing, and nothing it shows is an edge from there.
+    let relaunched = state.agent_launch != pane.terminal.agent_launch;
+    let (previous_agent_status, previous_age, previous_blocked) = if relaunched {
+        (None, None, false)
+    } else {
+        (previous_agent_status, previous_age, previous_blocked)
+    };
+    pane.terminal.agent_launch = state.agent_launch;
     pane.terminal.runtime_sequence = state.sequence;
     pane.terminal.cwd = state.cwd;
     pane.terminal.cwd_host = state.cwd_host;

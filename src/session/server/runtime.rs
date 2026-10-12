@@ -176,10 +176,12 @@ impl AgentScratch {
         let references = std::mem::take(&mut self.references);
         let next_incarnation = self.next_incarnation;
         let retired_integrations = std::mem::take(&mut self.retired_integrations);
+        let launches = self.launches;
         *self = Self {
             references,
             next_incarnation,
             retired_integrations,
+            launches,
             ..Self::default()
         };
     }
@@ -1002,8 +1004,11 @@ fn derive_detected_agent(
         let relaunched = named.as_ref().is_some_and(|(_, _, relaunched)| *relaunched);
         let launched = identity != pane.agent.identity || relaunched;
         if launched {
-            pane.agent.startup =
-                (identity.is_some() && !adopting).then(|| super::AgentStartup::new(Instant::now()));
+            let launch = identity.is_some() && !adopting;
+            pane.agent.startup = launch.then(|| super::AgentStartup::new(Instant::now()));
+            if launch {
+                pane.agent.launches = pane.agent.launches.wrapping_add(1);
+            }
             // What the screen said about the previous program does not describe this one. Held
             // over, its `working` would outlast the new loading screen and then end as a run.
             pane.agent.read = None;
@@ -1039,6 +1044,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.last_exit_status != current.last_exit_status
         || candidate.status != current.status
         || candidate.detected_agent != current.detected_agent
+        || candidate.agent_launch != current.agent_launch
         || candidate.work_started_at != current.work_started_at
 }
 
@@ -1140,6 +1146,7 @@ fn compute_runtime_state(
         last_exit_status,
         status: pane.runtime.status.clone(),
         detected_agent,
+        agent_launch: pane.agent.launches,
         work_started_at,
         // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
         rows: pane.runtime.rows.clone(),
@@ -1760,14 +1767,18 @@ fn identify_pane_agent<'a>(
 /// sweep may name either from one pass to the next, so a new pid alone says nothing while the old
 /// one is still in the job. Without process inspection there is only the foreground program's name.
 ///
-/// A sweep that could not inspect the job is no evidence either way, except about a stand-in: a
-/// hint names the agent while its shell is still at the prompt, and a process under another name
-/// arriving after that is the agent being launched.
+/// A stand-in is different: a hint names the agent while its shell is still at the prompt, so the
+/// agent's own process turning up after that is it being launched - whether or not the shell is
+/// still in the job, and even if the sweep that named the shell could not inspect the job at all.
+/// Otherwise a sweep without the job is no evidence either way.
 fn agent_process_replaced(
     previous: &super::AgentProcess,
     current: &super::AgentProcess,
     job: &ForegroundJob,
 ) -> bool {
+    if previous.stand_in && !current.stand_in {
+        return true;
+    }
     match (previous.pid, current.pid) {
         (0, 0) => previous.name != current.name,
         (0, _) => previous.stand_in && previous.name != current.name,
@@ -3642,6 +3653,95 @@ mod tests {
         assert_eq!(state(&mut pane, &new), Some(DetectedAgentState::Idle));
     }
 
+    /// One server poll against `job`, published the way the runtime loop publishes it. The sweep
+    /// runs against the given job; the poll then reuses it, as it would until the next sweep.
+    fn publish(pane: &mut ServerPane, job: &ForegroundJob) -> PaneRuntimeState {
+        derive_detected_agent(pane, Some(&catalog()), None, Some(job), true);
+        pane.agent.probe = Some(AgentProbe {
+            foreground_program: None,
+            command_phase: PaneCommandPhase::Unknown,
+        });
+        pane.agent.detected_at = Some(Instant::now());
+        pane.agent.foreground_job = Some(job.clone());
+        pane.runtime = compute_runtime_state(
+            pane,
+            &StubInspector,
+            Some(&catalog()),
+            &mut LazyProcessScan::default(),
+        );
+        pane.runtime.clone()
+    }
+
+    /// End to end, server poll to client edge. A supervised agent dies mid-turn and comes straight
+    /// back: the published state goes `working` -> `idle` while the new process loads, which a
+    /// client read as the run finishing. It did not finish - its process died - and the pulse and
+    /// notification it raised were for nothing. A later run of the new process still finishes.
+    #[test]
+    fn a_restarted_agent_does_not_finish_the_run_its_process_died_in() {
+        use crate::session::protocol::DetectedAgentState;
+        use crate::update::session::status::apply_pane_runtime_state;
+
+        let mut server = make_pane();
+        let mut client = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+        let state = |runtime: &PaneRuntimeState| runtime.detected_agent.as_ref().map(|d| d.state);
+
+        let old = agent_job(100, &[(100, "sv"), (101, "pi")]);
+        publish(&mut server, &old);
+        server.agent.startup = None;
+        server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
+        let working = publish(&mut server, &old);
+        assert_eq!(state(&working), Some(DetectedAgentState::Working));
+        apply_pane_runtime_state(&mut client, working);
+        assert!(client.terminal.is_working());
+
+        let new = agent_job(100, &[(100, "sv"), (102, "pi")]);
+        server
+            .terminal
+            .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
+        let restarted = publish(&mut server, &new);
+        assert_eq!(state(&restarted), Some(DetectedAgentState::Idle));
+        let applied = apply_pane_runtime_state(&mut client, restarted);
+        assert!(
+            !applied.edges.finished,
+            "no finish edge for a run that died"
+        );
+        assert!(
+            !client.terminal.finished_unseen,
+            "and no unseen-finish pulse"
+        );
+
+        // The new process's own run is an ordinary lifecycle again.
+        server.agent.startup = None;
+        server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
+        apply_pane_runtime_state(&mut client, publish(&mut server, &new));
+        server.agent.settled = None;
+        server.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
+        let applied = apply_pane_runtime_state(&mut client, publish(&mut server, &new));
+        assert!(applied.edges.finished, "the new process's run does finish");
+        assert!(client.terminal.finished_unseen);
+    }
+
+    /// The hint rides the job's first process - here a wrapper that stays alive beside the agent
+    /// it launches. Preferring the hinted process kept naming the wrapper, which never left, so
+    /// the agent's own launch opened no window for its loading screen.
+    #[test]
+    fn an_agent_launched_under_a_hinted_wrapper_that_stays_is_launched() {
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "pi".into()));
+        assert!(sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
+        pane.agent.startup = None;
+        assert!(!sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
+
+        let launched = agent_job(100, &[(100, "bash"), (101, "pi")]);
+        assert!(
+            sweep(&mut pane, &launched),
+            "the agent itself arriving is a launch"
+        );
+        assert_eq!(pane.agent.process.as_ref().map(|p| p.pid), Some(101));
+        pane.agent.startup = None;
+        assert!(!sweep(&mut pane, &launched), "and only once");
+    }
+
     #[test]
     fn a_process_replacement_needs_the_previous_process_gone() {
         let process = |pid: u32, name: &str, stand_in: bool| crate::session::server::AgentProcess {
@@ -3669,6 +3769,11 @@ mod tests {
         assert!(!replaced(process(0, "pi", false), process(11, "pi", false)));
         assert!(!replaced(process(0, "pi", true), process(11, "pi", true)));
         assert!(!replaced(process(10, "pi", false), process(0, "pi", false)));
+        // The agent's own process after its stand-in, the stand-in still in the job.
+        assert!(replaced(
+            process(10, "bash", true),
+            process(11, "pi", false)
+        ));
     }
 
     /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it

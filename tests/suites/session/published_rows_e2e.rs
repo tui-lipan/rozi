@@ -19,6 +19,8 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
     PublishedRow {
         publisher: "sessions".into(),
         kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
         id: id.to_string(),
         title: format!("tab {id}"),
         status: status.to_string(),

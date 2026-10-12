@@ -416,6 +416,8 @@ fn pane_rows_message_round_trips() {
             PublishedRow {
                 publisher: "sessions".into(),
                 kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: "ses_abc".into(),
                 title: "audit the widget layer".into(),
                 status: "working".into(),
@@ -429,6 +431,8 @@ fn pane_rows_message_round_trips() {
             PublishedRow {
                 publisher: "sessions".into(),
                 kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: "ses_def".into(),
                 title: "fix the flaky test".into(),
                 status: "blocked".into(),
@@ -458,6 +462,8 @@ fn row_aggregation_is_by_severity_not_recency() {
     let row = |status: &str| PublishedRow {
         publisher: "sessions".into(),
         kind: crate::session::protocol::PublisherKind::Agent,
+        live_session: None,
+        reported: false,
         id: status.into(),
         title: status.into(),
         status: status.into(),

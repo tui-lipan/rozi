@@ -465,6 +465,8 @@ mod tests {
         PublishedRow {
             publisher: String::new(),
             kind: PublisherKind::Activity,
+            live_session: None,
+            reported: false,
             id: id.into(),
             title: format!("tab {id}"),
             status: status.into(),

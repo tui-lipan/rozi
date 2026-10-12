@@ -146,11 +146,7 @@ fn install_managed_with(
         return Err(format!(
             "{} is outdated or locally modified; run `rozi skill install --force{}` to replace it",
             paths.skill_file.display(),
-            if paths.scope_root == super::resolve_home()? {
-                " --global"
-            } else {
-                ""
-            }
+            if paths.global { " --global" } else { "" }
         ));
     }
     super::install_canonical(paths)?;
@@ -244,7 +240,7 @@ fn refresh_managed_with(
     let mut report = RefreshReport::default();
     let target_hash = hash(new_skill.as_bytes());
     for index in 0..registry.installs.len() {
-        let paths = SkillPaths::at(registry.installs[index].root.clone());
+        let paths = SkillPaths::at(registry.installs[index].root.clone(), false);
         let canonical = managed_file_hash(
             &paths.skill_file,
             |value| registry.installs[index].owns_canonical(value),
@@ -317,7 +313,7 @@ fn refresh_managed_with(
     }
     for root in observed_roots {
         if !registry.installs.iter().any(|record| &record.root == root) {
-            let skill_file = SkillPaths::at(root.clone()).skill_file;
+            let skill_file = SkillPaths::at(root.clone(), false).skill_file;
             if skill_file.exists() {
                 report.untracked.push(skill_file);
             }

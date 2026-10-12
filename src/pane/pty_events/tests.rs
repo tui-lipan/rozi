@@ -1241,6 +1241,8 @@ mod finished_rows_notice {
         PublishedRow {
             publisher: "sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
             id: id.to_string(),
             title: title.to_string(),
             status: "done".to_string(),

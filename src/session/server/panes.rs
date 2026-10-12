@@ -657,6 +657,7 @@ impl SessionServer {
                 if let Some(integration) = pane.runtime.integration.take() {
                     pane.agent.retire_integration(integration.integration);
                 }
+                pane.agent.clear_row_reports();
                 pane.runtime.work_started_at = None;
                 // A resume that started and then failed leaves the same pane a resume that never
                 // started does: a shell. Its launch intent has to go with it, or the next snapshot

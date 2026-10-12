@@ -71,6 +71,8 @@ fn published_row(
     rozi::session::protocol::PublishedRow {
         publisher: "sessions".into(),
         kind: rozi::session::protocol::PublisherKind::Agent,
+        live_session: None,
+        reported: false,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),

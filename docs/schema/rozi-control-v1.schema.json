@@ -4594,8 +4594,15 @@
           "default": "activity",
           "description": "Server-owned copy of the kind the publisher declared when its stream opened. Whatever a\npublisher sends here is overwritten."
         },
+        "live_session": {
+          "description": "The session id the process running this row reports its hooks under, when that is not\n[`Self::native_session`].\n\nA conversation can move to another process under a new id while it is still resumed by its\nfirst one, as Claude Code does when it sends a conversation to the background. Hook reports\nthen name the new id, and only a report naming it speaks for the row; the first process's\nlast report no longer does.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "native_session": {
-          "description": "The agent's own conversation id for this row, when the row is one: what `--resume` takes.\n\nIt ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks\nfor the row whose native session it names, so several conversations behind one client\nstay listed while the one the hooks follow keeps their fresher state. It is also what\nresurrection resumes when this row is the active one.",
+          "description": "The agent's own conversation id for this row, when the row is one: what `--resume` takes.\n\nIt ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks\nfor the row whose native session it names, unless the row names a\n[`Self::live_session`] instead, so several conversations behind one client\nstay listed while the one the hooks follow keeps their fresher state. It is also what\nresurrection resumes when this row is the active one.",
           "type": [
             "string",
             "null"
@@ -4622,6 +4629,10 @@
             "string",
             "null"
           ]
+        },
+        "reported": {
+          "description": "Whether a hook report, rather than the publisher, set this row's status and reason.\nServer-owned: whatever a publisher sends here is overwritten.",
+          "type": "boolean"
         },
         "status": {
           "description": "Same vocabulary and same sanitization as [`PaneStatus::value`].",

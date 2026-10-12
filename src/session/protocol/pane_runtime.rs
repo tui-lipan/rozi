@@ -277,11 +277,25 @@ pub struct PublishedRow {
     /// The agent's own conversation id for this row, when the row is one: what `--resume` takes.
     ///
     /// It ties the row to the pane's [`AgentIntegrationReport`]: the hook-driven report speaks
-    /// for the row whose native session it names, so several conversations behind one client
+    /// for the row whose native session it names, unless the row names a
+    /// [`Self::live_session`] instead, so several conversations behind one client
     /// stay listed while the one the hooks follow keeps their fresher state. It is also what
     /// resurrection resumes when this row is the active one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_session: Option<String>,
+    /// The session id the process running this row reports its hooks under, when that is not
+    /// [`Self::native_session`].
+    ///
+    /// A conversation can move to another process under a new id while it is still resumed by its
+    /// first one, as Claude Code does when it sends a conversation to the background. Hook reports
+    /// then name the new id, and only a report naming it speaks for the row; the first process's
+    /// last report no longer does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_session: Option<String>,
+    /// Whether a hook report, rather than the publisher, set this row's status and reason.
+    /// Server-owned: whatever a publisher sends here is overwritten.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reported: bool,
 }
 
 impl PublishedRow {

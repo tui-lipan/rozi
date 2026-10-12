@@ -58,11 +58,12 @@ pub fn run() -> Result<()> {
         helper.run();
     }
 
-    let parsed = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let parsed = match cli::parse_cli_args(args.clone()) {
         Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Run `rozi --help` for usage.");
+            eprintln!("{}", cli::usage_hint(&args));
             std::process::exit(1);
         }
     };

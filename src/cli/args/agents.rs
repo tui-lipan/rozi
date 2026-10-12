@@ -16,20 +16,23 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "Waits and prompts need --session <NAME>; they run in the session server.",
+        note: "Every --target <PANE> also takes --ref <JSON> instead, from `list` or `get`.",
         rows: &[
             row("list [--format text|json]", "List semantic agent occupants"),
-            row("get <TARGET> [--format text|json]", "Show one agent record"),
             row(
-                "read <TARGET> [--scrollback <N|full>]",
+                "get --target <PANE> [--format text|json]",
+                "Show one agent record",
+            ),
+            row(
+                "read --target <PANE> [--scrollback <N|full>]",
                 "Read an agent's terminal",
             ),
             row(
-                "wait <TARGET> --until <STATE> [--timeout <DUR>]",
+                "wait --target <PANE> --until <STATE> --timeout <DUR>",
                 "Wait until an agent reaches a state",
             ),
             row(
-                "prompt <TARGET> [--wait <STATE>] [--timeout <DUR>] [--allow-working] <TEXT>",
+                "prompt --target <PANE> [--wait <STATE> --timeout <DUR>] <TEXT>",
                 "Safely submit a prompt",
             ),
             row(
@@ -47,11 +50,19 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("    --target <PANE>", "TARGET: an agent by pane id"),
-            row("    --ref <JSON>", "TARGET: an agent by AgentRef JSON"),
+            row("    --target <PANE>", "An agent by pane id"),
+            row("    --ref <JSON>", "An exact agent run, from list or get"),
             row("    --until <STATE>", "working, blocked, idle, done,"),
-            row("", "quiescent, or gone"),
+            row("", "quiescent (idle or done), or gone"),
             row("    --wait <STATE>", "The same states as --until"),
+            row(
+                "    --timeout <DUR>",
+                "Deadline for a wait, such as 30s or 2m",
+            ),
+            row(
+                "    --allow-working",
+                "Prompt an agent that is still working",
+            ),
             row("    --state <STATE>", "working, blocked, idle, or done"),
             row("    --reason <TEXT>", "Why the agent is in this state"),
             row("    --native-session <ID>", "The agent's own session id"),
@@ -249,8 +260,27 @@ fn parse_prompt(
             "--allow-working" => allow_working = true,
             "--format" => set_format(&mut format, &mut iter, "agents prompt")?,
             value if prompt.is_none() => prompt = Some(value.to_string()),
-            other => return Err(format!("unexpected agents prompt argument `{other}`")),
+            other => {
+                // `agents prompt 3 'text'`: the first word was taken for the prompt.
+                if target.is_none()
+                    && let Some(pane) = prompt.as_deref().filter(|value| is_pane_id(value))
+                {
+                    return Err(positional_target("agents prompt", pane));
+                }
+                return Err(format!("unexpected agents prompt argument `{other}`"));
+            }
         }
+    }
+    match (wait, timeout_ms) {
+        (Some(_), None) => {
+            return Err(
+                "agents prompt --wait requires --timeout, such as --timeout 2m".to_string(),
+            );
+        }
+        (None, Some(_)) => {
+            return Err("agents prompt --timeout only applies with --wait".to_string());
+        }
+        _ => {}
     }
     Ok((
         ControlCommand::AgentPrompt {
@@ -284,7 +314,7 @@ fn parse_read(
                 }
             }
             "--format" => set_format(&mut format, &mut iter, "agents read")?,
-            other => return Err(format!("unexpected agents read argument `{other}`")),
+            other => return Err(unexpected("agents read", other)),
         }
     }
     Ok((
@@ -323,7 +353,7 @@ fn parse_wait(
                 }
             }
             "--format" => set_format(&mut format, &mut iter, "agents wait")?,
-            other => return Err(format!("unexpected agents wait argument `{other}`")),
+            other => return Err(unexpected("agents wait", other)),
         }
     }
     Ok((
@@ -332,7 +362,9 @@ fn parse_wait(
             until: until.ok_or_else(|| {
                 "agents wait requires --until working|blocked|idle|done|quiescent|gone".to_string()
             })?,
-            timeout_ms,
+            timeout_ms: Some(timeout_ms.ok_or_else(|| {
+                "agents wait requires --timeout, such as --timeout 2m".to_string()
+            })?),
         },
         format,
     ))
@@ -352,6 +384,11 @@ fn parse_target_and_format(
             "--format" => set_format(&mut format, &mut iter, command)?,
             _ => rest.push(flag),
         }
+    }
+    if target.is_none()
+        && let Some(pane) = rest.first().filter(|value| is_pane_id(value))
+    {
+        return Err(positional_target(command, pane));
     }
     Ok((require_target(target, command)?, format, rest))
 }
@@ -440,9 +477,26 @@ fn next_value(
 
 fn reject_rest(rest: Vec<String>, command: &str) -> std::result::Result<(), String> {
     match rest.first() {
-        Some(value) => Err(format!("unexpected argument `{value}` after {command}")),
+        Some(value) => Err(unexpected(command, value)),
         None => Ok(()),
     }
+}
+
+fn unexpected(command: &str, value: &str) -> String {
+    if is_pane_id(value) {
+        positional_target(command, value)
+    } else {
+        format!("unexpected {command} argument `{value}`")
+    }
+}
+
+fn is_pane_id(value: &str) -> bool {
+    value.parse::<crate::state::PaneId>().is_ok()
+}
+
+/// The error for a pane id written where only a flag may go, as in `agents get 3`.
+fn positional_target(command: &str, pane: &str) -> String {
+    format!("{command} takes its pane as a flag: `{command} --target {pane}`")
 }
 
 #[cfg(test)]
@@ -494,6 +548,37 @@ mod tests {
                 timeout_ms: Some(30_000),
             }
         );
+    }
+
+    #[test]
+    fn waits_need_a_deadline() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
+        let error =
+            parse_agents_args(args(&["wait", "--target", "3", "--until", "idle"])).unwrap_err();
+        assert!(error.contains("requires --timeout"), "{error}");
+        let error = parse_agents_args(args(&["prompt", "--target", "3", "--wait", "idle", "go"]))
+            .unwrap_err();
+        assert!(error.contains("--wait requires --timeout"), "{error}");
+        let error = parse_agents_args(args(&["prompt", "--target", "3", "--timeout", "5s", "go"]))
+            .unwrap_err();
+        assert!(error.contains("only applies with --wait"), "{error}");
+    }
+
+    #[test]
+    fn a_bare_pane_id_points_at_target() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
+        for (command, expected) in [
+            (vec!["get", "3"], "`agents get --target 3`"),
+            (vec!["read", "3"], "`agents read --target 3`"),
+            (
+                vec!["wait", "3", "--until", "idle"],
+                "`agents wait --target 3`",
+            ),
+            (vec!["prompt", "3", "fix it"], "`agents prompt --target 3`"),
+        ] {
+            let error = parse_agents_args(args(&command)).unwrap_err();
+            assert!(error.contains(expected), "{command:?}: {error}");
+        }
     }
 
     #[test]

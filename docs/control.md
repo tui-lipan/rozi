@@ -58,7 +58,7 @@ Add `--remote <HOST>` to reach a named session on another machine:
 
 ```bash
 rozi --remote workbox --session dev list-panes
-rozi --remote workbox --session dev agents prompt --target 3 --wait idle "run the tests"
+rozi --remote workbox --session dev agents prompt --target 3 --wait quiescent --timeout 10m "run the tests"
 ```
 
 Every command a local session answers, a remote one answers the same way, with the same output and
@@ -168,8 +168,8 @@ attached.
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
-| `agents wait TARGET --until STATE [--timeout DURATION] [--format text\|json]` | Wait atomically for semantic state. | only |
-| `agents prompt TARGET [--wait STATE] [--timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | only |
+| `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
+| `agents prompt TARGET [--wait STATE --timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
@@ -206,8 +206,9 @@ attached.
 `[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
 
 In the `agents` rows, `TARGET` is `--target ID` (a pane id) or `--ref JSON` (an exact agent
-reference from `agents list`). `agents wait` and `agents prompt` run inside the session server, so
-they need `--session` and are refused against a UI. See
+reference from `agents list`); a bare pane id is refused. `agents wait` and `agents prompt` run
+inside the session server. Against a UI, they are passed to the session on screen, or to the
+session a `--ref` names. See
 [Inspect and wait for agents](agents.md#inspect-and-wait-for-agents) for states, references, and
 integration reports.
 
@@ -617,7 +618,8 @@ rozi send-keys --literal C-c
 rozi send-keys -- -n hello
 ```
 
-`capture-pane` returns the visible grid by default. `--scrollback N` returns the last `N` retained
+`capture-pane` returns the visible grid by default, without the spaces that pad each row to the
+pane's width. `--scrollback N` returns the last `N` retained
 lines, `--scrollback full` returns all retained lines, and `--last-output` returns the output of
 the most recent command, using [shell integration](terminal.md). A full-scrollback reply can exceed
 1 MiB; the CLI accepts replies of that size.

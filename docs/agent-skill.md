@@ -28,14 +28,15 @@ is not installed by `rozi skill install`. It reads the actual binary's control c
 
 ## Install the skill
 
-Install it for one project, from the project root:
+Install it for one project, from anywhere inside it:
 
 ```sh
 rozi skill install
 ```
 
-This writes `.agents/skills/rozi/SKILL.md`. Use a project install when the instructions should
-travel with one repository.
+This writes `.agents/skills/rozi/SKILL.md` at the root of the Git checkout you run it in, or in the
+current directory outside a checkout. `skill status` and `skill uninstall` find the project the same
+way. Use a project install when the instructions should travel with one repository.
 
 Or install it for your user, so agents see it in every project:
 
@@ -56,6 +57,10 @@ Check the project or user installation:
 rozi skill status
 rozi skill status --global
 ```
+
+Each report's first line names the installation it describes, such as
+`Rozi skill for project ~/src/app` or `Rozi skill for user (~)`; the paths below it are relative to
+that directory.
 
 `rozi skill install` is safe to rerun. It refreshes an unchanged copy that `rozi` installed, and
 refuses to replace a modified or untracked copy unless you add `--force`. `rozi` records each

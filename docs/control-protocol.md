@@ -893,6 +893,8 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `active` | bool | `false` | The row currently visible inside the publisher. At most one of a publisher's rows should be active. |
 | `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
 | `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. Used only on an agent publisher's rows. |
+| `live_session` | string or null | null | The session ID the process running this row reports its hooks under, when the conversation moved to a process with a new ID but is still resumed by `native_session`. Validated like `native_session`. Used only on an agent publisher's rows. |
+| `reported` | bool | set by rozi | Whether an agent report, rather than the publisher, set the row's `status` and `reason`. rozi replaces any value a publisher sends. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 | `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
 | `publisher` | string | set by rozi | `<client>/<identity>`: the rozi window that holds the stream, and the publisher's identity in it; see [Several publishers in one pane](#several-publishers-in-one-pane). rozi replaces any value a publisher sends. |
@@ -969,13 +971,23 @@ Screen detection carries on beside them, and the pane's agent stays listed next 
 
 Rows and a live [agent report](agents.md#report-state-from-agent-hooks) coexist. The report keeps its
 claim and its sequence fence, and its state and reason replace those of the agent row whose
-`native_session` exactly matches the report's, everywhere the row appears: Activity, the Agents
-view, `agents list`, and the row's run clock and finish alert. A report that matches no agent row
-is not listed while an agent publisher has rows. When a session is restored, the pane's active
-agent row's `native_session` is the conversation rozi resumes, ahead of the report's. Activity rows
-are never resumed. When the window holding that agent publisher leaves the session, its rows are
-withdrawn but the conversation they named is still the one rozi resumes, until agent rows are
-published again, the pane's shell returns to its prompt, or a different agent replaces it.
+reporting session — `live_session`, or `native_session` when the row has none — exactly matches the
+report's, everywhere the row appears: Activity, the Agents view, `agents list`, and the row's run
+clock and finish alert. A report that matches no agent row is not listed while an agent publisher
+has rows.
+
+While one integration owns the pane, a report from another integration token is accepted for the
+row whose reporting session it names, and only for that row. Publish `live_session` when a row's
+conversation runs in a process other than the pane's own, so that process's hooks, not the pane
+owner's last report, speak for it. A pane id given to `agents get`, `read`, `wait`, or `prompt`
+names the active agent row; a row that is not active is reached only by its exact reference. A
+released row report's token, or one whose conversation no row names any more, is retired.
+
+When a session is restored, the pane's active agent row's `native_session` is the conversation rozi
+resumes, ahead of the report's. Activity rows are never resumed. When the window holding that agent
+publisher leaves the session, its rows are withdrawn but the conversation they named is still the
+one rozi resumes, until agent rows are published again, the pane's shell returns to its prompt, or
+a different agent replaces it.
 
 ### Several publishers in one pane
 

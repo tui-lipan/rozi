@@ -52,6 +52,84 @@ pub(crate) fn forward_recording(
     Update::none()
 }
 
+/// Forward `agents wait` or `agents prompt` to the session server that sees the agent.
+///
+/// The server watches every state change as it happens, so a wait cannot miss one between a read
+/// and a re-read, and a prompt is checked and typed in one step. A pane id names a pane in the
+/// session on screen, as it does for `agents list` and `agents get` on this endpoint; an exact
+/// agent reference names its own session, current or in the background.
+pub(crate) fn forward_agent(
+    ctx: &mut Context<AppRoot>,
+    mut request: ControlRequest,
+    reply: Sender<ControlResponse>,
+) -> Update {
+    let routed = if let Some(provenance) = &request.extension {
+        Err(ControlResponse::error(format!(
+            "a session server cannot check whether extension `{}` is still active, so it does not wait for or prompt an agent on an extension's behalf",
+            provenance.id
+        )))
+    } else {
+        agent_epoch(&ctx.state, &request.command)
+    };
+    match routed {
+        Ok(epoch) => {
+            request.source_pane = None;
+            request.source_session = None;
+            send_to_epoch(ctx, epoch, request, AttachedReply::Control(reply));
+        }
+        Err(response) => {
+            let _ = reply.send(response);
+        }
+    }
+    Update::none()
+}
+
+fn agent_epoch(
+    state: &State,
+    command: &ControlCommand,
+) -> std::result::Result<u64, ControlResponse> {
+    let (target, unbounded) = match command {
+        ControlCommand::AgentWait {
+            target, timeout_ms, ..
+        } => (target, timeout_ms.is_none()),
+        ControlCommand::AgentPrompt {
+            target,
+            wait,
+            timeout_ms,
+            ..
+        } => (target, wait.is_some() && timeout_ms.is_none()),
+        _ => return Ok(state.runtime_epoch),
+    };
+    // The UI holds the caller's connection for as long as the server holds the wait, so a wait
+    // through it has to end on its own.
+    if unbounded {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "an agent wait needs a timeout",
+        ));
+    }
+    let crate::control::AgentTarget::Ref(reference) = target else {
+        return Ok(state.runtime_epoch);
+    };
+    std::iter::once((state.runtime_epoch, state.current()))
+        .chain(
+            state
+                .background
+                .iter()
+                .map(|(&epoch, attachment)| (epoch, attachment)),
+        )
+        .find(|(_, attachment)| {
+            attachment.session_instance.as_ref() == Some(&reference.pane.session_instance)
+        })
+        .map(|(epoch, _)| epoch)
+        .ok_or_else(|| {
+            ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                "agent reference belongs to a session this rozi is not attached to",
+            )
+        })
+}
+
 /// The epoch of the attachment `request` is about: the calling pane's session, current or in the
 /// background, or the one on screen for a caller outside every session.
 pub(crate) fn route(
@@ -411,6 +489,64 @@ mod tests {
                 "a dropped session answers what it left pending"
             );
             assert!(backend.state().pending_attached_controls.is_empty());
+        });
+    }
+
+    #[test]
+    fn an_agent_wait_goes_to_the_session_on_screen_and_needs_a_deadline() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            attach(backend.state_mut().current_mut(), client, "current");
+            let wait = |timeout_ms| ControlCommand::AgentWait {
+                target: crate::control::AgentTarget::Pane(3),
+                until: crate::control::AgentWaitCondition::Quiescent,
+                timeout_ms,
+            };
+
+            let unbounded = ask_from(&mut backend, wait(None), Some(1), Some("current"));
+            assert_eq!(code(&unbounded), Some(ControlErrorCode::InvalidArgument));
+            assert!(forwarded(&outbound).is_empty());
+
+            let response = ask_from(&mut backend, wait(Some(30_000)), Some(1), Some("current"));
+            let [(_, request)] = forwarded(&outbound).try_into().unwrap();
+            assert_eq!(request.command, wait(Some(30_000)));
+            assert_eq!(
+                (request.source_pane, request.source_session),
+                (None, None),
+                "the server reads explicit targets only"
+            );
+            assert!(response.try_recv().is_err(), "held for the server's answer");
+        });
+    }
+
+    #[test]
+    fn an_agent_reference_from_an_unattached_session_is_refused() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            attach(backend.state_mut().current_mut(), client, "current");
+            let reference = crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: SessionInstanceId::for_test("elsewhere"),
+                    pane_id: 3,
+                    generation: 1,
+                },
+                incarnation: 1,
+                slot: None,
+            };
+            let response = ask(
+                &mut backend,
+                ControlCommand::AgentPrompt {
+                    target: crate::control::AgentTarget::Ref(reference),
+                    prompt: "hi".into(),
+                    wait: None,
+                    timeout_ms: None,
+                    allow_working: false,
+                },
+            );
+            assert_eq!(code(&response), Some(ControlErrorCode::StaleReference));
+            assert!(forwarded(&outbound).is_empty());
         });
     }
 

@@ -134,7 +134,7 @@ pub(super) fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
 }
 
 /// Register and attach a client, returning its id and client-side stream.
-fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
+pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (id, stream) = add_client(server);
     let responses = server.handle_message(
         id,
@@ -2235,6 +2235,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
         protocol::PublishedRow {
             publisher: "sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
             id: "left".into(),
             title: "running tests".into(),
             status: "working".into(),
@@ -2248,6 +2250,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
         protocol::PublishedRow {
             publisher: "sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
             id: "right".into(),
             title: "waiting on approval".into(),
             status: "blocked".into(),
@@ -5077,6 +5081,8 @@ fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
         .map(|(index, status)| protocol::PublishedRow {
             publisher: "sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
             id: index.to_string(),
             title: status.into(),
             status: status.into(),
@@ -5211,6 +5217,8 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
     pane.runtime.rows = vec![protocol::PublishedRow {
         publisher: "sessions".into(),
         kind: crate::session::protocol::PublisherKind::Agent,
+        live_session: None,
+        reported: false,
         id: "row".into(),
         title: "task".into(),
         status: "working".into(),
@@ -5231,5 +5239,187 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
     assert!(
         server.any_agent_working(),
         "a different subagent remains Working"
+    );
+}
+
+/// A pane running Claude whose client lists `origin` on screen and `fork`'s conversation beside it.
+fn pane_with_session_rows(server: &mut SessionServer, id: PaneId) {
+    let mut pane = test_pane(1);
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+        state: protocol::DetectedAgentState::Idle,
+    });
+    pane.runtime.rows = ["origin", "background"]
+        .into_iter()
+        .map(|id| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: "working".into(),
+            reason: None,
+            active: id == "origin",
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(id.into()),
+            live_session: None,
+            reported: false,
+        })
+        .collect();
+    pane.agent.sync_references(&pane.runtime);
+    server.panes.insert(id, pane);
+}
+
+fn agent_report(
+    server: &mut SessionServer,
+    token: &str,
+    state: Option<protocol::AgentState>,
+    native: &str,
+    seq: u64,
+) -> crate::control::ControlResponse {
+    let command = match state {
+        Some(state) => crate::control::ControlCommand::AgentReport {
+            target: Some(7),
+            agent: "claude".into(),
+            integration: token.into(),
+            state,
+            reason: None,
+            native_session: Some(native.into()),
+            seq,
+        },
+        None => crate::control::ControlCommand::AgentRelease {
+            target: Some(7),
+            integration: token.into(),
+            seq,
+        },
+    };
+    let messages = server.handle_session_control(
+        99,
+        server.session_name.clone(),
+        PROTOCOL_VERSION,
+        protocol::MIN_SUPPORTED_PROTOCOL,
+        None,
+        crate::control::ControlRequest {
+            command,
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            credential: None,
+        },
+    );
+    match messages.into_iter().next() {
+        Some((Target::Sender, ServerMessage::SessionControlResult { response, .. })) => response,
+        other => panic!("expected a control result, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_released_row_reporter_can_never_report_again_or_claim_the_pane() {
+    let mut server = SessionServer::new_named("dev");
+    pane_with_session_rows(&mut server, 7);
+    let working = Some(protocol::AgentState::Working);
+
+    assert!(agent_report(&mut server, "client", working, "origin", 1).ok);
+    assert!(agent_report(&mut server, "fork-hooks", working, "background", 1).ok);
+    assert!(agent_report(&mut server, "fork-hooks", None, "background", 2).ok);
+    assert!(agent_report(&mut server, "client", None, "origin", 2).ok);
+    assert!(server.panes[&7].runtime.integration.is_none());
+
+    // A delayed hook from the released background process, with a newer sequence.
+    let late = agent_report(&mut server, "fork-hooks", working, "background", 5);
+    assert_eq!(late.code, Some(crate::control::ControlErrorCode::Conflict));
+    let late = agent_report(&mut server, "fork-hooks", working, "origin", 6);
+    assert_eq!(
+        late.code,
+        Some(crate::control::ControlErrorCode::Conflict),
+        "nor may it take the pane the owner gave up"
+    );
+    assert!(server.panes[&7].runtime.integration.is_none());
+}
+
+#[test]
+fn a_row_reporter_whose_conversation_is_withdrawn_is_retired() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let working = Some(protocol::AgentState::Working);
+    assert!(agent_report(&mut server, "client", working, "origin", 1).ok);
+    assert!(agent_report(&mut server, "fork-hooks", working, "background", 1).ok);
+
+    // The rows are this client's: its stream now publishes only the origin row.
+    for row in &mut server.panes.get_mut(&7).unwrap().runtime.rows {
+        row.publisher = protocol::qualified_publisher(client, "sessions");
+    }
+    let only_origin = vec![server.panes[&7].runtime.rows[0].clone()];
+    server
+        .report_pane_rows(
+            client,
+            7,
+            1,
+            false,
+            super::runtime::PanePublisher {
+                id: "sessions".into(),
+                kind: protocol::PublisherKind::Agent,
+            },
+            only_origin,
+        )
+        .expect("rows publish");
+    assert!(server.panes[&7].agent.row_reports.is_empty());
+
+    assert!(agent_report(&mut server, "client", None, "origin", 2).ok);
+    let late = agent_report(&mut server, "fork-hooks", working, "origin", 2);
+    assert_eq!(late.code, Some(crate::control::ControlErrorCode::Conflict));
+    assert!(server.panes[&7].runtime.integration.is_none());
+}
+
+#[test]
+fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    server.controller = Some(controller);
+    server.input_locked = true;
+    pane_with_session_rows(&mut server, 7);
+
+    let mut prompt = |client| {
+        let messages = server.handle_attached_control(
+            client,
+            1,
+            crate::control::ControlRequest {
+                command: crate::control::ControlCommand::AgentPrompt {
+                    target: crate::control::AgentTarget::Pane(7),
+                    prompt: "go".into(),
+                    wait: None,
+                    timeout_ms: None,
+                    allow_working: true,
+                },
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                credential: None,
+            },
+        );
+        match messages.into_iter().next() {
+            Some((Target::Sender, ServerMessage::AttachedControlResult { response, .. })) => {
+                response.code
+            }
+            other => panic!("expected an attached result, got {other:?}"),
+        }
+    };
+
+    // The test pane has no process, so the controller gets as far as the write.
+    assert_eq!(
+        prompt(controller),
+        Some(crate::control::ControlErrorCode::PaneNotRunning)
+    );
+    assert_eq!(
+        prompt(follower),
+        Some(crate::control::ControlErrorCode::InputLocked)
+    );
+    assert_eq!(
+        prompt(viewer),
+        Some(crate::control::ControlErrorCode::ReadOnly)
     );
 }

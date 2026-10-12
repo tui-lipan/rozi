@@ -993,6 +993,8 @@ mod tests {
         crate::session::protocol::PublishedRow {
             publisher: "sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
             id: id.to_string(),
             title: format!("tab {id}"),
             status: status.to_string(),
@@ -1053,6 +1055,8 @@ mod tests {
             crate::session::protocol::PublishedRow {
                 publisher: "sessions".into(),
                 kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: "build".into(),
                 title: "Cargo Watch".into(),
                 status: "working".into(),
@@ -1066,6 +1070,8 @@ mod tests {
             crate::session::protocol::PublishedRow {
                 publisher: "sessions".into(),
                 kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: "test".into(),
                 title: String::new(),
                 status: "blocked".into(),

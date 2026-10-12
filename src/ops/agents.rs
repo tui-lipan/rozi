@@ -689,6 +689,65 @@ mod tests {
         });
     }
 
+    /// Two agents of one kind in one session share a label, which a label-keyed palette folds into
+    /// a single row. Every refresh then put the cursor back on the first of them.
+    #[test]
+    fn the_cursor_stays_on_one_of_several_identically_named_agents_across_refreshes() {
+        on_large_stack(|| {
+            let mut backend = backend_with_panes(&[]);
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
+            let summary = |pane| crate::session::protocol::AgentSummary {
+                session: "dev".into(),
+                pane,
+                generation: 0,
+                row: None,
+                agent: "codex".into(),
+                label: "Codex".into(),
+                state: "idle".into(),
+                changed_at: 0,
+                launch: 0,
+            };
+            backend.state_mut().local_agent_snapshot =
+                Some(crate::session::discovery::LocalAgentSnapshot {
+                    sessions: Vec::new(),
+                    agents: vec![summary(1), summary(2), summary(3)],
+                });
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+                .unwrap();
+            backend.render();
+            let down = KeyEvent {
+                code: KeyCode::Down,
+                mods: KeyMods::NONE,
+            };
+            let selected_pane = |backend: &TestBackend<AppRoot>| {
+                backend
+                    .state()
+                    .agent_picker
+                    .as_ref()
+                    .and_then(|picker| picker.selected.as_ref())
+                    .map(AgentLocation::pane)
+            };
+            backend.send_key(down).unwrap();
+            backend.render();
+            assert_eq!(selected_pane(&backend), Some(2));
+            // A poll that brings another row is a refresh of the palette's items.
+            backend
+                .state_mut()
+                .local_agent_snapshot
+                .as_mut()
+                .unwrap()
+                .agents
+                .push(summary(4));
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            backend.render();
+            backend.send_key(down).unwrap();
+            backend.render();
+            assert_eq!(selected_pane(&backend), Some(3));
+        });
+    }
+
     /// An empty list says which machines were asked. "Nothing running" on a client watching four
     /// hosts is a different fact from the same words on a client watching none.
     #[test]

@@ -61,7 +61,8 @@ exclude = [
 # 0.22.1: renderer-aware capture underlays preserve glyph room and cursor layers.
 # 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
-tui-lipan = { version = "0.22.3", features = [
+# 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
+tui-lipan = { version = "0.22.4", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

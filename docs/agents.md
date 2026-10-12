@@ -234,7 +234,9 @@ agent, so a run that was in progress when the old process stopped is not reporte
 
 With `base = true`, rozi also applies common rules for approval text, yes/no questions, trust
 prompts, choice dialogs, braille spinners, and interrupt hints. They follow the same precedence as
-your own rules, so adding a `working` rule does not override a common `blocked` rule.
+your own rules, so adding a `working` rule does not override a common `blocked` rule. Screen spinners
+match one or two braille glyphs followed by whitespace or the end of a line. Longer runs of braille
+cells in artwork do not count as working.
 
 Set `base = false` when the tool's transcript often quotes that kind of text and causes false
 states. Then define the working and blocked rules the tool needs yourself.

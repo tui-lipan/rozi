@@ -4012,6 +4012,56 @@ mod tests {
         assert_eq!(state(&pane), Some(DetectedAgentState::Working));
     }
 
+    #[test]
+    fn codex_idle_logo_stays_idle_after_the_startup_window() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let fixture: toml::Value =
+            toml::from_str(include_str!("../../../tests/fixtures/agents/codex.toml")).unwrap();
+        let case = fixture["case"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"].as_str() == Some("idle-with-braille-logo"))
+            .unwrap();
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "codex".into()));
+        // Preserve the tall capture so its logo remains among the last non-empty footer lines.
+        pane.terminal = TerminalScreen::new(100, 160, 100);
+        pane.terminal.process_bytes(
+            case["screen"]
+                .as_str()
+                .unwrap()
+                .replace('\n', "\r\n")
+                .as_bytes(),
+        );
+        let mut scan = LazyProcessScan::default();
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Idle)
+        );
+        assert_eq!(pane.runtime.work_started_at, None);
+
+        // Keep the same screen so this also checks the cached observation at the timeout.
+        past_startup(&mut pane);
+        pane.runtime =
+            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
+        assert_eq!(
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|agent| agent.state),
+            Some(DetectedAgentState::Idle)
+        );
+        assert_eq!(pane.runtime.work_started_at, None);
+        assert!(pane.agent.startup.is_none());
+    }
+
     /// A timeline for one launch, read through the startup window at each `(ms, observed)` step.
     fn startup_timeline(
         steps: &[(u64, crate::session::protocol::DetectedAgentState)],

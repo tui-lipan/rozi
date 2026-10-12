@@ -317,7 +317,7 @@ fn routes_to_row(
             .runtime
             .rows
             .iter()
-            .any(|row| protocol::row_reporting_session(row) == Some(session.as_str()))
+            .any(|row| agent_reporting_session(row) == Some(session.as_str()))
     {
         return Ok(false);
     }
@@ -339,13 +339,46 @@ fn routes_to_row(
     Ok(true)
 }
 
-/// Give each row the state of the row report naming its reporting session, if one does.
+/// The session a row report has to name to speak for `row`. Only an agent row has one: an activity
+/// reports its own state and never takes on an agent's hooks, whatever it names.
+fn agent_reporting_session(row: &protocol::PublishedRow) -> Option<&str> {
+    row.is_agent()
+        .then(|| protocol::row_reporting_session(row))
+        .flatten()
+}
+
+/// Retire every row report no agent row names any more, with its token.
+///
+/// A row report lives only while some row - of any publisher - still names its conversation. A
+/// token left behind once the last one went, by a new snapshot or by its window leaving, would keep
+/// reporting for nothing, and would fold its stale state into the next row to name that
+/// conversation.
+fn retire_orphaned_row_reports(pane: &mut ServerPane) {
+    let rows = &pane.runtime.rows;
+    let orphaned = pane
+        .agent
+        .row_reports
+        .iter()
+        .filter(|(_, report)| {
+            !rows
+                .iter()
+                .any(|row| agent_reporting_session(row) == Some(report.native_session.as_str()))
+        })
+        .map(|(token, _)| token.clone())
+        .collect::<Vec<_>>();
+    for token in orphaned {
+        pane.agent.row_reports.remove(&token);
+        pane.agent.retire_integration(token);
+    }
+}
+
+/// Give each agent row the state of the row report naming its reporting session, if one does.
 pub(super) fn fold_row_reports(
     rows: &mut [protocol::PublishedRow],
     reports: &HashMap<String, RowReport>,
 ) {
     for row in rows {
-        let Some(session) = protocol::row_reporting_session(row) else {
+        let Some(session) = agent_reporting_session(row) else {
             continue;
         };
         if let Some(report) = reports
@@ -688,28 +721,12 @@ impl SessionServer {
             now,
         );
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
-        // A row report outlives a snapshot only while some row - of any publisher - still names
-        // its conversation, and its token is retired with it.
-        let orphaned = pane
-            .agent
-            .row_reports
-            .iter()
-            .filter(|(_, report)| {
-                !next.iter().any(|row| {
-                    protocol::row_reporting_session(row) == Some(report.native_session.as_str())
-                })
-            })
-            .map(|(token, _)| token.clone())
-            .collect::<Vec<_>>();
-        for token in orphaned {
-            pane.agent.row_reports.remove(&token);
-            pane.agent.retire_integration(token);
-        }
         if next == pane.runtime.rows {
             return Ok(None);
         }
         let resume_before = super::resurrect::resume_target(pane);
         replace_pane_rows(pane, next);
+        retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
         // The snapshot names the conversation a restore reopens. A publisher switching it is a
@@ -754,6 +771,7 @@ impl SessionServer {
             let before = super::resurrect::live_agent_resume(pane);
             let others_speak = next.iter().any(protocol::PublishedRow::is_agent);
             replace_pane_rows(pane, next);
+            retire_orphaned_row_reports(pane);
             if let Some(before) = before
                 && !others_speak
                 && super::resurrect::live_agent_resume(pane).as_ref() != Some(&before)
@@ -1892,6 +1910,7 @@ fn sanitize_rows(
     publisher: &PanePublisher,
 ) -> Vec<protocol::PublishedRow> {
     let mut active_seen = false;
+    let is_agent = publisher.kind == protocol::PublisherKind::Agent;
     rows.into_iter()
         .filter_map(|row| {
             let id = clean_text(&row.id, PANE_STATUS_MAX_LEN)?;
@@ -1929,13 +1948,15 @@ fn sanitize_rows(
                 cwd,
                 project,
                 // Byte for byte, or not at all: a cleaned id would never match the hook report
-                // naming the same conversation, and would resume the wrong one.
+                // naming the same conversation, and would resume the wrong one. Only an agent has
+                // a conversation, so an activity's are dropped: no hook report or restore can
+                // reach an activity through them.
                 native_session: row
                     .native_session
-                    .filter(|session| native_session_is_valid(session)),
+                    .filter(|session| is_agent && native_session_is_valid(session)),
                 live_session: row
                     .live_session
-                    .filter(|session| native_session_is_valid(session)),
+                    .filter(|session| is_agent && native_session_is_valid(session)),
                 // Set by the hook report folded into the row, never by the publisher.
                 reported: false,
             })

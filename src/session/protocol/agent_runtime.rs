@@ -308,21 +308,24 @@ pub enum PaneAgent {
 /// own, or of its published rows the one on screen. A row that is not on screen - a background
 /// conversation a client lists beside the one it shows - is reached by its exact reference, even
 /// when it is the only row.
+///
+/// Each publisher may mark a row active, so a pane shared by several windows can have several on
+/// screen. The pane id names the first, the same [`active_agent_row`] a restore resumes; `runtimes`
+/// are already in publisher order.
 pub fn pane_agent(runtimes: Vec<AgentRuntime>, rows: &[PublishedRow]) -> PaneAgent {
     if runtimes.is_empty() {
         return PaneAgent::Missing;
     }
-    let mut candidates = runtimes.into_iter().filter(|runtime| {
-        runtime
-            .reference
-            .slot
-            .as_ref()
-            .is_none_or(|slot| rows.iter().any(|row| row.has_key(slot) && row.active))
-    });
-    match (candidates.next(), candidates.next()) {
-        (Some(runtime), None) => PaneAgent::One(runtime),
-        _ => PaneAgent::NoneOnScreen,
-    }
+    runtimes
+        .into_iter()
+        .find(|runtime| {
+            runtime
+                .reference
+                .slot
+                .as_ref()
+                .is_none_or(|slot| rows.iter().any(|row| row.has_key(slot) && row.active))
+        })
+        .map_or(PaneAgent::NoneOnScreen, PaneAgent::One)
 }
 
 /// `row` as everything downstream of the protocol must present it: with the status and reason of
@@ -511,6 +514,29 @@ mod tests {
             ),
             PaneAgent::NoneOnScreen
         );
+    }
+
+    #[test]
+    fn a_pane_id_names_the_first_active_row_when_several_publishers_show_one() {
+        let mut first = listed("first", true);
+        first.publisher = "1/sessions".into();
+        let mut second = listed("second", true);
+        second.publisher = "2/sessions".into();
+        let runtimes: Vec<_> = [&first, &second]
+            .into_iter()
+            .map(|row| {
+                let mut runtime = runtime(None);
+                runtime.reference.slot = Some(row.key());
+                runtime
+            })
+            .collect();
+        let expected = runtimes[0].clone();
+        let rows = [first, second];
+        assert_eq!(
+            active_agent_row(&rows).map(|row| row.id.as_str()),
+            Some("first")
+        );
+        assert_eq!(pane_agent(runtimes, &rows), PaneAgent::One(expected));
     }
 
     #[test]

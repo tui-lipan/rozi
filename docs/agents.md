@@ -290,9 +290,9 @@ appear only in the sidebar's Activity tab. See
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. A bare pane
 id, as in `agents get 3`, is refused. When a pane publishes agent rows, such as a client showing one
 conversation while others run in the background, `--target` names the row on screen, and
-`list-panes` reports that one. A row that is not on screen, even the only one, is reached with
-`--ref`. `list` and
-`get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
+`list-panes` reports that one. When several windows each show a row, `--target` names the first
+active one, the same row session restore resumes. A row that is not on screen, even the only one,
+is reached with `--ref`. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
 ### Wait for a state

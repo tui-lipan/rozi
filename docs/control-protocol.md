@@ -892,8 +892,8 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `reason` | string or null | null | Supporting detail. |
 | `active` | bool | `false` | The row currently visible inside the publisher. At most one of a publisher's rows should be active. |
 | `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
-| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. Used only on an agent publisher's rows. |
-| `live_session` | string or null | null | The session ID the process running this row reports its hooks under, when the conversation moved to a process with a new ID but is still resumed by `native_session`. Validated like `native_session`. Used only on an agent publisher's rows. |
+| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. Used only on an agent publisher's rows, and dropped from an activity's. |
+| `live_session` | string or null | null | The session ID the process running this row reports its hooks under, when the conversation moved to a process with a new ID but is still resumed by `native_session`. Validated like `native_session`. Used only on an agent publisher's rows, and dropped from an activity's. |
 | `reported` | bool | set by rozi | Whether an agent report, rather than the publisher, set the row's `status` and `reason`. rozi replaces any value a publisher sends. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 | `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |

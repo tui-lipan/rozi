@@ -5373,6 +5373,142 @@ fn a_row_reporter_whose_conversation_is_withdrawn_is_retired() {
     assert!(server.panes[&7].runtime.integration.is_none());
 }
 
+fn session_row(
+    publisher: String,
+    kind: protocol::PublisherKind,
+    id: &str,
+    native: &str,
+) -> protocol::PublishedRow {
+    protocol::PublishedRow {
+        publisher,
+        kind,
+        id: id.into(),
+        title: id.into(),
+        status: "idle".into(),
+        reason: None,
+        active: false,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some(native.into()),
+        live_session: None,
+        reported: false,
+    }
+}
+
+/// A window that detaches takes its rows with it, and a row reporter whose conversation no row
+/// names any more goes with them. One another window still lists keeps reporting into that row.
+#[test]
+fn a_row_reporter_whose_window_detaches_is_retired_unless_another_lists_it() {
+    let mut server = SessionServer::new_named("dev");
+    let (leaving, _leaving_stream) = attach_client(&mut server);
+    let (staying, _staying_stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let agent = protocol::PublisherKind::Agent;
+    let pane = server.panes.get_mut(&7).unwrap();
+    for row in &mut pane.runtime.rows {
+        row.publisher = protocol::qualified_publisher(leaving, "sessions");
+    }
+    pane.runtime.rows.push(session_row(
+        protocol::qualified_publisher(leaving, "sessions"),
+        agent,
+        "side",
+        "side",
+    ));
+    pane.runtime.rows.push(session_row(
+        protocol::qualified_publisher(staying, "sessions"),
+        agent,
+        "side",
+        "side",
+    ));
+    pane.agent.sync_references(&pane.runtime);
+    let working = Some(protocol::AgentState::Working);
+    assert!(agent_report(&mut server, "client", working, "origin", 1).ok);
+    assert!(agent_report(&mut server, "fork-hooks", working, "background", 1).ok);
+    assert!(agent_report(&mut server, "side-hooks", working, "side", 1).ok);
+
+    server.withdraw_client_rows(leaving);
+    let reports = &server.panes[&7].agent.row_reports;
+    assert!(!reports.contains_key("fork-hooks"));
+    assert!(reports.contains_key("side-hooks"));
+
+    let late = agent_report(&mut server, "fork-hooks", working, "background", 2);
+    assert_eq!(late.code, Some(crate::control::ControlErrorCode::Conflict));
+    // A row naming the conversation again does not revive the retired token's state.
+    let pane = server.panes.get_mut(&7).unwrap();
+    pane.runtime.rows.push(session_row(
+        protocol::qualified_publisher(staying, "sessions"),
+        agent,
+        "background",
+        "background",
+    ));
+    super::runtime::fold_row_reports(&mut pane.runtime.rows, &pane.agent.row_reports);
+    let row = |server: &SessionServer, id: &str| {
+        server.panes[&7]
+            .runtime
+            .rows
+            .iter()
+            .find(|row| row.id == id)
+            .cloned()
+            .unwrap()
+    };
+    assert!(!row(&server, "background").reported);
+
+    let blocked = Some(protocol::AgentState::Blocked);
+    assert!(agent_report(&mut server, "side-hooks", blocked, "side", 2).ok);
+    let side = row(&server, "side");
+    assert_eq!(
+        side.publisher,
+        protocol::qualified_publisher(staying, "sessions")
+    );
+    assert!(side.reported);
+    assert_eq!(side.status, protocol::AgentState::Blocked.as_str());
+}
+
+/// An activity reports its own state: a hook naming the session an activity row carries neither
+/// claims a row report nor rewrites the row.
+#[test]
+fn a_hook_report_never_reaches_an_activity_row() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let working = Some(protocol::AgentState::Working);
+    assert!(agent_report(&mut server, "client", working, "origin", 1).ok);
+
+    // Whatever a publisher sends, an activity row keeps no conversation.
+    let publisher = super::runtime::PanePublisher {
+        id: "watch".into(),
+        kind: protocol::PublisherKind::Activity,
+    };
+    let sent = session_row(String::new(), publisher.kind, "watch", "side");
+    server
+        .report_pane_rows(client, 7, 1, false, publisher, vec![sent])
+        .expect("rows publish");
+    let activity = |server: &SessionServer| {
+        server.panes[&7]
+            .runtime
+            .rows
+            .iter()
+            .find(|row| !row.is_agent())
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(activity(&server).native_session, None);
+
+    // Even one that slipped a session through is out of a hook's reach.
+    let pane = server.panes.get_mut(&7).unwrap();
+    for row in &mut pane.runtime.rows {
+        if !row.is_agent() {
+            row.native_session = Some("side".into());
+        }
+    }
+    let before = activity(&server);
+    let report = agent_report(&mut server, "side-hooks", working, "side", 1);
+    assert!(!report.ok);
+    assert!(server.panes[&7].agent.row_reports.is_empty());
+    assert_eq!(activity(&server), before);
+}
+
 #[test]
 fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
     let mut server = SessionServer::new_named("dev");

@@ -74,7 +74,7 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let mut request = control_request(control::ControlCommand::Publish);
+    let mut request = control_request(command.command);
     request.source_pane = source_pane;
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 

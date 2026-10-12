@@ -578,6 +578,9 @@ refused at the handshake instead.
 ```
 
 - Workspace indices are `1..=9`.
+- `set-status` reports a generic status for the pane: it appears in Activity, but does not make the
+  pane an agent. In a pane with a detected agent it sets that agent's state. See
+  [Activities and agents](#activities-and-agents).
 - `set-status.target` falls back to `source_pane`, then the focused pane. Status and reason text is
   sanitized for display, trimmed, and limited to 64 and 256 characters. An empty or null status
   clears the report.
@@ -859,13 +862,21 @@ printf '%s\n' '{"title":"Branches","rows":[{"id":"main","label":"main"}]}' |
 ## Published activity stream
 
 A published activity stream lets a program report its own activities as rows in the sidebar's
-Activity list, and hear when the user activates one.
+Activity list, and hear when the user activates one. A publisher declares once, when the stream
+opens, whether it is an agent. Every published row appears in Activity; only an agent publisher's
+rows are also agents.
 
 Open with:
 
 ```json
 {"cmd":"publish","source_pane":3}
+{"cmd":"publish","source_pane":3,"kind":"agent","name":"sessions"}
 ```
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `kind` | string | `"activity"` | `"activity"` or `"agent"`. See [Activities and agents](#activities-and-agents). |
+| `name` | string or null | null | Tells apart several publishers from one caller in the same pane. 1–64 lowercase letters, digits, `-`, or `_`; anything else is refused with `invalid-argument`. |
 
 After `{"ok":true}`, the publisher writes complete snapshots:
 
@@ -875,58 +886,149 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `id` | string | required | Stable identity chosen by the publisher. |
+| `id` | string | required | Stable identity chosen by the publisher. Unique within this publisher; another publisher in the same pane may use the same ID. |
 | `title` | string | required | Activity title. May be empty. |
 | `status` | string | required | Status value. |
 | `reason` | string or null | null | Supporting detail. |
-| `active` | bool | `false` | The row currently visible inside the publisher. At most one should be active. |
+| `active` | bool | `false` | The row currently visible inside the publisher. At most one of a publisher's rows should be active. |
 | `cwd` | string or null | null | Absolute directory the activity works in, on the pane's host. Absent means the pane's directory. |
-| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. |
+| `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. Used only on an agent publisher's rows, and dropped from an activity's. |
+| `live_session` | string or null | null | The session ID the process running this row reports its hooks under, when the conversation moved to a process with a new ID but is still resumed by `native_session`. Validated like `native_session`. Used only on an agent publisher's rows, and dropped from an activity's. |
+| `reported` | bool | set by rozi | Whether an agent report, rather than the publisher, set the row's `status` and `reason`. rozi replaces any value a publisher sends. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 | `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
+| `publisher` | string | set by rozi | `<client>/<identity>`: the rozi window that holds the stream, and the publisher's identity in it; see [Several publishers in one pane](#several-publishers-in-one-pane). rozi replaces any value a publisher sends. |
+| `kind` | string | set by rozi | The `kind` the stream declared. rozi replaces any value a publisher sends. |
 
 A row with its own `cwd` is grouped in Activity under that directory's project and branch instead
 of its pane's. Use it when one program runs several activities in different checkouts, such as
 coding-agent sessions that each work in their own Git worktree. A relative `cwd` is dropped.
 
-- An empty `rows` list withdraws the rows. End of input or any stream failure also withdraws them.
+- An empty `rows` list withdraws this publisher's rows. End of input or any stream failure also
+  withdraws them.
 - IDs, titles, and statuses are sanitized for display and limited to 64 characters; reasons are
   limited to 256.
-- Rows with an empty ID or status are dropped.
-- Only the first row with `active: true` in a snapshot stays active.
+- Rows with an empty ID or status are dropped. A publisher may have at most 64 rows in a pane.
+- Only the first of a publisher's rows with `active: true` in a snapshot stays active.
 
-When the user activates a row, rozi focuses its pane and writes:
+When the user activates a row, rozi focuses its pane and writes to the stream that published it:
 
 ```json
 {"activate":"job-1"}
 ```
 
 The publisher must keep reading activations. If its backlog of unread activations fills up, rozi
-closes the stream and withdraws its rows.
+closes that stream and withdraws its rows.
+
+### Activities and agents
+
+An activity is something happening; an agent is something doing work. Declare `"kind":"agent"`
+only when each row is an agent's run or conversation, such as the sessions of a coding-agent
+client. Anything else, such as a build, a watcher, or a list of pull requests, keeps the default
+`"activity"`.
+
+| Origin | Activity | Agents view, `rozi agents`, keep-awake |
+| --- | --- | --- |
+| An agent rozi [detects](agents.md) on screen | yes | yes |
+| An [agent report](agents.md#report-state-from-agent-hooks) | yes | yes |
+| A publisher with `"kind":"agent"` | yes | yes, one agent per row |
+| A publisher with `"kind":"activity"` | yes | no |
+| A plain [`set-status`](#actions-workspaces-status-and-notifications) | yes | no, unless the pane has a detected agent, whose state it then sets |
+
+Only agents are listed by `agents list`, satisfy `agents wait`, can be targeted by `agents prompt`,
+appear in the Agents view and in host monitor summaries, and keep the host awake under
+[`keep_awake_while_agents_work`](configuration.md#session). An activity row never takes on the
+identity or the report of an agent in the same pane.
 
 ### Row ownership
 
 `source_pane` decides which pane owns the rows. If it is absent, rozi uses the focused live pane at
 the moment the stream opens; this lets a supervised service publish, but its rows still belong to
-that pane.
+that pane. To pin a service's rows to a specific pane, give it `ROZI_PANE`.
 
-While a pane has published rows, they are the authoritative activity list for that pane. If rozi has
-detected an agent in the pane, it derives the agent's displayed state from the rows: blocked first,
-then any status other than `idle` or `done`, then the remaining rows. A publisher in a pane with no
-detected agent still gets Activity rows, but rozi does not treat it as an agent.
+A stream also belongs to one session, because pane numbers repeat across sessions. With
+`source_session`, which the CLI sends from `ROZI_SESSION_INSTANCE`, it belongs to that session, and
+is refused with `session-not-attached` when that session is not attached to this rozi. Without it,
+the stream belongs to the session on screen when it opens, or to this client for a scratchpad or
+popup pane. Either way its rows keep reaching that session after you switch to another one, and
+never land on the other session's pane with the same number. Activating a row reaches the stream
+of the session on screen.
+
+A [placed extension process](extensions.md#what-a-placed-process-may-do) is the exception: like
+its other pane commands, its stream opens only into the session on screen, and only when that
+session lies within its placement, whatever `source_session` it names; otherwise it is refused
+with `out-of-scope`. Its rows are delivered only while that same session is on screen, and are
+dropped, not redirected, while another session is.
+
+While an agent publisher has rows in a pane, they are that pane's agents, and rozi stops reading
+the pane's screen for agent state. If rozi has detected an agent in the pane, the rows carry its
+identity, and the agent's displayed state is derived from them: blocked first, then any status
+other than `idle` or `done`, then the remaining rows. Once no agent publisher has rows, screen
+detection speaks for the pane again.
+
+An activity publisher's rows never replace, hide, or rename the pane's detected or reported agent.
+Screen detection carries on beside them, and the pane's agent stays listed next to the rows.
 
 Rows and a live [agent report](agents.md#report-state-from-agent-hooks) coexist. The report keeps its
-claim and its sequence fence, and its state and reason replace those of the row whose
-`native_session` exactly matches the report's, everywhere the row appears: Activity, the Agents
-view, `agents list`, and the row's run clock and finish alert. A report that matches no row is not
-listed while rows are published. When a
-session is restored, the active row's `native_session` is the conversation rozi resumes, ahead of
-the report's.
+claim and its sequence fence, and its state and reason replace those of the agent row whose
+reporting session — `live_session`, or `native_session` when the row has none — exactly matches the
+report's, everywhere the row appears: Activity, the Agents view, `agents list`, and the row's run
+clock and finish alert. A report that matches no agent row is not listed while an agent publisher
+has rows.
+
+While one integration owns the pane, a report from another integration token is accepted for the
+row whose reporting session it names, and only for that row. Publish `live_session` when a row's
+conversation runs in a process other than the pane's own, so that process's hooks, not the pane
+owner's last report, speak for it. A pane id given to `agents get`, `read`, `wait`, or `prompt`
+names the active agent row; a row that is not active is reached only by its exact reference. A
+released row report's token, or one whose conversation no row names any more, is retired.
+
+When a session is restored, the pane's active agent row's `native_session` is the conversation rozi
+resumes, ahead of the report's. Activity rows are never resumed. When the window holding that agent
+publisher leaves the session, its rows are withdrawn but the conversation they named is still the
+one rozi resumes, until agent rows are published again, the pane's shell returns to its prompt, or
+a different agent replaces it.
+
+### Several publishers in one pane
+
+A pane may have several publishers at once, such as an agent client's session list beside a
+pull-request watcher. Each publisher owns only its own rows: when one closes, crashes, restarts, or
+is dropped for not reading its activations, the others' rows stay exactly as they were. Run clocks,
+finish alerts, and activations follow a row by its publisher and ID together, so two publishers
+may use the same row ID.
+
+A stream lives in the rozi window it connected to. When several windows are attached to one
+session, each window's publishers are its own: two windows' publishers with the same identity are
+two publishers, and neither can replace or withdraw the other's rows. A row's `publisher` names
+the window as well as the identity. When a window leaves the session, by detaching, exiting, or
+losing its connection, the rows of its publishers are withdrawn; a window that reconnects reports
+its live publishers' rows again.
+
+Every attached window lists every window's rows in Activity, but only the window holding a stream
+can send it activations. Selecting another window's row focuses its pane; the program behind it
+does not switch to that row, because its stream is in the other window.
+
+A publisher's identity in its window is:
+
+| Caller | Identity |
+| --- | --- |
+| An extension process | `<extension>`, or `<extension>.<name>` with `name` |
+| Any other process | `publish:default`, or `publish:<name>` with `name` |
+
+A stream that opens with the same identity in the same pane of the same session, in the same
+window, replaces the earlier one, so a publisher that restarts takes over its own stale stream and
+nobody else's. Each window may have up to 16 publishers in a pane; a stream beyond that is
+refused with `conflict` when it opens, before its `{"ok":true}`. Give each publisher of one caller
+in a pane its own `name`.
+
+`active` is a rule per publisher, so a pane can have several active rows. The pane's active row,
+which session restore resumes, is the first active row of an agent publisher, taking publishers in
+the order they first published in the pane.
 
 CLI bridge:
 
 ```sh
-rozi publish
+rozi publish [--kind agent|activity] [--name NAME]
 ```
 
 ## Stream ownership

@@ -1,7 +1,7 @@
 # OpenCode activity in rozi
 
 This package connects OpenCode to rozi. OpenCode V2 publishes each open session tab as a separate
-activity row. The V1 event plugin reports one aggregate status for the pane.
+agent row. The V1 event plugin publishes one agent row with the aggregate state of the pane.
 
 ## Install for OpenCode V2
 
@@ -35,8 +35,9 @@ location. A background session that completes stays done until its tab is viewed
 withdraws its row. OpenCode's own tab persistence may synchronize tabs between clients using the
 same state directory; this plugin always follows the tab list of the client it runs in.
 
-The plugin launches the matching `ROZI_BIN publish` bridge, passes the pane's environment, and
-keeps reading activation requests. It sends changed snapshots and coalesces them if the bridge
+The plugin launches the matching `ROZI_BIN publish --kind agent --name opencode` bridge, passes
+the pane's environment, and keeps reading activation requests. Its rows are agents: they appear in
+rozi's Agents view and `rozi agents`, and replace screen detection for the pane while listed. It sends changed snapshots and coalesces them if the bridge
 cannot keep up. Plugin unload, bridge failure, or client exit closes the stream and withdraws its
 rows. Outside a pane with the current rozi environment contract, the plugin does nothing.
 
@@ -53,10 +54,14 @@ Restart the rozi session server after upgrading from a version that does not sta
 Copy `rozi-agent-state.js` into your project's `.opencode/plugins/` directory or the global
 `~/.config/opencode/plugins/` directory. OpenCode V1 loads the exported event plugin automatically.
 
-The V1 plugin aggregates sessions into one pane status, with blocked sessions taking precedence
-over working sessions. It does not publish session rows, directories, native IDs, or activation.
-Its implementation uses the legacy Unix control socket; use the V2 CLI plugin for portable
-publishing. Do not copy the V1 file into a V2 plugin directory.
+The V1 plugin aggregates sessions into one state, with blocked sessions taking precedence over
+working sessions. It holds a `publish` stream declared `kind: agent`, named `opencode`, and keeps
+one `OpenCode` row on it, starting `idle` when the plugin loads. Because the stream declares the
+agent, the row is listed in rozi's Agents view and `rozi agents` whether or not screen detection
+recognizes OpenCode in the pane. Unloading the plugin or exiting OpenCode closes the stream and
+withdraws the row. If rozi is unreachable, the next event opens the stream again. The plugin does
+not publish per-session rows, directories, native IDs, or activation. Its implementation uses the legacy Unix control socket; use
+the V2 CLI plugin for portable publishing. Do not copy the V1 file into a V2 plugin directory.
 
 ## Verify
 

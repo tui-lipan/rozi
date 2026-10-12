@@ -93,7 +93,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     match items.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
-        RowTarget::PublishedRow { pane_id, row_id } => activate_published_row(ctx, pane_id, row_id),
+        RowTarget::PublishedRow { pane_id, row } => activate_published_row(ctx, pane_id, row),
         RowTarget::Session(entry) => {
             crate::update::sidebar::sessions::activate_session(ctx, *entry)
         }
@@ -252,16 +252,16 @@ pub(crate) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -
 pub(crate) fn activate_published_row(
     ctx: &mut Context<AppRoot>,
     pane_id: crate::state::PaneId,
-    row_id: String,
+    row: crate::session::protocol::RowKey,
 ) -> Update {
     let update = focus_pane(ctx, pane_id);
     // Looking at a row acknowledges its finish, exactly as focusing a pane acknowledges the
     // pane's. The pane-wide chokepoint cannot do this: it does not know which row was asked for.
     if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, pane_id)
-        && let Some(ui) = pane.terminal.published_row_ui.get_mut(&row_id)
+        && let Some(ui) = pane.terminal.published_row_ui.get_mut(&row)
     {
         ui.finished_unseen = false;
     }
-    crate::ops::published_rows::request_activation(&mut ctx.state, pane_id, &row_id);
+    crate::ops::published_rows::request_activation(&mut ctx.state, pane_id, &row);
     update
 }

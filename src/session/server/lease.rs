@@ -383,7 +383,7 @@ impl SessionServer {
         promotion_reason: ControllerChangeReason,
     ) {
         self.clear_browse_requests(id);
-        self.remove_agent_wait(id);
+        self.remove_agent_waits(id);
         self.capture_waits.remove(&id);
         self.release_recording_replies(id);
         if self.origin_seed_client == Some(id) {
@@ -416,7 +416,7 @@ impl SessionServer {
         // The client that could not reach the filesystem may have just left, which puts naming a
         // file back on the table for the panes.
         self.sync_image_media_policy();
-        let mut messages: Vec<ServerMessage> = Vec::new();
+        let mut messages: Vec<ServerMessage> = self.withdraw_client_rows(id);
         if self.controller == Some(id) {
             self.controller = self.promotion_candidate();
             // A promoted client no longer needs its own pending request.

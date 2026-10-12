@@ -462,6 +462,12 @@ Let `rozi` supervise the process rather than daemonizing it or writing your own 
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
 [`rozi publish`](control.md#published-activity). Extensions cannot declare [hooks](hooks.md).
 
+An extension's published rows are activities unless its stream opens with `--kind agent`, which
+it should do only when each row is an agent's run or conversation. Each extension has its own
+publisher identity in a pane, so its rows never replace another publisher's; give a second stream
+in the same pane a `--name`. See
+[Several publishers in one pane](control-protocol.md#several-publishers-in-one-pane).
+
 A service's stdin stays open while its client runs and reaches end of file once the client is gone,
 even if it was killed or crashed. Watch stdin and exit at end of file, so the service does not
 outlive a client that could not stop it. In that case, Linux also kills the service process, but
@@ -993,7 +999,7 @@ The repository includes these example extensions:
 - [PR dashboard](../examples/extensions/pr-dashboard/) — a supervised pull request monitor
 - [Docker](../examples/extensions/docker/) — container controls
 - [SSH tools](../examples/extensions/ssh-tools/) — SSH host discovery and pane launch
-- [Agent activity](../examples/extensions/agent-activity/) — mirrored pane status
+- [Agent activity](../examples/extensions/agent-activity/) — notifications and a picker for pane status
 - [Activity dashboard](../examples/extensions/activity-dashboard/) — general published activity
 - [Snippets](../examples/extensions/snippets/) — saved commands pasted into the focused pane
 - [Tasks](../examples/extensions/tasks/) — `just`, `make`, and `package.json` tasks, with a sidebar

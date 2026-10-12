@@ -130,6 +130,8 @@ impl ControlEndpoint {
 #[derive(Debug)]
 pub(crate) struct PublishCli {
     pub(super) socket: Option<PathBuf>,
+    /// The `publish` request, carrying the declared `--kind` and `--name`.
+    pub(super) command: control::ControlCommand,
 }
 
 #[derive(Debug)]
@@ -304,6 +306,15 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
             !value.starts_with('-') && !matches!(value, "sessions" | "worktrees")
         })),
         _ => 0,
+    }
+}
+
+/// The line printed under a parse error: the help of the namespace the arguments are in, since
+/// that is where the failed command's syntax is, or the top-level help otherwise.
+pub(crate) fn usage_hint(args: &[String]) -> String {
+    match help_namespace_index(args).map(|index| args[index].as_str()) {
+        Some(namespace) => format!("Run `rozi {namespace} --help` for usage."),
+        None => "Run `rozi --help` for usage.".to_string(),
     }
 }
 
@@ -524,17 +535,6 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
                 let command = &request.command;
-                if matches!(
-                    command,
-                    control::ControlCommand::AgentWait { .. }
-                        | control::ControlCommand::AgentPrompt { .. }
-                ) && !endpoint.is_session()
-                {
-                    return Err(
-                        "agent waits and prompts are server-owned; select a named session with --session"
-                            .to_string(),
-                    );
-                }
                 if endpoint.is_session()
                     && matches!(
                         command,
@@ -846,9 +846,36 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "publish" => {
-                reject_trailing_control_args(&mut iter, "publish")?;
+                let mut kind = crate::session::protocol::PublisherKind::default();
+                let mut name = None;
+                while let Some(arg) = iter.next() {
+                    let (flag, inline) = match arg.split_once('=') {
+                        Some((flag, value)) => (flag.to_string(), Some(value.to_string())),
+                        None => (arg.clone(), None),
+                    };
+                    match flag.as_str() {
+                        "--kind" | "--name" => {
+                            let value = inline
+                                .or_else(|| iter.next())
+                                .ok_or_else(|| format!("{flag} requires a value"))?;
+                            if flag == "--kind" {
+                                kind = crate::session::protocol::PublisherKind::parse(&value)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "unknown publish kind `{value}`; expected `agent` or `activity`"
+                                        )
+                                    })?;
+                            } else {
+                                name = Some(value);
+                            }
+                        }
+                        _ => return Err(format!("unexpected argument `{arg}` after publish")),
+                    }
+                }
+                let command = control::ControlCommand::Publish { kind, name };
                 return Ok(ParsedCli::Publish(PublishCli {
-                    socket: ui_stream_socket(&cli, socket, &control::ControlCommand::Publish)?,
+                    socket: ui_stream_socket(&cli, socket, &command)?,
+                    command,
                 }));
             }
             "subscribe" => {
@@ -3369,6 +3396,45 @@ mod tests {
     }
 
     #[test]
+    fn publish_declares_its_kind_and_name() {
+        let parse =
+            |args: &[&str]| parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
+        let publish = |args: &[&str]| match parse(args) {
+            Ok(ParsedCli::Publish(publish)) => publish.command,
+            other => panic!("wrong parse: {other:?}"),
+        };
+        assert_eq!(
+            publish(&["publish"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Activity,
+                name: None,
+            }
+        );
+        assert_eq!(
+            publish(&["publish", "--kind", "agent", "--name=sessions"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Agent,
+                name: Some("sessions".into()),
+            }
+        );
+        assert_eq!(
+            publish(&["publish", "--kind=activity"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Activity,
+                name: None,
+            }
+        );
+        for args in [
+            &["publish", "--kind", "robot"][..],
+            &["publish", "--kind"],
+            &["publish", "--name"],
+            &["publish", "extra"],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
     fn cli_control_commands_reject_launch_only_flags() {
         for args in [
             vec!["--config", "/tmp/other.toml", "list-panes"],
@@ -3439,6 +3505,8 @@ mod tests {
                 "3",
                 "--until",
                 "idle",
+                "--timeout",
+                "2m",
             ],
             vec![
                 "--remote",
@@ -3457,6 +3525,27 @@ mod tests {
                 "refused {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_parse_error_points_at_the_namespace_help() {
+        let hint = |list: &[&str]| {
+            usage_hint(
+                &list
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            hint(&["--session", "dev", "agents", "get", "3"]),
+            "Run `rozi agents --help` for usage."
+        );
+        assert_eq!(
+            hint(&["skill", "bogus"]),
+            "Run `rozi skill --help` for usage."
+        );
+        assert_eq!(hint(&["list-panes", "x"]), "Run `rozi --help` for usage.");
     }
 
     #[test]

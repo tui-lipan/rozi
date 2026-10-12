@@ -88,7 +88,7 @@ pub(crate) fn update_agent_status_edge(
 }
 
 pub(crate) struct AppliedPaneRuntime {
-    pub(crate) finished_rows: Vec<String>,
+    pub(crate) finished_rows: Vec<crate::session::protocol::RowKey>,
     pub(crate) edges: AgentEdges,
     pub(crate) previous_status: Option<crate::session::protocol::PaneStatus>,
     pub(crate) current_status: Option<crate::session::protocol::PaneStatus>,

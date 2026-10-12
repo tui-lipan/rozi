@@ -655,10 +655,12 @@ impl SessionServer {
                 // to the shell now sitting in its place - which is a different program.
                 pane.agent.clear_runtime_identity();
                 pane.agent.reset_detection();
+                pane.agent.retained_resume = None;
                 pane.runtime.detected_agent = None;
                 if let Some(integration) = pane.runtime.integration.take() {
                     pane.agent.retire_integration(integration.integration);
                 }
+                pane.agent.clear_row_reports();
                 pane.runtime.work_started_at = None;
                 // A resume that started and then failed leaves the same pane a resume that never
                 // started does: a shell. Its launch intent has to go with it, or the next snapshot

@@ -522,7 +522,7 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `keep_awake_while_agents_work` | bool | `false` | Keeps the host awake while agents work; see [sleep policy](sessions.md#keep-the-system-awake). |
+| `keep_awake_while_agents_work` | bool | `false` | Keeps the host awake while an agent is working; activities such as `rozi status` and generic published rows do not count. See [sleep policy](sessions.md#keep-the-system-awake). |
 | `autosave` | bool | `false` | Saves and restores the local layout, not running programs. |
 | `resurrect` | bool | `true` | Saves each named session's layout, commands, scrollback, and what to restart. |
 | `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was seen running, or an agent conversation it reported: `"auto"` runs it again, `"hold"` types it at the prompt without submitting it, `"never"` restores only the shell and records neither. |

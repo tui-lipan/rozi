@@ -58,7 +58,7 @@ Add `--remote <HOST>` to reach a named session on another machine:
 
 ```bash
 rozi --remote workbox --session dev list-panes
-rozi --remote workbox --session dev agents prompt --target 3 --wait idle "run the tests"
+rozi --remote workbox --session dev agents prompt --target 3 --wait quiescent --timeout 10m "run the tests"
 ```
 
 Every command a local session answers, a remote one answers the same way, with the same output and
@@ -168,8 +168,8 @@ attached.
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
-| `agents wait TARGET --until STATE [--timeout DURATION] [--format text\|json]` | Wait atomically for semantic state. | only |
-| `agents prompt TARGET [--wait STATE] [--timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | only |
+| `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
+| `agents prompt TARGET [--wait STATE --timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
@@ -198,7 +198,7 @@ attached.
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
-| `publish` | Publish Activity rows over stdin and receive activations on stdout. | no |
+| `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
 | `extensions status [--json]` | Report where the UI runs [placed extension processes](extensions.md#run-on-the-session-host). | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 
@@ -206,8 +206,9 @@ attached.
 `[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
 
 In the `agents` rows, `TARGET` is `--target ID` (a pane id) or `--ref JSON` (an exact agent
-reference from `agents list`). `agents wait` and `agents prompt` run inside the session server, so
-they need `--session` and are refused against a UI. See
+reference from `agents list`); a bare pane id is refused. `agents wait` and `agents prompt` run
+inside the session server. Against a UI, they are passed to the session on screen, or to the
+session a `--ref` names. See
 [Inspect and wait for agents](agents.md#inspect-and-wait-for-agents) for states, references, and
 integration reports.
 
@@ -230,8 +231,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 18,
-  "session_protocol": 26,
+  "schema": 19,
+  "session_protocol": 27,
   "capabilities": [
     "agent-waits",
     "attached-control",
@@ -245,6 +246,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "layout-control",
     "pane-control",
     "pane-reveal",
+    "publish-kind",
     "published-activity",
     "record-pane",
     "record-ui",
@@ -261,6 +263,10 @@ only concerns how two rozi binaries talk to each other.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](extensions.md#link-handlers) through their manifest.
+
+`publish-kind` means [`publish`](#published-activity) accepts `--kind` and `--name`: published
+rows are activities unless declared agents, and several publishers can share a pane. An older
+binary treats every published row as an agent and keeps one publisher per pane.
 
 `remote-extension-runtime` means the binary can run
 [placed extension processes](extensions.md#run-on-the-session-host), as a client and as a host. Both
@@ -612,7 +618,8 @@ rozi send-keys --literal C-c
 rozi send-keys -- -n hello
 ```
 
-`capture-pane` returns the visible grid by default. `--scrollback N` returns the last `N` retained
+`capture-pane` returns the visible grid by default, without the spaces that pad each row to the
+pane's width. `--scrollback N` returns the last `N` retained
 lines, `--scrollback full` returns all retained lines, and `--last-output` returns the output of
 the most recent command, using [shell integration](terminal.md). A full-scrollback reply can exceed
 1 MiB; the CLI accepts replies of that size.
@@ -802,7 +809,9 @@ To save a PNG by hand instead, use the **Screenshot pane** and **Screenshot UI**
 Destructive actions honor `[confirm]`.
 
 `status` reports a short free-form value for a pane. `working`, `blocked`, `done`, and `idle` have
-built-in presentation. Values are limited to 64 characters and reasons to 256, after display-text
+built-in presentation. A status is a generic activity: it appears in Activity, but does not make
+the pane an agent. In a pane where rozi detects an agent, it sets that agent's state. An agent
+integration reports through [`agents report`](agents.md#report-state-from-agent-hooks) instead. Values are limited to 64 characters and reasons to 256, after display-text
 sanitization. `--target` may come before or after the value, and is the only way to name a pane
 from a script that is not running inside one. The update is queued to the session server, so a
 successful reply does not guarantee that every client has drawn it yet.
@@ -886,8 +895,21 @@ An empty row list or a closed stream withdraws the rows. Use stable IDs. A proce
 live pane when the stream opens. A stream opened by an extension closes when rozi reloads its
 configuration or disables the extension.
 
-Published rows appear even when the pane has no detected agent. When a known agent publishes rows,
-rozi derives that agent's displayed state from the rows instead of from its screen.
+Published rows are activities by default: they appear in Activity, but not in the Agents view or
+`rozi agents`, and they do not keep the host awake. A program whose rows are agents, such as a
+coding-agent client listing its sessions, declares it:
+
+```sh
+rozi publish --kind agent
+```
+
+An agent publisher's rows are the pane's agents, and rozi derives a detected agent's displayed
+state from them instead of from its screen. An activity publisher never changes the pane's agent.
+
+Several publishers can share a pane, and each owns only its own rows. One caller that runs more
+than one publisher in a pane gives each a `--name`; a publisher restarted with the same name
+replaces its own earlier stream. See
+[Several publishers in one pane](control-protocol.md#several-publishers-in-one-pane).
 
 See [Published activity protocol](control-protocol.md#published-activity-stream) and
 [Sidebar](sidebar.md).

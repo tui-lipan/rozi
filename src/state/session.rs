@@ -52,7 +52,7 @@ pub struct PendingAgentJump {
     pub target: Option<crate::session::remote::RemoteTarget>,
     pub session: String,
     pub pane: PaneId,
-    pub row: Option<String>,
+    pub row: Option<crate::session::protocol::RowKey>,
 }
 
 pub struct PendingSessionAttach {

@@ -202,12 +202,15 @@ pub enum ClientMessage {
         request_id: u64,
         request: crate::control::ControlRequest,
     },
-    /// Replace the pane's published rows. An empty list withdraws them, and the pane falls
-    /// back to screen detection.
+    /// Replace one publisher's rows in the pane, leaving every other publisher's alone. An empty
+    /// list withdraws them; once no agent publisher has rows, the pane falls back to screen
+    /// detection.
     ReportPaneRows {
         pane_id: PaneId,
         local: bool,
         generation: u64,
+        publisher: String,
+        kind: super::PublisherKind,
         rows: Vec<PublishedRow>,
     },
     /// Re-read the agent definitions this session detects with.

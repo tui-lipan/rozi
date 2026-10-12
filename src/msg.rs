@@ -552,6 +552,9 @@ pub enum Msg {
     PublishStreamOpen {
         stream_id: u64,
         requested_pane: Option<crate::state::PaneId>,
+        source_session: Option<crate::session::protocol::SessionInstanceId>,
+        kind: crate::session::protocol::PublisherKind,
+        name: Option<String>,
         extension: Option<crate::config::ExtensionProvenance>,
         worker: Option<crate::state::WorkerId>,
         sender: std::sync::mpsc::SyncSender<String>,

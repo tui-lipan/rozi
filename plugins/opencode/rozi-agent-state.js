@@ -1,47 +1,151 @@
 import net from "node:net"
 
-const socket = process.env.ROZI_SOCKET
-const pane = Number.parseInt(process.env.ROZI_PANE ?? "", 10)
+// OpenCode is an agent, so this plugin declares itself one: it holds a `publish` stream with
+// `kind: "agent"` and publishes a single row with the aggregate state. `rozi status` would be a
+// generic activity, and `agent-report` only lands once rozi's screen detection has recognized
+// OpenCode in the pane - a declared agent publisher needs neither. Closing the stream (plugin
+// unload, OpenCode exit, or a crash) withdraws the row.
+const ROW_ID = "opencode"
+const ROW_TITLE = "OpenCode"
+const ACK_TIMEOUT_MS = 1000
 
-function publish(status, reason) {
-  if (!socket || !Number.isSafeInteger(pane)) return Promise.resolve()
+export class AgentPublisher {
+  #env
+  #connect
+  #connection
+  #ready
+  #latest
+  #closed = false
+  #onLost
 
-  return new Promise((resolve) => {
-    const connection = net.createConnection(socket)
-    const finish = () => {
-      connection.destroy()
-      resolve()
-    }
-    connection.setTimeout(1000, finish)
-    connection.once("error", resolve)
-    connection.once("connect", () => {
-      connection.end(`${JSON.stringify({
-        cmd: "set-status",
-        target: pane,
-        status,
-        reason,
-        source_pane: pane,
-      })}\n`)
+  // `onLost` runs when an open stream drops: rozi has withdrawn the row, so whatever the caller
+  // last published is no longer on screen and must be offered again, changed or not.
+  constructor({
+    env = process.env,
+    connect = (path) => net.createConnection(path),
+    onLost = () => {},
+  } = {}) {
+    this.#env = env
+    this.#connect = connect
+    this.#onLost = onLost
+  }
+
+  get pane() {
+    const pane = Number.parseInt(this.#env.ROZI_PANE ?? "", 10)
+    return Number.isSafeInteger(pane) ? pane : undefined
+  }
+
+  // Publish one aggregate state. Resolves to whether the stream is open and carried it, so a
+  // caller can offer the same state again on its next event after rozi was unreachable.
+  async publish({ status, reason }) {
+    this.#latest = { status, reason }
+    if (this.#closed) return false
+    this.#ready ??= this.#open()
+    const open = await this.#ready
+    if (open) this.#write()
+    return open
+  }
+
+  close() {
+    this.#closed = true
+    this.#connection?.end()
+    this.#connection = undefined
+    this.#ready = undefined
+  }
+
+  #request() {
+    const request = { cmd: "publish", kind: "agent", name: ROW_ID, source_pane: this.pane }
+    if (this.#env.ROZI_SESSION_INSTANCE) request.source_session = this.#env.ROZI_SESSION_INSTANCE
+    return request
+  }
+
+  #open() {
+    const socket = this.#env.ROZI_SOCKET
+    if (!socket || this.pane === undefined) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      let acknowledged = false
+      let buffer = ""
+      const connection = this.#connect(socket)
+      const settle = (open) => {
+        clearTimeout(timer)
+        resolve(open)
+      }
+      let opened = false
+      const drop = () => {
+        if (this.#connection === connection) {
+          this.#connection = undefined
+          this.#ready = undefined
+        }
+        if (!acknowledged) settle(false)
+        acknowledged = true
+        if (opened && !this.#closed) {
+          opened = false
+          this.#onLost()
+        }
+      }
+      const timer = setTimeout(() => {
+        connection.destroy()
+        drop()
+      }, ACK_TIMEOUT_MS)
+      this.#connection = connection
+      connection.once("connect", () => connection.write(`${JSON.stringify(this.#request())}\n`))
+      // Keep reading for the stream's whole life: rozi drops a publisher that stops reading.
+      // Activations need no answer, since rozi focuses the pane and there is only one row.
+      connection.on("data", (chunk) => {
+        if (acknowledged) return
+        buffer += chunk
+        const end = buffer.indexOf("\n")
+        if (end < 0) return
+        acknowledged = true
+        let ok = false
+        try {
+          ok = JSON.parse(buffer.slice(0, end)).ok === true
+        } catch {}
+        if (!ok) {
+          connection.destroy()
+          if (this.#connection === connection) {
+            this.#connection = undefined
+            this.#ready = undefined
+          }
+        }
+        opened = ok
+        settle(ok)
+      })
+      connection.on("error", drop)
+      connection.on("close", drop)
     })
-    connection.once("close", resolve)
-  })
+  }
+
+  #write() {
+    const latest = this.#latest
+    if (!latest || !this.#connection) return
+    const row = { id: ROW_ID, title: ROW_TITLE, status: latest.status, active: true }
+    if (latest.reason) row.reason = latest.reason
+    this.#connection.write(`${JSON.stringify({ rows: [row] })}\n`)
+  }
 }
 
-export const RoziAgentState = async () => {
+// The plugin's hooks, over an injectable publisher so the event path is testable end to end.
+export async function agentStateHooks(options = {}) {
   const state = new AgentState()
-  await publish("idle")
+  // A dropped stream withdrew the row, so the next event republishes even an unchanged state.
+  const publisher = new AgentPublisher({ ...options, onLost: () => state.forget() })
+  if (await publisher.publish({ status: "idle" })) state.settle()
 
   return {
     event: async ({ event }) => {
       const update = reduceAgentEvent(state, event)
-      if (update) await publish(update.status, update.reason)
+      // An unpublished state is forgotten so the next event offers the aggregate again.
+      if (update && !(await publisher.publish(update))) state.forget()
     },
     dispose: async () => {
       state.clear()
-      await publish("idle")
+      publisher.close()
     },
   }
 }
+
+export const RoziAgentState = async () => agentStateHooks()
 
 const BLOCKED_REASON = { permission: "permission required", question: "answer required" }
 
@@ -153,6 +257,11 @@ export class AgentState {
     this.#requests.delete(sessionID)
     this.#busy.delete(sessionID)
     this.#errored.delete(sessionID)
+  }
+
+  // Drop what the pane was last told, so the next settle reports the aggregate even unchanged.
+  forget() {
+    this.#published = undefined
   }
 
   clear() {

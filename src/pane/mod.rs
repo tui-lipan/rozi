@@ -46,7 +46,16 @@ pub(crate) fn capture_screen(
         }
     }
     let text = match scrollback {
-        None => screen.render_snapshot().text.to_string(),
+        // Snapshot rows are padded to the pane's width; scrollback exports are not. Trim them so
+        // a wide pane's capture is its text rather than mostly spaces, and both forms agree.
+        None => {
+            let snapshot = screen.render_snapshot().text.to_string();
+            snapshot
+                .split('\n')
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
         Some(CaptureScrollback::Lines(lines)) => {
             let total = screen.total_text_lines();
             screen.export_text(total.saturating_sub(lines), total)
@@ -267,9 +276,10 @@ pub struct TerminalPane {
     pub last_run: Option<std::time::Duration>,
     /// Logical agents or activities this pane's program published for itself; empty for every other pane.
     pub published_rows: Vec<crate::session::protocol::PublishedRow>,
-    /// Per-row presentation state the server does not own, keyed by row id. Entries for ids the
-    /// publisher has dropped are pruned whenever rows are applied.
-    pub published_row_ui: std::collections::HashMap<String, PublishedRowUiState>,
+    /// Per-row presentation state the server does not own, keyed by publisher and row id. Entries
+    /// for rows their publisher has dropped are pruned whenever rows are applied.
+    pub published_row_ui:
+        std::collections::HashMap<crate::session::protocol::RowKey, PublishedRowUiState>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -369,9 +379,12 @@ fn row_run_age(started_at: Option<u64>) -> Option<std::time::Duration> {
     ))
 }
 
-fn previous_started(rows: &[crate::session::protocol::PublishedRow], id: &str) -> Option<u64> {
+fn previous_started(
+    rows: &[crate::session::protocol::PublishedRow],
+    key: &crate::session::protocol::RowKey,
+) -> Option<u64> {
     rows.iter()
-        .find(|row| row.id == id)
+        .find(|row| row.has_key(key))
         .and_then(|row| row.work_started_at)
 }
 
@@ -914,7 +927,7 @@ impl TerminalPane {
     ///
     /// Replace the pane's published rows, recording each row's finish edge.
     ///
-    /// Returns the ids of rows that just finished a run. Their alerts are raised per row rather
+    /// Returns the keys of rows that just finished a run. Their alerts are raised per row rather
     /// than per pane: a background tab finishing is news even while the pane is focused, because
     /// focusing the pane only ever showed the row the publisher had on screen.
     /// Edges are read from each row's *effective* status, with `integration` (the pane's report
@@ -924,14 +937,15 @@ impl TerminalPane {
         &mut self,
         rows: Vec<crate::session::protocol::PublishedRow>,
         integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
-    ) -> Vec<String> {
+    ) -> Vec<crate::session::protocol::RowKey> {
         let previous = self.effective_rows();
         self.agent_integration = integration;
         let mut finished = Vec::new();
         for raw in &rows {
             let row =
                 crate::session::protocol::effective_row(raw, self.agent_integration.as_deref());
-            let before = previous.iter().find(|candidate| candidate.id == row.id);
+            let key = row.key();
+            let before = previous.iter().find(|candidate| candidate.has_key(&key));
             let was_working = before.is_some_and(|before| {
                 before
                     .status
@@ -942,18 +956,18 @@ impl TerminalPane {
                 .status
                 .trim()
                 .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING);
-            let entry = self.published_row_ui.entry(row.id.clone()).or_default();
+            let entry = self.published_row_ui.entry(key.clone()).or_default();
             if now_working {
                 entry.finished_unseen = false;
             } else if was_working && !status_is_blocked(&row.status) {
-                entry.last_run = row_run_age(previous_started(&previous, &row.id));
+                entry.last_run = row_run_age(previous_started(&previous, &key));
                 entry.finished_unseen = true;
-                finished.push(row.id.clone());
+                finished.push(key);
             }
         }
         // A publisher that closed a tab should not leave its row's pulse behind.
         self.published_row_ui
-            .retain(|id, _| rows.iter().any(|s| &s.id == id));
+            .retain(|key, _| rows.iter().any(|row| row.has_key(key)));
         self.published_rows = rows;
         finished
     }
@@ -1091,15 +1105,16 @@ mod tests {
     }
 
     #[test]
-    fn capture_screen_keeps_text_captures_as_they_were() {
+    fn capture_screen_trims_the_padding_of_visible_rows() {
         let mut screen = TerminalScreen::new(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
+        assert!(screen.render_snapshot().text.starts_with("red   "));
         let content = capture_screen(&mut screen, None, CaptureRender::Text, None, false)
             .expect("text capture");
         assert_eq!(
             content,
             CaptureContent::Text {
-                text: screen.render_snapshot().text.to_string()
+                text: "red\n".to_string()
             }
         );
     }

@@ -152,7 +152,7 @@ pub struct SessionServer {
     input_locked: bool,
     allow_takeover: bool,
     clients: Vec<ClientConn>,
-    agent_waits: HashMap<ClientId, waits::PendingAgentWait>,
+    agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     /// Pane recordings running now, by id.
     recordings: recordings::Recordings,
@@ -401,13 +401,17 @@ pub struct AgentScratch {
     pub summary_changed_at: u64,
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
-    references: HashMap<Option<String>, TrackedAgentReference>,
+    references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
     next_incarnation: u64,
     /// Launch whose screen-detected reference was last synchronized.
     reference_launch: u64,
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
     retired_integrations: HashSet<String>,
+    /// Hook reports from processes other than the pane's own agent, by integration token. Each
+    /// speaks for the published row whose reporting session it names, such as a conversation a
+    /// client sent to the background; see [`runtime::RowReport`].
+    row_reports: HashMap<String, runtime::RowReport>,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group
@@ -453,6 +457,23 @@ pub struct AgentScratch {
         crate::session::protocol::DetectedAgentState,
         std::time::Instant,
     )>,
+    /// The conversation this pane would resume, kept when the published rows that named it were
+    /// withdrawn because their window left the session. See [`RetainedResume`].
+    pub retained_resume: Option<RetainedResume>,
+}
+
+/// A native conversation a pane's agent rows named, outliving those rows.
+///
+/// Published rows belong to the window whose stream reported them and go when it leaves, but the
+/// agent and its conversation are still running in the pane. Detaching the last window snapshots
+/// the session, and that snapshot must still say which conversation to reopen. Kept only until
+/// something says the conversation is no longer the pane's: live agent rows arriving again, the
+/// shell returning to its prompt, a different agent appearing, or the program being replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetainedResume {
+    pub agent: String,
+    pub session: String,
+    pub reported_at: u64,
 }
 
 #[derive(Debug)]

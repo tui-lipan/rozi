@@ -302,7 +302,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
-        ControlCommand::Publish => {
+        ControlCommand::Publish { .. } => {
             ControlResponse::error("publish is handled by the control listener")
         }
         ControlCommand::Pick { .. } => {
@@ -341,10 +341,13 @@ pub(crate) fn handle_control_request(
             status,
             reason,
         ),
-        ControlCommand::AgentWait { .. } => ControlResponse::error_with(
-            ControlErrorCode::Unsupported,
-            "agent wait is server-owned; select a named session with --session",
-        ),
+        ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
+            return crate::ops::attached_control::forward_agent(
+                ctx,
+                envelope.request,
+                envelope.reply,
+            );
+        }
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
@@ -382,10 +385,6 @@ pub(crate) fn handle_control_request(
         ControlCommand::RecordUiMark { label } => {
             crate::ops::ui_recording::mark_command(ctx, &label)
         }
-        ControlCommand::AgentPrompt { .. } => ControlResponse::error_with(
-            ControlErrorCode::Unsupported,
-            "agent prompt is server-owned; select a named session with --session",
-        ),
         ControlCommand::AgentReport {
             target,
             agent,
@@ -449,10 +448,14 @@ impl PaneInfo {
         session: &str,
         session_instance: Option<&crate::session::protocol::SessionInstanceId>,
     ) -> Self {
-        let runtime = pane
-            .agent_runtimes()
-            .into_iter()
-            .find(|runtime| runtime.reference.slot.is_none());
+        // The agent a pane id names: its own, or the published row on screen.
+        let runtime = match crate::session::protocol::pane_agent(
+            pane.agent_runtimes(),
+            &pane.terminal.published_rows,
+        ) {
+            crate::session::protocol::PaneAgent::One(runtime) => Some(runtime),
+            _ => None,
+        };
         Self {
             session: session.to_string(),
             id: pane.id,
@@ -1011,13 +1014,13 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                     reason: runtime.reason,
                     cwd: crate::session::protocol::occupant_cwd(
                         &pane.terminal.published_rows,
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                         pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
                     ),
                     native_session: crate::session::protocol::occupant_native_session(
                         &pane.terminal.published_rows,
                         pane.terminal.agent_integration.as_deref(),
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                     ),
                     reference: runtime.reference,
                     source: runtime.source,
@@ -1040,22 +1043,43 @@ fn resolve_agent(
     let agents = list_agents(ctx);
     match target {
         crate::control::AgentTarget::Pane(pane_id) => {
-            let mut matching = agents.into_iter().filter(|agent| agent.pane == *pane_id);
-            let Some(agent) = matching.next() else {
+            let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, *pane_id) else {
                 return Err(ControlResponse::error_with(
-                    ControlErrorCode::AgentGone,
-                    format!("pane {pane_id} has no agent"),
+                    ControlErrorCode::PaneNotFound,
+                    format!("pane {pane_id} does not exist"),
                 ));
             };
-            if matching.next().is_some() {
-                return Err(ControlResponse::error_with(
-                    ControlErrorCode::TargetRequired,
-                    format!(
-                        "pane {pane_id} has multiple agent activities; use an exact agent reference"
-                    ),
-                ));
-            }
-            Ok(agent)
+            let chosen = match crate::session::protocol::pane_agent(
+                pane.agent_runtimes(),
+                &pane.terminal.published_rows,
+            ) {
+                crate::session::protocol::PaneAgent::One(runtime) => runtime.reference,
+                crate::session::protocol::PaneAgent::Missing => {
+                    return Err(ControlResponse::error_with(
+                        ControlErrorCode::AgentGone,
+                        format!(
+                            "pane {pane_id} has no agent; `agents wait` waits for one to appear"
+                        ),
+                    ));
+                }
+                crate::session::protocol::PaneAgent::NoneOnScreen => {
+                    return Err(ControlResponse::error_with(
+                        ControlErrorCode::TargetRequired,
+                        format!(
+                            "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
+                        ),
+                    ));
+                }
+            };
+            agents
+                .into_iter()
+                .find(|agent| agent.reference == chosen)
+                .ok_or_else(|| {
+                    ControlResponse::error_with(
+                        ControlErrorCode::AgentGone,
+                        format!("pane {pane_id} has no agent in this session"),
+                    )
+                })
         }
         crate::control::AgentTarget::Ref(reference) => {
             let current_instance = ctx.state.current().session_instance.as_ref();
@@ -1082,7 +1106,7 @@ fn validate_agent_input_reference(
     ctx: &Context<AppRoot>,
     reference: &crate::session::protocol::AgentRef,
 ) -> std::result::Result<(), ControlResponse> {
-    let Some(slot) = reference.slot.as_deref() else {
+    let Some(slot) = reference.slot.as_ref() else {
         return Ok(());
     };
     let active = crate::pane::lifecycle::find_pane(&ctx.state, reference.pane.pane_id)
@@ -1090,9 +1114,10 @@ fn validate_agent_input_reference(
             pane.terminal
                 .published_rows
                 .iter()
-                .find(|row| row.id == slot)
+                .find(|row| row.has_key(slot))
         })
         .is_some_and(|row| row.active);
+    let slot = &slot.id;
     if active {
         Ok(())
     } else {

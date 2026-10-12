@@ -184,7 +184,8 @@ test("publisher launches the matching CLI, hydrates families, coalesces and acti
   t.after(stop)
   await tick()
   assert.equal(b.launches[0][0], env.ROZI_BIN)
-  assert.deepEqual(b.launches[0][1], ["publish"])
+  // OpenCode sessions are agents, declared as such rather than left to the `activity` default.
+  assert.deepEqual(b.launches[0][1], ["publish", "--kind", "agent", "--name", "opencode"])
   assert.equal(b.launches[0][2].env, env)
   assert.equal(b.writes.length, 1)
   assert.ok(f.syncs.some(([kind, id]) => kind === "permission" && id === "child"))

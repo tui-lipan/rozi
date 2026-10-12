@@ -317,7 +317,8 @@
 # Local layout autosave: write the layout on quit, restore it next launch. Restores layout
 # and launch intent only, unlike a named session, which keeps live PTY state.
 #autosave = false
-# Keep the host awake while agents work, including after detaching.
+# Keep the host awake while agents work, including after detaching. Only agents count: a
+# `rozi status` or a generic published row is an activity and lets the host sleep.
 #keep_awake_while_agents_work = false
 # Snapshot named sessions so layout, commands, and scrollback survive a server restart.
 #resurrect = true

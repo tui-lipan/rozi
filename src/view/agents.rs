@@ -132,7 +132,11 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
     let here_session = state.current().session_name.clone();
     let mut rows = Vec::new();
     if let Some(session) = here_session.as_deref() {
-        for row in crate::view::sidebar::agents::agent_rows(state) {
+        // The Activity tab's rows, minus its activities: only the agent projection is listed.
+        for row in crate::view::sidebar::agents::agent_rows(state)
+            .into_iter()
+            .filter(|row| row.agent)
+        {
             let place = row_place(&row);
             // A published row's activity is its title, the one thing naming which of a pane's
             // sessions it is. A lone agent's is its live terminal title, which only adds churn
@@ -143,7 +147,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 place,
                 location: AgentLocation::Here {
                     pane: row.pane_id,
-                    row: row.slot.as_ref().map(|slot| slot.id.clone()),
+                    row: row.slot.as_ref().map(|slot| slot.key.clone()),
                 },
                 agent: row.title,
                 host: here_host.clone(),
@@ -308,7 +312,7 @@ mod tests {
         let row = GlobalAgentRow {
             location: AgentLocation::Here {
                 pane: 1,
-                row: Some("fix".into()),
+                row: Some(crate::session::protocol::RowKey::new("sessions", "fix")),
             },
             agent: "Claude Code #2".into(),
             host: None,
@@ -339,6 +343,8 @@ mod tests {
             repository: Some("/x/rozi".into()),
             finished_unseen: false,
             slot: None,
+            agent: true,
+            order: 0,
         };
         assert_eq!(
             row_place(&agent_row).as_deref(),

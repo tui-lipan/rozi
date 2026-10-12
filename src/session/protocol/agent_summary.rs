@@ -23,9 +23,9 @@ pub struct AgentSummary {
     /// Which published row this is, for a pane running several agents. `None` for the one-row-per-
     /// pane case every agent that publishes nothing takes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row: Option<String>,
-    /// Detected agent id (`claude`, `codex`), or `reported` for a pane that named itself through
-    /// the status API without being recognized on screen.
+    pub row: Option<super::RowKey>,
+    /// Agent id: the detected or reported definition (`claude`, `codex`), or for an agent publisher
+    /// in a pane with neither, the row's own id.
     pub agent: String,
     /// Display name, already disambiguated per row where a pane publishes several.
     pub label: String,

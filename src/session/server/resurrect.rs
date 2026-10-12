@@ -317,17 +317,49 @@ struct SnapshotAgentResume {
 
 /// The conversation a restored pane resumes.
 ///
-/// The active published row wins when it names one: a client running several conversations
-/// shows that one, and its hooks may still be reporting on a conversation it has since switched
-/// away from. Otherwise the pane's integration report decides, as it always has.
+/// What the pane's live state names, from [`live_agent_resume`], ahead of a conversation retained
+/// from agent rows whose window has since left - unless no agent rows are listed and the live
+/// answer is a hook report no newer than those rows, which they had already outranked.
 fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
+    let live = live_agent_resume(pane);
+    let retained = pane.agent.retained_resume.as_ref();
+    let resume = match (live, retained) {
+        (Some(live), Some(retained))
+            if !pane
+                .runtime
+                .rows
+                .iter()
+                .any(protocol::PublishedRow::is_agent)
+                && live.reported_at <= retained.reported_at =>
+        {
+            retained.clone()
+        }
+        (Some(live), _) => live,
+        (None, retained) => retained?.clone(),
+    };
+    Some(SnapshotAgentResume {
+        agent: resume.agent,
+        session: resume.session,
+        reported_at: resume.reported_at,
+    })
+}
+
+/// Which conversation a snapshot taken now would resume: the agent and its session, without the
+/// report time, which moves on its own. A change in this is a change the snapshot must catch.
+pub(super) fn resume_target(pane: &ServerPane) -> Option<(String, String)> {
+    agent_resume(pane).map(|resume| (resume.agent, resume.session))
+}
+
+/// The conversation the pane's live state names.
+///
+/// The pane's active agent row wins when it names one: a client running several conversations
+/// shows that one, and its hooks may still be reporting on a conversation it has since switched
+/// away from. Otherwise the pane's integration report decides, as it always has. An activity row
+/// is never a resume candidate, whatever it names; see [`protocol::active_agent_row`].
+pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
     let report = pane.runtime.integration.as_deref();
-    let active = pane
-        .runtime
-        .rows
-        .iter()
-        .find(|row| row.active)
-        .and_then(|row| row.native_session.clone());
+    let active =
+        protocol::active_agent_row(&pane.runtime.rows).and_then(|row| row.native_session.clone());
     if let Some(session) = active {
         let agent = report
             .map(|report| report.identity.id.clone())
@@ -342,14 +374,14 @@ fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
             .map_or_else(crate::runtime_metrics::unix_time_millis, |report| {
                 report.reported_at_unix_ms
             });
-        return Some(SnapshotAgentResume {
+        return Some(RetainedResume {
             agent,
             session,
             reported_at,
         });
     }
     report.and_then(|report| {
-        Some(SnapshotAgentResume {
+        Some(RetainedResume {
             agent: report.identity.id.clone(),
             session: report.native_session.clone()?,
             reported_at: report.reported_at_unix_ms,
@@ -1660,6 +1692,234 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// The last window detaching withdraws its publishers' rows, then snapshots the session. The
+    /// agent and its conversation are still running, so the snapshot must still name the
+    /// conversation the active agent row did - until the pane shows the conversation is over.
+    #[test]
+    fn detaching_the_publishing_window_keeps_the_conversation_to_resume() {
+        let mut server = SessionServer::new_named_with_settings(
+            "native-agent-detach",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        let row = |publisher: &str, kind, id: &str, active: bool| protocol::PublishedRow {
+            live_session: None,
+            reported: false,
+            publisher: publisher.into(),
+            kind,
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("native-{id}")),
+        };
+        pane.runtime.rows = vec![
+            row("3/sessions", protocol::PublisherKind::Agent, "left", false),
+            row("3/sessions", protocol::PublisherKind::Agent, "shown", true),
+            // Another window's activity publisher stays; it is never a resume candidate.
+            row(
+                "4/publish:prs",
+                protocol::PublisherKind::Activity,
+                "pr",
+                true,
+            ),
+        ];
+        server.panes.insert(1, pane);
+
+        let messages = server.withdraw_client_rows(3);
+        assert_eq!(messages.len(), 1, "the departing window's rows went");
+        assert_eq!(server.panes[&1].runtime.rows.len(), 1);
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let resume = job.meta.panes[0]
+            .agent_resume
+            .as_ref()
+            .expect("the conversation outlives its window's rows");
+        assert_eq!(resume.agent, "claude");
+        assert_eq!(resume.session, "native-shown");
+
+        // Live agent rows arriving again speak for the pane instead.
+        let pane = server.panes.get_mut(&1).unwrap();
+        super::super::runtime::replace_pane_rows(
+            pane,
+            vec![row(
+                "5/sessions",
+                protocol::PublisherKind::Agent,
+                "new",
+                true,
+            )],
+        );
+        assert!(pane.agent.retained_resume.is_none());
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        assert_eq!(
+            job.meta.panes[0].agent_resume.as_ref().unwrap().session,
+            "native-new"
+        );
+    }
+
+    fn agent_row(publisher: &str, id: &str, active: bool) -> protocol::PublishedRow {
+        protocol::PublishedRow {
+            publisher: publisher.into(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("native-{id}")),
+            live_session: None,
+            reported: false,
+        }
+    }
+
+    #[cfg(unix)]
+    fn persisted_resume(root: &std::path::Path, session: &str) -> Option<String> {
+        let meta: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(session).join("meta.json")).unwrap())
+                .unwrap();
+        meta["panes"][0]["agent_resume"]["session"]
+            .as_str()
+            .map(str::to_string)
+    }
+
+    /// A publisher switching conversation dirties the snapshot even when the pane prints nothing
+    /// afterwards, and so does its window leaving: the snapshot the normal scheduling path then
+    /// writes names the conversation the publisher switched to, not the one persisted before.
+    #[cfg(unix)]
+    #[test]
+    fn a_conversation_switch_and_its_windows_departure_reach_the_persisted_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-switch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let name = "native-agent-switch";
+        let mut server = SessionServer::new_named_with_settings(
+            name,
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::from_secs(60 * 60),
+                ..ServerSettings::default()
+            },
+        );
+        let (client, _stream) = super::super::tests::attach_client(&mut server);
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        let generation = pane.generation;
+        server.panes.insert(1, pane);
+        let publish = |server: &mut SessionServer, rows| {
+            server
+                .report_pane_rows(
+                    client,
+                    1,
+                    generation,
+                    false,
+                    super::super::runtime::PanePublisher {
+                        id: "sessions".into(),
+                        kind: protocol::PublisherKind::Agent,
+                    },
+                    rows,
+                )
+                .expect("rows accepted")
+        };
+
+        publish(&mut server, vec![agent_row("", "a", true)]);
+        assert!(server.snapshot_dirty());
+        server.snapshot_before_shutdown().expect("first snapshot");
+        assert!(!server.snapshot_dirty());
+        assert_eq!(persisted_resume(&root, name).as_deref(), Some("native-a"));
+
+        // An activity-like change that keeps the conversation does not dirty the snapshot.
+        let mut retitled = agent_row("", "a", true);
+        retitled.title = "renamed".into();
+        publish(&mut server, vec![retitled]);
+        assert!(!server.snapshot_dirty(), "the conversation did not change");
+
+        // The publisher switches conversation; nothing else happens in the pane.
+        publish(
+            &mut server,
+            vec![agent_row("", "a", false), agent_row("", "b", true)],
+        );
+        assert!(server.snapshot_dirty(), "the switch dirties the snapshot");
+        server
+            .snapshot_before_shutdown()
+            .expect("snapshot after the switch");
+        assert_eq!(persisted_resume(&root, name).as_deref(), Some("native-b"));
+
+        // The window leaves: its rows go, the conversation is retained, and the retained fact
+        // is what the next scheduled snapshot persists.
+        server.snapshot_generation = server.dirty_generation;
+        server.withdraw_client_rows(client);
+        assert!(server.panes[&1].agent.retained_resume.is_some());
+        assert_eq!(
+            server
+                .panes
+                .get_mut(&1)
+                .and_then(|pane| resume_target(pane))
+                .map(|(_, session)| session)
+                .as_deref(),
+            Some("native-b")
+        );
+        server
+            .snapshot_before_shutdown()
+            .expect("snapshot after the departure");
+        assert_eq!(persisted_resume(&root, name).as_deref(), Some("native-b"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A departed window's conversation never outlives an agent publisher that superseded it:
+    /// when window A leaves while window B still publishes agent rows, nothing of A is retained,
+    /// so B withdrawing later cannot bring A's conversation back.
+    #[test]
+    fn a_surviving_agent_publisher_supersedes_a_departed_windows_conversation() {
+        let mut server = SessionServer::new_named_with_settings(
+            "native-agent-two-windows",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        // A published first, so its active row is the pane's; B's row names no conversation.
+        let mut b = agent_row("4/sessions", "b", true);
+        b.native_session = None;
+        pane.runtime.rows = vec![agent_row("3/sessions", "a", true), b];
+        server.panes.insert(1, pane);
+        let resumed =
+            |server: &SessionServer| resume_target(&server.panes[&1]).map(|(_, session)| session);
+        assert_eq!(resumed(&server).as_deref(), Some("native-a"));
+
+        server.withdraw_client_rows(3);
+        assert!(server.panes[&1].agent.retained_resume.is_none());
+        assert_eq!(resumed(&server), None, "B speaks for the pane now");
+
+        server.withdraw_client_rows(4);
+        assert_eq!(resumed(&server), None, "A never comes back");
+    }
+
     #[test]
     fn snapshot_records_only_explicit_native_agent_session_facts() {
         let mut server = SessionServer::new_named_with_settings(
@@ -1709,6 +1969,10 @@ mod tests {
         pane.runtime.rows = ["left-behind", "on-screen"]
             .into_iter()
             .map(|id| protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: id.into(),
                 title: id.into(),
                 status: "idle".into(),
@@ -1720,10 +1984,26 @@ mod tests {
                 native_session: Some(format!("native-{id}")),
             })
             .collect();
+        // An activity publisher that published first, with an active row naming a "session" of
+        // its own, is never what a restore resumes.
+        let mut activity = pane.runtime.rows[1].clone();
+        activity.publisher = "publish:prs".into();
+        activity.kind = crate::session::protocol::PublisherKind::Activity;
+        activity.native_session = Some("not-a-conversation".into());
+        pane.runtime.rows.insert(0, activity.clone());
         let job = server.capture_snapshot(Instant::now()).expect("capture");
         let resume = job.meta.panes[0].agent_resume.as_ref().expect("row fact");
         assert_eq!(resume.agent, "claude");
         assert_eq!(resume.session, "native-on-screen");
+
+        // With only the activity row left, the hooks' report decides again.
+        server.panes.get_mut(&1).unwrap().runtime.rows = vec![activity];
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let resume = job.meta.panes[0]
+            .agent_resume
+            .as_ref()
+            .expect("report fact");
+        assert_eq!(resume.session, "opaque-session-123");
 
         server.settings.resurrect_agents = false;
         let private_job = server.capture_snapshot(Instant::now()).expect("capture");

@@ -513,29 +513,38 @@ pub(crate) fn maybe_notify_pane_status(
 /// the pane shows, which is exactly not the row that finished.
 pub(crate) fn finished_rows_notice(
     pane: &crate::state::Pane,
-    finished: &[String],
+    finished: &[crate::session::protocol::RowKey],
 ) -> Option<String> {
-    let runtimes = pane.agent_runtimes();
-    let names: Vec<String> = pane
-        .terminal
-        .published_rows
+    let occupants = pane.occupants();
+    let rows = &pane.terminal.published_rows;
+    let names: Vec<String> = rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| !row.active && finished.contains(&row.id))
+        .filter(|(_, row)| !row.active && finished.iter().any(|key| row.has_key(key)))
         .map(|(index, row)| {
             let title = row.title.trim();
             if !title.is_empty() {
                 return title.to_string();
             }
-            // Only a detected agent's identity is a name; without one, a published row's runtime
-            // identity is built from the row itself and would be its ID.
-            let agent = pane.terminal.detected_agent.is_some().then(|| {
-                runtimes
-                    .iter()
-                    .find(|runtime| runtime.reference.slot.as_deref() == Some(row.id.as_str()))
-            });
-            match agent.flatten() {
-                Some(runtime) => format!("{} #{}", runtime.identity.label, index + 1),
+            // Only a detected agent's identity is a name, and only an agent row takes it on;
+            // without one, a published row's identity is built from the row itself and would be
+            // its ID.
+            let agent = pane
+                .terminal
+                .detected_agent
+                .is_some()
+                .then(|| {
+                    occupants
+                        .iter()
+                        .find(|occupant| occupant.slot.as_ref().is_some_and(|key| row.has_key(key)))
+                        .and_then(|occupant| occupant.agent.as_ref())
+                })
+                .flatten();
+            match agent {
+                Some(identity) => {
+                    let number = rows[..index].iter().filter(|row| row.is_agent()).count() + 1;
+                    format!("{} #{number}", identity.label)
+                }
                 None => pane.display_title(pane.terminal.title()),
             }
         })

@@ -271,9 +271,9 @@ The row belongs to a pane:
   pin the row to a specific pane, start the publisher with `ROZI_PANE` set to a pane ID from
   `list-panes`.
 
-While a pane has published rows, they decide the displayed state of any agent rozi has detected in
-that pane, instead of what is on screen, until the publisher sends an empty snapshot or
-disconnects. A publisher in a pane with no detected agent still gets its Activity row.
+The row is an activity, not an agent: it never changes the state or name of an agent rozi detects
+in the same pane, and it stays out of the Agents view and `rozi agents`. Give the publisher a
+`--name`, such as `publish --name cargo`, if the same pane runs another anonymous publisher.
 
 ## Make published rows clickable
 
@@ -311,7 +311,7 @@ produce_rows() {
 }
 
 produce_rows |
-    "$@" publish |
+    "$@" publish --name prs |
     while IFS= read -r message; do
         number=$(printf '%s\n' "$message" | jq -r '.activate // empty' | awk -F- '{print $2}')
         [ -n "$number" ] || continue

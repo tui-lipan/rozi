@@ -54,12 +54,10 @@ fn spawn_cli(socket: &Path, generation: &str, args: &[&str]) -> Child {
         .env("ROZI_SOCKET", socket)
         .env("ROZI_EXTENSION", EXTENSION_ID)
         .env(GENERATION_ENV, generation)
-        // A developer running the suite from inside rozi has ROZI_PANE set, and `publish` forwards
-        // it as the request's source pane. That pane id belongs to the developer's own session, not
-        // to the isolated app this test builds, so the server rejects the request with "pane N not
-        // found" and the generation assertion fails for a reason that has nothing to do with
-        // generations. CI has no ambient pane, which is why this only ever failed locally.
+        // The developer's pane and session belong to the surrounding rozi, not this isolated app.
+        // Publishing must use the test app's focused pane instead of those inherited identities.
         .env_remove("ROZI_PANE")
+        .env_remove("ROZI_SESSION_INSTANCE")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

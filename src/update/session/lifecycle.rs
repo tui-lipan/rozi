@@ -363,6 +363,9 @@ pub(crate) fn attached(
     // and typing goes nowhere until the pane is clicked. Requested before the follow prompt, which
     // takes the keyboard for itself and restores it to the pane on dismissal.
     crate::ops::focus::request_current_pane_focus(ctx);
+    // A reconnect is a new client to the server, which withdrew the rows this client's publish
+    // streams had reported under its old identity.
+    crate::ops::published_rows::resend_rows(&ctx.state);
 
     let named = !crate::state::is_ephemeral_session_name(&session);
     if !populated {

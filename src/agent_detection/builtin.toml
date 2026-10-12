@@ -151,6 +151,15 @@ argv = ["claude", "--resume", "{session}"]
 state = "blocked"
 screen = { regex = true, any_of = ["(?m)^\\s*❯\\s*\\d+\\. "] }
 
+# Claude 2.1.29x draws its trust dialog without numbers - `❯ No, exit` above `Yes, I trust this
+# folder` - so the option-cursor rule above misses it, and an unanswered dialog read as idle. Its
+# confirm hint is the dialog's own last line; footer-scoped so a transcript quoting it cannot pin
+# the pane blocked.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["Enter to confirm · Esc to cancel"] }
+
 # Claude keeps accepting a queued or steering prompt while a turn streams. As soon as the user
 # types, the composer grows and its compact status row drops `esc to interrupt`; even a one-line
 # draft pushes the live activity row outside the eight-row footer window. The animated activity

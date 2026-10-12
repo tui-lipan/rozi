@@ -173,30 +173,28 @@ fn row_integration<'a>(
 pub enum PaneAgent {
     Missing,
     One(AgentRuntime),
-    /// Several published rows, none of them on screen.
-    Ambiguous,
+    /// Published rows, none of them on screen.
+    NoneOnScreen,
 }
 
-/// The agent a pane id names among `runtimes`, the pane's [`effective_agent_runtimes`]: its only
-/// one, or of several published rows the one on screen. The others - background conversations a
-/// client lists beside the one it shows - are reached by their exact reference.
+/// The agent a pane id names among `runtimes`, the pane's [`effective_agent_runtimes`]: the pane's
+/// own, or of its published rows the one on screen. A row that is not on screen - a background
+/// conversation a client lists beside the one it shows - is reached by its exact reference, even
+/// when it is the only row.
 pub fn pane_agent(runtimes: Vec<AgentRuntime>, rows: &[PublishedRow]) -> PaneAgent {
-    if runtimes.len() <= 1 {
-        return runtimes
-            .into_iter()
-            .next()
-            .map_or(PaneAgent::Missing, PaneAgent::One);
+    if runtimes.is_empty() {
+        return PaneAgent::Missing;
     }
-    let mut on_screen = runtimes.into_iter().filter(|runtime| {
+    let mut candidates = runtimes.into_iter().filter(|runtime| {
         runtime
             .reference
             .slot
             .as_deref()
-            .is_some_and(|slot| rows.iter().any(|row| row.id == slot && row.active))
+            .is_none_or(|slot| rows.iter().any(|row| row.id == slot && row.active))
     });
-    match (on_screen.next(), on_screen.next()) {
+    match (candidates.next(), candidates.next()) {
         (Some(runtime), None) => PaneAgent::One(runtime),
-        _ => PaneAgent::Ambiguous,
+        _ => PaneAgent::NoneOnScreen,
     }
 }
 
@@ -335,6 +333,58 @@ mod tests {
             slot: slot.map(str::to_string),
             incarnation,
         }
+    }
+
+    fn runtime(slot: Option<&str>) -> AgentRuntime {
+        AgentRuntime {
+            reference: reference(slot, 1),
+            label: "Claude Code".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            state: AgentState::Idle,
+            reason: None,
+            source: AgentAuthority::Published,
+        }
+    }
+
+    fn listed(id: &str, active: bool) -> PublishedRow {
+        PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        }
+    }
+
+    #[test]
+    fn a_pane_id_names_its_own_agent_or_the_row_on_screen() {
+        assert_eq!(pane_agent(Vec::new(), &[]), PaneAgent::Missing);
+        assert_eq!(
+            pane_agent(vec![runtime(None)], &[]),
+            PaneAgent::One(runtime(None))
+        );
+        let rows = [listed("shown", true), listed("background", false)];
+        assert_eq!(
+            pane_agent(
+                vec![runtime(Some("shown")), runtime(Some("background"))],
+                &rows
+            ),
+            PaneAgent::One(runtime(Some("shown")))
+        );
+        // A lone background row is still not the agent on screen.
+        assert_eq!(
+            pane_agent(
+                vec![runtime(Some("background"))],
+                &[listed("background", false)]
+            ),
+            PaneAgent::NoneOnScreen
+        );
     }
 
     #[test]

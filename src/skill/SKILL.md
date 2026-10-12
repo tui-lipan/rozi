@@ -177,7 +177,7 @@ rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
 
 The pane id always goes after `--target`; `agents get 3` is refused. A pane can list several
 agents, such as a client's background conversations: `--target` names the one on screen, and the
-others need their `--ref` from `agents list`. From a UI pane, every
+others, even a lone background one, need their `--ref` from `agents list`. From a UI pane, every
 `agents` command addresses the session on screen; add `--session <NAME>` for a detached one.
 `--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), or
 `gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the user visits

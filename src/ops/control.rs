@@ -1062,11 +1062,11 @@ fn resolve_agent(
                         ),
                     ));
                 }
-                crate::session::protocol::PaneAgent::Ambiguous => {
+                crate::session::protocol::PaneAgent::NoneOnScreen => {
                     return Err(ControlResponse::error_with(
                         ControlErrorCode::TargetRequired,
                         format!(
-                            "pane {pane_id} lists several agents and none is on screen; pass one's --ref from `agents list`"
+                            "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
                         ),
                     ));
                 }

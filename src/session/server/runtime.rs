@@ -644,12 +644,23 @@ impl SessionServer {
         // its rows name a filesystem this server cannot read.
         let local = pane.runtime.cwd_host.is_none();
         let mut rows = sanitize_rows(rows, &pane.runtime.rows, now, local);
-        // A row report outlives a snapshot only while some row still names its conversation.
-        pane.agent.row_reports.retain(|_, report| {
-            rows.iter().any(|row| {
-                protocol::row_reporting_session(row) == Some(report.native_session.as_str())
+        // A row report outlives a snapshot only while some row still names its conversation, and
+        // its token is retired with it.
+        let orphaned = pane
+            .agent
+            .row_reports
+            .iter()
+            .filter(|(_, report)| {
+                !rows.iter().any(|row| {
+                    protocol::row_reporting_session(row) == Some(report.native_session.as_str())
+                })
             })
-        });
+            .map(|(token, _)| token.clone())
+            .collect::<Vec<_>>();
+        for token in orphaned {
+            pane.agent.row_reports.remove(&token);
+            pane.agent.retire_integration(token);
+        }
         fold_row_reports(&mut rows, &pane.agent.row_reports);
         restamp_row_clocks(
             &mut rows,
@@ -729,9 +740,11 @@ impl SessionServer {
                 }
                 // A release, or a report that stopped naming its conversation: either way this
                 // process no longer speaks for the row, which keeps its last state until the
-                // publisher next says otherwise.
+                // publisher next says otherwise. Retired like an owner's token, so a delayed hook
+                // from the same process can never come back - least of all as the pane's owner.
                 _ => {
                     pane.agent.row_reports.remove(&integration);
+                    pane.agent.retire_integration(integration);
                 }
             }
             fold_row_reports(&mut pane.runtime.rows, &pane.agent.row_reports);

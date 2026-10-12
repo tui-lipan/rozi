@@ -1113,6 +1113,26 @@ impl SessionServer {
             ));
         }
         let reply_id = reply.hold_id();
+        // A prompt forwarded by an attached UI types with that client's authority, the same rule
+        // its own keyboard follows: under an input lock only the controller may. A headless caller
+        // keeps the headless rule, which `session_write_input` applies.
+        let attached = matches!(reply, ReplyTo::Attached { .. });
+        if attached && !self.client_may_input(client_id) {
+            return Some(if self.client_read_only(client_id) {
+                ControlResponse::error_with(
+                    ControlErrorCode::ReadOnly,
+                    "this client is attached read-only and cannot prompt an agent",
+                )
+            } else {
+                ControlResponse::error_with(
+                    ControlErrorCode::InputLocked,
+                    format!(
+                        "session `{}` has input locked; only its controller may prompt",
+                        self.session_name
+                    ),
+                )
+            });
+        }
         let reference = match self.resolve_agent_wait_target(request.target) {
             Ok(reference) => reference,
             Err(response) => return Some(response),
@@ -1154,7 +1174,12 @@ impl SessionServer {
 
         let mut bytes = request.prompt.as_bytes().to_vec();
         bytes.push(b'\r');
-        let response = self.session_send_bytes(Some(reference.pane.pane_id), bytes);
+        let written = if attached {
+            self.write_running_pane(reference.pane.pane_id, bytes)
+        } else {
+            self.session_write_input(reference.pane.pane_id, bytes)
+        };
+        let response = written.map_or_else(|response| response, |()| ControlResponse::empty());
         if !response.ok {
             self.agent_waits.remove(&(client_id, reply_id));
             return Some(response);
@@ -1313,6 +1338,15 @@ impl SessionServer {
                 ),
             ));
         }
+        self.write_running_pane(id, bytes)
+    }
+
+    /// Write `bytes` to pane `id`'s program once the caller's authority to type is settled.
+    fn write_running_pane(
+        &mut self,
+        id: PaneId,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<(), ControlResponse> {
         let Some(pane) = self.panes.get(&id) else {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,

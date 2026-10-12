@@ -138,13 +138,13 @@ impl SessionServer {
                 ) {
                     protocol::PaneAgent::Missing => return (subject, WaitEvaluation::Pending),
                     protocol::PaneAgent::One(runtime) => runtime.reference,
-                    protocol::PaneAgent::Ambiguous => {
+                    protocol::PaneAgent::NoneOnScreen => {
                         return (
                             subject,
                             WaitEvaluation::Error(
                                 ControlErrorCode::TargetRequired,
                                 format!(
-                                    "pane {pane_id} lists several agents and none is on screen; pass one's --ref from `agents list`"
+                                    "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
                                 ),
                             ),
                         );
@@ -314,10 +314,10 @@ impl SessionServer {
                             "pane {pane_id} has no agent; `agents wait` waits for one to appear"
                         ),
                     )),
-                    protocol::PaneAgent::Ambiguous => Err(ControlResponse::error_with(
+                    protocol::PaneAgent::NoneOnScreen => Err(ControlResponse::error_with(
                         ControlErrorCode::TargetRequired,
                         format!(
-                            "pane {pane_id} lists several agents and none is on screen; pass one's --ref from `agents list`"
+                            "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
                         ),
                     )),
                 }

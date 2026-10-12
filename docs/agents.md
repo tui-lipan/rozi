@@ -284,9 +284,10 @@ Each published row is its own agent in `list`, with that row's own `cwd` and `na
 it names them.
 
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. A bare pane
-id, as in `agents get 3`, is refused. When a pane lists several agents, such as a client showing one
-conversation while others run in the background, `--target` names the one on screen, and
-`list-panes` reports that one; reach the others with `--ref`. `list` and
+id, as in `agents get 3`, is refused. When a pane publishes agent rows, such as a client showing one
+conversation while others run in the background, `--target` names the row on screen, and
+`list-panes` reports that one. A row that is not on screen, even the only one, is reached with
+`--ref`. `list` and
 `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
@@ -309,6 +310,10 @@ gone agent, a replacement agent, a stale reference, and a timeout. Use `--format
 responses and error codes.
 
 ### Send a prompt safely
+
+Through a UI, `agents prompt` types with that UI's authority, as its keyboard does: a read-only UI
+cannot prompt, and under an input lock only the controlling UI can. With `--session`, an input lock
+refuses every prompt.
 
 `agents prompt` checks the agent's state, sets up any `--wait`, and submits the text followed by
 `Enter` as one operation, so a fast run cannot finish unobserved between sending and waiting. It
@@ -340,7 +345,8 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - One token owns the pane. Another process's token, such as the hooks of a conversation the client
   runs in the background, cannot own it, but it can report for the row naming its conversation. It
   has its own sequence, and that row follows it until it releases or no row names its conversation.
-  Only one token reports for each conversation at a time.
+  Either way the token is retired like a released owner's, so it can never report again or claim the
+  pane. Only one token reports for each conversation at a time.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report

@@ -378,8 +378,8 @@ Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi 
 sharing a server each publish their own tab list. With OpenCode tabs disabled, only the viewed
 root session appears. See the plugin README for installation, lifecycle, and host requirements.
 
-The older V1 event plugin reports a single aggregate state for the OpenCode agent rozi detects in
-the pane, through the agent report path. The custom
+The older V1 event plugin publishes a single agent row with the aggregate state of every session in
+the pane, as an agent publisher, so it does not depend on screen detection. The custom
 `opencode-tui` client has its own built-in publisher and does not need the V2 CLI plugin.
 
 ### Claude Code background sessions

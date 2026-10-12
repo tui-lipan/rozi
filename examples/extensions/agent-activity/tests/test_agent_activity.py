@@ -48,16 +48,6 @@ class PaneWireTests(unittest.TestCase):
             (42, "Agent task", 3, "running", "working", "Run checks"),
         )
         self.assertTrue(pane.is_live_activity())
-        self.assertEqual(
-            pane.published_row(focused_pane=42),
-            {
-                "id": "pane:42",
-                "title": "Run checks",
-                "status": "working",
-                "active": True,
-                "reason": "Agent task",
-            },
-        )
 
     def test_invalid_or_exited_wire_panes_are_not_live_activity(self) -> None:
         self.assertIsNone(agent_activity.Pane.from_wire({"title": "missing id"}))

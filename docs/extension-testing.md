@@ -182,8 +182,9 @@ These need no external account or service:
 "$ROZI_BIN" run-action agent-activity.open
 ```
 
-Check that one stable row changes status, a repeated blocked status does not repeat its
-notification, activating the row focuses the owning pane, and clearing status removes the row.
+Check that the pane's Activity row changes status with no second row beside it, a repeated
+blocked status does not repeat its notification, choosing the pane in the picker focuses it, and
+clearing status removes the Activity row.
 
 For the activity dashboard:
 

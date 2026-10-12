@@ -38,8 +38,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, version 16 with
 /// `command-visibility`, and version 17 with a request's `credential`, the `not-permitted` and
 /// `out-of-scope` error codes, and `extension-runtime-status`, and version 18 with image capture
-/// `fill_cell_box`, `z_index`, and `underlying_cells`.
-pub const API_SCHEMA_VERSION: u32 = 18;
+/// `fill_cell_box`, `z_index`, and `underlying_cells`, and version 19 with `publish`'s `kind` and
+/// `name`, published rows' `publisher` and `kind`, and an agent reference's structured `slot`.
+pub const API_SCHEMA_VERSION: u32 = 19;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -3024,6 +3025,35 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ControlRequest>(r#"{"cmd":"metrics"}"#).unwrap(),
             request
+        );
+    }
+
+    /// A bare `publish` is an anonymous activity publisher; the OpenCode V1 plugin writes the
+    /// declared form below by hand over the socket, so its exact shape is pinned here.
+    #[test]
+    fn publish_requests_declare_their_kind_and_name() {
+        let bare = serde_json::from_str::<ControlRequest>(r#"{"cmd":"publish"}"#).unwrap();
+        assert_eq!(
+            bare.command,
+            ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Activity,
+                name: None,
+            }
+        );
+        let declared = serde_json::from_str::<ControlRequest>(
+            r#"{"cmd":"publish","kind":"agent","name":"opencode","source_pane":7,"source_session":"abc"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            declared.command,
+            ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Agent,
+                name: Some("opencode".into()),
+            }
+        );
+        assert_eq!(declared.source_pane, Some(7));
+        assert!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"publish","kind":"robot"}"#).is_err()
         );
     }
 

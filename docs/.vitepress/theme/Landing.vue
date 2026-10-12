@@ -265,7 +265,7 @@ const exampleExtensions = [
   ["pr-dashboard", "Monitors pull requests with gh and publishes rows"],
   ["docker", "Controls Docker through a supervised process"],
   ["ssh-tools", "Reads SSH config and opens panes"],
-  ["agent-activity", "Publishes pane status as actionable rows"],
+  ["agent-activity", "Notifies on pane status changes"],
 ];
 
 /**

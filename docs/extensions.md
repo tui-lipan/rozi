@@ -999,7 +999,7 @@ The repository includes these example extensions:
 - [PR dashboard](../examples/extensions/pr-dashboard/) — a supervised pull request monitor
 - [Docker](../examples/extensions/docker/) — container controls
 - [SSH tools](../examples/extensions/ssh-tools/) — SSH host discovery and pane launch
-- [Agent activity](../examples/extensions/agent-activity/) — mirrored pane status
+- [Agent activity](../examples/extensions/agent-activity/) — notifications and a picker for pane status
 - [Activity dashboard](../examples/extensions/activity-dashboard/) — general published activity
 - [Snippets](../examples/extensions/snippets/) — saved commands pasted into the focused pane
 - [Tasks](../examples/extensions/tasks/) — `just`, `make`, and `package.json` tasks, with a sidebar

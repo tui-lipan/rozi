@@ -517,10 +517,13 @@ impl SessionServer {
             .map(|row| row.publisher.as_str())
             .collect::<HashSet<_>>()
             .len();
-        if !rows.is_empty() && others >= MAX_PANE_PUBLISHERS {
+        if !rows.is_empty() && others >= protocol::MAX_PANE_PUBLISHERS {
             return Err((
                 "conflict",
-                format!("pane {pane_id} already has {MAX_PANE_PUBLISHERS} publishers"),
+                format!(
+                    "pane {pane_id} already has {} publishers",
+                    protocol::MAX_PANE_PUBLISHERS
+                ),
             ));
         }
         // Rows and a live integration report coexist: one client can run several conversations,
@@ -1553,9 +1556,6 @@ fn next_run_start(
 /// publisher sending thousands is malfunctioning, and every row costs a sidebar row.
 const MAX_PANE_ROWS: usize = 64;
 
-/// How many publishers one pane may hold rows from at once.
-const MAX_PANE_PUBLISHERS: usize = 16;
-
 /// Who is replacing rows in [`SessionServer::report_pane_rows`], as the UI client identified the
 /// stream: its stable id within the pane and the kind it declared.
 pub(super) struct PanePublisher {
@@ -1622,8 +1622,10 @@ fn sanitize_rows(
                 now,
             );
             // At most one of a publisher's rows is the one on screen; a publisher that marks
-            // several keeps the first, since the rest cannot also be in view.
-            let active = row.active && !std::mem::replace(&mut active_seen, row.active);
+            // several keeps the first, since the rest cannot also be in view. Once one is seen, no
+            // later row is, however many inactive rows come between.
+            let active = row.active && !active_seen;
+            active_seen |= active;
             let cwd = row
                 .cwd
                 .as_deref()
@@ -2204,6 +2206,39 @@ mod tests {
         assert_eq!(remote[0].project, None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only a publisher's first active row stays active, even with inactive rows between it and
+    /// a later one marked active.
+    #[test]
+    fn only_the_first_active_row_of_a_snapshot_stays_active() {
+        let row = |id: &str, active: bool| protocol::PublishedRow {
+            publisher: String::new(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        };
+        let rows = sanitize_rows(
+            vec![
+                row("a", true),
+                row("b", false),
+                row("c", true),
+                row("d", true),
+            ],
+            &[],
+            1,
+            true,
+            &test_publisher(),
+        );
+        let active: Vec<_> = rows.iter().map(|row| row.active).collect();
+        assert_eq!(active, [true, false, false, false]);
     }
 
     /// A native session id is an opaque reference matched by exact equality against the hooks'

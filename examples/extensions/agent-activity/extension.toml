@@ -1,7 +1,7 @@
 [extension]
 id = "agent-activity"
 title = "Agent activity"
-description = "Publishes pane-reported activity without agent-specific integrations"
+description = "Notifies on pane-reported status changes and lists them in a picker"
 version = "1.0.0"
 api = 1
 

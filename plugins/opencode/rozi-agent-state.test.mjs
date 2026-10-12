@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { AgentReporter, AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
+import { EventEmitter } from "node:events"
+
+import { AgentPublisher, AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
 
 const event = (type, properties) => ({ type, properties })
 const tracker = () => new AgentState()
@@ -168,56 +170,69 @@ test("an unchanged aggregate is not republished", () => {
 
 const paneEnv = { ROZI_PANE: "7", ROZI_SOCKET: "/run/rozi.sock", ROZI_SESSION_INSTANCE: "abc" }
 
-function transport(responses = []) {
-  const sent = []
-  return {
-    sent,
-    send: async (message) => {
-      sent.push(message)
-      return responses.shift() ?? { ok: true }
-    },
+// A fake control socket: records every line written, and answers the publish request with `ack`
+// (`null` for no answer at all).
+function socket({ ack = { ok: true } } = {}) {
+  const connections = []
+  const connect = (path) => {
+    const connection = new EventEmitter()
+    connection.path = path
+    connection.lines = []
+    connection.ended = false
+    connection.write = (data) => {
+      for (const line of data.split("\n").filter(Boolean)) connection.lines.push(JSON.parse(line))
+      if (connection.lines.length === 1 && ack !== null) {
+        queueMicrotask(() => connection.emit("data", `${JSON.stringify(ack)}\n`))
+      }
+      return true
+    }
+    connection.end = () => { connection.ended = true; connection.emit("close") }
+    connection.destroy = () => connection.emit("close")
+    connections.push(connection)
+    queueMicrotask(() => connection.emit("connect"))
+    return connection
   }
+  return { connections, connect }
 }
 
-// The V1 plugin is an agent integration: it reports through `agent-report` for the detected
-// OpenCode agent, never through `set-status`, which would make the pane a generic activity.
-test("reports claim the pane as the opencode agent and release on unload", async () => {
-  const wire = transport()
-  const reporter = new AgentReporter({ env: paneEnv, transport: wire.send })
-  assert.equal(await reporter.report(permission), true)
-  assert.equal(await reporter.report(idle), true)
-  await reporter.release()
-  const [first, second, release] = wire.sent
-  assert.equal(first.cmd, "agent-report")
-  assert.equal(first.agent, "opencode")
-  assert.equal(first.target, 7)
-  assert.equal(first.source_pane, 7)
-  assert.equal(first.source_session, "abc")
-  assert.equal(first.state, "blocked")
-  assert.equal(first.reason, "permission required")
-  assert.equal(second.integration, first.integration)
-  assert.ok(second.seq > first.seq)
-  assert.equal("reason" in second, false)
-  assert.deepEqual(
-    { cmd: release.cmd, integration: release.integration, target: release.target },
-    { cmd: "agent-release", integration: first.integration, target: 7 },
-  )
-  assert.ok(release.seq > second.seq)
-  assert.equal(wire.sent.some((message) => message.cmd === "set-status"), false)
+// The V1 plugin declares itself an agent publisher, so it is an agent whether or not rozi's screen
+// detection recognizes OpenCode, and never a generic `set-status` activity.
+test("publishes one agent row over a declared agent stream", async () => {
+  const wire = socket()
+  const publisher = new AgentPublisher({ env: paneEnv, connect: wire.connect })
+  assert.equal(await publisher.publish(idle), true)
+  assert.equal(await publisher.publish(permission), true)
+  assert.equal(wire.connections.length, 1, "one stream for the plugin's life")
+  const [connection] = wire.connections
+  assert.equal(connection.path, "/run/rozi.sock")
+  const [request, first, second] = connection.lines
+  assert.deepEqual(request, {
+    cmd: "publish",
+    kind: "agent",
+    name: "opencode",
+    source_pane: 7,
+    source_session: "abc",
+  })
+  assert.deepEqual(first, { rows: [{ id: "opencode", title: "OpenCode", status: "idle", active: true }] })
+  assert.deepEqual(second.rows[0].status, "blocked")
+  assert.deepEqual(second.rows[0].reason, "permission required")
+  publisher.close()
+  assert.equal(connection.ended, true, "closing the stream withdraws the row")
+  assert.equal(await publisher.publish(working), false)
 })
 
-test("a refused report is retried, and a retired claim starts a new token", async () => {
-  const wire = transport([
-    { ok: false, error: "agent `opencode` is not the currently detected agent in pane 7" },
-    { ok: false, error: "integration token belongs to a retired agent incarnation" },
-  ])
-  const reporter = new AgentReporter({ env: paneEnv, transport: wire.send })
-  assert.equal(await reporter.report(working), false)
-  assert.equal(await reporter.report(working), false)
-  assert.equal(await reporter.report(working), true)
-  assert.equal(wire.sent[0].integration, wire.sent[1].integration)
-  assert.notEqual(wire.sent[2].integration, wire.sent[1].integration)
-  assert.equal(wire.sent[2].seq, 1)
+test("a refused or dropped stream is reopened by the next publish", async () => {
+  const refused = socket({ ack: { ok: false, error: "pane 7 not found" } })
+  const publisher = new AgentPublisher({ env: paneEnv, connect: refused.connect })
+  assert.equal(await publisher.publish(working), false)
+
+  const wire = socket()
+  const retried = new AgentPublisher({ env: paneEnv, connect: wire.connect })
+  assert.equal(await retried.publish(working), true)
+  wire.connections[0].emit("close")
+  assert.equal(await retried.publish(idle), true)
+  assert.equal(wire.connections.length, 2)
+  assert.equal(wire.connections[1].lines.at(-1).rows[0].status, "idle")
 
   const state = tracker()
   assert.deepEqual(reduce(state, "session.status", { sessionID: "a", status: { type: "busy" } }), working)
@@ -229,9 +244,13 @@ test("a refused report is retried, and a retired claim starts a new token", asyn
   )
 })
 
-test("an unclaimed reporter releases nothing, and is inert outside a pane", async () => {
-  const wire = transport()
-  await new AgentReporter({ env: paneEnv, transport: wire.send }).release()
-  assert.equal(await new AgentReporter({ env: {}, transport: wire.send }).report(working), false)
-  assert.equal(wire.sent.length, 0)
+test("a publisher outside a pane, or with no answer, publishes nothing", async () => {
+  const wire = socket()
+  assert.equal(await new AgentPublisher({ env: {}, connect: wire.connect }).publish(working), false)
+  assert.equal(wire.connections.length, 0)
+  const silent = socket({ ack: null })
+  assert.equal(
+    await new AgentPublisher({ env: paneEnv, connect: silent.connect }).publish(working),
+    false,
+  )
 })

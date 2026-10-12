@@ -135,6 +135,25 @@ pub(crate) fn stream_opened(
         ),
         kind,
     };
+    // Admission counts open streams, not streams that have published: a stream refused here hears
+    // so before its acknowledgement, where a refusal of its rows later could not reach it at all.
+    // A publisher replacing its own stream takes no new place.
+    let open = ctx
+        .state
+        .publish_streams
+        .keys()
+        .filter(|(pane, id)| *pane == pane_id && *id != identity.id)
+        .count();
+    if open >= crate::session::protocol::MAX_PANE_PUBLISHERS {
+        let _ = ack.send(Err(ControlResponse::error_with(
+            crate::control::ControlErrorCode::Conflict,
+            format!(
+                "pane {pane_id} already has {} publishers",
+                crate::session::protocol::MAX_PANE_PUBLISHERS
+            ),
+        )));
+        return Update::none();
+    }
     ctx.state.publish_streams.insert(
         (pane_id, identity.id.clone()),
         crate::state::PublishStreamState {
@@ -588,6 +607,57 @@ mod tests {
             );
             assert!(backend.state().publish_streams.is_empty());
             drop(prs_rx);
+        });
+    }
+
+    /// The pane's publisher limit is enforced when a stream opens, counting streams that have not
+    /// published anything yet, so the refusal reaches the publisher. A publisher replacing its own
+    /// stream at the limit is still admitted.
+    #[test]
+    fn a_publisher_beyond_the_panes_limit_is_refused_when_it_opens() {
+        with_backend(|backend| {
+            let names: Vec<String> = (0..crate::session::protocol::MAX_PANE_PUBLISHERS)
+                .map(|index| format!("p{index}"))
+                .collect();
+            let mut receivers = Vec::new();
+            for (index, name) in names.iter().enumerate() {
+                let (tx, rx) = std::sync::mpsc::sync_channel(1);
+                receivers.push(rx);
+                open_stream(
+                    backend,
+                    Open {
+                        name: Some(name),
+                        ..Open::anonymous(index as u64 + 1)
+                    },
+                    tx,
+                );
+            }
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            let refused = try_open(
+                backend,
+                Open {
+                    name: Some("one-too-many"),
+                    ..Open::anonymous(100)
+                },
+                tx,
+            );
+            assert_eq!(
+                refused.unwrap_err().code,
+                Some(crate::control::ControlErrorCode::Conflict)
+            );
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            open_stream(
+                backend,
+                Open {
+                    name: Some("p0"),
+                    ..Open::anonymous(101)
+                },
+                tx,
+            );
+            assert_eq!(
+                backend.state().publish_streams.len(),
+                crate::session::protocol::MAX_PANE_PUBLISHERS
+            );
         });
     }
 

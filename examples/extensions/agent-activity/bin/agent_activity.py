@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Mirror public pane statuses into public, actionable Activity rows."""
+"""Notify on public pane statuses and list them in a picker.
+
+rozi already lists every pane's `rozi status` in its Activity sidebar, so this example adds what the
+sidebar does not: a notification on each new blocked, error, or finished state, and a searchable
+picker of every reporting pane.
+"""
 
 from __future__ import annotations
 
@@ -20,11 +25,9 @@ ROZI = os.environ.get("ROZI_BIN", "rozi")
 EXTENSION_ID = "agent-activity"
 EVENTS = (
     "pane-status-changed",
-    "focus-changed",
     "pane-exited",
     "config-reloaded",
 )
-HEARTBEAT_SECONDS = 5.0
 REFRESH_SECONDS = 30.0
 
 
@@ -64,25 +67,7 @@ class Pane:
             terminal.startswith("exited ") or terminal.startswith("error:")
         )
 
-    def published_row(self, focused_pane: int | None) -> dict[str, object]:
-        task = self.reason or self.title
-        context = self.title if self.reason and self.title != self.reason else None
-        row: dict[str, object] = {
-            "id": row_id(self.pane_id),
-            "title": task,
-            "status": self.reported_status or "idle",
-            "active": focused_pane == self.pane_id,
-        }
-        if context:
-            row["reason"] = context
-        return row
 
-
-@dataclass
-class Publisher:
-    pane_id: int
-    token: int
-    process: subprocess.Popen[str]
 
 
 def clean(value: object) -> str | None:
@@ -335,11 +320,7 @@ class ActivityService:
     def __init__(self) -> None:
         self.messages: queue.Queue[tuple[object, ...]] = queue.Queue()
         self.panes: dict[int, Pane] = {}
-        self.publishers: dict[int, Publisher] = {}
-        self.focused_pane: int | None = None
         self.subscription: subprocess.Popen[str] | None = None
-        self.next_token = 1
-        self.stopping = False
 
     def start_subscription(self) -> None:
         process = subprocess.Popen(
@@ -369,80 +350,8 @@ class ActivityService:
 
         threading.Thread(target=read, name="agent-activity-subscribe", daemon=True).start()
 
-    def start_publisher(self, pane_id: int) -> Publisher:
-        token = self.next_token
-        self.next_token += 1
-        environment = os.environ.copy()
-        environment["ROZI_PANE"] = str(pane_id)
-        process = subprocess.Popen(
-            [ROZI, "publish"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            env=environment,
-        )
-        if process.stdin is None or process.stdout is None:
-            wait_process(process, graceful=False)
-            raise ActivityError(f"could not open a publisher for pane {pane_id}")
-        publisher = Publisher(pane_id=pane_id, token=token, process=process)
-        self.publishers[pane_id] = publisher
-
-        def read() -> None:
-            assert process.stdout is not None
-            try:
-                for line in process.stdout:
-                    try:
-                        activation = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(activation, dict):
-                        self.messages.put(("activation", pane_id, token, activation))
-            finally:
-                returncode = process.wait()
-                self.messages.put(("publisher-closed", pane_id, token, returncode))
-
-        threading.Thread(
-            target=read,
-            name=f"agent-activity-publish-{pane_id}",
-            daemon=True,
-        ).start()
-        return publisher
-
-    def stop_publisher(self, pane_id: int) -> None:
-        publisher = self.publishers.pop(pane_id, None)
-        if publisher is not None:
-            wait_process(publisher.process, graceful=True)
-
-    def publish(self, pane: Pane) -> None:
-        publisher = self.publishers.get(pane.pane_id)
-        if publisher is None:
-            publisher = self.start_publisher(pane.pane_id)
-        assert publisher.process.stdin is not None
-        try:
-            write_line(
-                publisher.process.stdin,
-                {"rows": [pane.published_row(self.focused_pane)]},
-            )
-        except (BrokenPipeError, OSError) as error:
-            raise ActivityError(f"publisher for pane {pane.pane_id} closed") from error
-
-    def reconcile(self) -> None:
-        wanted = {
-            pane_id: pane
-            for pane_id, pane in self.panes.items()
-            if pane.is_live_activity()
-        }
-        for pane_id in set(self.publishers) - set(wanted):
-            self.stop_publisher(pane_id)
-        for pane in wanted.values():
-            self.publish(pane)
-
     def refresh(self) -> None:
         self.panes = list_panes()
-        if self.focused_pane not in self.panes:
-            self.focused_pane = None
-        self.reconcile()
 
     def status_changed(self, data: dict[str, Any]) -> None:
         pane_id = integer(data.get("pane"), -1)
@@ -458,9 +367,6 @@ class ActivityService:
         current = clean(data.get("status"))
         pane.reported_status = current
         pane.reason = clean(data.get("reason"))
-        if str(data.get("focused", "")).casefold() == "true":
-            self.focused_pane = pane_id
-        self.reconcile()
 
         kind = transition_kind(previous, current)
         if kind is None:
@@ -473,17 +379,11 @@ class ActivityService:
         else:
             notify(f"Pane {pane_id} finished{detail}")
 
-    def focus_changed(self, data: dict[str, Any]) -> None:
-        pane_id = integer(data.get("pane"), -1)
-        self.focused_pane = pane_id if pane_id >= 0 else None
-        self.reconcile()
-
     def pane_exited(self, data: dict[str, Any]) -> None:
         pane_id = integer(data.get("pane"), -1)
         if pane_id < 0:
             return
         pane = self.panes.pop(pane_id, None)
-        self.stop_publisher(pane_id)
         code = integer(data.get("code"), 0)
         if (
             pane is not None
@@ -499,8 +399,6 @@ class ActivityService:
         data = raw_data if isinstance(raw_data, dict) else {}
         if kind == "pane-status-changed":
             self.status_changed(data)
-        elif kind == "focus-changed":
-            self.focus_changed(data)
         elif kind == "pane-exited":
             self.pane_exited(data)
         elif kind == "config-reloaded":
@@ -509,11 +407,9 @@ class ActivityService:
     def run(self) -> int:
         self.start_subscription()
         self.refresh()
-        next_heartbeat = time.monotonic() + HEARTBEAT_SECONDS
         next_refresh = time.monotonic() + REFRESH_SECONDS
         while True:
-            now = time.monotonic()
-            timeout = max(0.0, min(next_heartbeat, next_refresh) - now)
+            timeout = max(0.0, next_refresh - time.monotonic())
             try:
                 message = self.messages.get(timeout=timeout)
             except queue.Empty:
@@ -526,40 +422,15 @@ class ActivityService:
                 raise ActivityError(
                     f"rozi subscribe stream closed (exit {integer(message[1], 1)})"
                 )
-            if kind == "publisher-closed":
-                pane_id = integer(message[1], -1)
-                token = integer(message[2], -1)
-                current = self.publishers.get(pane_id)
-                if current is not None and current.token == token:
-                    raise ActivityError(f"publisher for pane {pane_id} closed")
-            elif kind == "activation":
-                pane_id = integer(message[1], -1)
-                token = integer(message[2], -1)
-                activation = message[3]
-                current = self.publishers.get(pane_id)
-                if (
-                    current is not None
-                    and current.token == token
-                    and isinstance(activation, dict)
-                    and activation.get("activate") == row_id(pane_id)
-                ):
-                    focus_pane(pane_id)
-            elif kind == "event" and isinstance(message[1], dict):
+            if kind == "event" and isinstance(message[1], dict):
                 self.handle_event(message[1])
 
             now = time.monotonic()
-            if now >= next_heartbeat:
-                # Besides refreshing rows, the write detects a control-side publish closure.
-                self.reconcile()
-                next_heartbeat = now + HEARTBEAT_SECONDS
             if now >= next_refresh:
                 self.refresh()
                 next_refresh = now + REFRESH_SECONDS
 
     def close(self) -> None:
-        self.stopping = True
-        for pane_id in list(self.publishers):
-            self.stop_publisher(pane_id)
         if self.subscription is not None:
             wait_process(self.subscription, graceful=False)
             self.subscription = None

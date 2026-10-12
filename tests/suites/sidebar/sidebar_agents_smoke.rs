@@ -69,6 +69,8 @@ fn published_row(
     active: bool,
 ) -> rozi::session::protocol::PublishedRow {
     rozi::session::protocol::PublishedRow {
+        live_session: None,
+        reported: false,
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),

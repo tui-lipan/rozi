@@ -17,6 +17,8 @@ const PANE_GENERATION: u64 = 1;
 
 fn row(id: &str, status: &str, active: bool) -> PublishedRow {
     PublishedRow {
+        live_session: None,
+        reported: false,
         id: id.to_string(),
         title: format!("tab {id}"),
         status: status.to_string(),

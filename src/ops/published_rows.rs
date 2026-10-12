@@ -202,6 +202,8 @@ mod tests {
 
     fn row(id: &str, status: &str) -> PublishedRow {
         PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.into(),
             title: format!("tab {id}"),
             status: status.into(),

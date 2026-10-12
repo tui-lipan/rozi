@@ -46,7 +46,16 @@ pub(crate) fn capture_screen(
         }
     }
     let text = match scrollback {
-        None => screen.render_snapshot().text.to_string(),
+        // Snapshot rows are padded to the pane's width; scrollback exports are not. Trim them so
+        // a wide pane's capture is its text rather than mostly spaces, and both forms agree.
+        None => {
+            let snapshot = screen.render_snapshot().text.to_string();
+            snapshot
+                .split('\n')
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
         Some(CaptureScrollback::Lines(lines)) => {
             let total = screen.total_text_lines();
             screen.export_text(total.saturating_sub(lines), total)
@@ -1087,15 +1096,16 @@ mod tests {
     }
 
     #[test]
-    fn capture_screen_keeps_text_captures_as_they_were() {
+    fn capture_screen_trims_the_padding_of_visible_rows() {
         let mut screen = TerminalScreen::new(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
+        assert!(screen.render_snapshot().text.starts_with("red   "));
         let content = capture_screen(&mut screen, None, CaptureRender::Text, None, false)
             .expect("text capture");
         assert_eq!(
             content,
             CaptureContent::Text {
-                text: screen.render_snapshot().text.to_string()
+                text: "red\n".to_string()
             }
         );
     }

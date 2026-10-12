@@ -1709,6 +1709,8 @@ mod tests {
         pane.runtime.rows = ["left-behind", "on-screen"]
             .into_iter()
             .map(|id| protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: id.into(),
                 title: id.into(),
                 status: "idle".into(),

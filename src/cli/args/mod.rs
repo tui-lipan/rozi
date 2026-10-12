@@ -307,6 +307,15 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
     }
 }
 
+/// The line printed under a parse error: the help of the namespace the arguments are in, since
+/// that is where the failed command's syntax is, or the top-level help otherwise.
+pub(crate) fn usage_hint(args: &[String]) -> String {
+    match help_namespace_index(args).map(|index| args[index].as_str()) {
+        Some(namespace) => format!("Run `rozi {namespace} --help` for usage."),
+        None => "Run `rozi --help` for usage.".to_string(),
+    }
+}
+
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
@@ -524,17 +533,6 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
                 let command = &request.command;
-                if matches!(
-                    command,
-                    control::ControlCommand::AgentWait { .. }
-                        | control::ControlCommand::AgentPrompt { .. }
-                ) && !endpoint.is_session()
-                {
-                    return Err(
-                        "agent waits and prompts are server-owned; select a named session with --session"
-                            .to_string(),
-                    );
-                }
                 if endpoint.is_session()
                     && matches!(
                         command,
@@ -3439,6 +3437,8 @@ mod tests {
                 "3",
                 "--until",
                 "idle",
+                "--timeout",
+                "2m",
             ],
             vec![
                 "--remote",
@@ -3457,6 +3457,27 @@ mod tests {
                 "refused {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_parse_error_points_at_the_namespace_help() {
+        let hint = |list: &[&str]| {
+            usage_hint(
+                &list
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            hint(&["--session", "dev", "agents", "get", "3"]),
+            "Run `rozi agents --help` for usage."
+        );
+        assert_eq!(
+            hint(&["skill", "bogus"]),
+            "Run `rozi skill --help` for usage."
+        );
+        assert_eq!(hint(&["list-panes", "x"]), "Run `rozi --help` for usage.");
     }
 
     #[test]

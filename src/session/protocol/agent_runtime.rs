@@ -148,15 +148,54 @@ fn effective_single_status(
     }
 }
 
+/// The session a hook report has to name to speak for `row`: the id its process runs under now,
+/// which is its native session unless the conversation moved to another process.
+pub fn row_reporting_session(row: &PublishedRow) -> Option<&str> {
+    row.live_session
+        .as_deref()
+        .or(row.native_session.as_deref())
+}
+
 /// The integration report that speaks for `row`: the pane's live report, when it names the row's
-/// native session.
+/// reporting session.
 fn row_integration<'a>(
     integration: Option<&'a AgentIntegrationReport>,
     row: &PublishedRow,
 ) -> Option<&'a AgentIntegrationReport> {
     integration.filter(|report| {
-        report.native_session.is_some() && report.native_session == row.native_session
+        report.native_session.is_some()
+            && report.native_session.as_deref() == row_reporting_session(row)
     })
+}
+
+/// Which agent a bare pane id names.
+#[derive(Debug, PartialEq)]
+pub enum PaneAgent {
+    Missing,
+    One(AgentRuntime),
+    /// Published rows, none of them on screen.
+    NoneOnScreen,
+}
+
+/// The agent a pane id names among `runtimes`, the pane's [`effective_agent_runtimes`]: the pane's
+/// own, or of its published rows the one on screen. A row that is not on screen - a background
+/// conversation a client lists beside the one it shows - is reached by its exact reference, even
+/// when it is the only row.
+pub fn pane_agent(runtimes: Vec<AgentRuntime>, rows: &[PublishedRow]) -> PaneAgent {
+    if runtimes.is_empty() {
+        return PaneAgent::Missing;
+    }
+    let mut candidates = runtimes.into_iter().filter(|runtime| {
+        runtime
+            .reference
+            .slot
+            .as_deref()
+            .is_none_or(|slot| rows.iter().any(|row| row.id == slot && row.active))
+    });
+    match (candidates.next(), candidates.next()) {
+        (Some(runtime), None) => PaneAgent::One(runtime),
+        _ => PaneAgent::NoneOnScreen,
+    }
 }
 
 /// `row` as everything downstream of the protocol must present it: with the status and reason of
@@ -236,7 +275,11 @@ fn published_runtime(
         identity,
         state: AgentState::from_status(&row.status),
         reason: row.reason.clone(),
-        source: AgentAuthority::Published,
+        source: if row.reported {
+            AgentAuthority::Reported
+        } else {
+            AgentAuthority::Published
+        },
     })
 }
 
@@ -292,6 +335,58 @@ mod tests {
         }
     }
 
+    fn runtime(slot: Option<&str>) -> AgentRuntime {
+        AgentRuntime {
+            reference: reference(slot, 1),
+            label: "Claude Code".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            state: AgentState::Idle,
+            reason: None,
+            source: AgentAuthority::Published,
+        }
+    }
+
+    fn listed(id: &str, active: bool) -> PublishedRow {
+        PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: "idle".into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        }
+    }
+
+    #[test]
+    fn a_pane_id_names_its_own_agent_or_the_row_on_screen() {
+        assert_eq!(pane_agent(Vec::new(), &[]), PaneAgent::Missing);
+        assert_eq!(
+            pane_agent(vec![runtime(None)], &[]),
+            PaneAgent::One(runtime(None))
+        );
+        let rows = [listed("shown", true), listed("background", false)];
+        assert_eq!(
+            pane_agent(
+                vec![runtime(Some("shown")), runtime(Some("background"))],
+                &rows
+            ),
+            PaneAgent::One(runtime(Some("shown")))
+        );
+        // A lone background row is still not the agent on screen.
+        assert_eq!(
+            pane_agent(
+                vec![runtime(Some("background"))],
+                &[listed("background", false)]
+            ),
+            PaneAgent::NoneOnScreen
+        );
+    }
+
     #[test]
     fn reported_status_wins_except_for_a_detected_block() {
         let runtime = PaneRuntimeState {
@@ -317,6 +412,8 @@ mod tests {
         let runtime = PaneRuntimeState {
             rows: vec![
                 PublishedRow {
+                    live_session: None,
+                    reported: false,
                     id: "one".into(),
                     title: "First".into(),
                     status: "working".into(),
@@ -328,6 +425,8 @@ mod tests {
                     native_session: None,
                 },
                 PublishedRow {
+                    live_session: None,
+                    reported: false,
                     id: "two".into(),
                     title: "Second".into(),
                     status: "done".into(),
@@ -353,6 +452,8 @@ mod tests {
 
     fn session_row(id: &str, status: &str, native: Option<&str>) -> PublishedRow {
         PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.into(),
             title: id.into(),
             status: status.into(),

@@ -144,18 +144,25 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
 ///
 /// Deliberately a short list rather than [`session_control_unsupported`]'s inverse. An attached UI
 /// answers almost every command from its own state; these are the ones only the server can serve,
-/// because the server owns the recording. Each command added here becomes something any client
-/// attached to the session can ask the server to do on its behalf, so it is a choice, not a default.
+/// because the server owns the recording or sees every agent state change as it happens. Each
+/// command added here becomes something any client attached to the session can ask the server to do
+/// on its behalf, so it is a choice, not a default.
 ///
-/// A read-only client may look (`record-list`) but not start, stop, or mark: those write a file on
-/// the server's host. The input lock is not consulted, because a recording reads a pane rather than
-/// typing into it.
+/// A read-only client may look (`record-list`, `agents wait`) but not start, stop, or mark a
+/// recording, which writes a file on the server's host, nor prompt an agent, which types. The input
+/// lock is not consulted for a recording, because it reads a pane rather than typing into it; a
+/// prompt still meets it where the server writes the input.
 pub fn attached_control_refusal(
     command: &ControlCommand,
     read_only: bool,
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
-        ControlCommand::RecordList => None,
+        ControlCommand::RecordList | ControlCommand::AgentWait { .. } => None,
+        ControlCommand::AgentPrompt { .. } if read_only => Some((
+            ControlErrorCode::ReadOnly,
+            "this client is attached read-only and cannot prompt an agent",
+        )),
+        ControlCommand::AgentPrompt { .. } => None,
         ControlCommand::RecordStart { follow: true, .. } => Some((
             ControlErrorCode::InvalidArgument,
             "foreground recording needs --session <NAME>; a UI cannot hold its caller open until the recording ends",
@@ -175,7 +182,7 @@ pub fn attached_control_refusal(
         | ControlCommand::RecordMark { .. } => None,
         _ => Some((
             ControlErrorCode::Unsupported,
-            "only recording commands are run by the session server for an attached client",
+            "only recording commands and agent waits and prompts are run by the session server for an attached client",
         )),
     }
 }
@@ -233,6 +240,15 @@ impl ReplyTo {
                 request_id: *request_id,
                 response,
             },
+        }
+    }
+
+    /// Which of the client's held answers this is: an attached request's id, or 0 for a headless
+    /// connection, which holds one answer at most.
+    pub(super) fn hold_id(&self) -> u64 {
+        match self {
+            Self::Headless { .. } => 0,
+            Self::Attached { request_id } => *request_id,
         }
     }
 
@@ -969,9 +985,14 @@ impl SessionServer {
                     generation: pane.generation,
                 };
                 let references = pane.agent.references(reference.clone());
-                let runtime = protocol::effective_agent_runtimes(&pane.runtime, &references)
-                    .into_iter()
-                    .find(|runtime| runtime.reference.slot.is_none());
+                // The agent a pane id names: its own, or the published row on screen.
+                let runtime = match protocol::pane_agent(
+                    protocol::effective_agent_runtimes(&pane.runtime, &references),
+                    &pane.runtime.rows,
+                ) {
+                    protocol::PaneAgent::One(runtime) => Some(runtime),
+                    _ => None,
+                };
                 PaneInfo {
                     session: self.session_name.clone(),
                     id: *id,
@@ -1091,6 +1112,27 @@ impl SessionServer {
                 "agent prompt cannot be empty",
             ));
         }
+        let reply_id = reply.hold_id();
+        // A prompt forwarded by an attached UI types with that client's authority, the same rule
+        // its own keyboard follows: under an input lock only the controller may. A headless caller
+        // keeps the headless rule, which `session_write_input` applies.
+        let attached = matches!(reply, ReplyTo::Attached { .. });
+        if attached && !self.client_may_input(client_id) {
+            return Some(if self.client_read_only(client_id) {
+                ControlResponse::error_with(
+                    ControlErrorCode::ReadOnly,
+                    "this client is attached read-only and cannot prompt an agent",
+                )
+            } else {
+                ControlResponse::error_with(
+                    ControlErrorCode::InputLocked,
+                    format!(
+                        "session `{}` has input locked; only its controller may prompt",
+                        self.session_name
+                    ),
+                )
+            });
+        }
         let reference = match self.resolve_agent_wait_target(request.target) {
             Ok(reference) => reference,
             Err(response) => return Some(response),
@@ -1132,9 +1174,14 @@ impl SessionServer {
 
         let mut bytes = request.prompt.as_bytes().to_vec();
         bytes.push(b'\r');
-        let response = self.session_send_bytes(Some(reference.pane.pane_id), bytes);
+        let written = if attached {
+            self.write_running_pane(reference.pane.pane_id, bytes)
+        } else {
+            self.session_write_input(reference.pane.pane_id, bytes)
+        };
+        let response = written.map_or_else(|response| response, |()| ControlResponse::empty());
         if !response.ok {
-            self.remove_agent_wait(client_id);
+            self.agent_waits.remove(&(client_id, reply_id));
             return Some(response);
         }
         if request.wait.is_some() {
@@ -1291,6 +1338,15 @@ impl SessionServer {
                 ),
             ));
         }
+        self.write_running_pane(id, bytes)
+    }
+
+    /// Write `bytes` to pane `id`'s program once the caller's authority to type is settled.
+    fn write_running_pane(
+        &mut self,
+        id: PaneId,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<(), ControlResponse> {
         let Some(pane) = self.panes.get(&id) else {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,
@@ -2622,6 +2678,8 @@ mod tests {
         let pane = server.panes.get_mut(&7).unwrap();
         pane.runtime.rows = vec![
             protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: "visible".into(),
                 title: "Visible".into(),
                 status: "idle".into(),
@@ -2633,6 +2691,8 @@ mod tests {
                 native_session: None,
             },
             protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: "hidden".into(),
                 title: "Hidden".into(),
                 status: "working".into(),
@@ -2707,6 +2767,8 @@ mod tests {
         {
             let pane = server.panes.get_mut(&7).unwrap();
             pane.runtime.rows.push(protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: "old-session".into(),
                 title: "Old session".into(),
                 status: "working".into(),
@@ -2881,11 +2943,158 @@ mod tests {
     /// One Claude client runs several conversations: a publisher lists them as rows while the
     /// client's hooks report on the one they follow. Both must hold at once, without the hooks
     /// losing their stale-token and sequence fence.
+    /// The pane from the field: a client whose own hooks reported `done` on a conversation that
+    /// then moved to a background process under a new id. The publisher keeps the row under the
+    /// conversation's first id and names the new one as `live_session`.
+    #[test]
+    fn a_conversation_moved_to_the_background_reports_through_its_new_process() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row =
+            |id: &str, status: &str, active: bool, live: Option<&str>| protocol::PublishedRow {
+                id: id.into(),
+                title: id.into(),
+                status: status.into(),
+                reason: None,
+                active,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: Some(id.into()),
+                live_session: live.map(str::to_string),
+                reported: false,
+            };
+        let publish = |server: &mut SessionServer, mut rows: Vec<protocol::PublishedRow>| {
+            let pane = server.panes.get_mut(&7).unwrap();
+            super::super::runtime::fold_row_reports(&mut rows, &pane.agent.row_reports);
+            pane.runtime.rows = rows;
+            pane.agent.sync_references(&pane.runtime);
+        };
+        let report = |server: &mut SessionServer, token: &str, state, native: &str, seq| {
+            control(
+                server,
+                ControlCommand::AgentReport {
+                    target: Some(7),
+                    agent: "claude".into(),
+                    integration: token.into(),
+                    state,
+                    reason: None,
+                    native_session: Some(native.into()),
+                    seq,
+                },
+            )
+            .0
+        };
+        let state_of = |server: &SessionServer, id: &str| {
+            server
+                .session_agent_report()
+                .into_iter()
+                .find(|agent| agent.reference.slot.as_deref() == Some(id))
+                .map(|agent| (agent.state, agent.source))
+        };
+
+        assert!(
+            report(
+                &mut server,
+                "client",
+                protocol::AgentState::Done,
+                "origin",
+                1
+            )
+            .ok
+        );
+        publish(
+            &mut server,
+            vec![
+                row("origin", "working", true, Some("fork")),
+                row("other", "working", false, None),
+            ],
+        );
+        assert_eq!(
+            state_of(&server, "origin"),
+            Some((
+                protocol::AgentState::Working,
+                protocol::AgentAuthority::Published
+            )),
+            "the client's last word on the conversation no longer speaks for it"
+        );
+
+        assert!(
+            report(
+                &mut server,
+                "fork-hooks",
+                protocol::AgentState::Blocked,
+                "fork",
+                1
+            )
+            .ok
+        );
+        assert_eq!(
+            state_of(&server, "origin"),
+            Some((
+                protocol::AgentState::Blocked,
+                protocol::AgentAuthority::Reported
+            ))
+        );
+        // The publisher's next poll does not undo the hooks' fresher word.
+        publish(
+            &mut server,
+            vec![
+                row("origin", "working", true, Some("fork")),
+                row("other", "working", false, None),
+            ],
+        );
+        assert_eq!(
+            state_of(&server, "origin").map(|(state, _)| state),
+            Some(protocol::AgentState::Blocked)
+        );
+
+        // A pane id names the row on screen, beside a background one.
+        let reference = server
+            .resolve_agent_wait_target(AgentTarget::Pane(7))
+            .expect("the active row");
+        assert_eq!(reference.slot.as_deref(), Some("origin"));
+        let pane = server
+            .session_pane_report()
+            .into_iter()
+            .find(|pane| pane.id == 7)
+            .unwrap();
+        assert_eq!(pane.agent_state.as_deref(), Some("blocked"));
+
+        // With no row on screen, a pane id is ambiguous.
+        publish(
+            &mut server,
+            vec![
+                row("origin", "working", false, Some("fork")),
+                row("other", "working", false, None),
+            ],
+        );
+        assert_eq!(
+            server
+                .resolve_agent_wait_target(AgentTarget::Pane(7))
+                .unwrap_err()
+                .code,
+            Some(ControlErrorCode::TargetRequired)
+        );
+
+        // A process that is not the pane's and names no row still cannot claim it.
+        let stranger = report(
+            &mut server,
+            "stranger",
+            protocol::AgentState::Working,
+            "nowhere",
+            1,
+        );
+        assert_eq!(stranger.code, Some(ControlErrorCode::Conflict));
+    }
+
     #[test]
     fn hook_reports_and_published_session_rows_coexist() {
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
         let session_row = |id: &str, status: &str, active: bool| protocol::PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.into(),
             title: id.into(),
             status: status.into(),
@@ -2897,8 +3106,10 @@ mod tests {
             project: None,
             native_session: Some(format!("native-{id}")),
         };
-        let publish = |server: &mut SessionServer, rows: Vec<protocol::PublishedRow>| {
+        let publish = |server: &mut SessionServer, mut rows: Vec<protocol::PublishedRow>| {
             let pane = server.panes.get_mut(&7).unwrap();
+            // What `report_pane_rows` does to a snapshot: row reports keep speaking for their rows.
+            super::super::runtime::fold_row_reports(&mut rows, &pane.agent.row_reports);
             pane.runtime.rows = rows;
             pane.agent.sync_references(&pane.runtime);
         };
@@ -3007,24 +3218,45 @@ mod tests {
         );
         assert_eq!(listed(&server)[0].1, protocol::AgentState::Blocked);
         assert_eq!(listed(&server)[1].1, protocol::AgentState::Working);
-        let foreign = report(
+        // Another process's hooks - a conversation the client runs in the background - cannot own
+        // the pane, but speak for the row naming their conversation.
+        assert!(
+            report(
+                &mut server,
+                "hook-2",
+                protocol::AgentState::Idle,
+                "native-b",
+                1,
+            )
+            .ok
+        );
+        assert_eq!(
+            listed(&server)[1],
+            (
+                "b".into(),
+                protocol::AgentState::Idle,
+                protocol::AgentAuthority::Reported,
+                Some("native-b".into())
+            )
+        );
+        let second_claim = report(
             &mut server,
-            "hook-2",
-            protocol::AgentState::Idle,
+            "hook-3",
+            protocol::AgentState::Working,
             "native-b",
             1,
         );
-        assert_eq!(foreign.code, Some(ControlErrorCode::Conflict));
+        assert_eq!(second_claim.code, Some(ControlErrorCode::Conflict));
 
         // The client switched to `b` and its hooks went quiet: the report about `a` no longer
-        // matches any row, so the rows alone describe the pane.
-        publish(&mut server, vec![session_row("b", "idle", true)]);
+        // matches any row, so the rows describe the pane, `b` with its own process's report.
+        publish(&mut server, vec![session_row("b", "working", true)]);
         assert_eq!(
             listed(&server),
             vec![(
                 "b".into(),
                 protocol::AgentState::Idle,
-                protocol::AgentAuthority::Published,
+                protocol::AgentAuthority::Reported,
                 Some("native-b".into())
             )]
         );

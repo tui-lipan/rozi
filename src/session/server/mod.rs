@@ -152,7 +152,7 @@ pub struct SessionServer {
     input_locked: bool,
     allow_takeover: bool,
     clients: Vec<ClientConn>,
-    agent_waits: HashMap<ClientId, waits::PendingAgentWait>,
+    agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     /// Pane recordings running now, by id.
     recordings: recordings::Recordings,
@@ -406,6 +406,10 @@ pub struct AgentScratch {
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
     retired_integrations: HashSet<String>,
+    /// Hook reports from processes other than the pane's own agent, by integration token. Each
+    /// speaks for the published row whose reporting session it names, such as a conversation a
+    /// client sent to the background; see [`runtime::RowReport`].
+    row_reports: HashMap<String, runtime::RowReport>,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group

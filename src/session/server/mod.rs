@@ -460,6 +460,9 @@ pub struct AgentProcess {
     /// Zero when the platform could not inspect the job and the sweep worked from a name alone.
     pub pid: u32,
     pub name: String,
+    /// Named only by a `ROZI_AGENT` hint, not by anything about the process itself: the shell the
+    /// agent will be launched from, standing in for it until it is.
+    pub stand_in: bool,
 }
 
 /// A launched agent that has not yet shown it is ready.

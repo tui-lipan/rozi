@@ -1000,13 +1000,24 @@ fn derive_detected_agent(
             .as_ref()
             .map(|(definition, _, _)| definition.id().to_string());
         let relaunched = named.as_ref().is_some_and(|(_, _, relaunched)| *relaunched);
-        if identity != pane.agent.identity || relaunched {
+        let launched = identity != pane.agent.identity || relaunched;
+        if launched {
             pane.agent.startup =
                 (identity.is_some() && !adopting).then(|| super::AgentStartup::new(Instant::now()));
+            // What the screen said about the previous program does not describe this one. Held
+            // over, its `working` would outlast the new loading screen and then end as a run.
             pane.agent.read = None;
+            pane.agent.hold = None;
+            pane.agent.settled = None;
             pane.agent.identity = identity;
         }
-        pane.agent.process = named.map(|(_, process, _)| process);
+        // The process a launch was first seen as stays the anchor while it lives: the sweep may
+        // name one of its namesake children instead, and that child exiting is not a restart.
+        // A name-only record gives way to the first real process seen, which is better evidence.
+        let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
+        if !anchored {
+            pane.agent.process = named.map(|(_, process, _)| process);
+        }
     }
     read_agent_state(pane, agents)
 }
@@ -1732,6 +1743,7 @@ fn identify_pane_agent<'a>(
     let process = super::AgentProcess {
         pid: process.pid,
         name: process.name.clone(),
+        stand_in: !crate::agent_detection::process_is_agent(agents, process, definition.id()),
     };
     let relaunched = pane
         .agent
@@ -1747,6 +1759,10 @@ fn identify_pane_agent<'a>(
 /// window under a live run would end it. An agent's own children can match its name too, and the
 /// sweep may name either from one pass to the next, so a new pid alone says nothing while the old
 /// one is still in the job. Without process inspection there is only the foreground program's name.
+///
+/// A sweep that could not inspect the job is no evidence either way, except about a stand-in: a
+/// hint names the agent while its shell is still at the prompt, and a process under another name
+/// arriving after that is the agent being launched.
 fn agent_process_replaced(
     previous: &super::AgentProcess,
     current: &super::AgentProcess,
@@ -1754,7 +1770,8 @@ fn agent_process_replaced(
 ) -> bool {
     match (previous.pid, current.pid) {
         (0, 0) => previous.name != current.name,
-        (0, _) | (_, 0) => false,
+        (0, _) => previous.stand_in && previous.name != current.name,
+        (_, 0) => false,
         (pid, _) => !job.processes.iter().any(|process| process.pid == pid),
     }
 }
@@ -1884,11 +1901,62 @@ fn hold_back_startup_work(
 /// Whether input written to a pane submits a line: Enter as a plain carriage return, or as the
 /// kitty keyboard protocol reports it. Someone who has typed a prompt and sent it is talking to a
 /// ready agent, which is the one readiness signal an agent with no loading screen gives.
+///
+/// Text inside a bracketed paste is not a submission, whatever line endings it carries. A paste
+/// split across two writes is not tracked: its tail is read as typed.
 pub(super) fn input_submits_line(bytes: &[u8]) -> bool {
-    bytes.contains(&b'\r')
-        || bytes
-            .windows(5)
-            .any(|window| window == b"\x1b[13u" || window == b"\x1b[13;")
+    const PASTE_START: &[u8] = b"\x1b[200~";
+    const PASTE_END: &[u8] = b"\x1b[201~";
+
+    let mut rest = bytes;
+    loop {
+        let (typed, pasted) = match find_bytes(rest, PASTE_START) {
+            Some(at) => (&rest[..at], Some(&rest[at + PASTE_START.len()..])),
+            None => (rest, None),
+        };
+        if typed.contains(&b'\r') || kitty_enter_pressed(typed) {
+            return true;
+        }
+        let Some(end) = pasted.and_then(|pasted| {
+            find_bytes(pasted, PASTE_END).map(|end| &pasted[end + PASTE_END.len()..])
+        }) else {
+            return false;
+        };
+        rest = end;
+    }
+}
+
+/// Enter as the kitty keyboard protocol reports it, `CSI 13 [: alternates] [; mods [: event]] u`,
+/// on press or repeat but not on release (event 3). Anything not closed by `u` is another key that
+/// happens to share the number, such as a legacy `CSI 13 ~` function key.
+fn kitty_enter_pressed(bytes: &[u8]) -> bool {
+    let mut rest = bytes;
+    while let Some(at) = find_bytes(rest, b"\x1b[") {
+        rest = &rest[at + 2..];
+        let Some(end) = rest.iter().position(|byte| (0x40..=0x7e).contains(byte)) else {
+            return false;
+        };
+        if rest[end] != b'u' {
+            continue;
+        }
+        let mut fields = rest[..end].split(|byte| *byte == b';');
+        let key = fields
+            .next()
+            .and_then(|key| key.split(|byte| *byte == b':').next());
+        let event = fields
+            .next()
+            .and_then(|mods| mods.split(|byte| *byte == b':').nth(1));
+        if key == Some(b"13") && event != Some(b"3") {
+            return true;
+        }
+    }
+    false
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// How loud a state is, which is the only ordering this settle needs: a pane can go quiet in a
@@ -3381,7 +3449,20 @@ mod tests {
         assert!(input_submits_line(b"explain this\r"));
         assert!(input_submits_line(b"\x1b[13u"));
         assert!(input_submits_line(b"\x1b[13;1u"));
+        assert!(input_submits_line(b"\x1b[13;1:1u"), "a press");
+        assert!(input_submits_line(b"\x1b[13;1:2u"), "a repeat");
+        assert!(
+            !input_submits_line(b"\x1b[13;1:3u"),
+            "a release submits nothing"
+        );
+        assert!(
+            !input_submits_line(b"\x1b[13;2~"),
+            "a legacy function key sharing the number"
+        );
         assert!(!input_submits_line(b"typing ahead"));
+        // Line endings inside a paste are the pasted text's, not a submission.
+        assert!(!input_submits_line(b"\x1b[200~one\r\ntwo\r\n\x1b[201~"));
+        assert!(input_submits_line(b"\x1b[200~one\r\ntwo\x1b[201~\r"));
         assert!(
             !input_submits_line(b"\x1b[I"),
             "a focus report is not input"
@@ -3480,39 +3561,114 @@ mod tests {
         );
     }
 
+    /// The sweep may name a namesake child instead of the agent for a while. Tracking whichever it
+    /// named made the child the anchor, so the child exiting - the original agent still running
+    /// its turn - read as a restart and held that turn back as a loading screen.
+    #[test]
+    fn a_namesake_child_exiting_is_not_a_restart() {
+        let mut pane = make_pane();
+        let agent = [(100, "sv"), (101, "pi")];
+        assert!(sweep(&mut pane, &agent_job(100, &agent)));
+        pane.agent.startup = None;
+
+        let namesake = [(100, "sv"), (101, "pi"), (106, "pi")];
+        assert!(!sweep(&mut pane, &agent_job(100, &namesake)));
+        assert_eq!(pane.agent.process.as_ref().map(|p| p.pid), Some(101));
+        assert!(
+            !sweep(&mut pane, &agent_job(100, &agent)),
+            "the agent outlived its child; nothing was launched"
+        );
+    }
+
+    /// With no inspectable job, a hint names the agent through a stand-in built from the shell's
+    /// name. Every pid-zero transition used to be no evidence, so the agent's real process arriving
+    /// later could not open the window its loading screen needed.
+    #[test]
+    fn a_hinted_agent_named_without_a_job_is_launched_when_its_process_appears() {
+        let mut pane = make_pane();
+        pane.env.push(("ROZI_AGENT".into(), "pi".into()));
+        derive_detected_agent(&mut pane, Some(&catalog()), Some("bash"), None, true);
+        assert!(
+            pane.agent
+                .process
+                .as_ref()
+                .is_some_and(|p| p.pid == 0 && p.stand_in)
+        );
+        pane.agent.startup = None;
+
+        assert!(sweep(&mut pane, &agent_job(200, &[(200, "pi")])));
+    }
+
+    /// The reverse: the agent itself named once without its job, as a sweep that could not read
+    /// the process table does mid-run. That says nothing about a restart, in either direction.
+    #[test]
+    fn a_sweep_without_the_job_does_not_restart_a_running_agent() {
+        let mut pane = make_pane();
+        assert!(sweep(&mut pane, &agent_job(100, &[(100, "pi")])));
+        pane.agent.startup = None;
+
+        derive_detected_agent(&mut pane, Some(&catalog()), Some("pi"), None, true);
+        assert!(pane.agent.startup.is_none());
+        assert_eq!(pane.agent.process.as_ref().map(|p| p.pid), Some(100));
+        assert!(!sweep(&mut pane, &agent_job(100, &[(100, "pi")])));
+    }
+
+    /// A supervised agent dies mid-turn and comes straight back. The new process's loading spinner
+    /// must not be read as the old turn going on: held over, the old `working` outlasted it by the
+    /// settle grace and then ended - a finished run for work the new process never did.
+    #[test]
+    fn a_replacement_process_starts_from_a_clean_reading() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let mut pane = make_pane();
+        assert!(sweep(
+            &mut pane,
+            &agent_job(100, &[(100, "sv"), (101, "pi")])
+        ));
+        pane.agent.startup = None;
+        pane.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
+        let state = |pane: &mut ServerPane, job: &ForegroundJob| {
+            derive_detected_agent(pane, Some(&catalog()), None, Some(job), true).map(|d| d.state)
+        };
+        let old = agent_job(100, &[(100, "sv"), (101, "pi")]);
+        assert_eq!(state(&mut pane, &old), Some(DetectedAgentState::Working));
+
+        let new = agent_job(100, &[(100, "sv"), (102, "pi")]);
+        pane.terminal
+            .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
+        assert_eq!(state(&mut pane, &new), Some(DetectedAgentState::Idle));
+        assert!(pane.agent.settled.is_none(), "nothing louder is held over");
+        pane.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
+        assert_eq!(state(&mut pane, &new), Some(DetectedAgentState::Idle));
+    }
+
     #[test]
     fn a_process_replacement_needs_the_previous_process_gone() {
-        let process = |pid: u32, name: &str| crate::session::server::AgentProcess {
+        let process = |pid: u32, name: &str, stand_in: bool| crate::session::server::AgentProcess {
             pid,
             name: name.into(),
+            stand_in,
         };
-        let job = agent_job(10, &[(10, "pi"), (11, "pi")]);
-        assert!(!agent_process_replaced(
-            &process(10, "pi"),
-            &process(11, "pi"),
-            &job
+        let replaced = |previous, current| {
+            agent_process_replaced(
+                &previous,
+                &current,
+                &agent_job(10, &[(10, "pi"), (11, "pi")]),
+            )
+        };
+        assert!(!replaced(
+            process(10, "pi", false),
+            process(11, "pi", false)
         ));
-        assert!(agent_process_replaced(
-            &process(9, "pi"),
-            &process(11, "pi"),
-            &job
-        ));
+        assert!(replaced(process(9, "pi", false), process(11, "pi", false)));
         // Without process inspection only the foreground program's name can say it changed.
-        assert!(agent_process_replaced(
-            &process(0, "bash"),
-            &process(0, "pi"),
-            &job
-        ));
-        assert!(!agent_process_replaced(
-            &process(0, "pi"),
-            &process(0, "pi"),
-            &job
-        ));
-        assert!(!agent_process_replaced(
-            &process(0, "pi"),
-            &process(11, "pi"),
-            &job
-        ));
+        assert!(replaced(process(0, "bash", true), process(0, "pi", false)));
+        assert!(!replaced(process(0, "pi", false), process(0, "pi", false)));
+        // A real process after a name-only record: a launch only if the record was a stand-in.
+        assert!(replaced(process(0, "bash", true), process(11, "pi", false)));
+        assert!(!replaced(process(0, "pi", false), process(11, "pi", false)));
+        assert!(!replaced(process(0, "pi", true), process(11, "pi", true)));
+        assert!(!replaced(process(10, "pi", false), process(0, "pi", false)));
     }
 
     /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it

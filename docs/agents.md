@@ -220,7 +220,7 @@ that finished a moment later. The agent counts as ready when any of these happen
 
 - It shows a `blocked` screen, such as a trust prompt. rozi reports that immediately.
 - Its loading spinner is gone, and its prompt has stayed up for 2 seconds.
-- You submit a line to the pane.
+- You submit a line to the pane by pressing Enter. Pasted text does not count.
 - 8 seconds have passed since it started.
 
 If the agent is still working when the 8 seconds end, such as when you pass a prompt on the command

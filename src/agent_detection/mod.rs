@@ -48,6 +48,17 @@ pub(crate) fn identify<'a, 'j>(
     identify_job(catalog, job?)
 }
 
+/// Whether `process` is the agent `id` by its own name or path, rather than only because a hint
+/// said so. A hint names the agent from the pane's environment, which is true of the shell that
+/// will launch it as much as of the agent itself.
+pub(crate) fn process_is_agent(
+    catalog: &AgentCatalog,
+    process: &ForegroundProcess,
+    id: &str,
+) -> bool {
+    process::identify_process(catalog, process).is_some_and(|(definition, _)| definition.id() == id)
+}
+
 /// What an already-identified agent is doing right now.
 ///
 /// The cheap half: a lowercase and a handful of patterns over text the pane already keeps

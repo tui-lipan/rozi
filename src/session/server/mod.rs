@@ -401,7 +401,7 @@ pub struct AgentScratch {
     pub summary_changed_at: u64,
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
-    references: HashMap<Option<String>, TrackedAgentReference>,
+    references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
     next_incarnation: u64,
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
@@ -441,6 +441,23 @@ pub struct AgentScratch {
         crate::session::protocol::DetectedAgentState,
         std::time::Instant,
     )>,
+    /// The conversation this pane would resume, kept when the published rows that named it were
+    /// withdrawn because their window left the session. See [`RetainedResume`].
+    pub retained_resume: Option<RetainedResume>,
+}
+
+/// A native conversation a pane's agent rows named, outliving those rows.
+///
+/// Published rows belong to the window whose stream reported them and go when it leaves, but the
+/// agent and its conversation are still running in the pane. Detaching the last window snapshots
+/// the session, and that snapshot must still say which conversation to reopen. Kept only until
+/// something says the conversation is no longer the pane's: live agent rows arriving again, the
+/// shell returning to its prompt, a different agent appearing, or the program being replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetainedResume {
+    pub agent: String,
+    pub session: String,
+    pub reported_at: u64,
 }
 
 #[derive(Debug)]

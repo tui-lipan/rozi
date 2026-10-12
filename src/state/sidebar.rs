@@ -38,7 +38,7 @@ pub enum RowTarget {
     /// already draws.
     PublishedRow {
         pane_id: crate::state::PaneId,
-        row_id: String,
+        row: crate::session::protocol::RowKey,
     },
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// An offline host row in the Sessions tab: connect (probe) that host.
@@ -476,26 +476,30 @@ impl State {
         let mut rows = Vec::new();
         for (workspace, workspace_state) in self.current().workspaces.iter().enumerate() {
             for (pane_index, pane) in workspace_state.panes.iter().enumerate() {
-                let runtimes = pane.agent_runtimes();
-                if pane.id == crate::state::POPUP_PANE_ID || pane.closing || runtimes.is_empty() {
+                let occupants = pane.occupants();
+                if pane.id == crate::state::POPUP_PANE_ID || pane.closing || occupants.is_empty() {
                     continue;
                 }
-                for (slot, runtime) in runtimes.into_iter().enumerate() {
-                    let place = pane.agent_place(&runtime);
+                for (slot, occupant) in occupants.into_iter().enumerate() {
+                    let place = pane.agent_place(occupant.slot.as_ref());
                     let path = place.group_path().map(str::to_string);
                     let label_path = place.label_path().map(str::to_string);
                     let host = place.host;
-                    let row_id = runtime.reference.slot.as_deref();
-                    let finished = row_id.map_or(pane.terminal.finished_unseen, |row_id| {
-                        pane.terminal
-                            .published_row_ui
-                            .get(row_id)
-                            .is_some_and(|ui| ui.finished_unseen)
-                    });
-                    let target = match runtime.reference.slot {
-                        Some(row_id) => RowTarget::PublishedRow {
+                    let finished =
+                        occupant
+                            .slot
+                            .as_ref()
+                            .map_or(pane.terminal.finished_unseen, |key| {
+                                pane.terminal
+                                    .published_row_ui
+                                    .get(key)
+                                    .is_some_and(|ui| ui.finished_unseen)
+                            });
+                    let state = occupant.state;
+                    let target = match occupant.slot {
+                        Some(row) => RowTarget::PublishedRow {
                             pane_id: pane.id,
-                            row_id,
+                            row,
                         },
                         None => RowTarget::Pane(pane.id),
                     };
@@ -504,7 +508,7 @@ impl State {
                         host,
                         path,
                         label_path,
-                        rank: rank(Some(runtime.state.as_str()), finished),
+                        rank: rank(Some(state.as_str()), finished),
                         workspace,
                         pane: pane_index,
                         slot,

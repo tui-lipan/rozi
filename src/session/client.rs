@@ -754,18 +754,21 @@ impl SessionClient {
         self.send_control(ClientMessage::ReloadAgents);
     }
 
-    /// Replace a pane's published agent slots; an empty list withdraws them.
+    /// Replace one publisher's rows in a pane; an empty list withdraws them.
     pub fn report_pane_rows(
         &self,
         pane_id: PaneId,
         generation: u64,
         local: bool,
+        publisher: &crate::state::PublisherIdentity,
         rows: Vec<crate::session::protocol::PublishedRow>,
     ) {
         self.send_control(ClientMessage::ReportPaneRows {
             pane_id,
             local,
             generation,
+            publisher: publisher.id.clone(),
+            kind: publisher.kind,
             rows,
         });
     }

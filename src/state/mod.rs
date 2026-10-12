@@ -90,8 +90,46 @@ pub struct CommandPaletteHandoff {
     pub running: bool,
 }
 
+/// Who a publish stream is within its pane, and what it declared itself to be.
+///
+/// `id` is stable across restarts of the same publisher, so a restarted publisher replaces its own
+/// stale stream and nobody else's: `<extension>` or `<extension>.<name>` for an extension process,
+/// `publish:<name>` for any other caller (`publish:default` without `--name`). Extension ids cannot
+/// contain `:`, so an anonymous publisher can never take an extension's place.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PublisherIdentity {
+    pub id: String,
+    pub kind: crate::session::protocol::PublisherKind,
+}
+
+/// Which namespace a publish stream's pane lives in.
+///
+/// Pane ids repeat across sessions, so a stream is bound to the session its pane belongs to when it
+/// opens - the caller's `source_session`, or the session on screen for a caller that names none -
+/// and its rows reach that session whether it is on screen or in the background. A scratch or
+/// popup pane belongs to this client alone. An attachment that has not learned its session's
+/// instance is bound by the attachment itself.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PublishOrigin {
+    Local,
+    Session(crate::session::protocol::SessionInstanceId),
+    Attachment(AttachmentId),
+}
+
+/// A publish stream's place: one publisher identity in one pane of one namespace.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PublishStreamKey {
+    pub origin: PublishOrigin,
+    pub pane: PaneId,
+    pub publisher: String,
+}
+
 pub struct PublishStreamState {
     pub id: u64,
+    pub identity: PublisherIdentity,
+    /// The publisher's latest snapshot, resent when this client attaches again: the session server
+    /// withdraws a client's rows when it leaves, and a reconnect is a new client to it.
+    pub last_rows: Vec<crate::session::protocol::PublishedRow>,
     pub sender: std::sync::mpsc::SyncSender<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
@@ -365,8 +403,10 @@ pub struct State {
     ///
     /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
     /// closes the stream, which is also how a pane's rows are withdrawn. Each value carries a
-    /// generation id so a replaced publisher's late rows/close cannot affect its successor.
-    pub publish_streams: std::collections::HashMap<PaneId, PublishStreamState>,
+    /// generation id so a replaced publisher's late rows/close cannot affect its successor. Keyed by
+    /// session, pane, and [`PublisherIdentity::id`]: a pane may have several publishers, each owning
+    /// its rows, and the same pane id in another session is another pane.
+    pub publish_streams: std::collections::HashMap<PublishStreamKey, PublishStreamState>,
     /// Long-lived event subscriptions owned by extension generations.
     pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
     /// Palette visibility extensions chose for their own commands, keyed by public command ID.

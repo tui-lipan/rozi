@@ -1239,6 +1239,8 @@ mod finished_rows_notice {
 
     fn row(id: &str, title: &str, active: bool) -> PublishedRow {
         PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             live_session: None,
             reported: false,
             id: id.to_string(),
@@ -1278,7 +1280,7 @@ mod finished_rows_notice {
                     pane_id: pane.id,
                     generation: pane.pty_generation,
                 },
-                slot: Some(row.id.clone()),
+                slot: Some(row.key()),
                 incarnation: index as u64 + 2,
             })
             .collect();
@@ -1286,8 +1288,10 @@ mod finished_rows_notice {
         pane
     }
 
-    fn finished(ids: &[&str]) -> Vec<String> {
-        ids.iter().map(|id| id.to_string()).collect()
+    fn finished(ids: &[&str]) -> Vec<crate::session::protocol::RowKey> {
+        ids.iter()
+            .map(|id| crate::session::protocol::RowKey::new("sessions", *id))
+            .collect()
     }
 
     #[test]
@@ -1338,6 +1342,20 @@ mod finished_rows_notice {
             .expect("a background row finished");
         assert!(!notice.contains("ses_9f2c"), "{notice}");
         assert_eq!(notice, "build watcher in pane 23 is done");
+    }
+
+    /// An activity row behind a detected agent is not that agent's session: untitled, it is named
+    /// after the pane, never `Claude Code #n`.
+    #[test]
+    fn an_untitled_activity_row_never_borrows_the_detected_agents_name() {
+        let mut activity = row("ci", "", false);
+        activity.kind = crate::session::protocol::PublisherKind::Activity;
+        let mut pane = publisher(vec![row("shown", "on screen", true), activity]);
+        pane.title = "build watcher".to_string();
+        assert_eq!(
+            super::super::finished_rows_notice(&pane, &finished(&["ci"])).as_deref(),
+            Some("build watcher in pane 23 is done")
+        );
     }
 
     #[test]

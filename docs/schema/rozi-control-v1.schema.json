@@ -122,10 +122,15 @@
           "$ref": "#/$defs/PaneRef"
         },
         "slot": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RowKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The published agent row this reference names, or `None` for the pane's own agent."
         }
       },
       "required": [
@@ -135,7 +140,7 @@
       "type": "object"
     },
     "AgentRuntime": {
-      "description": "One automation-facing semantic occupant of a pane.",
+      "description": "One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,\npaired with the reference that names it.",
       "properties": {
         "identity": {
           "$ref": "#/$defs/AgentIdentity"
@@ -1402,11 +1407,23 @@
           "type": "object"
         },
         {
-          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws the pane's rows. Reached through `rozi publish`.",
+          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws this publisher's rows. Reached through `rozi publish`.",
           "properties": {
             "cmd": {
               "const": "publish",
               "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/PublisherKind",
+              "default": "activity",
+              "description": "What the publisher is: `activity` (the default) or `agent`. Only an agent publisher's\nrows are agents."
+            },
+            "name": {
+              "description": "Distinguishes several publishers of one caller in the same pane; see\n[`crate::state::PublisherIdentity`].",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2778,11 +2795,23 @@
           "type": "object"
         },
         {
-          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws the pane's rows. Reached through `rozi publish`.",
+          "description": "Publish the logical agents or activities running inside the calling pane, and receive\nactivations for them. Unlike every other command this connection stays open in both\ndirections; closing it withdraws this publisher's rows. Reached through `rozi publish`.",
           "properties": {
             "cmd": {
               "const": "publish",
               "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/PublisherKind",
+              "default": "activity",
+              "description": "What the publisher is: `activity` (the default) or `agent`. Only an agent publisher's\nrows are agents."
+            },
+            "name": {
+              "description": "Distinguishes several publishers of one caller in the same pane; see\n[`crate::state::PublisherIdentity`].",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -4557,8 +4586,13 @@
           ]
         },
         "id": {
-          "description": "Publisher-chosen identity, opaque to rozi and stable across updates.\n\nNever a position: tabs are reordered and closed, and an index-keyed run clock would hand\none tab's elapsed time to whichever tab slid into its place.",
+          "description": "Publisher-chosen identity, opaque to rozi and stable across updates. Unique only within\nits publisher; see [`RowKey`].\n\nNever a position: tabs are reordered and closed, and an index-keyed run clock would hand\none tab's elapsed time to whichever tab slid into its place.",
           "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PublisherKind",
+          "default": "activity",
+          "description": "Server-owned copy of the kind the publisher declared when its stream opened. Whatever a\npublisher sends here is overwritten."
         },
         "live_session": {
           "description": "The session id the process running this row reports its hooks under, when that is not\n[`Self::native_session`].\n\nA conversation can move to another process under a new id while it is still resumed by its\nfirst one, as Claude Code does when it sends a conversation to the background. Hook reports\nthen name the new id, and only a report naming it speaks for the row; the first process's\nlast report no longer does.",
@@ -4584,6 +4618,11 @@
             }
           ],
           "description": "Server-owned project of [`Self::cwd`]. Whatever a publisher sends here is overwritten."
+        },
+        "publisher": {
+          "default": "",
+          "description": "Server-owned identity of the stream that published this row. Whatever a publisher sends\nhere is overwritten.",
+          "type": "string"
         },
         "reason": {
           "type": [
@@ -4618,6 +4657,14 @@
         "status"
       ],
       "type": "object"
+    },
+    "PublisherKind": {
+      "description": "What a publisher declares itself to be when its stream opens.\n\nAn activity is something happening; an agent is something doing work. Every published row\nappears in Activity, but only an agent publisher's rows are agents: listed by `rozi agents`,\ntargetable by `agents prompt`, counted by `keep_awake_while_agents_work`, and authoritative over\nthe pane's screen detection. Declared, never inferred from what detection happens to see.",
+      "enum": [
+        "agent",
+        "activity"
+      ],
+      "type": "string"
     },
     "QueueMetrics": {
       "properties": {
@@ -5622,6 +5669,22 @@
       ],
       "type": "object"
     },
+    "RowKey": {
+      "description": "A published row's identity within its pane: the publisher that owns it and the id it chose.\n\nRow ids are the publisher's own, so two publishers in one pane may pick the same one. Everything\nkeyed by a row - run clocks, finish edges, activation, agent slots - keys by this pair.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "publisher",
+        "id"
+      ],
+      "type": "object"
+    },
     "RowProject": {
       "description": "The Git project a published row's `cwd` lies in, as the session server resolved it.",
       "properties": {
@@ -6318,5 +6381,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 18
+  "x-rozi-schema-version": 19
 }

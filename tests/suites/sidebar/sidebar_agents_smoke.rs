@@ -56,7 +56,7 @@ fn agent_ref(pane_id: PaneId, slot: Option<&str>, incarnation: u64) -> AgentRef 
             pane_id,
             generation: 0,
         },
-        slot: slot.map(str::to_string),
+        slot: slot.map(|id| rozi::session::protocol::RowKey::new("sessions", id)),
         incarnation,
     }
 }
@@ -69,6 +69,8 @@ fn published_row(
     active: bool,
 ) -> rozi::session::protocol::PublishedRow {
     rozi::session::protocol::PublishedRow {
+        publisher: "sessions".into(),
+        kind: rozi::session::protocol::PublisherKind::Agent,
         live_session: None,
         reported: false,
         id: id.to_string(),

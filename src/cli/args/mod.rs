@@ -130,6 +130,8 @@ impl ControlEndpoint {
 #[derive(Debug)]
 pub(crate) struct PublishCli {
     pub(super) socket: Option<PathBuf>,
+    /// The `publish` request, carrying the declared `--kind` and `--name`.
+    pub(super) command: control::ControlCommand,
 }
 
 #[derive(Debug)]
@@ -844,9 +846,36 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "publish" => {
-                reject_trailing_control_args(&mut iter, "publish")?;
+                let mut kind = crate::session::protocol::PublisherKind::default();
+                let mut name = None;
+                while let Some(arg) = iter.next() {
+                    let (flag, inline) = match arg.split_once('=') {
+                        Some((flag, value)) => (flag.to_string(), Some(value.to_string())),
+                        None => (arg.clone(), None),
+                    };
+                    match flag.as_str() {
+                        "--kind" | "--name" => {
+                            let value = inline
+                                .or_else(|| iter.next())
+                                .ok_or_else(|| format!("{flag} requires a value"))?;
+                            if flag == "--kind" {
+                                kind = crate::session::protocol::PublisherKind::parse(&value)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "unknown publish kind `{value}`; expected `agent` or `activity`"
+                                        )
+                                    })?;
+                            } else {
+                                name = Some(value);
+                            }
+                        }
+                        _ => return Err(format!("unexpected argument `{arg}` after publish")),
+                    }
+                }
+                let command = control::ControlCommand::Publish { kind, name };
                 return Ok(ParsedCli::Publish(PublishCli {
-                    socket: ui_stream_socket(&cli, socket, &control::ControlCommand::Publish)?,
+                    socket: ui_stream_socket(&cli, socket, &command)?,
+                    command,
                 }));
             }
             "subscribe" => {
@@ -3363,6 +3392,45 @@ mod tests {
                 other => panic!("wrong command: {other:?}"),
             },
             other => panic!("wrong parse: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn publish_declares_its_kind_and_name() {
+        let parse =
+            |args: &[&str]| parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
+        let publish = |args: &[&str]| match parse(args) {
+            Ok(ParsedCli::Publish(publish)) => publish.command,
+            other => panic!("wrong parse: {other:?}"),
+        };
+        assert_eq!(
+            publish(&["publish"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Activity,
+                name: None,
+            }
+        );
+        assert_eq!(
+            publish(&["publish", "--kind", "agent", "--name=sessions"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Agent,
+                name: Some("sessions".into()),
+            }
+        );
+        assert_eq!(
+            publish(&["publish", "--kind=activity"]),
+            control::ControlCommand::Publish {
+                kind: crate::session::protocol::PublisherKind::Activity,
+                name: None,
+            }
+        );
+        for args in [
+            &["publish", "--kind", "robot"][..],
+            &["publish", "--kind"],
+            &["publish", "--name"],
+            &["publish", "extra"],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
         }
     }
 

@@ -62,8 +62,9 @@ pub struct PaneRef {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentRef {
     pub pane: PaneRef,
+    /// The published agent row this reference names, or `None` for the pane's own agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slot: Option<String>,
+    pub slot: Option<super::RowKey>,
     pub incarnation: u64,
 }
 
@@ -88,7 +89,7 @@ mod tests {
                 pane_id: 3,
                 generation: 7,
             },
-            slot: Some("review".into()),
+            slot: Some(super::super::RowKey::new("sessions", "review")),
             incarnation: 11,
         };
         let json = serde_json::to_string(&reference).unwrap();

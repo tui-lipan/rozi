@@ -143,7 +143,7 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> U
         AgentLocation::Here { pane, row } => {
             // Landed on before the overlay closes, so the focus the close returns to the "current"
             // pane is the pane the user just asked for rather than the one they came from.
-            land_on_pane(ctx, pane, row.as_deref());
+            land_on_pane(ctx, pane, row.as_ref());
             close_agent_picker(ctx)
         }
         AgentLocation::OtherSession {
@@ -214,7 +214,7 @@ pub(crate) fn land_on_pending_agent(ctx: &mut Context<AppRoot>) -> bool {
     let Some(jump) = ctx.state.pending_agent_jump.take() else {
         return false;
     };
-    land_on_pane(ctx, jump.pane, jump.row.as_deref())
+    land_on_pane(ctx, jump.pane, jump.row.as_ref())
 }
 
 /// Whether the session the recorded destination named is the one now in the foreground.
@@ -231,14 +231,18 @@ fn pending_agent_has_arrived(state: &crate::state::State) -> bool {
 /// `false` when the pane is not in this client's layout — what a summary taken by a poll before the
 /// pane exited looks like from here. The session is still opened either way, which is the half of
 /// the request that survives its destination going away.
-fn land_on_pane(ctx: &mut Context<AppRoot>, pane: crate::state::PaneId, row: Option<&str>) -> bool {
+fn land_on_pane(
+    ctx: &mut Context<AppRoot>,
+    pane: crate::state::PaneId,
+    row: Option<&crate::session::protocol::RowKey>,
+) -> bool {
     let Some(row) = row else {
         return crate::ops::focus::focus_pane_anywhere(ctx, pane);
     };
     if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, pane).is_none() {
         return false;
     }
-    crate::update::sidebar::activation::activate_published_row(ctx, pane, row.to_string());
+    crate::update::sidebar::activation::activate_published_row(ctx, pane, row.clone());
     true
 }
 

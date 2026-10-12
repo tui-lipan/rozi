@@ -401,7 +401,7 @@ pub struct AgentScratch {
     pub summary_changed_at: u64,
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
-    references: HashMap<Option<String>, TrackedAgentReference>,
+    references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
     next_incarnation: u64,
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.

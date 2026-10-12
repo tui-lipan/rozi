@@ -410,8 +410,12 @@ fn pane_rows_message_round_trips() {
         pane_id: 3,
         local: false,
         generation: 2,
+        publisher: "opencode".into(),
+        kind: crate::session::protocol::PublisherKind::Agent,
         rows: vec![
             PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "ses_abc".into(),
                 title: "audit the widget layer".into(),
                 status: "working".into(),
@@ -423,6 +427,8 @@ fn pane_rows_message_round_trips() {
                 native_session: None,
             },
             PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "ses_def".into(),
                 title: "fix the flaky test".into(),
                 status: "blocked".into(),
@@ -450,6 +456,8 @@ fn a_pane_without_rows_does_not_serialize_the_key() {
 #[test]
 fn row_aggregation_is_by_severity_not_recency() {
     let row = |status: &str| PublishedRow {
+        publisher: "sessions".into(),
+        kind: crate::session::protocol::PublisherKind::Agent,
         id: status.into(),
         title: status.into(),
         status: status.into(),

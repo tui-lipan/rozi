@@ -144,7 +144,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::CapturePane { .. }
         | ControlCommand::SwitchWorkspace { .. }
         | ControlCommand::MoveToWorkspace { .. }
-        | ControlCommand::Publish
+        | ControlCommand::Publish { .. }
         | ControlCommand::SetStatus { .. } => Gate::Session,
         ControlCommand::RunAction { .. } => Gate::RunAction,
         ControlCommand::Popup { .. } => Gate::Denied(
@@ -306,7 +306,7 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         | ControlCommand::SendKeys { target, .. }
         | ControlCommand::CapturePane { target, .. }
         | ControlCommand::SetStatus { target, .. } => vec![*target],
-        ControlCommand::Publish => vec![None],
+        ControlCommand::Publish { .. } => vec![None],
         _ => Vec::new(),
     })
 }
@@ -616,7 +616,10 @@ mod tests {
             let refused = ask(&mut backend, worker, send);
             assert_eq!(refused.code, Some(ControlErrorCode::OutOfScope));
 
-            let mut sourced = request(ControlCommand::Publish);
+            let mut sourced = request(ControlCommand::Publish {
+                kind: Default::default(),
+                name: None,
+            });
             sourced.source_pane = Some(id);
             assert!(
                 admit(

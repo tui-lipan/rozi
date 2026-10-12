@@ -89,7 +89,10 @@ keyboard focus and tab selection remain client-local and are not saved.
 
 ## Activity
 
-Activity lists detected coding agents and rows published with `rozi publish`. Rows are grouped by
+Activity lists everything happening in the session: detected coding agents, agents that report
+their own state, statuses set with `rozi status`, and rows published with `rozi publish`. Only the
+agents among them also appear in the [Agents view](sessions.md#go-to-an-agent); see
+[Activities and agents](control-protocol.md#activities-and-agents). Rows are grouped by
 the Git project that contains each pane's working directory, with branch and workspace context. A
 published row can name its own directory, so a program that runs several sessions in separate
 worktrees shows each one under its own branch. A linked Git worktree is labelled with its

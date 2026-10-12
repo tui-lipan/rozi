@@ -165,15 +165,76 @@ pub(crate) fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
     }
 }
 
+/// What a publisher declares itself to be when its stream opens.
+///
+/// An activity is something happening; an agent is something doing work. Every published row
+/// appears in Activity, but only an agent publisher's rows are agents: listed by `rozi agents`,
+/// targetable by `agents prompt`, counted by `keep_awake_while_agents_work`, and authoritative over
+/// the pane's screen detection. Declared, never inferred from what detection happens to see.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum PublisherKind {
+    Agent,
+    #[default]
+    Activity,
+}
+
+impl PublisherKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Activity => "activity",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "agent" => Some(Self::Agent),
+            "activity" => Some(Self::Activity),
+            _ => None,
+        }
+    }
+}
+
+/// A published row's identity within its pane: the publisher that owns it and the id it chose.
+///
+/// Row ids are the publisher's own, so two publishers in one pane may pick the same one. Everything
+/// keyed by a row - run clocks, finish edges, activation, agent slots - keys by this pair.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct RowKey {
+    pub publisher: String,
+    pub id: String,
+}
+
+impl RowKey {
+    pub fn new(publisher: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            publisher: publisher.into(),
+            id: id.into(),
+        }
+    }
+}
+
 /// One logical agent or activity inside a pane that publishes several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PublishedRow {
-    /// Publisher-chosen identity, opaque to rozi and stable across updates.
+    /// Publisher-chosen identity, opaque to rozi and stable across updates. Unique only within
+    /// its publisher; see [`RowKey`].
     ///
     /// Never a position: tabs are reordered and closed, and an index-keyed run clock would hand
     /// one tab's elapsed time to whichever tab slid into its place.
     pub id: String,
+    /// Server-owned identity of the stream that published this row. Whatever a publisher sends
+    /// here is overwritten.
+    #[serde(default)]
+    pub publisher: String,
+    /// Server-owned copy of the kind the publisher declared when its stream opened. Whatever a
+    /// publisher sends here is overwritten.
+    #[serde(default)]
+    pub kind: PublisherKind,
     pub title: String,
     /// Same vocabulary and same sanitization as [`PaneStatus::value`].
     pub status: String,
@@ -205,6 +266,20 @@ pub struct PublishedRow {
     /// resurrection resumes when this row is the active one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_session: Option<String>,
+}
+
+impl PublishedRow {
+    pub fn key(&self) -> RowKey {
+        RowKey::new(self.publisher.clone(), self.id.clone())
+    }
+
+    pub fn has_key(&self, key: &RowKey) -> bool {
+        self.publisher == key.publisher && self.id == key.id
+    }
+
+    pub fn is_agent(&self) -> bool {
+        self.kind == PublisherKind::Agent
+    }
 }
 
 /// The Git project a published row's `cwd` lies in, as the session server resolved it.

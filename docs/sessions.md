@@ -173,8 +173,9 @@ A portal then opens onto the incoming session. To use a fade instead or turn the
 
 ## Go to an agent
 
-Press `Ctrl+A`, then `a` to open **Agents**. It lists coding agents in the current session, in other
-running named local sessions, and on every
+Press `Ctrl+A`, then `a` to open **Agents**. It lists agents, not every Activity row: detected
+coding agents, agents that report their own state, and rows from a publisher that declared itself
+an agent. It covers the current session, other running named local sessions, and every
 [connected host](remote.md#connected-host-monitoring), ordered by what needs attention: blocked,
 then working, then done, then idle.
 
@@ -455,7 +456,10 @@ See also [Troubleshooting](troubleshooting.md).
 Enable **Settings → Sessions → Keep awake while agents work**, or set
 `[session] keep_awake_while_agents_work = true`. The default is disabled. Each session
 server keeps its host awake while any agent is Working, including agents in local panes
-and sessions whose UI has detached. Blocked, Idle, Done, exited panes, and no agents
+and sessions whose UI has detached. Agents are the ones listed by `rozi agents list`: detected
+agents, [agent reports](agents.md#report-state-from-agent-hooks), and rows from a publisher that
+declared itself an agent. A `rozi status` or a generic published row is an activity and does not
+keep the host awake. Blocked, Idle, Done, exited panes, and no agents
 allow sleep after a five-second grace period. Working again during that grace period
 keeps the existing lock. Disabling the setting releases it immediately.
 

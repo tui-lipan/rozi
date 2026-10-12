@@ -286,7 +286,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "hide-command <ID>",
                 "Hide an extension's command from the palette",
             ),
-            row("publish", "Publish activity rows over stdio"),
+            row(
+                "publish [--kind agent|activity] [--name N]",
+                "Publish activity rows over stdio",
+            ),
             row("subscribe [EVENT...]", "Stream application events as JSON"),
             row(
                 "pick [--title T] [--placeholder P] [--json]",

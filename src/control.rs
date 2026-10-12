@@ -82,6 +82,10 @@ pub const SPLIT_SIZE_CAPABILITY: &str = "split-size";
 /// A UI answers `command-visibility`, which shows or hides an extension's own command in the
 /// command palette, and extension manifests accept `hidden` on `[[commands]]`.
 pub const COMMAND_VISIBILITY_CAPABILITY: &str = "command-visibility";
+/// `publish` accepts `kind` and `name`: a publisher declares whether its rows are agents, and
+/// several publishers share a pane, each owning its own rows. Without it every published row is
+/// treated as an agent and a pane holds one publisher.
+pub const PUBLISH_KIND_CAPABILITY: &str = "publish-kind";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -114,6 +118,7 @@ impl ApiDescription {
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PANE_REVEAL_CAPABILITY,
+                PUBLISH_KIND_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 RECORD_PANE_CAPABILITY,
                 RECORD_UI_CAPABILITY,
@@ -573,8 +578,17 @@ pub enum ControlCommand {
     },
     /// Publish the logical agents or activities running inside the calling pane, and receive
     /// activations for them. Unlike every other command this connection stays open in both
-    /// directions; closing it withdraws the pane's rows. Reached through `rozi publish`.
-    Publish,
+    /// directions; closing it withdraws this publisher's rows. Reached through `rozi publish`.
+    Publish {
+        /// What the publisher is: `activity` (the default) or `agent`. Only an agent publisher's
+        /// rows are agents.
+        #[serde(default)]
+        kind: crate::session::protocol::PublisherKind,
+        /// Distinguishes several publishers of one caller in the same pane; see
+        /// [`crate::state::PublisherIdentity`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -2346,11 +2360,9 @@ fn control_stream_reader(stream: &IpcConnection) -> io::Result<IpcConnection> {
 fn run_publish_stream(
     mut stream: IpcConnection,
     link: CommandLink<Msg>,
-    stream_id: u64,
-    requested_pane: Option<PaneId>,
-    extension: Option<crate::config::ExtensionProvenance>,
-    worker: Option<crate::state::WorkerId>,
+    open: crate::ops::published_rows::PublishOpen,
 ) {
+    let stream_id = open.stream_id;
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
     };
@@ -2361,9 +2373,11 @@ fn run_publish_stream(
     let (ack_tx, ack_rx) = mpsc::channel();
     link.send(Msg::PublishStreamOpen {
         stream_id,
-        requested_pane,
-        extension,
-        worker,
+        requested_pane: open.requested_pane,
+        kind: open.kind,
+        name: open.name,
+        extension: open.extension,
+        worker: open.worker,
         sender: tx,
         ack: ack_tx,
     });
@@ -2813,16 +2827,20 @@ pub(crate) fn serve_connection(
         );
         return;
     }
-    if let ControlCommand::Publish = &request.command {
+    if let ControlCommand::Publish { kind, name } = &request.command {
         static NEXT_PUBLISH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let stream_id = NEXT_PUBLISH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         run_publish_stream(
             stream,
             link,
-            stream_id,
-            request.source_pane,
-            request.extension.clone(),
-            worker,
+            crate::ops::published_rows::PublishOpen {
+                stream_id,
+                requested_pane: request.source_pane,
+                kind: *kind,
+                name: name.clone(),
+                extension: request.extension.clone(),
+                worker,
+            },
         );
         return;
     }

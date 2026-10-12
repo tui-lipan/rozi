@@ -17,7 +17,13 @@ function readActivation(line) {
 
 export function startPublisher(context, { env = process.env, launch = spawn, interval = 250 } = {}) {
   if (!insideRozi(env)) return () => {}
-  const child = launch(env.ROZI_BIN, ["publish"], { env, stdio: ["pipe", "pipe", "ignore"] })
+  // Each row is an OpenCode session, so this publisher declares itself an agent: its rows are
+  // listed by `rozi agents` and stand in for screen detection. The name keeps it apart from any
+  // other publisher in the same pane.
+  const child = launch(env.ROZI_BIN, ["publish", "--kind", "agent", "--name", "opencode"], {
+    env,
+    stdio: ["pipe", "pipe", "ignore"],
+  })
   const input = createInterface({ input: child.stdout })
   const state = new SessionRows()
   const hydrated = new Set()

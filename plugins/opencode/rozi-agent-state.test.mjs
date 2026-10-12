@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
+import { AgentReporter, AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
 
 const event = (type, properties) => ({ type, properties })
 const tracker = () => new AgentState()
@@ -164,4 +164,74 @@ test("an unchanged aggregate is not republished", () => {
     null,
     "a busy session's event stream must not reconnect to the control socket per token",
   )
+})
+
+const paneEnv = { ROZI_PANE: "7", ROZI_SOCKET: "/run/rozi.sock", ROZI_SESSION_INSTANCE: "abc" }
+
+function transport(responses = []) {
+  const sent = []
+  return {
+    sent,
+    send: async (message) => {
+      sent.push(message)
+      return responses.shift() ?? { ok: true }
+    },
+  }
+}
+
+// The V1 plugin is an agent integration: it reports through `agent-report` for the detected
+// OpenCode agent, never through `set-status`, which would make the pane a generic activity.
+test("reports claim the pane as the opencode agent and release on unload", async () => {
+  const wire = transport()
+  const reporter = new AgentReporter({ env: paneEnv, transport: wire.send })
+  assert.equal(await reporter.report(permission), true)
+  assert.equal(await reporter.report(idle), true)
+  await reporter.release()
+  const [first, second, release] = wire.sent
+  assert.equal(first.cmd, "agent-report")
+  assert.equal(first.agent, "opencode")
+  assert.equal(first.target, 7)
+  assert.equal(first.source_pane, 7)
+  assert.equal(first.source_session, "abc")
+  assert.equal(first.state, "blocked")
+  assert.equal(first.reason, "permission required")
+  assert.equal(second.integration, first.integration)
+  assert.ok(second.seq > first.seq)
+  assert.equal("reason" in second, false)
+  assert.deepEqual(
+    { cmd: release.cmd, integration: release.integration, target: release.target },
+    { cmd: "agent-release", integration: first.integration, target: 7 },
+  )
+  assert.ok(release.seq > second.seq)
+  assert.equal(wire.sent.some((message) => message.cmd === "set-status"), false)
+})
+
+test("a refused report is retried, and a retired claim starts a new token", async () => {
+  const wire = transport([
+    { ok: false, error: "agent `opencode` is not the currently detected agent in pane 7" },
+    { ok: false, error: "integration token belongs to a retired agent incarnation" },
+  ])
+  const reporter = new AgentReporter({ env: paneEnv, transport: wire.send })
+  assert.equal(await reporter.report(working), false)
+  assert.equal(await reporter.report(working), false)
+  assert.equal(await reporter.report(working), true)
+  assert.equal(wire.sent[0].integration, wire.sent[1].integration)
+  assert.notEqual(wire.sent[2].integration, wire.sent[1].integration)
+  assert.equal(wire.sent[2].seq, 1)
+
+  const state = tracker()
+  assert.deepEqual(reduce(state, "session.status", { sessionID: "a", status: { type: "busy" } }), working)
+  state.forget()
+  assert.deepEqual(
+    reduce(state, "session.status", { sessionID: "a", status: { type: "busy" } }),
+    working,
+    "a forgotten aggregate is offered again",
+  )
+})
+
+test("an unclaimed reporter releases nothing, and is inert outside a pane", async () => {
+  const wire = transport()
+  await new AgentReporter({ env: paneEnv, transport: wire.send }).release()
+  assert.equal(await new AgentReporter({ env: {}, transport: wire.send }).report(working), false)
+  assert.equal(wire.sent.length, 0)
 })

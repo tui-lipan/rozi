@@ -493,13 +493,13 @@ pub enum AgentLocation {
     Here {
         pane: PaneId,
         /// The published row within the pane, for a program running several agents.
-        row: Option<String>,
+        row: Option<crate::session::protocol::RowKey>,
     },
     OtherSession {
         target: Option<crate::session::remote::RemoteTarget>,
         session: String,
         pane: PaneId,
-        row: Option<String>,
+        row: Option<crate::session::protocol::RowKey>,
     },
 }
 
@@ -511,9 +511,9 @@ impl AgentLocation {
         }
     }
 
-    pub fn row(&self) -> Option<&str> {
+    pub fn row(&self) -> Option<&crate::session::protocol::RowKey> {
         match self {
-            Self::Here { row, .. } | Self::OtherSession { row, .. } => row.as_deref(),
+            Self::Here { row, .. } | Self::OtherSession { row, .. } => row.as_ref(),
         }
     }
 }

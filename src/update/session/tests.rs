@@ -2687,6 +2687,8 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 });
             let mut runtime = PaneRuntimeState::default();
             runtime.rows.push(crate::session::protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "shared-row".into(),
                 title: "Shared row".into(),
                 status: "working".into(),

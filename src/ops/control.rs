@@ -302,7 +302,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
-        ControlCommand::Publish => {
+        ControlCommand::Publish { .. } => {
             ControlResponse::error("publish is handled by the control listener")
         }
         ControlCommand::Pick { .. } => {
@@ -1011,13 +1011,13 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                     reason: runtime.reason,
                     cwd: crate::session::protocol::occupant_cwd(
                         &pane.terminal.published_rows,
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                         pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
                     ),
                     native_session: crate::session::protocol::occupant_native_session(
                         &pane.terminal.published_rows,
                         pane.terminal.agent_integration.as_deref(),
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                     ),
                     reference: runtime.reference,
                     source: runtime.source,
@@ -1082,7 +1082,7 @@ fn validate_agent_input_reference(
     ctx: &Context<AppRoot>,
     reference: &crate::session::protocol::AgentRef,
 ) -> std::result::Result<(), ControlResponse> {
-    let Some(slot) = reference.slot.as_deref() else {
+    let Some(slot) = reference.slot.as_ref() else {
         return Ok(());
     };
     let active = crate::pane::lifecycle::find_pane(&ctx.state, reference.pane.pane_id)
@@ -1090,9 +1090,10 @@ fn validate_agent_input_reference(
             pane.terminal
                 .published_rows
                 .iter()
-                .find(|row| row.id == slot)
+                .find(|row| row.has_key(slot))
         })
         .is_some_and(|row| row.active);
+    let slot = &slot.id;
     if active {
         Ok(())
     } else {

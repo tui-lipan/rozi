@@ -2179,8 +2179,16 @@ fn query_carries_agent_summaries_only_for_a_client_that_asked_for_them() {
         reason: Some("waiting".into()),
         set_at: 0,
     });
+    // A bare status is an activity, not an agent: no summary for it.
     pane.agent.sync_references(&pane.runtime);
     server.panes.insert(1, pane);
+    assert!(server.agent_summaries().is_empty());
+    let pane = server.panes.get_mut(&1).unwrap();
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+        state: protocol::DetectedAgentState::Idle,
+    });
+    pane.agent.sync_references(&pane.runtime);
 
     let summaries = |responses: &[(Target, ServerMessage)]| match responses {
         [(Target::Sender, ServerMessage::SessionInfo { agents, .. })] => agents.clone(),
@@ -2225,6 +2233,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
     });
     pane.runtime.rows = vec![
         protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: "left".into(),
             title: "running tests".into(),
             status: "working".into(),
@@ -2236,6 +2246,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
             native_session: None,
         },
         protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: "right".into(),
             title: "waiting on approval".into(),
             status: "blocked".into(),
@@ -2253,10 +2265,16 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
     let summaries = server.agent_summaries();
     assert_eq!(summaries.len(), 2);
     // Publish order, not row-id order: the publisher's own numbering is what the label counts.
-    assert_eq!(summaries[0].row.as_deref(), Some("left"));
+    assert_eq!(
+        summaries[0].row.as_ref().map(|row| row.id.as_str()),
+        Some("left")
+    );
     assert_eq!(summaries[0].label, "Codex #1");
     assert_eq!(summaries[0].state, "working");
-    assert_eq!(summaries[1].row.as_deref(), Some("right"));
+    assert_eq!(
+        summaries[1].row.as_ref().map(|row| row.id.as_str()),
+        Some("right")
+    );
     assert_eq!(summaries[1].label, "Codex #2");
     assert_eq!(summaries[1].state, "blocked");
     // The title is what the row is *doing*. Identity and activity are different fields, and only
@@ -5057,6 +5075,8 @@ fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
         .into_iter()
         .enumerate()
         .map(|(index, status)| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: index.to_string(),
             title: status.into(),
             status: status.into(),
@@ -5189,6 +5209,8 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
     let pane = server.panes.get_mut(&1).unwrap();
     pane.runtime.integration.as_mut().unwrap().state = protocol::AgentState::Blocked;
     pane.runtime.rows = vec![protocol::PublishedRow {
+        publisher: "sessions".into(),
+        kind: crate::session::protocol::PublisherKind::Agent,
         id: "row".into(),
         title: "task".into(),
         status: "working".into(),

@@ -317,17 +317,14 @@ struct SnapshotAgentResume {
 
 /// The conversation a restored pane resumes.
 ///
-/// The active published row wins when it names one: a client running several conversations
+/// The pane's active agent row wins when it names one: a client running several conversations
 /// shows that one, and its hooks may still be reporting on a conversation it has since switched
-/// away from. Otherwise the pane's integration report decides, as it always has.
+/// away from. Otherwise the pane's integration report decides, as it always has. An activity row
+/// is never a resume candidate, whatever it names; see [`protocol::active_agent_row`].
 fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
     let report = pane.runtime.integration.as_deref();
-    let active = pane
-        .runtime
-        .rows
-        .iter()
-        .find(|row| row.active)
-        .and_then(|row| row.native_session.clone());
+    let active =
+        protocol::active_agent_row(&pane.runtime.rows).and_then(|row| row.native_session.clone());
     if let Some(session) = active {
         let agent = report
             .map(|report| report.identity.id.clone())
@@ -1709,6 +1706,8 @@ mod tests {
         pane.runtime.rows = ["left-behind", "on-screen"]
             .into_iter()
             .map(|id| protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: id.into(),
                 title: id.into(),
                 status: "idle".into(),
@@ -1720,10 +1719,26 @@ mod tests {
                 native_session: Some(format!("native-{id}")),
             })
             .collect();
+        // An activity publisher that published first, with an active row naming a "session" of
+        // its own, is never what a restore resumes.
+        let mut activity = pane.runtime.rows[1].clone();
+        activity.publisher = "publish:prs".into();
+        activity.kind = crate::session::protocol::PublisherKind::Activity;
+        activity.native_session = Some("not-a-conversation".into());
+        pane.runtime.rows.insert(0, activity.clone());
         let job = server.capture_snapshot(Instant::now()).expect("capture");
         let resume = job.meta.panes[0].agent_resume.as_ref().expect("row fact");
         assert_eq!(resume.agent, "claude");
         assert_eq!(resume.session, "native-on-screen");
+
+        // With only the activity row left, the hooks' report decides again.
+        server.panes.get_mut(&1).unwrap().runtime.rows = vec![activity];
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        let resume = job.meta.panes[0]
+            .agent_resume
+            .as_ref()
+            .expect("report fact");
+        assert_eq!(resume.session, "opaque-session-123");
 
         server.settings.resurrect_agents = false;
         let private_job = server.capture_snapshot(Instant::now()).expect("capture");

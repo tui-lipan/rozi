@@ -141,7 +141,8 @@ entries = [
   are namespaced `<extension>.<id>`, so an extension can add an agent but never replace a built-in
   one. Rules are evaluated by precedence (blocked, working, idle, unknown), not declaration order;
   scope a `working` rule to `footer` or a transcript quoting its own hints reads as a live run. Full
-  format in `docs/agents.md`. Publish rows instead when the program knows its own state.
+  format in `docs/agents.md`. Publish rows with `rozi publish --kind agent` instead when the
+  program knows its own agents' state.
 - `[[sidebar_tabs]]` takes the launcher and command forms `[sidebar]` tab tables accept, minus the
   `files`/`git` tree options. Ids are namespaced `<extension>.<name>`, so a tab can only be added,
   never substituted for a built-in one, and a `config.toml` tab of the same id wins. Out-of-range
@@ -296,6 +297,17 @@ Keep `rozi publish` open, write replacement activity snapshots, and read activat
 ```
 
 Use stable row IDs. An empty row list or closed stream withdraws the rows.
+
+- Rows are activities by default: they appear in Activity, but not in the Agents view or
+  `rozi agents`, and do not keep the host awake. Declare `rozi publish --kind agent` only when
+  each row is an agent's run or conversation. Never infer it from whether rozi detects an agent
+  in the pane, and never use `rozi status` to make something an agent.
+- Each extension has one publisher identity per pane (`<extension>`). A restarted stream replaces
+  its own earlier one. Give each additional publisher of the extension in the same pane a
+  `--name` (identity `<extension>.<name>`); it never affects other publishers' rows.
+- `active` and row IDs are per publisher; another publisher in the pane may reuse an ID.
+- A service without `ROZI_PANE` publishes into the pane focused when the stream opens, which is
+  often an agent's pane. Set `ROZI_PANE` when the rows belong somewhere specific.
 
 ### Notify
 

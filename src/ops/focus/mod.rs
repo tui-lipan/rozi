@@ -80,17 +80,21 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
         return false;
     };
 
-    // Only the row the publisher has on screen was actually looked at. The others are behind a
-    // tab the user has not visited, so their pulses stay lit until that tab is opened.
-    let active_row = pane
+    // Only the rows publishers have on screen were actually looked at - one per publisher. The
+    // others are behind a tab the user has not visited, so their pulses stay lit until it opens.
+    let active_rows: Vec<_> = pane
         .terminal
         .published_rows
         .iter()
-        .find(|row| row.active)
-        .map(|row| row.id.clone());
-    let row_cleared = active_row
-        .and_then(|id| pane.terminal.published_row_ui.get_mut(&id))
-        .is_some_and(|ui| std::mem::replace(&mut ui.finished_unseen, false));
+        .filter(|row| row.active)
+        .map(crate::session::protocol::PublishedRow::key)
+        .collect();
+    let mut row_cleared = false;
+    for key in active_rows {
+        if let Some(ui) = pane.terminal.published_row_ui.get_mut(&key) {
+            row_cleared |= std::mem::replace(&mut ui.finished_unseen, false);
+        }
+    }
 
     let changed = pane.activity.has_unseen_output
         || pane.activity.bell

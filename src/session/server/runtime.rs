@@ -75,7 +75,7 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
         if let Some(integration) = &runtime.integration
-            && runtime.rows.is_empty()
+            && !runtime.rows.iter().any(protocol::PublishedRow::is_agent)
         {
             self.references.clear();
             self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
@@ -88,7 +88,7 @@ impl AgentScratch {
             );
             return;
         }
-        let occupants = runtime_occupants(runtime);
+        let occupants = protocol::agent_occupant_identities(runtime);
         self.references.retain(|slot, tracked| {
             occupants.iter().any(|(candidate_slot, identity)| {
                 candidate_slot == slot && *identity == tracked.identity
@@ -100,9 +100,9 @@ impl AgentScratch {
             }
             self.next_incarnation = self.next_incarnation.saturating_add(1).max(1);
             self.references.insert(
-                slot.clone(),
+                slot,
                 TrackedAgentReference {
-                    identity: identity.to_string(),
+                    identity,
                     incarnation: self.next_incarnation,
                 },
             );
@@ -128,7 +128,7 @@ impl AgentScratch {
     fn ensure_reference(
         &mut self,
         pane: protocol::PaneRef,
-        slot: Option<String>,
+        slot: Option<protocol::RowKey>,
         identity: &str,
     ) -> protocol::AgentRef {
         let replace = self
@@ -182,27 +182,6 @@ impl AgentScratch {
         references.sort_by(|left, right| left.slot.cmp(&right.slot));
         references
     }
-}
-
-fn runtime_occupants(runtime: &PaneRuntimeState) -> Vec<(Option<String>, &str)> {
-    if !runtime.rows.is_empty() {
-        return runtime
-            .rows
-            .iter()
-            .map(|row| (Some(row.id.clone()), row.id.as_str()))
-            .collect();
-    }
-    runtime
-        .detected_agent
-        .as_ref()
-        .map(|agent| vec![(None, agent.agent.id.as_str())])
-        .unwrap_or_else(|| {
-            runtime
-                .status
-                .as_ref()
-                .map(|_| vec![(None, "reported")])
-                .unwrap_or_default()
-        })
 }
 
 fn integration_has_strong_replacement_evidence(
@@ -490,8 +469,9 @@ impl SessionServer {
         Ok(Some(state))
     }
 
-    /// Replace a pane's published rows. An empty list withdraws them and lets screen
-    /// detection speak for the pane again.
+    /// Replace one publisher's rows in a pane, leaving every other publisher's rows alone. An
+    /// empty list withdraws them; once no agent publisher has rows, screen detection speaks for
+    /// the pane again.
     ///
     /// Guards match [`Self::set_pane_status`] exactly: this is the same authority - a program
     /// speaking for its own pane - reporting more than one thing at a time.
@@ -501,6 +481,7 @@ impl SessionServer {
         pane_id: PaneId,
         generation: u64,
         local: bool,
+        publisher: PanePublisher,
         rows: Vec<protocol::PublishedRow>,
     ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
         if !self.client_attached(client_id) {
@@ -508,6 +489,12 @@ impl SessionServer {
         }
         if self.client_read_only(client_id) {
             return Err(("read-only", "read-only client".to_string()));
+        }
+        if !publisher_id_is_valid(&publisher.id) {
+            return Err((
+                "invalid-argument",
+                "publisher id must be 1-160 characters without control characters".to_string(),
+            ));
         }
         let owner = local.then_some(client_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
@@ -522,28 +509,61 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
+        let others = pane
+            .runtime
+            .rows
+            .iter()
+            .filter(|row| row.publisher != publisher.id)
+            .map(|row| row.publisher.as_str())
+            .collect::<HashSet<_>>()
+            .len();
+        if !rows.is_empty() && others >= MAX_PANE_PUBLISHERS {
+            return Err((
+                "conflict",
+                format!("pane {pane_id} already has {MAX_PANE_PUBLISHERS} publishers"),
+            ));
+        }
         // Rows and a live integration report coexist: one client can run several conversations,
-        // and the report speaks for the row whose `native_session` it names. See
+        // and the report speaks for the agent row whose `native_session` it names. See
         // [`protocol::effective_agent_runtimes`].
         let now = unix_now_secs();
         // A pane whose shell reports another host's cwd is running its publisher there too, so
         // its rows name a filesystem this server cannot read.
         let local = pane.runtime.cwd_host.is_none();
-        let mut rows = sanitize_rows(rows, &pane.runtime.rows, now, local);
+        let previous: Vec<protocol::PublishedRow> = protocol::rows_with_integration(&pane.runtime)
+            .into_iter()
+            .filter(|row| row.publisher == publisher.id)
+            .collect();
+        let mut rows = sanitize_rows(rows, &previous, now, local, &publisher);
         restamp_row_clocks(
             &mut rows,
-            &protocol::rows_with_integration(&pane.runtime),
+            &previous,
             pane.runtime.integration.as_deref(),
             now,
         );
-        if rows == pane.runtime.rows {
+        let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
+        if next == pane.runtime.rows {
             return Ok(None);
         }
+        let was_agent = pane
+            .runtime
+            .rows
+            .iter()
+            .any(protocol::PublishedRow::is_agent);
         pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
-        pane.runtime.rows = rows;
-        // A publisher that enumerates its own sessions is better informed than the scraper, which
-        // can only see the one it draws. Drop anything the scraper was holding for this pane.
-        pane.agent.hold = None;
+        pane.runtime.rows = next;
+        // An agent publisher that enumerates its own sessions is better informed than the scraper,
+        // which can only see the one it draws. Drop anything the scraper was holding for this pane.
+        // An activity publisher says nothing about the pane's agent, so detection carries on.
+        if pane
+            .runtime
+            .rows
+            .iter()
+            .any(protocol::PublishedRow::is_agent)
+            || was_agent
+        {
+            pane.agent.hold = None;
+        }
         pane.agent.sync_references(&pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
@@ -955,13 +975,13 @@ fn derive_detected_agent(
     foreground_job: Option<&ForegroundJob>,
     process_refreshed: bool,
 ) -> Option<DetectedAgent> {
-    // Published rows describe all sessions, while screen detection sees only the session in view.
-    if !pane.runtime.rows.is_empty() {
+    // An agent publisher's rows describe all its sessions, while screen detection sees only the
+    // session in view. Activity rows say nothing about the pane's agent, so they leave it alone.
+    let agent_rows = crate::session::protocol::agent_rows_with_integration(&pane.runtime);
+    if !agent_rows.is_empty() {
         pane.agent.hold = None;
         pane.agent.read = None;
-        let aggregate = crate::session::protocol::aggregate_row_state(
-            &crate::session::protocol::rows_with_integration(&pane.runtime),
-        );
+        let aggregate = crate::session::protocol::aggregate_row_state(&agent_rows);
         return pane
             .runtime
             .detected_agent
@@ -1529,9 +1549,48 @@ fn next_run_start(
     Some(now)
 }
 
-/// How many rows one pane may publish. A tab bar is a human-sized list; a publisher sending
-/// thousands is malfunctioning, and every row costs a sidebar row.
+/// How many rows one publisher may publish into a pane. A tab bar is a human-sized list; a
+/// publisher sending thousands is malfunctioning, and every row costs a sidebar row.
 const MAX_PANE_ROWS: usize = 64;
+
+/// How many publishers one pane may hold rows from at once.
+const MAX_PANE_PUBLISHERS: usize = 16;
+
+/// Who is replacing rows in [`SessionServer::report_pane_rows`], as the UI client identified the
+/// stream: its stable id within the pane and the kind it declared.
+pub(super) struct PanePublisher {
+    pub id: String,
+    pub kind: protocol::PublisherKind,
+}
+
+fn publisher_id_is_valid(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 160 && !id.chars().any(char::is_control)
+}
+
+/// `current` with `publisher`'s rows replaced by `rows`.
+///
+/// The publisher keeps its place: its new rows go where its first old row was, and a publisher
+/// with no rows yet goes last. Publishers therefore stay in the order they first published, which
+/// is the order the pane-level active row is chosen in.
+fn splice_publisher_rows(
+    current: &[protocol::PublishedRow],
+    publisher: &str,
+    rows: Vec<protocol::PublishedRow>,
+) -> Vec<protocol::PublishedRow> {
+    // Every row before the publisher's first one belongs to someone else, so this index is the
+    // same once the publisher's old rows are gone.
+    let position = current
+        .iter()
+        .position(|row| row.publisher == publisher)
+        .unwrap_or(current.len());
+    let mut next: Vec<protocol::PublishedRow> = current
+        .iter()
+        .filter(|row| row.publisher != publisher)
+        .cloned()
+        .collect();
+    next.splice(position..position, rows);
+    next
+}
 
 /// Clean a publisher's row list and give each row the run clock the server owns.
 ///
@@ -1548,6 +1607,7 @@ fn sanitize_rows(
     previous: &[protocol::PublishedRow],
     now: u64,
     local: bool,
+    publisher: &PanePublisher,
 ) -> Vec<protocol::PublishedRow> {
     let mut active_seen = false;
     rows.into_iter()
@@ -1561,8 +1621,8 @@ fn sanitize_rows(
                 Some(status.as_str()),
                 now,
             );
-            // At most one row is the one on screen; a publisher that marks several keeps the
-            // first, since the rest cannot also be in view.
+            // At most one of a publisher's rows is the one on screen; a publisher that marks
+            // several keeps the first, since the rest cannot also be in view.
             let active = row.active && !std::mem::replace(&mut active_seen, row.active);
             let cwd = row
                 .cwd
@@ -1576,6 +1636,8 @@ fn sanitize_rows(
                 // screen where a description belongs.
                 title: clean_text(&row.title, PANE_STATUS_MAX_LEN).unwrap_or_default(),
                 id,
+                publisher: publisher.id.clone(),
+                kind: publisher.kind,
                 status,
                 reason: clean_text(&row.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),
                 active,
@@ -1607,7 +1669,9 @@ fn restamp_row_clocks(
 ) {
     for row in rows {
         let effective = protocol::effective_row(row, integration);
-        let before = previous.iter().find(|candidate| candidate.id == row.id);
+        let before = previous
+            .iter()
+            .find(|candidate| candidate.publisher == row.publisher && candidate.id == row.id);
         row.work_started_at = next_run_start(
             before.map(|before| before.status.as_str()),
             before.and_then(|before| before.work_started_at),
@@ -1895,6 +1959,13 @@ fn is_local_host(host: Option<&str>) -> bool {
 mod tests {
     use super::*;
 
+    fn test_publisher() -> PanePublisher {
+        PanePublisher {
+            id: "sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+        }
+    }
+
     fn catalog() -> AgentCatalog {
         AgentCatalog::builtin()
     }
@@ -2086,6 +2157,8 @@ mod tests {
         .unwrap();
 
         let row = |id: &str, cwd: Option<String>| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: id.into(),
             title: id.into(),
             status: "working".into(),
@@ -2107,7 +2180,7 @@ mod tests {
             row("none", None),
         ];
 
-        let local = sanitize_rows(rows.clone(), &[], 1, true);
+        let local = sanitize_rows(rows.clone(), &[], 1, true, &test_publisher());
         let project = local[0].project.as_ref().expect("resolved project");
         assert_eq!(local[0].cwd.as_deref(), Some(inside.as_str()));
         assert_eq!(project.root, worktree.to_string_lossy());
@@ -2126,7 +2199,7 @@ mod tests {
             (None, None)
         );
 
-        let remote = sanitize_rows(rows, &[], 1, false);
+        let remote = sanitize_rows(rows, &[], 1, false, &test_publisher());
         assert_eq!(remote[0].cwd.as_deref(), Some(inside.as_str()));
         assert_eq!(remote[0].project, None);
 
@@ -2138,6 +2211,8 @@ mod tests {
     #[test]
     fn a_row_native_session_is_kept_exactly_or_not_at_all() {
         let row = |id: &str, native: &str| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: id.into(),
             title: id.into(),
             status: "idle".into(),
@@ -2159,6 +2234,7 @@ mod tests {
             &[],
             1,
             true,
+            &test_publisher(),
         );
         let native = rows
             .iter()
@@ -2181,6 +2257,8 @@ mod tests {
     #[test]
     fn a_hook_report_starts_and_ends_its_rows_run() {
         let quiet = protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: "quiet".into(),
             title: "quiet".into(),
             status: "idle".into(),
@@ -2228,6 +2306,8 @@ mod tests {
     #[test]
     fn published_slots_keep_independent_incarnations() {
         let row = |id: &str| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: id.into(),
             title: id.into(),
             status: "working".into(),
@@ -2252,10 +2332,10 @@ mod tests {
         let initial = scratch.references(pane_ref.clone());
         let a = initial
             .iter()
-            .find(|item| item.slot.as_deref() == Some("a"));
+            .find(|item| item.slot.as_ref().map(|slot| slot.id.as_str()) == Some("a"));
         let b = initial
             .iter()
-            .find(|item| item.slot.as_deref() == Some("b"));
+            .find(|item| item.slot.as_ref().map(|slot| slot.id.as_str()) == Some("b"));
         let (a, b) = (a.unwrap().incarnation, b.unwrap().incarnation);
 
         runtime.rows.remove(0);
@@ -2265,18 +2345,95 @@ mod tests {
         let next = scratch.references(pane_ref);
         assert_eq!(
             next.iter()
-                .find(|item| item.slot.as_deref() == Some("b"))
+                .find(|item| item.slot.as_ref().map(|slot| slot.id.as_str()) == Some("b"))
                 .unwrap()
                 .incarnation,
             b
         );
         assert!(
             next.iter()
-                .find(|item| item.slot.as_deref() == Some("a"))
+                .find(|item| item.slot.as_ref().map(|slot| slot.id.as_str()) == Some("a"))
                 .unwrap()
                 .incarnation
                 > a
         );
+    }
+
+    /// Only agent occupants are referenced: a generic publisher's rows and a bare `rozi status`
+    /// get no `AgentRef`, so nothing can wait on or prompt them, while a detected agent beside
+    /// them keeps its own.
+    #[test]
+    fn activities_never_get_agent_references() {
+        let activity = |id: &str| protocol::PublishedRow {
+            publisher: "publish:prs".into(),
+            kind: protocol::PublisherKind::Activity,
+            id: id.into(),
+            title: id.into(),
+            status: "working".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let mut scratch = AgentScratch::default();
+        let mut runtime = PaneRuntimeState {
+            rows: vec![activity("pr-1")],
+            status: Some(PaneStatus {
+                value: "working".into(),
+                reason: None,
+                set_at: 1,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        scratch.sync_references(&runtime);
+        assert!(scratch.references(pane_ref.clone()).is_empty());
+
+        runtime.detected_agent = Some(DetectedAgent {
+            agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: protocol::DetectedAgentState::Working,
+        });
+        scratch.sync_references(&runtime);
+        let references = scratch.references(pane_ref);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].slot, None);
+    }
+
+    /// One publisher replacing its rows keeps its place and leaves every other publisher's rows
+    /// in theirs.
+    #[test]
+    fn a_publisher_replaces_only_its_own_rows_in_place() {
+        let row = |publisher: &str, id: &str| protocol::PublishedRow {
+            publisher: publisher.into(),
+            kind: protocol::PublisherKind::Activity,
+            id: id.into(),
+            title: String::new(),
+            status: "idle".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        };
+        let ids = |rows: &[protocol::PublishedRow]| {
+            rows.iter()
+                .map(|row| format!("{}/{}", row.publisher, row.id))
+                .collect::<Vec<_>>()
+        };
+        let current = vec![row("a", "1"), row("b", "1"), row("c", "1")];
+        let next = splice_publisher_rows(&current, "b", vec![row("b", "2"), row("b", "3")]);
+        assert_eq!(ids(&next), ["a/1", "b/2", "b/3", "c/1"]);
+        let next = splice_publisher_rows(&next, "b", Vec::new());
+        assert_eq!(ids(&next), ["a/1", "c/1"]);
+        let next = splice_publisher_rows(&next, "d", vec![row("d", "1")]);
+        assert_eq!(ids(&next), ["a/1", "c/1", "d/1"]);
     }
 
     struct StubInspector;

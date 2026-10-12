@@ -127,7 +127,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Pick { .. } => {
             Some("pick opens a modal in a UI; a session server cannot show one")
         }
-        ControlCommand::Publish => Some(
+        ControlCommand::Publish { .. } => Some(
             "publish belongs to the pane that publishes; run it inside the pane, which reaches its own session",
         ),
         ControlCommand::Subscribe { .. } => Some(
@@ -1041,13 +1041,13 @@ impl SessionServer {
                     reason: runtime.reason,
                     cwd: protocol::occupant_cwd(
                         &pane.runtime.rows,
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                         pane.runtime.cwd.clone(),
                     ),
                     native_session: protocol::occupant_native_session(
                         &pane.runtime.rows,
                         pane.runtime.integration.as_deref(),
-                        runtime.reference.slot.as_deref(),
+                        runtime.reference.slot.as_ref(),
                     ),
                     reference: runtime.reference,
                     source: runtime.source,
@@ -1151,14 +1151,15 @@ impl SessionServer {
         &self,
         reference: &protocol::AgentRef,
     ) -> std::result::Result<(), ControlResponse> {
-        let Some(slot) = reference.slot.as_deref() else {
+        let Some(slot) = reference.slot.as_ref() else {
             return Ok(());
         };
         let active = self
             .panes
             .get(&reference.pane.pane_id)
-            .and_then(|pane| pane.runtime.rows.iter().find(|row| row.id == slot))
+            .and_then(|pane| pane.runtime.rows.iter().find(|row| row.has_key(slot)))
             .is_some_and(|row| row.active);
+        let slot = &slot.id;
         if active {
             Ok(())
         } else {
@@ -2615,6 +2616,148 @@ mod tests {
         assert_eq!(got, agents[0]);
     }
 
+    fn published(
+        publisher: &str,
+        kind: protocol::PublisherKind,
+        id: &str,
+    ) -> protocol::PublishedRow {
+        protocol::PublishedRow {
+            publisher: publisher.into(),
+            kind,
+            id: id.into(),
+            title: format!("{id} title"),
+            status: "working".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("native-{id}")),
+        }
+    }
+
+    fn listed_agents(server: &mut SessionServer) -> Vec<AgentInfo> {
+        let (listed, _) = control(server, ControlCommand::AgentsList);
+        serde_json::from_value(listed.data.unwrap()).unwrap()
+    }
+
+    /// A generic PR publisher beside a detected Codex: the PR rows are activities. Only Codex is
+    /// listed, waited on, and prompted, and no PR row carries Codex's identity.
+    #[test]
+    fn a_generic_publisher_beside_a_detected_agent_is_not_an_agent() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let pane = server.panes.get_mut(&7).unwrap();
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.runtime.rows = vec![
+            published("publish:prs", protocol::PublisherKind::Activity, "pr-1"),
+            published("publish:prs", protocol::PublisherKind::Activity, "pr-2"),
+        ];
+        pane.agent.sync_references(&pane.runtime);
+
+        let agents = listed_agents(&mut server);
+        assert_eq!(agents.len(), 1, "only Codex is an agent: {agents:?}");
+        assert_eq!(agents[0].agent, "codex");
+        assert_eq!(agents[0].reference.slot, None);
+        assert_eq!(
+            agents[0].state,
+            protocol::AgentState::Idle,
+            "PR rows do not drive Codex"
+        );
+
+        // A pane target resolves to Codex alone, so waits and prompts reach it unambiguously.
+        let (waited, _) = control(
+            &mut server,
+            ControlCommand::AgentWait {
+                target: AgentTarget::Pane(7),
+                until: crate::control::AgentWaitCondition::Quiescent,
+                timeout_ms: None,
+            },
+        );
+        assert!(waited.ok, "{waited:?}");
+        // The PR rows are working, but they are not agents: nothing keeps the host awake.
+        assert!(!server.any_agent_working());
+    }
+
+    /// An agent with no screen detection behind it, known only through an agent publisher, is
+    /// listed and can be waited on.
+    #[test]
+    fn an_api_only_agent_publisher_is_listed_and_waitable() {
+        let mut server = SessionServer::new_named("dev");
+        let mut pane = super::super::tests::test_pane(1);
+        pane.runtime.rows = vec![protocol::PublishedRow {
+            status: "idle".into(),
+            ..published("remote-agent", protocol::PublisherKind::Agent, "run-1")
+        }];
+        pane.agent.sync_references(&pane.runtime);
+        server.panes.insert(7, pane);
+
+        let agents = listed_agents(&mut server);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(
+            agents[0].reference.slot,
+            Some(protocol::RowKey::new("remote-agent", "run-1"))
+        );
+        assert_eq!(agents[0].native_session.as_deref(), Some("native-run-1"));
+        let (waited, _) = control(
+            &mut server,
+            ControlCommand::AgentWait {
+                target: AgentTarget::Ref(agents[0].reference.clone()),
+                until: crate::control::AgentWaitCondition::Idle,
+                timeout_ms: None,
+            },
+        );
+        assert!(waited.ok, "{waited:?}");
+
+        let pane = server.panes.get_mut(&7).unwrap();
+        pane.runtime.rows[0].status = "working".into();
+        assert!(server.any_agent_working());
+    }
+
+    /// A generic `rozi publish` and a plain `rozi status` in a pane nothing detected are
+    /// activities: not listed, not targetable by a prompt, and never keeping the host awake.
+    #[test]
+    fn a_status_and_a_generic_publisher_are_never_agents() {
+        let mut server = SessionServer::new_named("dev");
+        let mut pane = super::super::tests::test_pane(1);
+        pane.runtime.status = Some(protocol::PaneStatus {
+            value: "working".into(),
+            reason: Some("cargo build".into()),
+            set_at: 1,
+        });
+        pane.runtime.rows = vec![published(
+            "publish:default",
+            protocol::PublisherKind::Activity,
+            "build",
+        )];
+        pane.agent.sync_references(&pane.runtime);
+        server.panes.insert(7, pane);
+
+        assert!(listed_agents(&mut server).is_empty());
+        assert!(server.agent_summaries().is_empty());
+        assert!(!server.any_agent_working());
+        let refused = server
+            .register_agent_prompt(
+                1,
+                SessionAgentPrompt {
+                    target: AgentTarget::Pane(7),
+                    prompt: "hello",
+                    wait: None,
+                    timeout_ms: None,
+                    allow_working: true,
+                },
+                ReplyTo::Headless {
+                    capabilities: protocol::Capabilities::default(),
+                    effective_protocol: PROTOCOL_VERSION,
+                },
+            )
+            .unwrap();
+        assert_eq!(refused.code, Some(ControlErrorCode::AgentGone));
+    }
+
     #[test]
     fn published_slot_input_requires_the_active_activity() {
         let mut server = SessionServer::new_named("dev");
@@ -2622,6 +2765,8 @@ mod tests {
         let pane = server.panes.get_mut(&7).unwrap();
         pane.runtime.rows = vec![
             protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "visible".into(),
                 title: "Visible".into(),
                 status: "idle".into(),
@@ -2633,6 +2778,8 @@ mod tests {
                 native_session: None,
             },
             protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "hidden".into(),
                 title: "Hidden".into(),
                 status: "working".into(),
@@ -2648,12 +2795,16 @@ mod tests {
         let agents = server.session_agent_report();
         let visible = &agents
             .iter()
-            .find(|agent| agent.reference.slot.as_deref() == Some("visible"))
+            .find(|agent| {
+                agent.reference.slot.as_ref().map(|slot| slot.id.as_str()) == Some("visible")
+            })
             .unwrap()
             .reference;
         let hidden = &agents
             .iter()
-            .find(|agent| agent.reference.slot.as_deref() == Some("hidden"))
+            .find(|agent| {
+                agent.reference.slot.as_ref().map(|slot| slot.id.as_str()) == Some("hidden")
+            })
             .unwrap()
             .reference;
 
@@ -2707,6 +2858,8 @@ mod tests {
         {
             let pane = server.panes.get_mut(&7).unwrap();
             pane.runtime.rows.push(protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
                 id: "old-session".into(),
                 title: "Old session".into(),
                 status: "working".into(),
@@ -2886,6 +3039,8 @@ mod tests {
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
         let session_row = |id: &str, status: &str, active: bool| protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: id.into(),
             title: id.into(),
             status: status.into(),
@@ -2923,7 +3078,7 @@ mod tests {
                 .into_iter()
                 .map(|agent| {
                     (
-                        agent.reference.slot.unwrap_or_default(),
+                        agent.reference.slot.map(|slot| slot.id).unwrap_or_default(),
                         agent.state,
                         agent.source,
                         agent.native_session,
@@ -3653,7 +3808,10 @@ mod tests {
                 command: "my-extension.choose".to_string(),
                 visible: false,
             },
-            ControlCommand::Publish,
+            ControlCommand::Publish {
+                kind: Default::default(),
+                name: None,
+            },
             ControlCommand::Subscribe { events: Vec::new() },
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,

@@ -500,8 +500,20 @@ impl SessionServer {
                 pane_id,
                 local,
                 generation,
+                publisher,
+                kind,
                 rows,
-            } => match self.report_pane_rows(client_id, pane_id, generation, local, rows) {
+            } => match self.report_pane_rows(
+                client_id,
+                pane_id,
+                generation,
+                local,
+                runtime::PanePublisher {
+                    id: publisher,
+                    kind,
+                },
+                rows,
+            ) {
                 Ok(Some(state)) => vec![(
                     if local {
                         Target::Client(client_id)

@@ -463,9 +463,21 @@ fn main_case() {
         backend,
         Duration::from_secs(15),
         "the publish stream",
-        |backend| backend.state().publish_streams.contains_key(&1),
+        |backend| {
+            backend
+                .state()
+                .publish_streams
+                .keys()
+                .any(|(pane, _)| *pane == 1)
+        },
     );
-    backend.state().publish_streams[&1]
+    backend
+        .state()
+        .publish_streams
+        .iter()
+        .find(|((pane, _), _)| *pane == 1)
+        .map(|(_, stream)| stream)
+        .unwrap()
         .sender
         .try_send("{\"activate\":\"r1\"}\n".to_string())
         .unwrap();

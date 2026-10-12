@@ -90,8 +90,21 @@ pub struct CommandPaletteHandoff {
     pub running: bool,
 }
 
+/// Who a publish stream is within its pane, and what it declared itself to be.
+///
+/// `id` is stable across restarts of the same publisher, so a restarted publisher replaces its own
+/// stale stream and nobody else's: `<extension>` or `<extension>.<name>` for an extension process,
+/// `publish:<name>` for any other caller (`publish:default` without `--name`). Extension ids cannot
+/// contain `:`, so an anonymous publisher can never take an extension's place.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PublisherIdentity {
+    pub id: String,
+    pub kind: crate::session::protocol::PublisherKind,
+}
+
 pub struct PublishStreamState {
     pub id: u64,
+    pub identity: PublisherIdentity,
     pub sender: std::sync::mpsc::SyncSender<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
@@ -365,8 +378,9 @@ pub struct State {
     ///
     /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
     /// closes the stream, which is also how a pane's rows are withdrawn. Each value carries a
-    /// generation id so a replaced publisher's late rows/close cannot affect its successor.
-    pub publish_streams: std::collections::HashMap<PaneId, PublishStreamState>,
+    /// generation id so a replaced publisher's late rows/close cannot affect its successor. Keyed by
+    /// pane and [`PublisherIdentity::id`]: a pane may have several publishers, each owning its rows.
+    pub publish_streams: std::collections::HashMap<(PaneId, String), PublishStreamState>,
     /// Long-lived event subscriptions owned by extension generations.
     pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
     /// Palette visibility extensions chose for their own commands, keyed by public command ID.

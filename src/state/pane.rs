@@ -241,35 +241,48 @@ impl Pane {
         title
     }
 
+    /// The semantic runtime the shared projections read, rebuilt from this client's copy.
+    fn semantic_runtime(&self) -> crate::session::protocol::PaneRuntimeState {
+        crate::session::protocol::PaneRuntimeState {
+            status: self.terminal.reported_status.clone(),
+            detected_agent: self.terminal.detected_agent.clone(),
+            work_started_at: self.terminal.work_started_at,
+            rows: self.terminal.published_rows.clone(),
+            integration: self.terminal.agent_integration.clone(),
+            ..crate::session::protocol::PaneRuntimeState::default()
+        }
+    }
+
+    /// The agent projection: this pane's agents, for the Agents view and `rozi agents`.
     pub fn agent_runtimes(&self) -> Vec<crate::session::protocol::AgentRuntime> {
         crate::session::protocol::effective_agent_runtimes(
-            &crate::session::protocol::PaneRuntimeState {
-                status: self.terminal.reported_status.clone(),
-                detected_agent: self.terminal.detected_agent.clone(),
-                work_started_at: self.terminal.work_started_at,
-                rows: self.terminal.published_rows.clone(),
-                integration: self.terminal.agent_integration.clone(),
-                ..crate::session::protocol::PaneRuntimeState::default()
-            },
+            &self.semantic_runtime(),
             &self.agent_refs,
         )
     }
 
-    /// Where one of this pane's agent occupants is working.
+    /// The activity projection: everything happening in this pane, agents and activities alike,
+    /// for the Activity sidebar.
+    pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {
+        crate::session::protocol::pane_occupants(&self.semantic_runtime())
+    }
+
+    /// Where one of this pane's occupants is working.
     ///
     /// A published row that names its own `cwd` is somewhere else than the pane: a program that
     /// runs several sessions behind one terminal typically gives each its own Git worktree. Every
     /// other occupant is wherever the pane is.
     pub(crate) fn agent_place(
         &self,
-        runtime: &crate::session::protocol::AgentRuntime,
+        slot: Option<&crate::session::protocol::RowKey>,
     ) -> AgentPlace {
         let host = self.terminal.cwd_host.clone();
-        let row = runtime
-            .reference
-            .slot
-            .as_deref()
-            .and_then(|id| self.terminal.published_rows.iter().find(|row| row.id == id));
+        let row = slot.and_then(|slot| {
+            self.terminal
+                .published_rows
+                .iter()
+                .find(|row| row.has_key(slot))
+        });
         if let Some(row) = row
             && let Some(cwd) = row.cwd.clone()
         {

@@ -8,7 +8,8 @@ and the `rozi agents` commands for scripts.
 
 Detected agents appear in the sidebar's [Activity tab](sidebar.md#activity) and in the
 [Agents view](sessions.md#go-to-an-agent), which also lists agents in your other local sessions and
-on connected hosts.
+on connected hosts. Activity also lists things that are not agents, such as a build that sets
+`rozi status`; see [Activities and agents](control-protocol.md#activities-and-agents).
 
 rozi ships definitions for common agent CLIs in
 [`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Add an `[[agents]]` entry
@@ -280,8 +281,11 @@ rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
 `rozi --help` shows only with `--advanced`. A help flag anywhere after `agents` prints help instead
 of running the command, so it is never sent as prompt text.
 
-Each published row is its own agent in `list`, with that row's own `cwd` and `native_session` when
-it names them.
+Each row from a publisher that declared itself an agent (`rozi publish --kind agent`) is its own
+agent in `list`, with that row's own `cwd` and `native_session` when it names them. Activities are
+not listed: a `rozi status` in a pane with no detected agent, and rows from any other publisher,
+appear only in the sidebar's Activity tab. See
+[Activities and agents](control-protocol.md#activities-and-agents).
 
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. `list` and
 `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
@@ -322,10 +326,11 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
 - A live report overrides screen detection. Releasing it returns the pane to screen detection.
-- When the pane also publishes rows, the rows stay listed. The report drives only the row whose
-  `native_session` matches `--native-session`. A report about a conversation no row lists is kept
-  but not shown, so a client that switched conversations without its hooks noticing still lists
-  every conversation correctly.
+- When the pane also has an agent publisher's rows, the rows stay listed. The report drives only
+  the agent row whose `native_session` matches `--native-session`. A report about a conversation no
+  agent row lists is kept but not shown, so a client that switched conversations without its hooks
+  noticing still lists every conversation correctly. Rows from an activity publisher are never
+  driven by the report.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report
@@ -342,10 +347,20 @@ attached, the UI refuses the report instead of applying it to the session on scr
 Screen matching only sees what one terminal is currently drawing. It cannot reliably follow a
 program with several hidden tabs, parent and child agents, or state that exists only in an API.
 
-For those programs, use `rozi status` to report one state for the pane, or `rozi publish` for
-several activity rows. While a pane publishes rows, rozi shows them instead of screen detection.
-Selecting a published row can also bring that activity into view inside the program. See
-[Control](control.md#published-activity) for fields and lifecycle.
+For an agent rozi cannot follow on screen, use one of the agent paths:
+
+- Report its state from its hooks with [`rozi agents report`](#report-state-from-agent-hooks), when
+  rozi detects the agent's process in the pane.
+- Publish one row per run or conversation with `rozi publish --kind agent`. This works whether or
+  not rozi detects anything in the pane, so it also covers an agent that exists only behind an
+  API. While an agent publisher has rows, rozi shows them instead of screen detection. Selecting a
+  row can also bring that run into view inside the program.
+
+`rozi status` and a plain `rozi publish` report activities, not agents. Their rows appear in
+Activity, but not in the Agents view or `rozi agents`, and they do not keep the host awake. A
+`rozi status` in a pane where rozi detects an agent still sets that agent's state. See
+[Control](control.md#published-activity) for fields and lifecycle, and
+[Activities and agents](control-protocol.md#activities-and-agents) for the full rules.
 
 A row can carry the directory its activity works in. Activity and the Agents view then show it
 under that directory's project and branch, so sessions that each run in their own Git worktree are
@@ -354,7 +369,7 @@ told apart.
 ### OpenCode sessions and worktrees
 
 The [OpenCode V2 plugin](../plugins/opencode/README.md) publishes each open root-session tab as its
-own activity row, including tabs working in different Git worktrees. Each row carries the session's
+own agent row, including tabs working in different Git worktrees. Each row carries the session's
 directory and native conversation ID. Selecting a row switches OpenCode to that tab through its
 UI API. Child sessions contribute to their parent's activity, and pending permissions or input
 forms keep the relevant row blocked.
@@ -363,7 +378,8 @@ Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi 
 sharing a server each publish their own tab list. With OpenCode tabs disabled, only the viewed
 root session appears. See the plugin README for installation, lifecycle, and host requirements.
 
-The older V1 event plugin reports a single aggregate pane status. The custom
+The older V1 event plugin reports a single aggregate state for the OpenCode agent rozi detects in
+the pane, through the agent report path. The custom
 `opencode-tui` client has its own built-in publisher and does not need the V2 CLI plugin.
 
 ### Claude Code background sessions
@@ -379,7 +395,9 @@ unsent text, a dialog, or a streaming response. Install it from the **Discover**
 
 It works with or without the [Claude Code hook plugin](#integrate-claude-code-hooks). With it, the
 hooks' state drives the row for the conversation they report on, matched by `native_session`, and
-the other rows stay listed.
+the other rows stay listed. The extension publishes its rows as agents; a release from before
+rozi separated activities from agents shows them in Activity only, so update the extension
+together with rozi.
 The extension needs a readable foreground process group, so it covers local panes on Linux and
 macOS, not Windows or remote panes.
 
@@ -396,6 +414,8 @@ running. Install it from the **Discover** tab of **Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/codex-rozi-sessions.git`.
 
 It works with or without the [Codex hook plugin](#integrate-codex-hooks). With it, the hooks' state
-drives the row for the thread they report on, matched by `native_session`. The extension covers
+drives the row for the thread they report on, matched by `native_session`. The extension publishes
+its rows as agents; a release from before rozi separated activities from agents shows them in
+Activity only, so update the extension together with rozi. The extension covers
 local panes on Linux and macOS whose Codex client uses the background server, which is Codex's
 default.

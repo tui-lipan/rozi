@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AgentIdentity, AgentIntegrationReport, AgentRef, DetectedAgent, PaneRuntimeState, PaneStatus,
-    PublishedRow, detected_agent_status, pane_status,
+    PublishedRow, RowKey, detected_agent_status, pane_status,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,7 +52,8 @@ pub enum AgentAuthority {
     Detected,
 }
 
-/// One automation-facing semantic occupant of a pane.
+/// One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,
+/// paired with the reference that names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentRuntime {
@@ -65,64 +66,173 @@ pub struct AgentRuntime {
     pub source: AgentAuthority,
 }
 
-/// Resolve detection, explicit status, and published rows into the records automation should use.
-pub fn effective_agent_runtimes(
-    runtime: &PaneRuntimeState,
-    references: &[AgentRef],
-) -> Vec<AgentRuntime> {
-    // Published rows win over a live integration report, because one client can run several
-    // conversations and only the rows list them all. The report still speaks for the row whose
-    // native session it names: hooks see that conversation's state before any poll does. A
-    // report naming no listed row describes a conversation the client no longer shows, so it
-    // stays out of the list - it keeps its claim and its sequence fence all the same.
-    if !runtime.rows.is_empty() {
-        return runtime
+/// One thing happening in a pane: the activity projection, which feeds the Activity sidebar.
+///
+/// Every occupant is an activity. Only one with an [`Self::agent`] identity is also an agent, and
+/// only those reach the agent projection ([`effective_agent_runtimes`]): the Agents view,
+/// `rozi agents`, waits, prompts, and the keep-awake policy. Agent identity comes from screen
+/// detection, an integration report, or a publisher that declared itself
+/// [`PublisherKind::Agent`](super::PublisherKind::Agent) - never from a row or a status merely
+/// sharing a pane with one of those.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaneOccupant {
+    /// The published row this occupant is, or `None` for the pane's own agent or status.
+    pub slot: Option<RowKey>,
+    /// Who the agent is, for an agent occupant; `None` for an activity.
+    pub agent: Option<AgentIdentity>,
+    /// Display name: the agent's label, or an activity row's title. Empty for an untitled row and
+    /// for the pane's own status, whose presenters fall back to the pane title.
+    pub label: String,
+    pub state: AgentState,
+    pub reason: Option<String>,
+    pub source: AgentAuthority,
+}
+
+impl PaneOccupant {
+    pub fn is_agent(&self) -> bool {
+        self.agent.is_some()
+    }
+}
+
+/// The pane's activity projection: its agents first, then its activity rows.
+///
+/// A pane's own `rozi status` with no agent to describe is an activity of its own. With a detected
+/// or reported agent in the pane, the status is that agent's, exactly as it always was.
+pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
+    let mut occupants = agent_occupants(runtime);
+    if occupants.is_empty()
+        && let Some(status) = &runtime.status
+    {
+        occupants.push(PaneOccupant {
+            slot: None,
+            agent: None,
+            label: String::new(),
+            state: AgentState::from_status(&status.value),
+            reason: status.reason.clone(),
+            source: AgentAuthority::Reported,
+        });
+    }
+    occupants.extend(
+        runtime
             .rows
             .iter()
-            .filter_map(|row| {
-                let mut published = published_runtime(runtime, references, row)?;
+            .filter(|row| !row.is_agent())
+            .map(|row| PaneOccupant {
+                slot: Some(row.key()),
+                agent: None,
+                label: row.title.clone(),
+                state: AgentState::from_status(&row.status),
+                reason: row.reason.clone(),
+                source: AgentAuthority::Published,
+            }),
+    );
+    occupants
+}
+
+/// The pane's agents, before references are attached.
+///
+/// An agent publisher's rows are the authoritative list while it has any, because one client can
+/// run several conversations and only its rows list them all. The integration report still speaks
+/// for the row whose native session it names: hooks see that conversation's state before any poll
+/// does. A report naming no listed row describes a conversation the client no longer shows, so it
+/// stays out of the list - it keeps its claim and its sequence fence all the same.
+///
+/// Activity rows never enter here, so a generic publisher can neither hide the pane's detected or
+/// reported agent nor borrow its identity.
+fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
+    let agent_rows: Vec<&PublishedRow> = runtime.rows.iter().filter(|row| row.is_agent()).collect();
+    if !agent_rows.is_empty() {
+        return agent_rows
+            .into_iter()
+            .map(|row| {
+                let identity = runtime
+                    .detected_agent
+                    .as_ref()
+                    .map(|detected| detected.agent.as_ref().clone())
+                    .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
+                let mut occupant = PaneOccupant {
+                    slot: Some(row.key()),
+                    label: identity.label.clone(),
+                    agent: Some(identity),
+                    state: AgentState::from_status(&row.status),
+                    reason: row.reason.clone(),
+                    source: AgentAuthority::Published,
+                };
                 if let Some(report) = row_integration(runtime.integration.as_deref(), row) {
-                    published.state = report.state;
-                    published.reason = report.reason.clone();
-                    published.source = AgentAuthority::Reported;
+                    occupant.state = report.state;
+                    occupant.reason = report.reason.clone();
+                    occupant.source = AgentAuthority::Reported;
                 }
-                Some(published)
+                occupant
             })
             .collect();
     }
     if let Some(report) = &runtime.integration {
-        return vec![AgentRuntime {
-            reference: report.reference.clone(),
+        return vec![PaneOccupant {
+            slot: None,
             label: report.identity.label.clone(),
-            identity: report.identity.clone(),
+            agent: Some(report.identity.clone()),
             state: report.state,
             reason: report.reason.clone(),
             source: AgentAuthority::Reported,
         }];
     }
-    let Some(reference) = references
-        .iter()
-        .find(|reference| reference.slot.is_none())
-        .cloned()
-    else {
+    let Some(detected) = runtime.detected_agent.as_ref() else {
         return Vec::new();
     };
     let Some((status, reason, source)) = effective_single_status(runtime) else {
         return Vec::new();
     };
-    let identity = runtime
-        .detected_agent
-        .as_ref()
-        .map(|detected| detected.agent.as_ref().clone())
-        .unwrap_or_else(|| AgentIdentity::new("reported", "Agent"));
-    vec![AgentRuntime {
-        reference,
+    let identity = detected.agent.as_ref().clone();
+    vec![PaneOccupant {
+        slot: None,
         label: identity.label.clone(),
-        identity,
+        agent: Some(identity),
         state: AgentState::from_status(status),
         reason,
         source,
     }]
+}
+
+/// The identities the session server tracks references for: one per agent occupant, keyed by
+/// slot. Activities get none, so nothing can wait on, prompt, or keep the machine awake for one.
+pub fn agent_occupant_identities(runtime: &PaneRuntimeState) -> Vec<(Option<RowKey>, String)> {
+    agent_occupants(runtime)
+        .into_iter()
+        .filter_map(|occupant| Some((occupant.slot, occupant.agent?.id)))
+        .collect()
+}
+
+/// The agent projection: the pane's agent occupants, each with the reference that names it.
+///
+/// Every agent-facing surface reads this one function, so none of them filters activities out on
+/// its own and none can disagree about what is an agent.
+pub fn effective_agent_runtimes(
+    runtime: &PaneRuntimeState,
+    references: &[AgentRef],
+) -> Vec<AgentRuntime> {
+    agent_occupants(runtime)
+        .into_iter()
+        .filter_map(|occupant| {
+            let identity = occupant.agent?;
+            let reference = match (&occupant.slot, &runtime.integration) {
+                // The report alone speaks for the pane under the reference it was bound to.
+                (None, Some(report)) => report.reference.clone(),
+                (slot, _) => references
+                    .iter()
+                    .find(|reference| reference.slot == *slot)?
+                    .clone(),
+            };
+            Some(AgentRuntime {
+                reference,
+                identity,
+                label: occupant.label,
+                state: occupant.state,
+                reason: occupant.reason,
+                source: occupant.source,
+            })
+        })
+        .collect()
 }
 
 fn effective_single_status(
@@ -148,14 +258,17 @@ fn effective_single_status(
     }
 }
 
-/// The integration report that speaks for `row`: the pane's live report, when it names the row's
-/// native session.
+/// The integration report that speaks for `row`: the pane's live report, when the row belongs to
+/// an agent publisher and the report names its native session. An activity row never takes on an
+/// agent's report, whatever it names.
 fn row_integration<'a>(
     integration: Option<&'a AgentIntegrationReport>,
     row: &PublishedRow,
 ) -> Option<&'a AgentIntegrationReport> {
     integration.filter(|report| {
-        report.native_session.is_some() && report.native_session == row.native_session
+        row.is_agent()
+            && report.native_session.is_some()
+            && report.native_session == row.native_session
     })
 }
 
@@ -184,25 +297,25 @@ pub fn effective_row(
 pub fn occupant_native_session(
     rows: &[PublishedRow],
     integration: Option<&AgentIntegrationReport>,
-    slot: Option<&str>,
+    slot: Option<&RowKey>,
 ) -> Option<String> {
     match slot {
         Some(slot) => rows
             .iter()
-            .find(|row| row.id == slot)
+            .find(|row| row.has_key(slot))
             .and_then(|row| row.native_session.clone()),
         None => integration.and_then(|report| report.native_session.clone()),
     }
 }
 
-/// The directory one agent occupant works in: its row's own when it is a published row that names
-/// one, the pane's otherwise.
+/// The directory one occupant works in: its row's own when it is a published row that names one,
+/// the pane's otherwise.
 pub fn occupant_cwd(
     rows: &[PublishedRow],
-    slot: Option<&str>,
+    slot: Option<&RowKey>,
     pane_cwd: Option<String>,
 ) -> Option<String> {
-    slot.and_then(|slot| rows.iter().find(|row| row.id == slot))
+    slot.and_then(|slot| rows.iter().find(|row| row.has_key(slot)))
         .and_then(|row| row.cwd.clone())
         .or(pane_cwd)
 }
@@ -216,28 +329,25 @@ pub fn rows_with_integration(runtime: &PaneRuntimeState) -> Vec<PublishedRow> {
         .collect()
 }
 
-fn published_runtime(
-    runtime: &PaneRuntimeState,
-    references: &[AgentRef],
-    row: &PublishedRow,
-) -> Option<AgentRuntime> {
-    let reference = references
+/// The pane's agent rows, merged with the integration report: what an agent publisher says the
+/// pane's one agent state is, and what replaces screen detection while it says anything.
+pub fn agent_rows_with_integration(runtime: &PaneRuntimeState) -> Vec<PublishedRow> {
+    runtime
+        .rows
         .iter()
-        .find(|reference| reference.slot.as_deref() == Some(row.id.as_str()))?
-        .clone();
-    let identity = runtime
-        .detected_agent
-        .as_ref()
-        .map(|detected| detected.agent.as_ref().clone())
-        .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
-    Some(AgentRuntime {
-        reference,
-        label: identity.label.clone(),
-        identity,
-        state: AgentState::from_status(&row.status),
-        reason: row.reason.clone(),
-        source: AgentAuthority::Published,
-    })
+        .filter(|row| row.is_agent())
+        .map(|row| effective_row(row, runtime.integration.as_deref()))
+        .collect()
+}
+
+/// The pane's active agent row, for the one conversation a restored pane resumes.
+///
+/// "Only one `active: true` row" is a rule per publisher, so a pane can have several active rows.
+/// The pane-level active row is the first active row of an agent publisher, in the order the
+/// pane's rows are kept: publishers in the order they first published, each one's rows in its own
+/// order. Activity rows are never resume candidates.
+pub fn active_agent_row(rows: &[PublishedRow]) -> Option<&PublishedRow> {
+    rows.iter().find(|row| row.is_agent() && row.active)
 }
 
 fn display_row_label(row: &PublishedRow) -> &str {
@@ -287,9 +397,13 @@ mod tests {
                 pane_id: 3,
                 generation: 7,
             },
-            slot: slot.map(str::to_string),
+            slot: slot.map(|id| RowKey::new("sessions", id)),
             incarnation,
         }
+    }
+
+    fn key(id: &str) -> RowKey {
+        RowKey::new("sessions", id)
     }
 
     #[test]
@@ -317,6 +431,8 @@ mod tests {
         let runtime = PaneRuntimeState {
             rows: vec![
                 PublishedRow {
+                    publisher: "sessions".into(),
+                    kind: crate::session::protocol::PublisherKind::Agent,
                     id: "one".into(),
                     title: "First".into(),
                     status: "working".into(),
@@ -328,6 +444,8 @@ mod tests {
                     native_session: None,
                 },
                 PublishedRow {
+                    publisher: "sessions".into(),
+                    kind: crate::session::protocol::PublisherKind::Agent,
                     id: "two".into(),
                     title: "Second".into(),
                     status: "done".into(),
@@ -353,6 +471,8 @@ mod tests {
 
     fn session_row(id: &str, status: &str, native: Option<&str>) -> PublishedRow {
         PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
             id: id.into(),
             title: id.into(),
             status: status.into(),
@@ -393,7 +513,7 @@ mod tests {
         let references = [reference(Some("one"), 1), reference(Some("two"), 2)];
         let projected = effective_agent_runtimes(&runtime, &references);
         assert_eq!(projected.len(), 2);
-        assert_eq!(projected[0].reference.slot.as_deref(), Some("one"));
+        assert_eq!(projected[0].reference.slot, Some(key("one")));
         assert_eq!(projected[0].state, AgentState::Blocked);
         assert_eq!(projected[0].reason.as_deref(), Some("approval"));
         assert_eq!(projected[0].source, AgentAuthority::Reported);
@@ -406,8 +526,12 @@ mod tests {
             Some(crate::session::protocol::DetectedAgentState::Blocked)
         );
         assert_eq!(
-            occupant_native_session(&runtime.rows, runtime.integration.as_deref(), Some("two"))
-                .as_deref(),
+            occupant_native_session(
+                &runtime.rows,
+                runtime.integration.as_deref(),
+                Some(&key("two"))
+            )
+            .as_deref(),
             Some("def")
         );
         assert_eq!(
@@ -464,5 +588,135 @@ mod tests {
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].state, AgentState::Blocked);
         assert_eq!(projected[0].source, AgentAuthority::Reported);
+    }
+
+    fn activity_row(publisher: &str, id: &str, status: &str) -> PublishedRow {
+        PublishedRow {
+            publisher: publisher.into(),
+            kind: crate::session::protocol::PublisherKind::Activity,
+            ..session_row(id, status, None)
+        }
+    }
+
+    fn codex() -> Option<DetectedAgent> {
+        Some(DetectedAgent {
+            agent: AgentIdentity::new("codex", "Codex").into(),
+            state: DetectedAgentState::Working,
+        })
+    }
+
+    /// A generic PR publisher beside a detected Codex: both are activities, only Codex is an
+    /// agent, and the PR rows never take on Codex's identity.
+    #[test]
+    fn a_generic_publisher_beside_a_detected_agent_is_only_an_activity() {
+        let runtime = PaneRuntimeState {
+            detected_agent: codex(),
+            rows: vec![
+                activity_row("publish:prs", "pr-1", "working"),
+                activity_row("publish:prs", "pr-2", "idle"),
+            ],
+            ..PaneRuntimeState::default()
+        };
+        let occupants = pane_occupants(&runtime);
+        assert_eq!(occupants.len(), 3, "Codex and both PR rows are activities");
+        assert_eq!(occupants[0].slot, None);
+        assert_eq!(
+            occupants[0].agent.as_ref().map(|agent| agent.id.as_str()),
+            Some("codex")
+        );
+        assert!(
+            occupants[1..]
+                .iter()
+                .all(|occupant| occupant.agent.is_none())
+        );
+        assert_eq!(occupants[1].label, "pr-1");
+
+        let agents = effective_agent_runtimes(&runtime, &[reference(None, 1)]);
+        assert_eq!(agents.len(), 1, "only Codex is an agent");
+        assert_eq!(agents[0].identity.id, "codex");
+        assert_eq!(agents[0].state, AgentState::Working);
+        assert_eq!(
+            agent_occupant_identities(&runtime),
+            [(None, "codex".to_string())]
+        );
+    }
+
+    /// An agent publisher with no screen detection behind it is still an agent.
+    #[test]
+    fn a_declared_agent_publisher_is_an_agent_without_detection() {
+        let runtime = PaneRuntimeState {
+            rows: vec![session_row("api-run", "working", None)],
+            ..PaneRuntimeState::default()
+        };
+        let agents = effective_agent_runtimes(&runtime, &[reference(Some("api-run"), 1)]);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].identity.id, "api-run");
+        assert_eq!(agents[0].state, AgentState::Working);
+    }
+
+    /// A plain `rozi status`, and a generic publisher, in a pane nothing detected: both are
+    /// activities, and neither is an agent.
+    #[test]
+    fn a_status_or_generic_publisher_alone_is_never_an_agent() {
+        let runtime = PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: "working".into(),
+                reason: Some("cargo build".into()),
+                set_at: 1,
+            }),
+            rows: vec![activity_row("publish:default", "build", "working")],
+            ..PaneRuntimeState::default()
+        };
+        let occupants = pane_occupants(&runtime);
+        assert_eq!(occupants.len(), 2);
+        assert!(occupants.iter().all(|occupant| !occupant.is_agent()));
+        assert_eq!(occupants[0].reason.as_deref(), Some("cargo build"));
+        assert!(effective_agent_runtimes(&runtime, &[reference(None, 1)]).is_empty());
+        assert!(agent_occupant_identities(&runtime).is_empty());
+    }
+
+    /// An agent publisher's rows are the pane's agents; a generic publisher beside it neither
+    /// adds agents nor takes the hooks' report, even for a matching native session.
+    #[test]
+    fn an_integration_report_never_speaks_for_an_activity_row() {
+        let mut activity = activity_row("publish:prs", "one", "idle");
+        activity.native_session = Some("abc".into());
+        let runtime = PaneRuntimeState {
+            detected_agent: codex(),
+            rows: vec![activity.clone(), session_row("one", "idle", Some("abc"))],
+            integration: Some(hook_report("abc", AgentState::Blocked)),
+            ..PaneRuntimeState::default()
+        };
+        assert_eq!(
+            effective_row(&activity, runtime.integration.as_deref()),
+            activity
+        );
+        let agents = effective_agent_runtimes(&runtime, &[reference(Some("one"), 1)]);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].reference.slot, Some(key("one")));
+        assert_eq!(agents[0].state, AgentState::Blocked);
+        assert_eq!(agents[0].identity.id, "codex");
+        assert_eq!(
+            aggregate_rows(&agent_rows_with_integration(&runtime)),
+            Some(DetectedAgentState::Blocked)
+        );
+    }
+
+    #[test]
+    fn only_an_agent_row_is_the_panes_active_row() {
+        let mut activity = activity_row("publish:prs", "pr", "idle");
+        activity.active = true;
+        activity.native_session = Some("not-a-conversation".into());
+        let mut agent = session_row("conv", "idle", Some("abc"));
+        agent.active = true;
+        assert_eq!(active_agent_row(std::slice::from_ref(&activity)), None);
+        assert_eq!(
+            active_agent_row(&[activity, agent.clone()]).map(|row| row.id.as_str()),
+            Some("conv")
+        );
+    }
+
+    fn aggregate_rows(rows: &[PublishedRow]) -> Option<DetectedAgentState> {
+        crate::session::protocol::aggregate_row_state(rows)
     }
 }

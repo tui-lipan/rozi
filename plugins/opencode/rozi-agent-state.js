@@ -1,44 +1,118 @@
+import { randomUUID } from "node:crypto"
 import net from "node:net"
 
-const socket = process.env.ROZI_SOCKET
-const pane = Number.parseInt(process.env.ROZI_PANE ?? "", 10)
+// OpenCode is an agent, so this plugin speaks through rozi's agent report path rather than a plain
+// pane status: `rozi status` is a generic activity and never makes a pane an agent. Each plugin
+// instance claims the pane under its own integration token for the `opencode` agent rozi detects
+// in it, and releases the claim on unload.
+const AGENT = "opencode"
 
-function publish(status, reason) {
-  if (!socket || !Number.isSafeInteger(pane)) return Promise.resolve()
-
+function send(message, { socket = process.env.ROZI_SOCKET } = {}) {
+  if (!socket) return Promise.resolve({ ok: false })
   return new Promise((resolve) => {
+    let reply = ""
+    let settled = false
     const connection = net.createConnection(socket)
-    const finish = () => {
+    const finish = (response) => {
+      if (settled) return
+      settled = true
       connection.destroy()
-      resolve()
+      resolve(response)
     }
-    connection.setTimeout(1000, finish)
-    connection.once("error", resolve)
-    connection.once("connect", () => {
-      connection.end(`${JSON.stringify({
-        cmd: "set-status",
-        target: pane,
-        status,
-        reason,
-        source_pane: pane,
-      })}\n`)
+    connection.setTimeout(1000, () => finish({ ok: false }))
+    connection.once("error", () => finish({ ok: false }))
+    connection.on("data", (chunk) => {
+      reply += chunk
+      const end = reply.indexOf("\n")
+      if (end < 0) return
+      try {
+        finish(JSON.parse(reply.slice(0, end)))
+      } catch {
+        finish({ ok: false })
+      }
     })
-    connection.once("close", resolve)
+    connection.once("connect", () => connection.write(`${JSON.stringify(message)}\n`))
+    connection.once("close", () => finish({ ok: false }))
   })
+}
+
+// One plugin instance's claim on its pane: the integration token and sequence `agent-report`
+// fences on. Transport is injected so the protocol is testable without a socket.
+export class AgentReporter {
+  #send
+  #env
+  #token = randomUUID()
+  #seq = 0
+  #claimed = false
+
+  constructor({ env = process.env, transport = send } = {}) {
+    this.#env = env
+    this.#send = transport
+  }
+
+  get pane() {
+    const pane = Number.parseInt(this.#env.ROZI_PANE ?? "", 10)
+    return Number.isSafeInteger(pane) ? pane : undefined
+  }
+
+  #envelope(command) {
+    const message = { ...command, target: this.pane, source_pane: this.pane }
+    if (this.#env.ROZI_SESSION_INSTANCE) message.source_session = this.#env.ROZI_SESSION_INSTANCE
+    return message
+  }
+
+  // Report one aggregate state. Resolves to whether rozi accepted it, so a caller can retry the
+  // same state on its next event - before rozi has detected OpenCode in the pane, say.
+  async report({ status, reason }) {
+    if (this.pane === undefined || !this.#env.ROZI_SOCKET) return false
+    this.#seq += 1
+    const message = this.#envelope({
+      cmd: "agent-report",
+      agent: AGENT,
+      integration: this.#token,
+      state: status,
+      seq: this.#seq,
+    })
+    if (reason) message.reason = reason
+    const response = await this.#send(message, { socket: this.#env.ROZI_SOCKET })
+    if (response?.ok) {
+      this.#claimed = true
+      return true
+    }
+    // rozi retires a claim when the pane's program is replaced. A retired token can never claim
+    // again, so a restarted OpenCode in the same pane starts a new one.
+    if (typeof response?.error === "string" && response.error.includes("retired")) {
+      this.#token = randomUUID()
+      this.#seq = 0
+      this.#claimed = false
+    }
+    return false
+  }
+
+  async release() {
+    if (!this.#claimed) return
+    this.#claimed = false
+    this.#seq += 1
+    await this.#send(
+      this.#envelope({ cmd: "agent-release", integration: this.#token, seq: this.#seq }),
+      { socket: this.#env.ROZI_SOCKET },
+    )
+  }
 }
 
 export const RoziAgentState = async () => {
   const state = new AgentState()
-  await publish("idle")
+  const reporter = new AgentReporter()
 
   return {
     event: async ({ event }) => {
       const update = reduceAgentEvent(state, event)
-      if (update) await publish(update.status, update.reason)
+      // An unaccepted report is forgotten so the next event offers the aggregate again.
+      if (update && !(await reporter.report(update))) state.forget()
     },
     dispose: async () => {
       state.clear()
-      await publish("idle")
+      await reporter.release()
     },
   }
 }
@@ -153,6 +227,11 @@ export class AgentState {
     this.#requests.delete(sessionID)
     this.#busy.delete(sessionID)
     this.#errored.delete(sessionID)
+  }
+
+  // Drop what the pane was last told, so the next settle reports the aggregate even unchanged.
+  forget() {
+    this.#published = undefined
   }
 
   clear() {

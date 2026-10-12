@@ -5,7 +5,7 @@
 
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
-    ClientMessage, Frame, PaneRuntimeState, PublishedRow, ServerMessage, WirePalette,
+    ClientMessage, Frame, PaneRuntimeState, PublishedRow, PublisherKind, ServerMessage, WirePalette,
 };
 use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
@@ -17,6 +17,8 @@ const PANE_GENERATION: u64 = 1;
 
 fn row(id: &str, status: &str, active: bool) -> PublishedRow {
     PublishedRow {
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         id: id.to_string(),
         title: format!("tab {id}"),
         status: status.to_string(),
@@ -92,6 +94,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: vec![row("a", "working", true), row("b", "idle", false)],
     });
 
@@ -115,6 +119,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: vec![
             row("b", "working", false),
             PublishedRow {
@@ -150,6 +156,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: vec![row("a", "blocked", true)],
     });
     let state = read_rows(&mut controller, |rows| rows.len() == 1);
@@ -164,6 +172,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: Vec::new(),
     });
     let state = read_rows(&mut controller, |rows| rows.is_empty());
@@ -184,6 +194,8 @@ fn published_rows_survive_detach_and_reattach() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: vec![row("only", "working", true)],
     });
     read_rows(&mut controller, |rows| rows.len() == 1);
@@ -233,6 +245,8 @@ fn a_row_cwd_resolves_to_its_worktree_on_the_server() {
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
         rows: vec![PublishedRow {
             cwd: Some(worktree.to_string_lossy().into_owned()),
             project: Some(rozi::session::protocol::RowProject {
@@ -257,4 +271,82 @@ fn a_row_cwd_resolves_to_its_worktree_on_the_server() {
 
     controller.write_control(&ClientMessage::Detach);
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// Two publishers in one pane own their rows independently: colliding row ids stay two rows with
+/// two run clocks, and one publisher withdrawing leaves the other's rows exactly as they were.
+#[test]
+fn publishers_in_one_pane_keep_their_own_rows() {
+    let server = spawn_listener(ServerSettings::default());
+    let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
+    spawn_pane(&mut controller);
+
+    let report = |controller: &mut crate::common::TestConnection,
+                  publisher: &str,
+                  kind: PublisherKind,
+                  rows: Vec<PublishedRow>| {
+        controller.write_control(&ClientMessage::ReportPaneRows {
+            pane_id: PANE_ID,
+            local: false,
+            generation: PANE_GENERATION,
+            publisher: publisher.into(),
+            kind,
+            rows,
+        });
+    };
+    report(
+        &mut controller,
+        "codex-rozi-sessions",
+        PublisherKind::Agent,
+        vec![row("1", "working", true)],
+    );
+    read_rows(&mut controller, |rows| rows.len() == 1);
+    // A forged publisher or kind in the row itself is replaced by the stream's.
+    report(
+        &mut controller,
+        "publish:prs",
+        PublisherKind::Activity,
+        vec![PublishedRow {
+            publisher: "codex-rozi-sessions".into(),
+            kind: PublisherKind::Agent,
+            ..row("1", "idle", true)
+        }],
+    );
+    let state = read_rows(&mut controller, |rows| rows.len() == 2);
+    let owners: Vec<_> = state
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.publisher.as_str(),
+                row.id.as_str(),
+                row.kind,
+                row.active,
+            )
+        })
+        .collect();
+    assert_eq!(
+        owners,
+        [
+            ("codex-rozi-sessions", "1", PublisherKind::Agent, true),
+            ("publish:prs", "1", PublisherKind::Activity, true),
+        ],
+        "colliding ids stay distinct and each publisher keeps its own active row"
+    );
+    assert!(state.rows[0].work_started_at.is_some());
+    assert_eq!(state.rows[1].work_started_at, None);
+
+    // Withdrawing the activity publisher leaves the agent publisher's row and its clock alone.
+    let started = state.rows[0].work_started_at;
+    report(
+        &mut controller,
+        "publish:prs",
+        PublisherKind::Activity,
+        Vec::new(),
+    );
+    let state = read_rows(&mut controller, |rows| rows.len() == 1);
+    assert_eq!(state.rows[0].publisher, "codex-rozi-sessions");
+    assert_eq!(state.rows[0].work_started_at, started);
+
+    controller.write_control(&ClientMessage::Detach);
 }

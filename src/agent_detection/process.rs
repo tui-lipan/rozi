@@ -3,21 +3,22 @@ use crate::platform::process::{ForegroundJob, ForegroundProcess};
 use super::catalog::AgentCatalog;
 use super::definition::{AgentDefinition, normalized_name};
 
-/// Identify the most authoritative agent process in one foreground process group.
+/// Identify the most authoritative agent process in one foreground process group, and which
+/// process it was.
 ///
 /// Process traversal and wrapper scoring are generic observation policy. Tool names and package
 /// markers live in the catalog's definitions instead of leaking into this layer.
-pub(super) fn identify_job<'a>(
+pub(super) fn identify_job<'a, 'j>(
     catalog: &'a AgentCatalog,
-    job: &ForegroundJob,
-) -> Option<&'a AgentDefinition> {
+    job: &'j ForegroundJob,
+) -> Option<(&'a AgentDefinition, &'j ForegroundProcess)> {
     for process in &job.processes {
         if let Some(definition) = process
             .agent_hint
             .as_deref()
             .and_then(|hint| catalog.by_name(hint))
         {
-            return Some(definition);
+            return Some((definition, process));
         }
     }
 
@@ -26,10 +27,10 @@ pub(super) fn identify_job<'a>(
         .filter_map(|process| {
             let (definition, wrapped) = identify_process(catalog, process)?;
             let leader = process.pid == job.process_group_id;
-            Some(((leader as u8) * 2 + wrapped as u8, definition))
+            Some(((leader as u8) * 2 + wrapped as u8, (definition, process)))
         })
         .max_by_key(|(score, _)| *score)
-        .map(|(_, definition)| definition)
+        .map(|(_, named)| named)
 }
 
 pub(super) fn identify_process<'a>(

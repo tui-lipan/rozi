@@ -652,6 +652,7 @@ impl SessionServer {
                 // to the shell now sitting in its place - which is a different program.
                 pane.agent.clear_runtime_identity();
                 pane.agent.reset_detection();
+                pane.agent.retained_resume = None;
                 pane.runtime.detected_agent = None;
                 if let Some(integration) = pane.runtime.integration.take() {
                     pane.agent.retire_integration(integration.integration);

@@ -161,10 +161,12 @@ impl AgentScratch {
         let references = std::mem::take(&mut self.references);
         let next_incarnation = self.next_incarnation;
         let retired_integrations = std::mem::take(&mut self.retired_integrations);
+        let retained_resume = self.retained_resume.take();
         *self = Self {
             references,
             next_incarnation,
             retired_integrations,
+            retained_resume,
             ..Self::default()
         };
     }
@@ -182,6 +184,19 @@ impl AgentScratch {
         references.sort_by(|left, right| left.slot.cmp(&right.slot));
         references
     }
+}
+
+/// Whether the pane shows that a retained conversation is no longer running in it: the shell is
+/// back at its prompt, or a different agent is there now. The same evidence that retires a hook
+/// integration's claim.
+fn conversation_ended(retained: &RetainedResume, runtime: &PaneRuntimeState) -> bool {
+    matches!(
+        runtime.command_phase,
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. }
+    ) || runtime
+        .detected_agent
+        .as_ref()
+        .is_some_and(|detected| detected.agent.id != retained.agent)
 }
 
 fn integration_has_strong_replacement_evidence(
@@ -590,7 +605,15 @@ impl SessionServer {
             if next.len() == pane.runtime.rows.len() {
                 continue;
             }
+            // The agent and its conversation are still running; only the window that listed
+            // them left. Keep what a snapshot would have resumed from those rows.
+            let before = super::resurrect::live_agent_resume(pane);
             replace_pane_rows(pane, next);
+            if let Some(before) = before
+                && super::resurrect::live_agent_resume(pane).as_ref() != Some(&before)
+            {
+                pane.agent.retained_resume = Some(before);
+            }
             messages.push(ServerMessage::PaneRuntimeChanged {
                 pane_id,
                 local: wire_local(None),
@@ -888,7 +911,19 @@ impl SessionServer {
                 None,
             );
         }
+        // A snapshot must stop offering a conversation the pane has visibly left.
+        let resume_ended = pane
+            .agent
+            .retained_resume
+            .as_ref()
+            .is_some_and(|retained| conversation_ended(retained, &next));
+        if resume_ended {
+            pane.agent.retained_resume = None;
+        }
         if next == pane.runtime {
+            if resume_ended {
+                self.mark_dirty();
+            }
             return;
         }
         let pane_ref = protocol::PaneRef {
@@ -920,7 +955,7 @@ impl SessionServer {
         } else {
             self.broadcast_control(&message);
         }
-        if snapshot_foreground_changed || integration_replaced {
+        if snapshot_foreground_changed || integration_replaced || resume_ended {
             // PTY output normally dirties a snapshot first, but the process inspector can learn
             // the command or its argv after that output has already been persisted. Keep the
             // metadata change dirty so a later detach or shutdown cannot retain the earlier,
@@ -1606,7 +1641,7 @@ fn publisher_id_is_valid(id: &str) -> bool {
 ///
 /// The agent summary's change time moves only when the pane's agents changed: an activity
 /// publisher updating its own rows says nothing new about the agent beside it.
-fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
+pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
     let had_agent_rows = pane
         .runtime
         .rows
@@ -1620,14 +1655,17 @@ fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
     // An agent publisher that enumerates its own sessions is better informed than the scraper,
     // which can only see the one it draws. Drop anything the scraper was holding for this pane.
     // An activity publisher says nothing about the pane's agent, so detection carries on.
-    if had_agent_rows
-        || pane
-            .runtime
-            .rows
-            .iter()
-            .any(protocol::PublishedRow::is_agent)
-    {
+    let has_agent_rows = pane
+        .runtime
+        .rows
+        .iter()
+        .any(protocol::PublishedRow::is_agent);
+    if had_agent_rows || has_agent_rows {
         pane.agent.hold = None;
+    }
+    // Live agent rows speak for the pane's conversations again.
+    if has_agent_rows {
+        pane.agent.retained_resume = None;
     }
     pane.agent.sync_references(&pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -2552,6 +2590,7 @@ mod tests {
     }
 
     /// A client that leaves takes its publishers' rows with it, and only its own.
+    #[cfg(unix)]
     #[test]
     fn a_departing_client_withdraws_only_its_own_rows() {
         let mut server = SessionServer::new_named("dev");
@@ -2575,6 +2614,43 @@ mod tests {
             server.withdraw_client_rows(3).is_empty(),
             "nothing left to withdraw"
         );
+    }
+
+    /// A retained conversation is forgotten once the pane shows it is over: the shell back at its
+    /// prompt, or another agent in its place. The same agent still running keeps it.
+    #[test]
+    fn a_retained_conversation_ends_with_its_agent() {
+        let retained = RetainedResume {
+            agent: "claude".into(),
+            session: "abc".into(),
+            reported_at: 1,
+        };
+        let detected = |id: &str| {
+            Some(DetectedAgent {
+                agent: protocol::AgentIdentity::new(id, id).into(),
+                state: protocol::DetectedAgentState::Idle,
+            })
+        };
+        let running = PaneRuntimeState {
+            command_phase: PaneCommandPhase::Executing,
+            detected_agent: detected("claude"),
+            ..PaneRuntimeState::default()
+        };
+        assert!(!conversation_ended(&retained, &running));
+        assert!(conversation_ended(
+            &retained,
+            &PaneRuntimeState {
+                command_phase: PaneCommandPhase::Prompt,
+                ..running.clone()
+            }
+        ));
+        assert!(conversation_ended(
+            &retained,
+            &PaneRuntimeState {
+                detected_agent: detected("codex"),
+                ..running
+            }
+        ));
     }
 
     #[test]

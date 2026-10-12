@@ -973,7 +973,9 @@ claim and its sequence fence, and its state and reason replace those of the agen
 view, `agents list`, and the row's run clock and finish alert. A report that matches no agent row
 is not listed while an agent publisher has rows. When a session is restored, the pane's active
 agent row's `native_session` is the conversation rozi resumes, ahead of the report's. Activity rows
-are never resumed.
+are never resumed. When the window holding that agent publisher leaves the session, its rows are
+withdrawn but the conversation they named is still the one rozi resumes, until agent rows are
+published again, the pane's shell returns to its prompt, or a different agent replaces it.
 
 ### Several publishers in one pane
 
@@ -989,6 +991,10 @@ two publishers, and neither can replace or withdraw the other's rows. A row's `p
 the window as well as the identity. When a window leaves the session, by detaching, exiting, or
 losing its connection, the rows of its publishers are withdrawn; a window that reconnects reports
 its live publishers' rows again.
+
+Every attached window lists every window's rows in Activity, but only the window holding a stream
+can send it activations. Selecting another window's row focuses its pane; the program behind it
+does not switch to that row, because its stream is in the other window.
 
 A publisher's identity in its window is:
 

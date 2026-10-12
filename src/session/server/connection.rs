@@ -158,7 +158,7 @@ impl SessionServer {
                     }
                 }
                 if is_query
-                    && !self.agent_waits.contains_key(&id)
+                    && !self.holds_agent_wait(id)
                     && !self.capture_waits.contains_key(&id)
                     && !self.holds_recording_reply(id)
                 {

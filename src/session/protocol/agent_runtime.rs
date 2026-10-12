@@ -148,15 +148,56 @@ fn effective_single_status(
     }
 }
 
+/// The session a hook report has to name to speak for `row`: the id its process runs under now,
+/// which is its native session unless the conversation moved to another process.
+pub fn row_reporting_session(row: &PublishedRow) -> Option<&str> {
+    row.live_session
+        .as_deref()
+        .or(row.native_session.as_deref())
+}
+
 /// The integration report that speaks for `row`: the pane's live report, when it names the row's
-/// native session.
+/// reporting session.
 fn row_integration<'a>(
     integration: Option<&'a AgentIntegrationReport>,
     row: &PublishedRow,
 ) -> Option<&'a AgentIntegrationReport> {
     integration.filter(|report| {
-        report.native_session.is_some() && report.native_session == row.native_session
+        report.native_session.is_some()
+            && report.native_session.as_deref() == row_reporting_session(row)
     })
+}
+
+/// Which agent a bare pane id names.
+#[derive(Debug, PartialEq)]
+pub enum PaneAgent {
+    Missing,
+    One(AgentRuntime),
+    /// Several published rows, none of them on screen.
+    Ambiguous,
+}
+
+/// The agent a pane id names among `runtimes`, the pane's [`effective_agent_runtimes`]: its only
+/// one, or of several published rows the one on screen. The others - background conversations a
+/// client lists beside the one it shows - are reached by their exact reference.
+pub fn pane_agent(runtimes: Vec<AgentRuntime>, rows: &[PublishedRow]) -> PaneAgent {
+    if runtimes.len() <= 1 {
+        return runtimes
+            .into_iter()
+            .next()
+            .map_or(PaneAgent::Missing, PaneAgent::One);
+    }
+    let mut on_screen = runtimes.into_iter().filter(|runtime| {
+        runtime
+            .reference
+            .slot
+            .as_deref()
+            .is_some_and(|slot| rows.iter().any(|row| row.id == slot && row.active))
+    });
+    match (on_screen.next(), on_screen.next()) {
+        (Some(runtime), None) => PaneAgent::One(runtime),
+        _ => PaneAgent::Ambiguous,
+    }
 }
 
 /// `row` as everything downstream of the protocol must present it: with the status and reason of
@@ -236,7 +277,11 @@ fn published_runtime(
         identity,
         state: AgentState::from_status(&row.status),
         reason: row.reason.clone(),
-        source: AgentAuthority::Published,
+        source: if row.reported {
+            AgentAuthority::Reported
+        } else {
+            AgentAuthority::Published
+        },
     })
 }
 
@@ -317,6 +362,8 @@ mod tests {
         let runtime = PaneRuntimeState {
             rows: vec![
                 PublishedRow {
+                    live_session: None,
+                    reported: false,
                     id: "one".into(),
                     title: "First".into(),
                     status: "working".into(),
@@ -328,6 +375,8 @@ mod tests {
                     native_session: None,
                 },
                 PublishedRow {
+                    live_session: None,
+                    reported: false,
                     id: "two".into(),
                     title: "Second".into(),
                     status: "done".into(),
@@ -353,6 +402,8 @@ mod tests {
 
     fn session_row(id: &str, status: &str, native: Option<&str>) -> PublishedRow {
         PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.into(),
             title: id.into(),
             status: status.into(),

@@ -890,6 +890,8 @@ mod tests {
 
     fn row(id: &str, status: &str, active: bool) -> crate::session::protocol::PublishedRow {
         crate::session::protocol::PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.to_string(),
             title: format!("tab {id}"),
             status: status.to_string(),
@@ -948,6 +950,8 @@ mod tests {
         publisher.terminal.detected_agent = None;
         publisher.terminal.published_rows = vec![
             crate::session::protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: "build".into(),
                 title: "Cargo Watch".into(),
                 status: "working".into(),
@@ -959,6 +963,8 @@ mod tests {
                 native_session: None,
             },
             crate::session::protocol::PublishedRow {
+                live_session: None,
+                reported: false,
                 id: "test".into(),
                 title: String::new(),
                 status: "blocked".into(),

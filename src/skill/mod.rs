@@ -14,6 +14,8 @@ pub use managed::{forget_install, install_managed, refresh_managed};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillPaths {
+    /// Whether this is the user installation under the home directory rather than a project's.
+    pub global: bool,
     pub scope_root: PathBuf,
     pub canonical_dir: PathBuf,
     pub skill_file: PathBuf,
@@ -21,19 +23,20 @@ pub struct SkillPaths {
 }
 
 impl SkillPaths {
-    pub fn project(cwd: impl AsRef<Path>) -> Self {
-        Self::at(absolute(cwd.as_ref()))
+    pub fn project(root: impl AsRef<Path>) -> Self {
+        Self::at(absolute(root.as_ref()), false)
     }
 
     pub fn global(home: impl AsRef<Path>) -> Self {
-        Self::at(absolute(home.as_ref()))
+        Self::at(absolute(home.as_ref()), true)
     }
 
-    fn at(scope_root: PathBuf) -> Self {
+    fn at(scope_root: PathBuf, global: bool) -> Self {
         let canonical_dir = scope_root.join(".agents").join("skills").join("rozi");
         let skill_file = canonical_dir.join("SKILL.md");
         let claude_path = scope_root.join(".claude").join("skills").join("rozi");
         Self {
+            global,
             scope_root,
             canonical_dir,
             skill_file,
@@ -88,7 +91,27 @@ pub fn default_paths(global: bool) -> Result<SkillPaths, String> {
         Ok(SkillPaths::global(resolve_home()?))
     } else {
         let cwd = std::env::current_dir().map_err(|err| format!("could not read cwd: {err}"))?;
-        Ok(SkillPaths::project(cwd))
+        Ok(SkillPaths::project(project_root(&cwd)))
+    }
+}
+
+/// The project a project installation belongs to: the Git checkout containing `cwd`, so running
+/// from a subdirectory does not scatter a second copy there, or `cwd` itself outside any checkout.
+fn project_root(cwd: &Path) -> PathBuf {
+    cwd.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(cwd)
+        .to_path_buf()
+}
+
+/// The heading naming which installation a report is about, so a project and a user report never
+/// read the same.
+fn scope_heading(verb: &str, paths: &SkillPaths) -> String {
+    let root = crate::platform::paths::compress_home(&paths.scope_root.to_string_lossy());
+    if paths.global {
+        format!("{verb} for user ({root})\n")
+    } else {
+        format!("{verb} for project {root}\n")
     }
 }
 
@@ -134,7 +157,7 @@ pub fn status(paths: &SkillPaths, claude_available: bool) -> StatusReport {
 }
 
 pub fn format_install(report: &InstallReport, paths: &SkillPaths) -> String {
-    let mut out = String::from("Installed Rozi skill\n");
+    let mut out = scope_heading("Installed Rozi skill", paths);
     out.push_str(&format!("  {}\n", display_path(&report.skill_file, paths)));
     match &report.claude {
         ClaudeInstall::Linked { path, target } => {
@@ -160,9 +183,9 @@ pub fn format_install(report: &InstallReport, paths: &SkillPaths) -> String {
 
 pub fn format_uninstall(report: &UninstallReport, paths: &SkillPaths) -> String {
     if report.removed.is_empty() {
-        return "Rozi skill is not installed\n".to_string();
+        return scope_heading("Rozi skill is not installed", paths);
     }
-    let mut out = String::from("Removed Rozi skill\n");
+    let mut out = scope_heading("Removed Rozi skill", paths);
     for path in &report.removed {
         out.push_str(&format!("  {}\n", display_path(path, paths)));
     }
@@ -171,7 +194,8 @@ pub fn format_uninstall(report: &UninstallReport, paths: &SkillPaths) -> String 
 
 pub fn format_status(report: &StatusReport, paths: &SkillPaths) -> String {
     format!(
-        "Rozi skill\n\n  canonical   {:<15} {}\n  claude      {:<15} {}\n",
+        "{}\n  canonical   {:<15} {}\n  claude      {:<15} {}\n",
+        scope_heading("Rozi skill", paths),
         canonical_label(report.canonical),
         display_path(&paths.skill_file, paths),
         claude_label(report.claude),
@@ -674,6 +698,29 @@ mod tests {
 
     fn read(path: &Path) -> String {
         fs::read_to_string(path).expect("read")
+    }
+
+    #[test]
+    fn a_project_install_belongs_to_the_checkout_root() {
+        let scratch = Scratch::new("root");
+        let nested = scratch.0.join("src").join("deep");
+        fs::create_dir_all(&nested).expect("nested");
+        assert_eq!(project_root(&nested), nested, "outside a checkout, the cwd");
+        fs::create_dir(scratch.0.join(".git")).expect("git dir");
+        assert_eq!(project_root(&nested), scratch.0);
+    }
+
+    #[test]
+    fn reports_name_their_scope() {
+        let status = StatusReport {
+            canonical: CanonicalStatus::Missing,
+            claude: ClaudeStatus::Missing,
+        };
+        let project = format_status(&status, &SkillPaths::project("/work/app"));
+        assert!(project.starts_with("Rozi skill for project "), "{project}");
+        let user = format_status(&status, &SkillPaths::global("/nonexistent-home"));
+        assert!(user.starts_with("Rozi skill for user ("), "{user}");
+        assert_ne!(project.lines().next(), user.lines().next());
     }
 
     #[test]

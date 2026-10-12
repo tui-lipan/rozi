@@ -167,15 +167,23 @@ Rozi detects coding-agent CLIs in panes and tracks their state: `working`, `bloc
 agent pane with `send-keys`:
 
 ```bash
-rozi --session dev agents list --format json
-rozi --session dev agents get --target <PANE_ID> --format json
-rozi --session dev agents read --target <PANE_ID> --scrollback 200
+rozi agents list --format json
+rozi agents get --target <PANE_ID> --format json
+rozi agents read --target <PANE_ID> --scrollback 200
+rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
+rozi agents prompt --target <PANE_ID> --wait quiescent --timeout 10m 'Fix the failing test'
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi --session dev agents prompt --target <PANE_ID> --wait idle 'Fix the failing test'
 ```
 
-`wait` and `prompt` run in the session server, so they need `--session <NAME>`. `--until` and
-`--wait` take `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), or `gone`.
+The pane id always goes after `--target`; `agents get 3` is refused. A pane can list several
+agents, such as a client's background conversations: `--target` names the one on screen, and the
+others need their `--ref` from `agents list`. From a UI pane, every
+`agents` command addresses the session on screen; add `--session <NAME>` for a detached one.
+`--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), or
+`gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the user visits
+its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn. Right after `split`,
+`wait` waits for the new pane's agent to be detected; `get` and `prompt` refuse a pane with no agent
+yet.
 
 `agents prompt` submits the text and Enter as one operation, only to the agent incarnation it
 resolved. It never types into a `blocked` agent, which may be showing an approval dialog, and it
@@ -261,7 +269,7 @@ would answer it:
 
 ```bash
 rozi --remote workbox --session dev list-panes --format json
-rozi --remote workbox --session dev agents wait --target <PANE_ID> --until idle
+rozi --remote workbox --session dev agents wait --target <PANE_ID> --until quiescent --timeout 5m
 ```
 
 `--remote` without `--session` is refused: a control command addresses a session server, never the

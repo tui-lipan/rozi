@@ -3,8 +3,8 @@
 # approvals, footer versus transcript interrupt hints - are asserted inline in
 # `src/agent_detection/mod.rs`, where they can also be run against another agent's rules.
 source = "capture"
-captured_at = "2026-08-20..2026-09-01"
-notes = "Claude Code v2.1.237 first-launch cases; current-version queued-input screenshot added 2026-09-01"
+captured_at = "2026-08-20..2026-10-12"
+notes = "Claude Code v2.1.237 first-launch cases; current-version queued-input screenshot added 2026-09-01; v2.1.294 unnumbered trust dialog added 2026-10-12"
 
 # Caught, where Codex's and Copilot's equivalents were not: the option cursor starts its line, which
 # is the shape Claude's own rule looks for. Kept because a first-run dialog is the single screen a
@@ -29,6 +29,31 @@ screen = '''
 
  ❯ 1. Yes, I trust this folder
    2. No, exit
+
+ Enter to confirm · Esc to cancel
+'''
+
+# Claude 2.1.294's trust dialog, captured 2026-10-12: unnumbered options, with `No, exit` first and
+# selected. The `❯ 1.` rule cannot see it, and reading it as idle let `agents prompt` type into it -
+# its Enter picked `No, exit` and quit Claude. Kept because the confirm hint is now the only shape
+# that marks this dialog blocked.
+[[case]]
+name = "startup-trust-dialog-unnumbered"
+state = "blocked"
+screen = '''
+──────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ ~/.cache/rozi-agent-lab
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
 
  Enter to confirm · Esc to cancel
 '''

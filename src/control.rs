@@ -2729,7 +2729,8 @@ impl<R: io::Read> Iterator for ControlLines<R> {
 /// An ordinary request is answered on the app's next update, so ten seconds is a wedged UI. A pane
 /// wait is answered when its condition resolves or its own deadline passes, and the UI enforces
 /// that deadline itself, so the connection outlasts it by the same margin rather than cutting
-/// every wait off at ten seconds. A `record-stop` is answered once the session server has finished
+/// every wait off at ten seconds. An agent wait, alone or after a prompt, is held by the session
+/// server until its own deadline, with the same margin. A `record-stop` is answered once the session server has finished
 /// the file, so it gets the budget a session caller gets, and a `record-ui-stop` once the UI has.
 fn control_reply_timeout(command: &ControlCommand) -> Duration {
     const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -2738,6 +2739,18 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
         ControlCommand::RecordStop { .. } | ControlCommand::RecordUiStop
     ) {
         return crate::session::headless::RECORDING_STOP_TIMEOUT;
+    }
+    if let ControlCommand::AgentWait {
+        timeout_ms: Some(timeout_ms),
+        ..
+    }
+    | ControlCommand::AgentPrompt {
+        wait: Some(_),
+        timeout_ms: Some(timeout_ms),
+        ..
+    } = command
+    {
+        return Duration::from_millis(*timeout_ms).saturating_add(REPLY_TIMEOUT);
     }
     command.pane_wait().map_or(REPLY_TIMEOUT, |wait| {
         Duration::from_millis(wait.timeout_ms).saturating_add(REPLY_TIMEOUT)

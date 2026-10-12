@@ -273,7 +273,7 @@ rozi --session dev agents list
 rozi --session dev agents get --target 3
 rozi --session dev agents read --target 3 --scrollback 200
 rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
-rozi --session dev agents prompt --target 3 --wait idle "Fix the failing test"
+rozi --session dev agents prompt --target 3 --wait quiescent --timeout 10m "Fix the failing test"
 ```
 
 `rozi agents --help` lists every subcommand and flag, including `report` and `release`, which
@@ -283,19 +283,30 @@ of running the command, so it is never sent as prompt text.
 Each published row is its own agent in `list`, with that row's own `cwd` and `native_session` when
 it names them.
 
-Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. `list` and
+Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. A bare pane
+id, as in `agents get 3`, is refused. When a pane lists several agents, such as a client showing one
+conversation while others run in the background, `--target` names the one on screen, and
+`list-panes` reports that one; reach the others with `--ref`. `list` and
 `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
 ### Wait for a state
 
-`agents wait` and `agents prompt` need `--session`, because they run in the session server. That
-lets a wait work while no client is attached, without missing a change that happens between reading
-the agent and starting to wait.
+`agents wait` and `agents prompt` run in the session server, so a wait cannot miss a change that
+happens between reading the agent and starting to wait. With `--session`, they work while no client
+is attached. From inside a UI pane, or with `ROZI_SOCKET`, the UI passes them to the session on
+screen, or to the session a `--ref` names.
 
-Wait states are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`. Errors
-distinguish a gone agent, a replacement agent, a stale reference, and a timeout. Use
-`--format json` for stable responses and error codes.
+`--timeout` is required for `agents wait`, and for `agents prompt` with `--wait`.
+
+Wait states are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`. An agent
+that finishes a turn is `done` until you look at its pane, so wait for `quiescent` to catch the end of
+a turn; `idle` alone may never come. A timeout names the state the agent was left in.
+
+Waiting on a pane whose agent has not been detected yet, such as one you just opened with `split`,
+waits for the agent to appear. `gone` answers at once for a pane with no agent. Errors distinguish a
+gone agent, a replacement agent, a stale reference, and a timeout. Use `--format json` for stable
+responses and error codes.
 
 ### Send a prompt safely
 
@@ -323,9 +334,13 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - `--agent` ties the report to the agent currently detected in the pane.
 - A live report overrides screen detection. Releasing it returns the pane to screen detection.
 - When the pane also publishes rows, the rows stay listed. The report drives only the row whose
-  `native_session` matches `--native-session`. A report about a conversation no row lists is kept
-  but not shown, so a client that switched conversations without its hooks noticing still lists
-  every conversation correctly.
+  `live_session`, or `native_session` when it has none, matches `--native-session`. A report about a
+  conversation no row lists is kept but not shown, so a client that switched conversations without
+  its hooks noticing still lists every conversation correctly.
+- One token owns the pane. Another process's token, such as the hooks of a conversation the client
+  runs in the background, cannot own it, but it can report for the row naming its conversation. It
+  has its own sequence, and that row follows it until it releases or no row names its conversation.
+  Only one token reports for each conversation at a time.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report

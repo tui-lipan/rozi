@@ -2225,6 +2225,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
     });
     pane.runtime.rows = vec![
         protocol::PublishedRow {
+            live_session: None,
+            reported: false,
             id: "left".into(),
             title: "running tests".into(),
             status: "working".into(),
@@ -2236,6 +2238,8 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
             native_session: None,
         },
         protocol::PublishedRow {
+            live_session: None,
+            reported: false,
             id: "right".into(),
             title: "waiting on approval".into(),
             status: "blocked".into(),
@@ -5057,6 +5061,8 @@ fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
         .into_iter()
         .enumerate()
         .map(|(index, status)| protocol::PublishedRow {
+            live_session: None,
+            reported: false,
             id: index.to_string(),
             title: status.into(),
             status: status.into(),
@@ -5189,6 +5195,8 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
     let pane = server.panes.get_mut(&1).unwrap();
     pane.runtime.integration.as_mut().unwrap().state = protocol::AgentState::Blocked;
     pane.runtime.rows = vec![protocol::PublishedRow {
+        live_session: None,
+        reported: false,
         id: "row".into(),
         title: "task".into(),
         status: "working".into(),

@@ -26,7 +26,10 @@ pub(super) fn parse_skill_args(args: &[String]) -> std::result::Result<ParsedCli
                 return Err(format!("unknown skill command `{other}`"));
             }
             other => {
-                return Err(format!("unexpected argument `{other}` after skill"));
+                let command = command.unwrap_or_default();
+                return Err(format!(
+                    "unexpected argument `{other}` after skill {command}"
+                ));
             }
         }
     }
@@ -76,6 +79,10 @@ mod tests {
             parse_cli_args(vec!["skill".into(), "-h".into()]).expect("parses"),
             ParsedCli::SkillHelp
         ));
+        assert_eq!(
+            parse_skill_args(&["install".into(), "extra".into()]).err(),
+            Some("unexpected argument `extra` after skill install".to_string())
+        );
         assert!(matches!(
             parse_cli_args(vec!["skill".into(), "install".into(), "--global".into()])
                 .expect("parses"),

@@ -1239,6 +1239,8 @@ mod finished_rows_notice {
 
     fn row(id: &str, title: &str, active: bool) -> PublishedRow {
         PublishedRow {
+            live_session: None,
+            reported: false,
             id: id.to_string(),
             title: title.to_string(),
             status: "done".to_string(),

@@ -188,6 +188,7 @@ pub(crate) fn stream_opened(
         crate::state::PublishStreamState {
             id: stream_id,
             identity,
+            last_rows: Vec::new(),
             sender,
             extension,
             binding,
@@ -319,17 +320,38 @@ pub(crate) fn rows_reported(
     let Some(key) = live_stream(&ctx.state, stream_id, pane_id) else {
         return Update::none();
     };
-    let stream = &ctx.state.publish_streams[&key];
+    let Some(stream) = ctx.state.publish_streams.get_mut(&key) else {
+        return Update::none();
+    };
+    stream.last_rows = rows;
+    send_latest(&ctx.state, &key);
+    Update::none()
+}
+
+/// Send a stream's latest snapshot to the session it is bound to, if it may reach it now.
+fn send_latest(state: &crate::state::State, key: &PublishStreamKey) {
+    let Some(stream) = state.publish_streams.get(key) else {
+        return;
+    };
     if stream
         .binding
         .as_ref()
-        .is_some_and(|binding| !worker_may_publish(&ctx.state, binding, &key.origin))
+        .is_some_and(|binding| !worker_may_publish(state, binding, &key.origin))
     {
-        return Update::none();
+        return;
     }
-    let identity = stream.identity.clone();
-    report_rows(&ctx.state, &key, &identity, rows);
-    Update::none()
+    report_rows(state, key, &stream.identity, stream.last_rows.clone());
+}
+
+/// Report every live stream's latest snapshot again, after this client attached to a session.
+///
+/// The server keeps a client's rows only while that client is attached, so a reconnect would
+/// otherwise leave every live publisher's rows withdrawn until it next changed them. A stream
+/// whose rows are unchanged on a server that still has them costs the server one comparison.
+pub(crate) fn resend_rows(state: &crate::state::State) {
+    for key in state.publish_streams.keys() {
+        send_latest(state, key);
+    }
 }
 
 /// Send one publisher's rows to the session its stream is bound to. A session no longer attached
@@ -393,15 +415,29 @@ pub(crate) fn unload_extensions(
 /// has stopped reading is indistinguishable from one that is slow. The pane is focused either way,
 /// so the click is never a no-op.
 pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneId, row: &RowKey) {
+    // The server qualifies each publisher by the client whose stream it is. Another client's row
+    // has no stream here, whatever its publisher is called in that client.
+    let Some((owner, publisher)) = crate::session::protocol::publisher_owner(&row.publisher) else {
+        return;
+    };
     let origin = if crate::pane::lifecycle::pane_is_local(state, pane_id) {
+        // A scratch or popup pane is this client's alone, on whichever connection it used.
         PublishOrigin::Local
     } else {
+        if state
+            .current()
+            .shared
+            .as_ref()
+            .is_none_or(|shared| shared.client_id != owner)
+        {
+            return;
+        }
         current_origin(state)
     };
     let key = PublishStreamKey {
         origin,
         pane: pane_id,
-        publisher: row.publisher.clone(),
+        publisher: publisher.to_string(),
     };
     let Some(stream) = state.publish_streams.get(&key) else {
         return;
@@ -460,8 +496,20 @@ mod tests {
         state.current_mut().session_attached = true;
         state.current_mut().session_client = Some(client);
         state.current_mut().session_instance = Some(SessionInstanceId::for_test("session-a"));
+        state.current_mut().shared = Some(crate::state::SharedSessionState::new(CLIENT));
         state.current_mut().workspaces[0].panes[0].pty_generation = 4;
         outbound
+    }
+
+    /// This client's id in the session `attach` sets up.
+    const CLIENT: u64 = 7;
+
+    /// A row of `publisher` as the server reports it back: qualified by the client.
+    fn row_key(client: u64, publisher: &str, id: &str) -> RowKey {
+        RowKey::new(
+            crate::session::protocol::qualified_publisher(client, publisher),
+            id,
+        )
     }
 
     /// The key of `publisher`'s stream in pane 1 of the session `attach` set up.
@@ -648,10 +696,20 @@ mod tests {
             let _outbound = attach(backend);
             let (tx, rx) = std::sync::mpsc::sync_channel(4);
             open_stream(backend, Open::anonymous(1), tx);
+            // Another client's publisher of the same name has no stream here.
             super::request_activation(
                 backend.state_mut(),
                 1,
-                &RowKey::new("publish:default", "ses_b"),
+                &row_key(CLIENT + 1, "publish:default", "ses_b"),
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "another client's row is not this stream's"
+            );
+            super::request_activation(
+                backend.state_mut(),
+                1,
+                &row_key(CLIENT, "publish:default", "ses_b"),
             );
             let line = rx.try_recv().expect("activation was written");
             assert_eq!(line.trim(), r#"{"activate":"ses_b"}"#);
@@ -709,7 +767,7 @@ mod tests {
             super::request_activation(
                 backend.state_mut(),
                 1,
-                &RowKey::new("codex-rozi-sessions", "1"),
+                &row_key(CLIENT, "codex-rozi-sessions", "1"),
             );
             assert_eq!(agent_rx.try_recv().unwrap().trim(), r#"{"activate":"1"}"#);
             assert!(
@@ -718,7 +776,7 @@ mod tests {
             );
 
             // The PR publisher stops draining: it is evicted, and only its rows are withdrawn.
-            let prs = RowKey::new("publish:prs", "1");
+            let prs = row_key(CLIENT, "publish:prs", "1");
             super::request_activation(backend.state_mut(), 1, &prs);
             super::request_activation(backend.state_mut(), 1, &prs);
             assert_eq!(
@@ -828,6 +886,7 @@ mod tests {
             b.session_attached = true;
             b.session_client = Some(client_b);
             b.session_instance = Some(SessionInstanceId::for_test("session-b"));
+            b.shared = Some(crate::state::SharedSessionState::new(8));
             b.workspaces[0].panes.push(crate::state::Pane::new(
                 1,
                 100,
@@ -867,7 +926,7 @@ mod tests {
             );
             assert_eq!(backend.state().publish_streams.len(), 2);
             // An activation from the screen reaches B's stream, the one on screen.
-            super::request_activation(backend.state_mut(), 1, &RowKey::new("publish:default", "b"));
+            super::request_activation(backend.state_mut(), 1, &row_key(8, "publish:default", "b"));
             assert_eq!(rx_b.try_recv().unwrap().trim(), r#"{"activate":"b"}"#);
 
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
@@ -990,6 +1049,28 @@ mod tests {
             report(backend, 2, vec![row("r", "idle")]);
             assert!(reports(&outbound_a).is_empty(), "never into A");
             assert!(reports(&outbound_b).is_empty(), "B is not on screen");
+        });
+    }
+
+    /// The server withdraws a client's rows when it leaves, so attaching again resends every live
+    /// stream's latest snapshot.
+    #[test]
+    fn live_streams_resend_their_rows_after_an_attach() {
+        with_backend(|backend| {
+            let outbound = attach(backend);
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            open_stream(backend, Open::anonymous(1), tx);
+            report(backend, 1, vec![row("a", "working")]);
+            assert_eq!(reports(&outbound).len(), 1);
+            super::resend_rows(backend.state());
+            assert_eq!(
+                reports(&outbound),
+                [(
+                    "publish:default".into(),
+                    PublisherKind::Activity,
+                    vec!["a".to_string()]
+                )]
+            );
         });
     }
 

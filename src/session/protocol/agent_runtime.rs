@@ -203,6 +203,16 @@ pub fn agent_occupant_identities(runtime: &PaneRuntimeState) -> Vec<(Option<RowK
         .collect()
 }
 
+/// What an agent summary says about the pane's agents: who each is and what state it is in. Two
+/// runtimes with equal signatures describe the same agents in the same states, whatever their
+/// activities are doing.
+pub fn agent_signature(runtime: &PaneRuntimeState) -> Vec<(Option<RowKey>, String, AgentState)> {
+    agent_occupants(runtime)
+        .into_iter()
+        .filter_map(|occupant| Some((occupant.slot, occupant.agent?.id, occupant.state)))
+        .collect()
+}
+
 /// The agent projection: the pane's agent occupants, each with the reference that names it.
 ///
 /// Every agent-facing surface reads this one function, so none of them filters activities out on

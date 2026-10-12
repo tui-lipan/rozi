@@ -127,6 +127,9 @@ pub struct PublishStreamKey {
 pub struct PublishStreamState {
     pub id: u64,
     pub identity: PublisherIdentity,
+    /// The publisher's latest snapshot, resent when this client attaches again: the session server
+    /// withdraws a client's rows when it leaves, and a reconnect is a new client to it.
+    pub last_rows: Vec<crate::session::protocol::PublishedRow>,
     pub sender: std::sync::mpsc::SyncSender<String>,
     pub extension: Option<crate::config::ExtensionProvenance>,
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies

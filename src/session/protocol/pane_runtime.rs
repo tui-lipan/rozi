@@ -217,6 +217,22 @@ impl RowKey {
     }
 }
 
+/// A row's publisher as the session server stores it: the identity a UI client gave the stream,
+/// qualified by that client.
+///
+/// A publish stream lives in one UI client, so the same identity from two attached clients is two
+/// publishers: neither can replace or withdraw the other's rows, and a client's rows go when it
+/// leaves. UI publisher identities never contain `/`.
+pub fn qualified_publisher(client: crate::layout::shared::ClientId, publisher: &str) -> String {
+    format!("{client}/{publisher}")
+}
+
+/// The client and the client's own identity of a server-qualified publisher.
+pub fn publisher_owner(qualified: &str) -> Option<(crate::layout::shared::ClientId, &str)> {
+    let (client, publisher) = qualified.split_once('/')?;
+    Some((client.parse().ok()?, publisher))
+}
+
 /// One logical agent or activity inside a pane that publishes several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

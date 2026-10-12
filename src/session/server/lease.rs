@@ -416,7 +416,7 @@ impl SessionServer {
         // The client that could not reach the filesystem may have just left, which puts naming a
         // file back on the table for the panes.
         self.sync_image_media_policy();
-        let mut messages: Vec<ServerMessage> = Vec::new();
+        let mut messages: Vec<ServerMessage> = self.withdraw_client_rows(id);
         if self.controller == Some(id) {
             self.controller = self.promotion_candidate();
             // A promoted client no longer needs its own pending request.

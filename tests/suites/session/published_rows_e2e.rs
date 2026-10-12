@@ -273,27 +273,47 @@ fn a_row_cwd_resolves_to_its_worktree_on_the_server() {
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
+fn client_id(attached: &ServerMessage) -> u64 {
+    match attached {
+        ServerMessage::Attached { client_id, .. } => *client_id,
+        other => panic!("expected attached response, got {other:?}"),
+    }
+}
+
+fn report(
+    client: &mut crate::common::TestConnection,
+    publisher: &str,
+    kind: PublisherKind,
+    rows: Vec<PublishedRow>,
+) {
+    client.write_control(&ClientMessage::ReportPaneRows {
+        pane_id: PANE_ID,
+        local: false,
+        generation: PANE_GENERATION,
+        publisher: publisher.into(),
+        kind,
+        rows,
+    });
+}
+
+fn owners(state: &PaneRuntimeState) -> Vec<(String, String, PublisherKind, bool)> {
+    state
+        .rows
+        .iter()
+        .map(|row| (row.publisher.clone(), row.id.clone(), row.kind, row.active))
+        .collect()
+}
+
 /// Two publishers in one pane own their rows independently: colliding row ids stay two rows with
 /// two run clocks, and one publisher withdrawing leaves the other's rows exactly as they were.
 #[test]
 fn publishers_in_one_pane_keep_their_own_rows() {
     let server = spawn_listener(ServerSettings::default());
-    let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
+    let (mut controller, attached) =
+        attach_client(server.endpoint(), server.session(), "controller");
+    let me = client_id(&attached);
     spawn_pane(&mut controller);
 
-    let report = |controller: &mut crate::common::TestConnection,
-                  publisher: &str,
-                  kind: PublisherKind,
-                  rows: Vec<PublishedRow>| {
-        controller.write_control(&ClientMessage::ReportPaneRows {
-            pane_id: PANE_ID,
-            local: false,
-            generation: PANE_GENERATION,
-            publisher: publisher.into(),
-            kind,
-            rows,
-        });
-    };
     report(
         &mut controller,
         "codex-rozi-sessions",
@@ -313,23 +333,21 @@ fn publishers_in_one_pane_keep_their_own_rows() {
         }],
     );
     let state = read_rows(&mut controller, |rows| rows.len() == 2);
-    let owners: Vec<_> = state
-        .rows
-        .iter()
-        .map(|row| {
-            (
-                row.publisher.as_str(),
-                row.id.as_str(),
-                row.kind,
-                row.active,
-            )
-        })
-        .collect();
     assert_eq!(
-        owners,
+        owners(&state),
         [
-            ("codex-rozi-sessions", "1", PublisherKind::Agent, true),
-            ("publish:prs", "1", PublisherKind::Activity, true),
+            (
+                format!("{me}/codex-rozi-sessions"),
+                "1".into(),
+                PublisherKind::Agent,
+                true
+            ),
+            (
+                format!("{me}/publish:prs"),
+                "1".into(),
+                PublisherKind::Activity,
+                true
+            ),
         ],
         "colliding ids stay distinct and each publisher keeps its own active row"
     );
@@ -345,8 +363,86 @@ fn publishers_in_one_pane_keep_their_own_rows() {
         Vec::new(),
     );
     let state = read_rows(&mut controller, |rows| rows.len() == 1);
-    assert_eq!(state.rows[0].publisher, "codex-rozi-sessions");
+    assert_eq!(state.rows[0].publisher, format!("{me}/codex-rozi-sessions"));
     assert_eq!(state.rows[0].work_started_at, started);
 
     controller.write_control(&ClientMessage::Detach);
+}
+
+/// Two clients attached to one session, each running a publisher with the same identity in the
+/// same pane: they are two publishers. Neither's reports, late updates, or close touch the other's
+/// rows, and a client that leaves takes only its own rows with it.
+#[test]
+fn publishers_of_two_clients_never_touch_each_others_rows() {
+    let server = spawn_listener(ServerSettings::default());
+    let (mut a, attached_a) = attach_client(server.endpoint(), server.session(), "a");
+    let id_a = client_id(&attached_a);
+    spawn_pane(&mut a);
+    let (mut b, attached_b) = attach_client(server.endpoint(), server.session(), "b");
+    let id_b = client_id(&attached_b);
+    assert_ne!(id_a, id_b);
+
+    report(
+        &mut a,
+        "publish:tasks",
+        PublisherKind::Activity,
+        vec![row("a", "working", true)],
+    );
+    read_rows(&mut b, |rows| rows.len() == 1);
+    report(
+        &mut b,
+        "publish:tasks",
+        PublisherKind::Activity,
+        vec![row("b", "working", true)],
+    );
+    let state = read_rows(&mut a, |rows| rows.len() == 2);
+    let publishers: Vec<_> = state.rows.iter().map(|row| row.publisher.clone()).collect();
+    assert_eq!(
+        publishers,
+        [
+            format!("{id_a}/publish:tasks"),
+            format!("{id_b}/publish:tasks")
+        ],
+        "the same identity in two clients is two publishers"
+    );
+
+    // A late update from A replaces only A's row.
+    report(
+        &mut a,
+        "publish:tasks",
+        PublisherKind::Activity,
+        vec![row("a2", "idle", true)],
+    );
+    let state = read_rows(&mut b, |rows| rows.iter().any(|row| row.id == "a2"));
+    assert!(state.rows.iter().any(|row| row.id == "b"));
+
+    // A closing its stream withdraws A's rows, never B's.
+    report(&mut a, "publish:tasks", PublisherKind::Activity, Vec::new());
+    let state = read_rows(&mut b, |rows| rows.len() == 1);
+    assert_eq!(state.rows[0].id, "b");
+
+    // B restarts its publisher (same identity, new snapshot) and A publishes again; then B leaves
+    // without closing anything: only B's rows go.
+    report(
+        &mut b,
+        "publish:tasks",
+        PublisherKind::Activity,
+        vec![row("b2", "working", true)],
+    );
+    report(
+        &mut a,
+        "publish:tasks",
+        PublisherKind::Activity,
+        vec![row("a3", "idle", true)],
+    );
+    read_rows(&mut a, |rows| {
+        rows.iter().any(|row| row.id == "b2") && rows.iter().any(|row| row.id == "a3")
+    });
+    b.write_control(&ClientMessage::Detach);
+    drop(b);
+    let state = read_rows(&mut a, |rows| rows.len() == 1);
+    assert_eq!(state.rows[0].id, "a3");
+    assert_eq!(state.rows[0].publisher, format!("{id_a}/publish:tasks"));
+
+    a.write_control(&ClientMessage::Detach);
 }

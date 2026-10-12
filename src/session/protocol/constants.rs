@@ -28,8 +28,9 @@ pub const EVICTED_ERROR_CODE: &str = "evicted";
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
-/// How many publishers one pane may have at once. The UI refuses a stream beyond it when the stream
-/// opens; the session server enforces it again on the rows it is sent.
+/// How many publishers one client may have in one pane at once. The UI refuses a stream beyond it
+/// when the stream opens, so the refusal reaches the publisher; the session server enforces it again
+/// per client on the rows it is sent. Clients never share publishers, so no count spans them.
 pub const MAX_PANE_PUBLISHERS: usize = 16;
 
 /// On-wire size of a pane byte frame besides the payload: 4-byte length, 1-byte kind, 13-byte

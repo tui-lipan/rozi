@@ -895,7 +895,7 @@ After `{"ok":true}`, the publisher writes complete snapshots:
 | `native_session` | string or null | null | The agent's own conversation ID for this row, such as the ID `claude --resume` takes. Kept exactly as sent; one longer than 4096 bytes or containing a control character is dropped. Used only on an agent publisher's rows. |
 | `work_started_at` | integer or null | set by rozi | rozi replaces any value a publisher sends. |
 | `project` | object or null | set by rozi | The Git project containing `cwd`: `root`, `branch`, and `repository` when `root` is a linked worktree. rozi replaces any value a publisher sends. |
-| `publisher` | string | set by rozi | The publisher's identity in the pane; see [Several publishers in one pane](#several-publishers-in-one-pane). rozi replaces any value a publisher sends. |
+| `publisher` | string | set by rozi | `<client>/<identity>`: the rozi window that holds the stream, and the publisher's identity in it; see [Several publishers in one pane](#several-publishers-in-one-pane). rozi replaces any value a publisher sends. |
 | `kind` | string | set by rozi | The `kind` the stream declared. rozi replaces any value a publisher sends. |
 
 A row with its own `cwd` is grouped in Activity under that directory's project and branch instead
@@ -977,24 +977,31 @@ are never resumed.
 
 ### Several publishers in one pane
 
-A pane may have up to 16 publishers at once, such as an agent client's session list beside a
+A pane may have several publishers at once, such as an agent client's session list beside a
 pull-request watcher. Each publisher owns only its own rows: when one closes, crashes, restarts, or
 is dropped for not reading its activations, the others' rows stay exactly as they were. Run clocks,
 finish alerts, and activations follow a row by its publisher and ID together, so two publishers
 may use the same row ID.
 
-A publisher's identity in its pane is:
+A stream lives in the rozi window it connected to. When several windows are attached to one
+session, each window's publishers are its own: two windows' publishers with the same identity are
+two publishers, and neither can replace or withdraw the other's rows. A row's `publisher` names
+the window as well as the identity. When a window leaves the session, by detaching, exiting, or
+losing its connection, the rows of its publishers are withdrawn; a window that reconnects reports
+its live publishers' rows again.
+
+A publisher's identity in its window is:
 
 | Caller | Identity |
 | --- | --- |
 | An extension process | `<extension>`, or `<extension>.<name>` with `name` |
 | Any other process | `publish:default`, or `publish:<name>` with `name` |
 
-A stream that opens with the same identity in the same pane of the same session replaces the
-earlier one, so a publisher that restarts takes over its own stale stream and nobody else's. A
-stream beyond the pane's 16 publishers is refused with `conflict` when it opens, before its
-`{"ok":true}`. Give each publisher of
-one caller in a pane its own `name`.
+A stream that opens with the same identity in the same pane of the same session, in the same
+window, replaces the earlier one, so a publisher that restarts takes over its own stale stream and
+nobody else's. Each window may have up to 16 publishers in a pane; a stream beyond that is
+refused with `conflict` when it opens, before its `{"ok":true}`. Give each publisher of one caller
+in a pane its own `name`.
 
 `active` is a rule per publisher, so a pane can have several active rows. The pane's active row,
 which session restore resumes, is the first active row of an agent publisher, taking publishers in

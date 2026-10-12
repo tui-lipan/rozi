@@ -493,9 +493,16 @@ impl SessionServer {
         if !publisher_id_is_valid(&publisher.id) {
             return Err((
                 "invalid-argument",
-                "publisher id must be 1-160 characters without control characters".to_string(),
+                "publisher id must be 1-160 characters without control characters or `/`"
+                    .to_string(),
             ));
         }
+        // The identity is the client's own; qualified by the client, it never meets another
+        // client's publisher of the same name. See [`protocol::qualified_publisher`].
+        let publisher = PanePublisher {
+            id: protocol::qualified_publisher(client_id, &publisher.id),
+            kind: publisher.kind,
+        };
         let owner = local.then_some(client_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
@@ -509,11 +516,17 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
+        // The UI refuses a publisher beyond the limit when its stream opens; this only stops a
+        // client that did not.
         let others = pane
             .runtime
             .rows
             .iter()
-            .filter(|row| row.publisher != publisher.id)
+            .filter(|row| {
+                row.publisher != publisher.id
+                    && protocol::publisher_owner(&row.publisher)
+                        .is_some_and(|(owner, _)| owner == client_id)
+            })
             .map(|row| row.publisher.as_str())
             .collect::<HashSet<_>>()
             .len();
@@ -548,30 +561,52 @@ impl SessionServer {
         if next == pane.runtime.rows {
             return Ok(None);
         }
-        let was_agent = pane
-            .runtime
-            .rows
-            .iter()
-            .any(protocol::PublishedRow::is_agent);
-        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
-        pane.runtime.rows = next;
-        // An agent publisher that enumerates its own sessions is better informed than the scraper,
-        // which can only see the one it draws. Drop anything the scraper was holding for this pane.
-        // An activity publisher says nothing about the pane's agent, so detection carries on.
-        if pane
-            .runtime
-            .rows
-            .iter()
-            .any(protocol::PublishedRow::is_agent)
-            || was_agent
-        {
-            pane.agent.hold = None;
-        }
-        pane.agent.sync_references(&pane.runtime);
-        pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+        replace_pane_rows(pane, next);
         let state = pane.runtime.clone();
         self.resolve_agent_waits();
         Ok(Some(state))
+    }
+
+    /// Withdraw every row a departing client published into a shared pane, and say so to the
+    /// clients that remain.
+    ///
+    /// A publish stream lives in its UI client, so a client that left - detached, crashed, or
+    /// dropped by the network - took its streams with it, and the empty snapshot each would have
+    /// sent on closing never arrives. Its own local panes go with it anyway.
+    pub(super) fn withdraw_client_rows(&mut self, client: ClientId) -> Vec<ServerMessage> {
+        let session_instance = self.instance_id.clone();
+        let mut messages = Vec::new();
+        for (&pane_id, pane) in &mut self.panes {
+            let next: Vec<_> = pane
+                .runtime
+                .rows
+                .iter()
+                .filter(|row| {
+                    protocol::publisher_owner(&row.publisher)
+                        .is_none_or(|(owner, _)| owner != client)
+                })
+                .cloned()
+                .collect();
+            if next.len() == pane.runtime.rows.len() {
+                continue;
+            }
+            replace_pane_rows(pane, next);
+            messages.push(ServerMessage::PaneRuntimeChanged {
+                pane_id,
+                local: wire_local(None),
+                generation: pane.generation,
+                agent_refs: pane.agent.references(protocol::PaneRef {
+                    session_instance: session_instance.clone(),
+                    pane_id,
+                    generation: pane.generation,
+                }),
+                state: pane.runtime.clone(),
+            });
+        }
+        if !messages.is_empty() {
+            self.resolve_agent_waits();
+        }
+        messages
     }
 
     pub(super) fn apply_agent_integration(
@@ -1564,7 +1599,38 @@ pub(super) struct PanePublisher {
 }
 
 fn publisher_id_is_valid(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 160 && !id.chars().any(char::is_control)
+    !id.is_empty() && id.len() <= 160 && !id.chars().any(|ch| ch.is_control() || ch == '/')
+}
+
+/// Install a pane's new row list and everything that follows from it.
+///
+/// The agent summary's change time moves only when the pane's agents changed: an activity
+/// publisher updating its own rows says nothing new about the agent beside it.
+fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
+    let had_agent_rows = pane
+        .runtime
+        .rows
+        .iter()
+        .any(protocol::PublishedRow::is_agent);
+    let before = protocol::agent_signature(&pane.runtime);
+    pane.runtime.rows = next;
+    if protocol::agent_signature(&pane.runtime) != before {
+        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
+    }
+    // An agent publisher that enumerates its own sessions is better informed than the scraper,
+    // which can only see the one it draws. Drop anything the scraper was holding for this pane.
+    // An activity publisher says nothing about the pane's agent, so detection carries on.
+    if had_agent_rows
+        || pane
+            .runtime
+            .rows
+            .iter()
+            .any(protocol::PublishedRow::is_agent)
+    {
+        pane.agent.hold = None;
+    }
+    pane.agent.sync_references(&pane.runtime);
+    pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
 }
 
 /// `current` with `publisher`'s rows replaced by `rows`.
@@ -2438,6 +2504,89 @@ mod tests {
         let references = scratch.references(pane_ref);
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].slot, None);
+    }
+
+    fn row_of(publisher: &str, kind: protocol::PublisherKind, id: &str) -> protocol::PublishedRow {
+        protocol::PublishedRow {
+            publisher: publisher.into(),
+            kind,
+            id: id.into(),
+            title: String::new(),
+            status: "working".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        }
+    }
+
+    /// A PR watcher updating its activity rows beside an idle Codex says nothing new about Codex,
+    /// so the agent summary's change time stays put; an agent row arriving moves it.
+    #[test]
+    fn activity_updates_leave_the_agent_summary_time_alone() {
+        let mut pane = make_pane();
+        pane.runtime.detected_agent = Some(DetectedAgent {
+            agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.agent.summary_changed_at = 1;
+        let activity = protocol::PublisherKind::Activity;
+        replace_pane_rows(&mut pane, vec![row_of("7/publish:prs", activity, "pr-1")]);
+        replace_pane_rows(
+            &mut pane,
+            vec![
+                row_of("7/publish:prs", activity, "pr-1"),
+                row_of("7/publish:prs", activity, "pr-2"),
+            ],
+        );
+        replace_pane_rows(&mut pane, Vec::new());
+        assert_eq!(pane.agent.summary_changed_at, 1);
+
+        replace_pane_rows(
+            &mut pane,
+            vec![row_of("7/sessions", protocol::PublisherKind::Agent, "s")],
+        );
+        assert_ne!(pane.agent.summary_changed_at, 1);
+    }
+
+    /// A client that leaves takes its publishers' rows with it, and only its own.
+    #[test]
+    fn a_departing_client_withdraws_only_its_own_rows() {
+        let mut server = SessionServer::new_named("dev");
+        let mut pane = make_pane();
+        let activity = protocol::PublisherKind::Activity;
+        pane.runtime.rows = vec![
+            row_of("3/publish:tasks", activity, "a"),
+            row_of("4/publish:tasks", activity, "b"),
+        ];
+        server.panes.insert(1, pane);
+        let messages = server.withdraw_client_rows(3);
+        assert_eq!(messages.len(), 1);
+        let ids: Vec<_> = server.panes[&1]
+            .runtime
+            .rows
+            .iter()
+            .map(|row| row.publisher.as_str())
+            .collect();
+        assert_eq!(ids, ["4/publish:tasks"]);
+        assert!(
+            server.withdraw_client_rows(3).is_empty(),
+            "nothing left to withdraw"
+        );
+    }
+
+    #[test]
+    fn a_qualified_publisher_names_its_client() {
+        let qualified = protocol::qualified_publisher(12, "publish:tasks");
+        assert_eq!(qualified, "12/publish:tasks");
+        assert_eq!(
+            protocol::publisher_owner(&qualified),
+            Some((12, "publish:tasks"))
+        );
+        assert_eq!(protocol::publisher_owner("publish:tasks"), None);
+        assert!(!publisher_id_is_valid("a/b"));
     }
 
     /// One publisher replacing its rows keeps its place and leaves every other publisher's rows

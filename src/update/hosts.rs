@@ -459,6 +459,7 @@ mod tests {
             label: "Codex".into(),
             state: state.into(),
             changed_at: 0,
+            launch: 0,
         }
     }
 

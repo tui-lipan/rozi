@@ -103,6 +103,16 @@ pub(crate) fn apply_pane_runtime_state(
     // Sampled before the incoming runtime state overwrites the status it dates.
     let previous_age = pane.terminal.status_age();
     let previous_blocked = pane.terminal.is_blocked();
+    // Replacing a detected agent establishes a new lifecycle baseline: its loading screen is
+    // not the previous run finishing. A first detection still alerts if it needs attention.
+    let relaunched =
+        state.agent_launch != pane.terminal.agent_launch && pane.terminal.detected_agent.is_some();
+    let (previous_agent_status, previous_age, previous_blocked) = if relaunched {
+        (None, None, false)
+    } else {
+        (previous_agent_status, previous_age, previous_blocked)
+    };
+    pane.terminal.agent_launch = state.agent_launch;
     pane.terminal.runtime_sequence = state.sequence;
     pane.terminal.cwd = state.cwd;
     pane.terminal.cwd_host = state.cwd_host;
@@ -122,12 +132,16 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
     let finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
-    let edges = update_agent_status_edge(
+    let mut edges = update_agent_status_edge(
         &mut pane.terminal,
         previous_agent_status.as_deref(),
         previous_age,
         previous_blocked,
     );
+    if relaunched {
+        edges.finished = false;
+        edges.became_blocked = false;
+    }
     AppliedPaneRuntime {
         finished_rows,
         edges,
@@ -299,4 +313,66 @@ pub(crate) fn pane_runtime_changed(
     // Agents tab may already be open with nothing ticking.
     crate::update::sidebar::arm_agent_tick(ctx);
     Update::full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    #[test]
+    fn a_first_detected_agent_alerts_when_it_is_blocked() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        assert!(pane.terminal.detected_agent.is_none());
+        assert_eq!(pane.terminal.agent_launch, 0);
+        let runtime = PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                agent: AgentIdentity::new("pi", "Pi").into(),
+                state: DetectedAgentState::Blocked,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        let applied = apply_pane_runtime_state(&mut pane, runtime.clone());
+        assert!(applied.edges.became_blocked);
+        assert!(!applied.edges.finished);
+        assert!(!pane.terminal.finished_unseen);
+        let applied = apply_pane_runtime_state(&mut pane, runtime);
+        assert!(!applied.edges.became_blocked);
+        assert!(!applied.edges.finished);
+    }
+
+    #[test]
+    fn a_blocked_relaunch_establishes_a_baseline_without_alerts() {
+        for previous in [
+            DetectedAgentState::Idle,
+            DetectedAgentState::Working,
+            DetectedAgentState::Blocked,
+        ] {
+            let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+            pane.terminal.agent_launch = 1;
+            pane.terminal.detected_agent = Some(DetectedAgent {
+                agent: AgentIdentity::new("pi", "Pi").into(),
+                state: previous,
+            });
+            let mut runtime = PaneRuntimeState {
+                agent_launch: 2,
+                detected_agent: Some(DetectedAgent {
+                    agent: AgentIdentity::new("pi", "Pi").into(),
+                    state: DetectedAgentState::Blocked,
+                }),
+                ..PaneRuntimeState::default()
+            };
+            let applied = apply_pane_runtime_state(&mut pane, runtime.clone());
+            assert!(!applied.edges.finished);
+            assert!(!applied.edges.became_blocked);
+            assert!(!pane.terminal.finished_unseen);
+            runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
+            apply_pane_runtime_state(&mut pane, runtime.clone());
+            runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Blocked;
+            let applied = apply_pane_runtime_state(&mut pane, runtime);
+            assert!(applied.edges.became_blocked);
+            assert!(!applied.edges.finished);
+        }
+    }
 }

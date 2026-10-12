@@ -403,6 +403,8 @@ pub struct AgentScratch {
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
     next_incarnation: u64,
+    /// Launch whose screen-detected reference was last synchronized.
+    reference_launch: u64,
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
     retired_integrations: HashSet<String>,
@@ -421,6 +423,20 @@ pub struct AgentScratch {
     pub probe: Option<AgentProbe>,
     /// When the process sweep last actually ran, for the periodic refresh.
     pub detected_at: Option<std::time::Instant>,
+    /// The process the sweep named as this pane's agent, so a restart under the same name is still
+    /// recognized as a launch.
+    pub process: Option<AgentProcess>,
+    /// Set from a launch until the agent is ready: its loading spinner is not a run. See
+    /// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE).
+    pub startup: Option<AgentStartup>,
+    /// The next agent named here was already running: the definitions changed under it, so naming
+    /// it is not a launch and starts no [`Self::startup`].
+    pub adopting: bool,
+    /// How many agent launches this pane has seen, published as
+    /// [`protocol::PaneRuntimeState::agent_launch`]. Survives
+    /// [`Self::reset_detection`](super::AgentScratch::reset_detection): a count that went back to
+    /// an earlier value would let a client mistake a new process for one it has already seen.
+    pub launches: u64,
     /// Last sampled foreground process group, shared by split-aware navigation and agent identity.
     /// Keeping it across fast polls avoids re-walking the host process table every 250 ms.
     pub foreground_job: Option<crate::platform::process::ForegroundJob>,
@@ -464,6 +480,42 @@ pub struct RetainedResume {
 struct TrackedAgentReference {
     identity: String,
     incarnation: u64,
+}
+
+/// The process a detection sweep named as a pane's agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentProcess {
+    /// Zero when the platform could not inspect the job and the sweep worked from a name alone.
+    pub pid: u32,
+    pub name: String,
+    /// Named only by a `ROZI_AGENT` hint, not by anything about the process itself: the shell the
+    /// agent will be launched from, standing in for it until it is.
+    pub stand_in: bool,
+}
+
+/// A launched agent that has not yet shown it is ready.
+///
+/// Ends on the first sign of a ready agent - a dialog, a prompt that stays up once its loading
+/// screen has gone, a submitted line - or after
+/// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE) for an agent that shows none.
+#[derive(Clone, Copy, Debug)]
+pub struct AgentStartup {
+    pub since: std::time::Instant,
+    /// The launch has drawn working evidence: its loading screen.
+    pub loading_seen: bool,
+    /// When the screen last went quiet after the loading screen, to tell a prompt that has come
+    /// up from a gap in the spinner's redraw.
+    pub quiet_since: Option<std::time::Instant>,
+}
+
+impl AgentStartup {
+    pub fn new(since: std::time::Instant) -> Self {
+        Self {
+            since,
+            loading_seen: false,
+            quiet_since: None,
+        }
+    }
 }
 
 /// One state read: the text it was taken from, and what the rules made of it.

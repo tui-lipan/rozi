@@ -8,7 +8,7 @@ mod panes;
 mod prompts;
 pub(crate) use prompts::cancel_attach_askpass;
 mod services;
-mod session;
+pub(crate) mod session;
 pub(crate) mod sidebar;
 pub(crate) mod workbar;
 

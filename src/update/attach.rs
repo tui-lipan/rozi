@@ -52,6 +52,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.reported_status = meta.runtime.status.clone();
     pane.terminal.recording = meta.runtime.recording;
     pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
+    pane.terminal.agent_launch = meta.runtime.agent_launch;
     pane.terminal.work_started_at = meta.runtime.work_started_at;
     pane.terminal.command_phase = meta.runtime.command_phase;
     pane.terminal.last_exit_status = meta.runtime.last_exit_status;
@@ -297,5 +298,52 @@ pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
     };
     for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
         client.spawn_pane(spawn);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::protocol::{
+        AgentIdentity, DetectedAgent, DetectedAgentState, PaneMeta, PaneRuntimeState,
+    };
+    use crate::update::session::status::apply_pane_runtime_state;
+
+    #[test]
+    fn attaching_to_a_working_agent_preserves_its_first_completion() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let mut runtime = PaneRuntimeState {
+            agent_launch: 4,
+            sequence: 10,
+            detected_agent: Some(DetectedAgent {
+                agent: AgentIdentity::new("pi", "Pi").into(),
+                state: DetectedAgentState::Working,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        apply_pane_meta(
+            &mut pane,
+            &PaneMeta {
+                pane_id: 1,
+                generation: 7,
+                agent_refs: Vec::new(),
+                cols: 80,
+                rows: 24,
+                pid: Some(101),
+                title: None,
+                original_user: None,
+                exited: None,
+                logging: false,
+                runtime: runtime.clone(),
+            },
+        );
+        assert_eq!(pane.terminal.agent_launch, 4);
+        assert!(pane.terminal.is_working());
+        runtime.sequence += 1;
+        runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
+        let applied = apply_pane_runtime_state(&mut pane, runtime);
+        assert!(applied.edges.finished);
+        assert!(!applied.edges.became_blocked);
+        assert!(pane.terminal.finished_unseen);
     }
 }

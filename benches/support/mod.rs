@@ -168,6 +168,7 @@ pub fn attached_message() -> ServerMessage {
                     last_exit_status: Some(0),
                     status: None,
                     detected_agent: None,
+                    agent_launch: 0,
                     work_started_at: None,
                     rows: Vec::new(),
                     integration: None,

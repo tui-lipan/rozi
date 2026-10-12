@@ -45,6 +45,7 @@ impl SessionServer {
                     label,
                     state: runtime.state.as_str().into(),
                     changed_at: pane.agent.summary_changed_at,
+                    launch: pane.runtime.agent_launch,
                 });
             }
         }

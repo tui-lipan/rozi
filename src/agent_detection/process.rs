@@ -3,33 +3,51 @@ use crate::platform::process::{ForegroundJob, ForegroundProcess};
 use super::catalog::AgentCatalog;
 use super::definition::{AgentDefinition, normalized_name};
 
-/// Identify the most authoritative agent process in one foreground process group.
+/// Identify the most authoritative agent process in one foreground process group, and which
+/// process it was.
 ///
 /// Process traversal and wrapper scoring are generic observation policy. Tool names and package
 /// markers live in the catalog's definitions instead of leaking into this layer.
-pub(super) fn identify_job<'a>(
+///
+/// A hint decides *which* agent this is, but the process carrying it is often not that agent: it is
+/// set on the job's first process, which is the shell or wrapper that launches it. So the process
+/// named is the agent's own when one in the job is recognizable as it, and the hinted one only
+/// stands in until then - otherwise a wrapper that outlives the launch would be the agent forever.
+pub(super) fn identify_job<'a, 'j>(
     catalog: &'a AgentCatalog,
-    job: &ForegroundJob,
-) -> Option<&'a AgentDefinition> {
+    job: &'j ForegroundJob,
+) -> Option<(&'a AgentDefinition, &'j ForegroundProcess)> {
     for process in &job.processes {
         if let Some(definition) = process
             .agent_hint
             .as_deref()
             .and_then(|hint| catalog.by_name(hint))
         {
-            return Some(definition);
+            let itself = best_match(catalog, job, |candidate| {
+                candidate.identity.id == definition.identity.id
+            });
+            return Some((definition, itself.map_or(process, |(_, process)| process)));
         }
     }
+    best_match(catalog, job, |_| true)
+}
 
+/// The job's most authoritative process recognizable by itself as an agent `accept` allows.
+fn best_match<'a, 'j>(
+    catalog: &'a AgentCatalog,
+    job: &'j ForegroundJob,
+    accept: impl Fn(&AgentDefinition) -> bool,
+) -> Option<(&'a AgentDefinition, &'j ForegroundProcess)> {
     job.processes
         .iter()
         .filter_map(|process| {
             let (definition, wrapped) = identify_process(catalog, process)?;
+            accept(definition).then_some(())?;
             let leader = process.pid == job.process_group_id;
-            Some(((leader as u8) * 2 + wrapped as u8, definition))
+            Some(((leader as u8) * 2 + wrapped as u8, (definition, process)))
         })
         .max_by_key(|(score, _)| *score)
-        .map(|(_, definition)| definition)
+        .map(|(_, named)| named)
 }
 
 pub(super) fn identify_process<'a>(

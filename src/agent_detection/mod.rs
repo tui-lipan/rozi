@@ -20,7 +20,7 @@ pub use definition::{
 };
 pub use spec::{AgentMatchSpec, AgentOrigin, AgentSpec, AgentStateSpec, build_definitions};
 
-use crate::platform::process::ForegroundJob;
+use crate::platform::process::{ForegroundJob, ForegroundProcess};
 use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
 use definition::evaluate;
@@ -37,15 +37,26 @@ pub(crate) struct AgentObservation {
     pub state: Option<DetectedAgentState>,
 }
 
-/// Which agent is running behind a pane.
+/// Which agent is running behind a pane, and the process in `job` that is it.
 ///
 /// The expensive half of detection: naming the program means walking the host's process table for
 /// this pane's process-group members, so callers cache the answer rather than asking every poll.
-pub(crate) fn identify<'a>(
+pub(crate) fn identify<'a, 'j>(
     catalog: &'a AgentCatalog,
-    job: Option<&ForegroundJob>,
-) -> Option<&'a AgentDefinition> {
+    job: Option<&'j ForegroundJob>,
+) -> Option<(&'a AgentDefinition, &'j ForegroundProcess)> {
     identify_job(catalog, job?)
+}
+
+/// Whether `process` is the agent `id` by its own name or path, rather than only because a hint
+/// said so. A hint names the agent from the pane's environment, which is true of the shell that
+/// will launch it as much as of the agent itself.
+pub(crate) fn process_is_agent(
+    catalog: &AgentCatalog,
+    process: &ForegroundProcess,
+    id: &str,
+) -> bool {
+    process::identify_process(catalog, process).is_some_and(|(definition, _)| definition.id() == id)
 }
 
 /// What an already-identified agent is doing right now.
@@ -116,7 +127,7 @@ mod tests {
 
     fn identify_group(job: &ForegroundJob) -> Option<String> {
         let catalog = catalog();
-        identify_job(&catalog, job).map(|definition| definition.id().to_string())
+        identify_job(&catalog, job).map(|(definition, _)| definition.id().to_string())
     }
 
     #[test]
@@ -142,7 +153,7 @@ mod tests {
         screen: &str,
         title: &str,
     ) -> Option<AgentObservation> {
-        let definition = super::identify(catalog, job)?;
+        let (definition, _) = super::identify(catalog, job)?;
         Some(observe(catalog, definition, screen, title))
     }
 

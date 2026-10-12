@@ -256,6 +256,9 @@ pub struct TerminalPane {
     /// The session server is recording this pane (`rozi record`).
     pub recording: bool,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
+    /// The server's launch count for [`Self::detected_agent`]; see
+    /// [`crate::session::protocol::PaneRuntimeState::agent_launch`].
+    pub agent_launch: u64,
     pub agent_integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
     /// Set when this agent pane's effective status transitions from `working` to a quiescent state
     /// (finished), and cleared once it is attended (its host window and the pane are both focused).
@@ -433,6 +436,7 @@ impl TerminalPane {
             reported_status: None,
             recording: false,
             detected_agent: None,
+            agent_launch: 0,
             agent_integration: None,
             finished_unseen: false,
             work_started_at: None,

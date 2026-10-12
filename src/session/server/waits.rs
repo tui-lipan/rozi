@@ -394,6 +394,35 @@ mod tests {
     }
 
     #[test]
+    fn an_exact_reference_rejects_a_new_launch_of_the_same_agent() {
+        let mut server = server_with_agent(protocol::DetectedAgentState::Working);
+        let reference = server
+            .resolve_agent_wait_target(AgentTarget::Pane(3))
+            .unwrap();
+        let pane = server.panes.get_mut(&3).unwrap();
+        pane.runtime.agent_launch += 1;
+        pane.runtime.detected_agent.as_mut().unwrap().state = protocol::DetectedAgentState::Idle;
+        pane.agent.sync_references(&pane.runtime);
+
+        assert!(matches!(
+            server.evaluate_agent_wait(&reference, AgentWaitCondition::Idle),
+            WaitEvaluation::Error(ControlErrorCode::AgentReplaced, _)
+        ));
+        let error = server
+            .resolve_agent_wait_target(AgentTarget::Ref(reference.clone()))
+            .unwrap_err();
+        assert_eq!(error.code, Some(ControlErrorCode::AgentReplaced));
+        let fresh = server
+            .resolve_agent_wait_target(AgentTarget::Pane(3))
+            .unwrap();
+        assert_ne!(fresh, reference);
+        assert!(matches!(
+            server.evaluate_agent_wait(&fresh, AgentWaitCondition::Idle),
+            WaitEvaluation::Ready(Some(_))
+        ));
+    }
+
+    #[test]
     fn registration_accepts_an_exact_reference_that_is_already_gone() {
         let server = server_with_agent(protocol::DetectedAgentState::Working);
         let reference = server

@@ -89,6 +89,14 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
+        if self.reference_launch != runtime.agent_launch {
+            // A confirmed screen launch renews only the pane-level detected occupant. Claims and
+            // published rows have independent identities that survive screen process changes.
+            if runtime.integration.is_none() && runtime.detected_agent.is_some() {
+                self.references.remove(&None);
+            }
+            self.reference_launch = runtime.agent_launch;
+        }
         if let Some(integration) = &runtime.integration
             && runtime.rows.is_empty()
         {
@@ -175,11 +183,13 @@ impl AgentScratch {
     pub(super) fn reset_detection(&mut self) {
         let references = std::mem::take(&mut self.references);
         let next_incarnation = self.next_incarnation;
+        let reference_launch = self.reference_launch;
         let retired_integrations = std::mem::take(&mut self.retired_integrations);
         let launches = self.launches;
         *self = Self {
             references,
             next_incarnation,
+            reference_launch,
             retired_integrations,
             launches,
             ..Self::default()
@@ -2192,6 +2202,13 @@ mod tests {
         };
         let mut scratch = AgentScratch::default();
         scratch.sync_references(&runtime);
+        let mut runtime = runtime;
+        runtime.agent_launch += 1;
+        scratch.sync_references(&runtime);
+        assert_eq!(
+            scratch.references(pane_ref.clone()),
+            vec![reference.clone()]
+        );
         scratch.clear_runtime_identity();
         scratch.sync_references(&runtime);
 
@@ -2449,6 +2466,9 @@ mod tests {
         };
         scratch.sync_references(&runtime);
         let initial = scratch.references(pane_ref.clone());
+        runtime.agent_launch += 1;
+        scratch.sync_references(&runtime);
+        assert_eq!(scratch.references(pane_ref.clone()), initial);
         let a = initial
             .iter()
             .find(|item| item.slot.as_deref() == Some("a"));
@@ -3669,6 +3689,7 @@ mod tests {
             Some(&catalog()),
             &mut LazyProcessScan::default(),
         );
+        pane.agent.sync_references(&pane.runtime);
         pane.runtime.clone()
     }
 
@@ -3691,6 +3712,12 @@ mod tests {
         server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
         let working = publish(&mut server, &old);
         assert_eq!(state(&working), Some(DetectedAgentState::Working));
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 1,
+            generation: 1,
+        };
+        let old_refs = server.agent.references(pane_ref.clone());
         apply_pane_runtime_state(&mut client, working);
         assert!(client.terminal.is_working());
 
@@ -3700,6 +3727,7 @@ mod tests {
             .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
         let restarted = publish(&mut server, &new);
         assert_eq!(state(&restarted), Some(DetectedAgentState::Idle));
+        assert_ne!(server.agent.references(pane_ref), old_refs);
         let applied = apply_pane_runtime_state(&mut client, restarted);
         assert!(
             !applied.edges.finished,

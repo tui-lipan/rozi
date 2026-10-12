@@ -403,6 +403,8 @@ pub struct AgentScratch {
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<String>, TrackedAgentReference>,
     next_incarnation: u64,
+    /// Launch whose screen-detected reference was last synchronized.
+    reference_launch: u64,
     /// Integration ownership tokens that have already relinquished this pane. Retained for the
     /// pane lifetime so a delayed hook from an old process cannot reclaim authority.
     retired_integrations: HashSet<String>,

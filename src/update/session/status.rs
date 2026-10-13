@@ -70,7 +70,17 @@ pub(crate) fn update_agent_status_edge(
     let current = pane.agent_status();
     let current = current.as_deref();
     if current != previous {
-        if status_is_active_run(previous) && status_is_quiescent(current) {
+        let generic = pane.detected_agent.is_none() && pane.agent_integration.is_none();
+        let ended = if generic {
+            previous.is_some_and(|s| {
+                !crate::session::protocol::ActivityState::from_status(s).is_terminal()
+            }) && current.is_some_and(|s| {
+                crate::session::protocol::ActivityState::from_status(s).is_terminal()
+            })
+        } else {
+            status_is_active_run(previous) && status_is_quiescent(current)
+        };
+        if ended {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());

@@ -436,29 +436,6 @@ impl State {
             slot: usize,
         }
 
-        fn rank(status: Option<&str>, finished: bool) -> u8 {
-            let Some(status) = status.map(str::trim) else {
-                return 5;
-            };
-            if finished
-                && !status.eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
-                && !status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
-            {
-                return 3;
-            }
-            if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED) {
-                0
-            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING) {
-                1
-            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE) {
-                3
-            } else if status.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE) {
-                4
-            } else {
-                2
-            }
-        }
-
         fn group_label(path: Option<&str>, host: Option<&str>) -> String {
             let label = path
                 .and_then(|path| {
@@ -485,7 +462,9 @@ impl State {
                     let path = place.group_path().map(str::to_string);
                     let label_path = place.label_path().map(str::to_string);
                     let host = place.host;
-                    let finished =
+                    let finished = if occupant.program_status.is_some() {
+                        pane.terminal.program_status_attention
+                    } else {
                         occupant
                             .slot
                             .as_ref()
@@ -494,7 +473,8 @@ impl State {
                                     .published_row_ui
                                     .get(key)
                                     .is_some_and(|ui| ui.finished_unseen)
-                            });
+                            })
+                    };
                     let state = occupant.state;
                     let target = match occupant.slot {
                         Some(row) => RowTarget::PublishedRow {
@@ -508,7 +488,7 @@ impl State {
                         host,
                         path,
                         label_path,
-                        rank: rank(Some(state.as_str()), finished),
+                        rank: state.presentation_rank(finished),
                         workspace,
                         pane: pane_index,
                         slot,

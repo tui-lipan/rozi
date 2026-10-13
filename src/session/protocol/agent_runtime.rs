@@ -81,6 +81,20 @@ impl ActivityState {
         matches!(self, Self::Idle | Self::Done | Self::Error)
     }
 
+    /// Successful terminal outcomes, distinct from a failed run ending.
+    pub const fn is_successful_terminal(self) -> bool {
+        matches!(self, Self::Idle | Self::Done)
+    }
+
+    /// Shared ordering for the drawn rows and their keyboard activation targets.
+    pub const fn presentation_rank(self, finished_unseen: bool) -> u8 {
+        if finished_unseen && self.is_successful_terminal() {
+            Self::Done.rank()
+        } else {
+            self.rank()
+        }
+    }
+
     pub const fn rank(self) -> u8 {
         match self {
             Self::Blocked => 0,

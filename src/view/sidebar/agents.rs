@@ -977,6 +977,36 @@ mod tests {
     }
 
     #[test]
+    fn osc_activation_order_uses_its_own_attention_latch() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut osc = pane_in(1, None, false, Some("/repo"));
+        osc.terminal.detected_agent = None;
+        osc.agent_refs.clear();
+        osc.terminal.finished_unseen = true;
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=idle\x07");
+        osc.terminal.program_status = screen.program_status_snapshot();
+        let mut done = pane_in(2, Some("done"), false, Some("/repo"));
+        done.terminal.detected_agent = None;
+        done.agent_refs.clear();
+        state.current_mut().workspaces[0].panes = vec![osc, done];
+        let rendered = agent_groups(&state)
+            .into_iter()
+            .flat_map(|group| group.rows)
+            .map(|row| RowTarget::Pane(row.pane_id))
+            .collect::<Vec<_>>();
+        let projected = state
+            .activity_item_projections()
+            .into_iter()
+            .map(|item| item.target)
+            .filter(|target| *target != RowTarget::Inert)
+            .collect::<Vec<_>>();
+        assert_eq!(rendered, vec![RowTarget::Pane(2), RowTarget::Pane(1)]);
+        assert_eq!(projected, rendered);
+    }
+
+    #[test]
     fn osc_activity_coexists_with_agent_and_generic_status() {
         let mut pane = pane(1, Some("working"), false);
         let before = pane.agent_runtimes();

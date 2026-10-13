@@ -748,6 +748,91 @@ mod tests {
         });
     }
 
+    /// The rendered Agents rows for `agents` (label, session) on a 100-column screen.
+    fn rendered_rows(agents: &[(&str, &str)]) -> Vec<String> {
+        let agents = agents
+            .iter()
+            .enumerate()
+            .map(
+                |(pane, (label, session))| crate::session::protocol::AgentSummary {
+                    session: (*session).into(),
+                    pane: pane as crate::state::PaneId + 1,
+                    generation: 0,
+                    row: None,
+                    agent: "codex".into(),
+                    label: (*label).into(),
+                    state: "idle".into(),
+                    changed_at: 0,
+                    launch: 0,
+                },
+            )
+            .collect::<Vec<_>>();
+        let mut backend = backend_with_panes(&[]);
+        backend.state_mut().config.animations.picker =
+            crate::layout::anim::PickerAnimationStyle::Off;
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents,
+            });
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+            .unwrap();
+        backend.render();
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .into_iter()
+            .filter(|line| line.contains("Idle"))
+            .collect()
+    }
+
+    /// Character column of `needle` in a rendered `row`.
+    fn column(row: &str, needle: &str) -> usize {
+        let byte = row
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} in {row:?}"));
+        row[..byte].chars().count()
+    }
+
+    /// A short description stays right-aligned like every picker's; a long one starts two columns
+    /// after the name instead of at a fixed column. When both sides are long the label gives way
+    /// down to a third of the row, and a long label beside a short description is cut only as far
+    /// as the description needs.
+    #[test]
+    fn row_descriptions_follow_the_name_and_share_the_row_with_long_labels() {
+        on_large_stack(|| {
+            let long_session = "s".repeat(120);
+            let long_label = format!("Codex {}", "l".repeat(120));
+
+            let short = rendered_rows(&[("Codex", "dev")]).remove(0);
+            assert!(
+                column(&short, "Idle") - column(&short, "Codex") > 40,
+                "a short description stays at the right edge: {short}"
+            );
+
+            let long = rendered_rows(&[("Codex", &long_session)]).remove(0);
+            assert!(long.contains("Codex  Idle · sss"), "{long}");
+            assert!(long.contains("s… │"), "truncated at the end: {long}");
+
+            // The 100-column screen leaves a 92-column row for label and description.
+            let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
+            assert!(both.contains("…  Idle · sss"), "{both}");
+            assert_eq!(
+                column(&both, "Idle") - column(&both, "Codex"),
+                92 / 3 + 2,
+                "{both}"
+            );
+
+            let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
+            assert!(label.contains("…  Idle · dev │"), "{label}");
+            assert!(
+                column(&label, "Idle") - column(&label, "Codex") > 92 / 3 + 2,
+                "{label}"
+            );
+        });
+    }
+
     /// An empty list says which machines were asked. "Nothing running" on a client watching four
     /// hosts is a different fact from the same words on a client watching none.
     #[test]

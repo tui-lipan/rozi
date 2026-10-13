@@ -204,9 +204,11 @@ fn row_context(row: &crate::view::agents::GlobalAgentRow, show_location: bool) -
     }
 }
 
-/// The description takes whatever the label leaves, so a long one starts right after a short name
-/// instead of at a fixed column. A long label still stops at a third of the row, leaving the rest
-/// for the state and location.
+/// How far a row's description may grow: everything the label leaves, so a long description starts
+/// right after a short name instead of at a fixed column. A short one is not stretched; it stays
+/// right-aligned. When the label is long too it reserves no more than a third of the row, so the
+/// label is cut there and the state and location keep the rest. A long label beside a short
+/// description is cut only as far as the description needs.
 fn description_width(row: &crate::view::agents::GlobalAgentRow, row_width: u16) -> u16 {
     use unicode_width::UnicodeWidthStr;
     let label = row.agent.width() + row.activity.as_deref().map_or(0, |text| text.width() + 2);

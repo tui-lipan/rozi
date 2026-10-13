@@ -71,6 +71,7 @@ pub(crate) use worktrees::worktree_overlay;
 pub(in crate::view::overlays) use commands::settings_palette_aliases;
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_button, hint_pill, hint_row};
 pub(in crate::view::overlays) use confirm::{DialogButton, DialogChrome, dialog_overlay};
+pub(crate) use palette::PICKER_DESCRIPTION_GAP;
 pub(in crate::view::overlays) use palette::{
     OverlayAction, OverlayItemRenderer, OverlayPalette, OverlayTabs, overlay_hints,
     overlay_interceptor, picker_description, picker_row, picker_selection_style,

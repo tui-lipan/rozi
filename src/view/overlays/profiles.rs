@@ -268,6 +268,5 @@ pub(super) fn render_ephemeral_session_item(
         .as_ref()
         .and_then(|desc| desc.right.clone())
         .unwrap_or_default();
-    let description = description.strip_prefix("  ").unwrap_or(&description);
-    picker_row(label_spans, description.to_string(), *description_style)
+    picker_row(label_spans, description, *description_style)
 }

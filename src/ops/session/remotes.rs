@@ -868,6 +868,62 @@ mod tests {
         });
     }
 
+    /// On All, a remote session's label is `name@host`, which easily outgrows the row. The
+    /// description still says what its agents are doing, and the name keeps enough to recognise.
+    #[test]
+    fn a_long_remote_session_name_leaves_its_agent_state_visible() {
+        with_backend(|backend| {
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
+            let target = RemoteTarget::Alias("build-host-with-a-long-alias".into());
+            let name = "reviewing-the-agent-picker-cursor";
+            let state = backend.state_mut();
+            state
+                .remote
+                .live_sessions
+                .push(crate::session::discovery::DiscoveredSession {
+                    name: name.into(),
+                    status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        panes: 1,
+                        clients: 0,
+                        has_layout: true,
+                    },
+                    origin: Default::default(),
+                    ephemeral: false,
+                    host: None,
+                    remote_target: Some(target.clone()),
+                });
+            state.remote.agents.insert(
+                target.clone(),
+                vec![crate::session::protocol::AgentSummary {
+                    session: name.into(),
+                    pane: 1,
+                    generation: 0,
+                    row: None,
+                    agent: "claude".into(),
+                    label: "Claude Code".into(),
+                    state: "blocked".into(),
+                    changed_at: 0,
+                    launch: 0,
+                }],
+            );
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::OpenSessionPicker))
+                .unwrap();
+            backend.state_mut().session_picker.as_mut().unwrap().tab =
+                crate::state::SessionPickerTab::All;
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            backend.render();
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            let row = frame
+                .lines()
+                .find(|line| line.contains("reviewing-the"))
+                .unwrap_or_else(|| panic!("the session is listed:\n{frame}"));
+            assert!(row.contains("Claude Code blocked"), "{row}");
+            assert!(row.contains("…"), "the name gives way first: {row}");
+        });
+    }
+
     #[test]
     fn only_offline_hosts_rozi_owns_are_forgettable() {
         let saved = RemoteTarget::Alias("saved".into());

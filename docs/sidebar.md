@@ -375,3 +375,6 @@ Generic activities reporting `error`, through `rozi status` or an activity
 publisher, show a failure glyph and stop their run duration. Arbitrary custom
 statuses remain active. Agent APIs retain their four-state classification, where
 an unrecognized status, including `error`, is interpreted as working.
+
+Blocked agents and activities use `▲` in the theme's warning color. Errors use
+`×` in the error color, so waiting for input and failed work remain distinct.

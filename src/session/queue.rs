@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
@@ -9,6 +9,8 @@ pub(crate) struct QueueStats {
     pub(crate) capacity: usize,
     pub(crate) len: usize,
     pub(crate) closed: bool,
+    pub(crate) coalesced_frames: u64,
+    pub(crate) coalesced_bytes: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -25,16 +27,43 @@ pub(crate) enum SegmentCoalesce {
     Barrier,
 }
 
+/// Parser-proven independence key. Ordered barriers advance the epoch before insertion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ReplacementKey {
+    pub(crate) pane: u32,
+    pub(crate) local: bool,
+    pub(crate) generation: u64,
+    pub(crate) epoch: u64,
+    pub(crate) image: u32,
+    pub(crate) incarnation: u64,
+}
+
 struct Entry<T> {
     value: T,
     bytes: usize,
+    replacement: Option<ReplacementKey>,
 }
 
 struct State<T> {
     entries: VecDeque<Entry<T>>,
+    base: u64,
+    replacements: HashMap<ReplacementKey, u64>,
+    coalesced_frames: u64,
+    coalesced_bytes: u64,
     bytes: usize,
     high_water_bytes: usize,
     closed: bool,
+}
+
+impl<T> State<T> {
+    fn remove_front_index(&mut self, entry: &Entry<T>) {
+        if let Some(key) = entry.replacement
+            && self.replacements.get(&key) == Some(&self.base)
+        {
+            self.replacements.remove(&key);
+        }
+        self.base += 1;
+    }
 }
 
 /// FIFO queue bounded by retained payload bytes rather than message count.
@@ -54,6 +83,10 @@ impl<T> ByteQueue<T> {
             capacity,
             state: Mutex::new(State {
                 entries: VecDeque::new(),
+                base: 0,
+                replacements: HashMap::new(),
+                coalesced_frames: 0,
+                coalesced_bytes: 0,
                 bytes: 0,
                 high_water_bytes: 0,
                 closed: false,
@@ -91,11 +124,98 @@ impl<T> ByteQueue<T> {
             self.changed.notify_all();
             return Ok(());
         }
-        state.entries.push_back(Entry { value, bytes });
+        state.entries.push_back(Entry {
+            value,
+            bytes,
+            replacement: None,
+        });
         state.bytes += bytes;
         state.high_water_bytes = state.high_water_bytes.max(state.bytes);
         self.changed.notify_all();
         Ok(())
+    }
+
+    /// Supersede pending independent state in O(1), accounting for reclaimed bytes before
+    /// applying capacity. This never merges bytes or replaces an ordered entry.
+    pub(crate) fn try_push_latest(
+        &self,
+        value: T,
+        bytes: usize,
+        key: Option<ReplacementKey>,
+    ) -> Result<(), PushError<T>> {
+        if bytes > self.capacity {
+            return Err(PushError::TooLarge(value));
+        }
+        let mut state = self.state.lock().expect("byte queue poisoned");
+        if state.closed {
+            return Err(PushError::Closed(value));
+        }
+        let index = key
+            .and_then(|key| state.replacements.get(&key).copied())
+            .and_then(|index| index.checked_sub(state.base))
+            .and_then(|index| usize::try_from(index).ok());
+        let previous_bytes = index
+            .and_then(|index| state.entries.get(index))
+            .map_or(0, |entry| entry.bytes);
+        let retained = state
+            .bytes
+            .saturating_sub(previous_bytes)
+            .saturating_add(bytes);
+        if retained > self.capacity {
+            return Err(PushError::Full(value));
+        }
+        if let Some(entry) = index.and_then(|index| state.entries.get_mut(index)) {
+            *entry = Entry {
+                value,
+                bytes,
+                replacement: key,
+            };
+            state.coalesced_frames += 1;
+            state.coalesced_bytes += previous_bytes as u64;
+        } else {
+            if let Some(key) = key {
+                let position = state.base + state.entries.len() as u64;
+                state.replacements.insert(key, position);
+            }
+            state.entries.push_back(Entry {
+                value,
+                bytes,
+                replacement: key,
+            });
+        }
+        state.bytes = retained;
+        state.high_water_bytes = state.high_water_bytes.max(retained);
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    pub(crate) fn push_blocking_latest(
+        &self,
+        mut value: T,
+        bytes: usize,
+        key: ReplacementKey,
+    ) -> Result<(), PushError<T>> {
+        loop {
+            match self.try_push_latest(value, bytes, Some(key)) {
+                Err(PushError::Full(returned)) => value = returned,
+                result => return result,
+            }
+            let state = self.state.lock().expect("byte queue poisoned");
+            let _state = self
+                .changed
+                .wait_while(state, |state| {
+                    let previous = state
+                        .replacements
+                        .get(&key)
+                        .and_then(|position| position.checked_sub(state.base))
+                        .and_then(|position| state.entries.get(position as usize))
+                        .map_or(0, |entry| entry.bytes);
+                    !state.closed
+                        && state.bytes.saturating_sub(previous).saturating_add(bytes)
+                            > self.capacity
+                })
+                .expect("byte queue poisoned");
+        }
     }
 
     pub(crate) fn push_blocking_with(
@@ -159,7 +279,11 @@ impl<T> ByteQueue<T> {
             return Ok(());
         }
 
-        state.entries.push_back(Entry { value, bytes });
+        state.entries.push_back(Entry {
+            value,
+            bytes,
+            replacement: None,
+        });
         state.bytes += bytes;
         state.high_water_bytes = state.high_water_bytes.max(state.bytes);
         self.changed.notify_all();
@@ -174,6 +298,7 @@ impl<T> ByteQueue<T> {
     pub(crate) fn try_pop_with_bytes_and_more(&self) -> Option<(T, usize, bool)> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         let entry = state.entries.pop_front()?;
+        state.remove_front_index(&entry);
         state.bytes -= entry.bytes;
         let has_more = !state.entries.is_empty();
         self.changed.notify_all();
@@ -184,6 +309,7 @@ impl<T> ByteQueue<T> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         loop {
             if let Some(entry) = state.entries.pop_front() {
+                state.remove_front_index(&entry);
                 state.bytes -= entry.bytes;
                 self.changed.notify_all();
                 return Some(entry.value);
@@ -236,6 +362,8 @@ impl<T> ByteQueue<T> {
             capacity: self.capacity,
             len: state.entries.len(),
             closed: state.closed,
+            coalesced_frames: state.coalesced_frames,
+            coalesced_bytes: state.coalesced_bytes,
         }
     }
 }
@@ -248,6 +376,62 @@ mod tests {
 
     const WAKE_FALLBACK: Duration = Duration::from_secs(5);
     const WAKE_DEADLINE: Duration = Duration::from_millis(500);
+
+    fn replacement(image: u32, epoch: u64) -> ReplacementKey {
+        ReplacementKey {
+            pane: 1,
+            local: false,
+            generation: 2,
+            epoch,
+            image,
+            incarnation: 1,
+        }
+    }
+
+    #[test]
+    fn independent_frames_keep_only_latest_at_capacity() {
+        let queue = ByteQueue::new(8);
+        for frame in 0..100 {
+            queue
+                .try_push_latest(frame, 8, Some(replacement(7, 0)))
+                .unwrap();
+        }
+        assert_eq!(queue.stats().len, 1);
+        assert_eq!(queue.stats().bytes, 8);
+        assert_eq!(queue.stats().coalesced_frames, 99);
+        assert_eq!(queue.stats().coalesced_bytes, 792);
+        assert_eq!(queue.try_pop(), Some(99));
+        queue
+            .try_push_latest(100, 1, Some(replacement(7, 0)))
+            .unwrap();
+        assert_eq!(queue.try_pop(), Some(100));
+    }
+
+    #[test]
+    fn independent_streams_preserve_barriers_and_ordered_bytes() {
+        let queue = ByteQueue::new(8);
+        queue
+            .try_push_latest(1, 1, Some(replacement(7, 0)))
+            .unwrap();
+        queue
+            .try_push_latest(2, 1, Some(replacement(8, 0)))
+            .unwrap();
+        queue
+            .try_push_latest(3, 1, Some(replacement(7, 0)))
+            .unwrap();
+        queue.try_push_latest(4, 1, None).unwrap();
+        queue
+            .try_push_latest(5, 1, Some(replacement(7, 1)))
+            .unwrap();
+        queue
+            .try_push_latest(6, 1, Some(replacement(7, 1)))
+            .unwrap();
+        assert_eq!(queue.try_pop(), Some(3));
+        assert_eq!(queue.pop_blocking(), Some(2));
+        assert_eq!(queue.try_pop(), Some(4));
+        assert_eq!(queue.try_pop(), Some(6));
+        assert_eq!(queue.stats().bytes, 0);
+    }
 
     #[test]
     fn preserves_order_and_exact_byte_accounting() {

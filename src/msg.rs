@@ -762,7 +762,9 @@ pub enum Msg {
         local: bool,
         generation: u64,
     },
+    TerminalPresented(Vec<tui_lipan::PresentedTerminal>),
     SessionOutput {
+        metadata: crate::session::protocol::OutputMetadata,
         epoch: u64,
         pane_id: PaneId,
         local: bool,

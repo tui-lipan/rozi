@@ -210,6 +210,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.dispatch(rozi::Msg::SessionOutput {
+                    metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -229,6 +230,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.update_level(rozi::Msg::SessionOutput {
+                    metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,

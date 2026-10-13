@@ -64,6 +64,7 @@ fn output(bytes: &str) -> rozi::Msg {
 
 fn output_to(bytes: &str, local: bool) -> rozi::Msg {
     rozi::Msg::SessionOutput {
+        metadata: rozi::session::protocol::OutputMetadata::default(),
         epoch: 0,
         pane_id: PANE,
         local,

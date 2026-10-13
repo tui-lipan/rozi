@@ -32,6 +32,8 @@ pub struct QueueMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
     pub queued_items: u64,
+    pub coalesced_frames: u64,
+    pub coalesced_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,8 @@ pub struct ServerOutboxMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
     pub clients: u64,
+    pub coalesced_frames: u64,
+    pub coalesced_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,9 +132,25 @@ pub struct ServerRuntimeMetrics {
     pub attach_seed: AttachSeedMetrics,
     pub client_resync: ClientResyncMetrics,
     pub resurrection: ResurrectionMetrics,
+    pub graphics: GraphicsSessionMetrics,
     /// Pane recordings (`rozi record`). Absent from a server that predates them.
     #[serde(default)]
     pub recordings: RecordingMetrics,
+}
+
+/// Semantic graphics supersession is counted separately from overload/resync loss.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct GraphicsSessionMetrics {
+    pub graphics_transactions: u64,
+    pub replaceable_transactions: u64,
+    pub staged_coalesced_frames: u64,
+    pub staged_coalesced_bytes: u64,
+    pub ordered_barriers: u64,
+    pub presentation_acks: u64,
+    pub presentation_ack_latency_samples: u64,
+    pub presentation_ack_latency_us: u64,
+    pub presentation_ack_latency_max_us: u64,
 }
 
 /// Pane recordings on a session server.
@@ -233,7 +253,36 @@ impl RuntimeMetrics {
             },
         );
 
+        let graphics = self
+            .server
+            .as_ref()
+            .map(|server| server.sample.graphics)
+            .unwrap_or_default();
+        let ack_average = graphics
+            .presentation_ack_latency_us
+            .checked_div(graphics.presentation_ack_latency_samples)
+            .unwrap_or(0);
         vec![
+            DevToolsMetric::new(
+                "Gfx frames",
+                format!(
+                    "{} independent/{} graphics · staged {} · outbox {} · inbox {} coalesced",
+                    graphics.replaceable_transactions,
+                    graphics.graphics_transactions,
+                    graphics.staged_coalesced_frames,
+                    server_out.coalesced_frames,
+                    inbound.coalesced_frames
+                ),
+            ),
+            DevToolsMetric::new(
+                "Gfx ACK",
+                format!(
+                    "{} · avg {}ms · max {}ms",
+                    graphics.presentation_acks,
+                    format_millis(ack_average),
+                    format_millis(graphics.presentation_ack_latency_max_us)
+                ),
+            ),
             DevToolsMetric::new(
                 "Pointer",
                 format_pointer(tui_lipan::prelude::pixel_pointer_status()),
@@ -428,6 +477,8 @@ mod tests {
                     capacity_bytes: 3,
                 },
                 queued_items: 4,
+                coalesced_frames: 0,
+                coalesced_bytes: 0,
             }),
             client_outbound: None,
             piped_remote: None,
@@ -450,7 +501,7 @@ mod tests {
                     "current_bytes": 1,
                     "high_water_bytes": 2,
                     "capacity_bytes": 3,
-                    "queued_items": 4
+                    "queued_items": 4, "coalesced_frames": 0, "coalesced_bytes": 0
                 },
                 "client_outbound": null,
                 "piped_remote": null,
@@ -463,17 +514,21 @@ mod tests {
                 },
                 "server": {
                     "sampled_at_unix_ms": 90,
+                    "graphics": { "graphics_transactions": 0, "replaceable_transactions": 0,
+                        "staged_coalesced_frames": 0, "staged_coalesced_bytes": 0,
+                        "ordered_barriers": 0, "presentation_acks": 0,
+                        "presentation_ack_latency_samples": 0, "presentation_ack_latency_us": 0, "presentation_ack_latency_max_us": 0 },
                     "pty_ingress": {
                         "current_bytes": 0,
                         "high_water_bytes": 0,
                         "capacity_bytes": 0,
-                        "queued_items": 0
+                        "queued_items": 0, "coalesced_frames": 0, "coalesced_bytes": 0
                     },
                     "client_outboxes": {
                         "current_bytes": 0,
                         "high_water_bytes": 0,
                         "capacity_bytes": 0,
-                        "clients": 0
+                        "clients": 0, "coalesced_frames": 0, "coalesced_bytes": 0
                     },
                     "attach_seed": {
                         "active_clients": 0,

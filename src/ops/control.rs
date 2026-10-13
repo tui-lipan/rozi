@@ -2889,7 +2889,11 @@ mod tests {
                     .expect("dispatch send-text at a starting pane");
                 assert!(response.recv().unwrap().ok);
                 assert!(
-                    outbound.try_recv().is_err(),
+                    !outbound.try_iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::PaneInput { .. }
+                            | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
+                    )),
                     "input reached the PTY before it was ready"
                 );
 
@@ -3986,6 +3990,7 @@ mod tests {
         let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
         backend
             .dispatch(crate::Msg::SessionOutput {
+                metadata: crate::session::protocol::OutputMetadata::default(),
                 epoch,
                 pane_id: 1,
                 local: false,
@@ -4045,7 +4050,16 @@ mod tests {
                         scale: None,
                     },
                 );
-                let sent: Vec<_> = outbound.try_iter().collect();
+                let sent: Vec<_> = outbound
+                    .try_iter()
+                    .filter(|message| {
+                        !matches!(
+                            message,
+                            ClientOutbound::PresentationInterest(_)
+                                | ClientOutbound::PresentationAcks(_)
+                        )
+                    })
+                    .collect();
                 let [
                     ClientOutbound::Control(ClientMessage::MarkedInput {
                         pane_id: 1, token, ..
@@ -4158,7 +4172,14 @@ mod tests {
                 };
                 let first = ask(&mut backend, send("one\r", "ONE"));
                 let second = ask(&mut backend, send("two\r", "TWO"));
-                assert!(outbound.try_recv().is_err(), "input waits for the PTY");
+                assert!(
+                    !outbound.try_iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::PaneInput { .. }
+                            | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
+                    )),
+                    "input waits for the PTY"
+                );
 
                 let epoch = backend.state().runtime_epoch;
                 backend
@@ -4172,7 +4193,16 @@ mod tests {
                         error: None,
                     })
                     .expect("dispatch spawn result");
-                let sent: Vec<_> = outbound.try_iter().collect();
+                let sent: Vec<_> = outbound
+                    .try_iter()
+                    .filter(|message| {
+                        !matches!(
+                            message,
+                            ClientOutbound::PresentationInterest(_)
+                                | ClientOutbound::PresentationAcks(_)
+                        )
+                    })
+                    .collect();
                 let [
                     ClientOutbound::Control(ClientMessage::MarkedInput {
                         pane_id: 1,
@@ -4196,6 +4226,7 @@ mod tests {
                 let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
                 backend
                     .dispatch(crate::Msg::SessionOutput {
+                        metadata: crate::session::protocol::OutputMetadata::default(),
                         epoch,
                         pane_id: 1,
                         local: false,

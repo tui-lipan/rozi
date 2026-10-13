@@ -31,6 +31,9 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         pty_resize_pending: false,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
+        output_sequence: 0,
+        output_coalesce_epoch: 0,
+        output_times: VecDeque::new(),
         output_seen: false,
         cols: 20,
         rows: 5,
@@ -200,7 +203,7 @@ fn decode_outbox_frames(client: &ClientConn) -> Vec<DecodedOutboxFrame> {
                 Some(Frame::Control(message)) => {
                     Some(DecodedOutboxFrame::Control(Box::new(message)))
                 }
-                Some(Frame::PaneBytes {
+                Some(Frame::PaneOutput {
                     pane_id,
                     generation,
                     bytes,
@@ -210,7 +213,7 @@ fn decode_outbox_frames(client: &ClientConn) -> Vec<DecodedOutboxFrame> {
                     generation,
                     bytes,
                 }),
-                None => None,
+                _ => None,
             }
         })
         .collect()
@@ -382,6 +385,7 @@ fn pending_pane_output_is_represented_only_by_its_future_snapshot() {
         .screen_mut()
         .process_bytes(b"before snapshot");
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        metadata: protocol::OutputMetadata::default(),
         pane_id: 7,
         local: false,
         generation: 3,
@@ -463,6 +467,7 @@ fn output_after_snapshot_waits_behind_the_complete_replay() {
 
     assert!(server.pump_attach_seeds());
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        metadata: protocol::OutputMetadata::default(),
         pane_id: key.pane_id,
         local: false,
         generation: key.generation,
@@ -476,7 +481,7 @@ fn output_after_snapshot_waits_behind_the_complete_replay() {
             .as_ref()
             .unwrap()
             .catch_up_bytes,
-        protocol::PANE_FRAME_OVERHEAD + b"after".len()
+        protocol::PANE_OUTPUT_FRAME_OVERHEAD + b"after".len()
     );
     for _ in 0..4 {
         server.pump_attach_seeds();
@@ -835,6 +840,7 @@ fn catch_up_overflow_sheds_the_flooding_pane_and_requeues_its_replay() {
 
     for _ in 0..2 {
         server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: key.pane_id,
             local: false,
             generation: key.generation,
@@ -892,6 +898,7 @@ fn broadcast_pane_output(
     bytes: &[u8],
 ) {
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        metadata: protocol::OutputMetadata::default(),
         pane_id,
         local: false,
         generation,
@@ -2977,11 +2984,12 @@ fn decode_outbox_pane_bytes(client: &ClientConn) -> Vec<(PaneId, bool, u64, Vec<
                 decoder.read_from_status(&mut input).ok()?;
             }
             match decoder.next_frame::<ServerMessage>().ok()? {
-                Some(Frame::PaneBytes {
+                Some(Frame::PaneOutput {
                     pane_id,
                     local,
                     generation,
                     bytes,
+                    ..
                 }) => Some((pane_id, local, generation, bytes)),
                 _ => None,
             }
@@ -3835,6 +3843,9 @@ fn resize_updates_screen_and_broadcasts_ack() {
             pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_sequence: 0,
+            output_coalesce_epoch: 0,
+            output_times: VecDeque::new(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -3988,6 +3999,9 @@ fn duplicate_spawn_is_rejected() {
             pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_sequence: 0,
+            output_coalesce_epoch: 0,
+            output_times: VecDeque::new(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4046,6 +4060,9 @@ fn exited_pane_can_be_respawned() {
             pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_sequence: 0,
+            output_coalesce_epoch: 0,
+            output_times: VecDeque::new(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4231,6 +4248,9 @@ fn attach_reports_layout_and_panes() {
         pty_resize_pending: false,
         terminal: TerminalScreen::new(5, 20, 100),
         content_generation: 0,
+        output_sequence: 0,
+        output_coalesce_epoch: 0,
+        output_times: VecDeque::new(),
         output_seen: false,
         cols: 20,
         rows: 5,
@@ -4428,6 +4448,9 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             pty_resize_pending: false,
             terminal: TerminalScreen::new(5, 20, 100),
             content_generation: 0,
+            output_sequence: 0,
+            output_coalesce_epoch: 0,
+            output_times: VecDeque::new(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4511,6 +4534,9 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 pty_resize_pending: false,
                 terminal: screen,
                 content_generation: 0,
+                output_sequence: 0,
+                output_coalesce_epoch: 0,
+                output_times: VecDeque::new(),
                 output_seen: true,
                 cols: 20,
                 rows: 5,
@@ -5810,5 +5836,197 @@ fn program_status_snapshot_follows_the_layout_that_introduces_a_pane() {
         server
             .program_status_for_new_layout_panes(&layout)
             .is_empty()
+    );
+}
+
+fn independent_output(sequence: u64, epoch: u64, image: u32) -> protocol::OutputMetadata {
+    protocol::OutputMetadata {
+        sequence,
+        coalesce_epoch: epoch,
+        class: protocol::OutputClass::IndependentGraphics {
+            image,
+            incarnation: 1,
+            revision: sequence,
+        },
+    }
+}
+
+#[test]
+fn client_outboxes_coalesce_independent_frames_and_preserve_ordered_barriers() {
+    let mut server = SessionServer::new_named("graphics");
+    let (id, _stream) = attach_client(&mut server);
+    for sequence in 1..=100 {
+        server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            metadata: independent_output(sequence, 0, 7),
+            bytes: sequence.to_be_bytes().to_vec(),
+        });
+    }
+    let client = server.client_mut(id).unwrap();
+    assert_eq!(client.outbox.len(), 1);
+    assert_eq!(client.coalesced_frames, 99);
+    assert_eq!(decode_outbox_frames(client).len(), 1);
+    client.front_offset = 1;
+    client.outbox_bytes -= 1;
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        pane_id: 7,
+        local: false,
+        generation: 2,
+        metadata: independent_output(101, 0, 7),
+        bytes: b"pinned frame continuation".to_vec(),
+    });
+    assert_eq!(server.client_mut(id).unwrap().outbox.len(), 2);
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        pane_id: 7,
+        local: false,
+        generation: 2,
+        metadata: protocol::OutputMetadata {
+            sequence: 102,
+            coalesce_epoch: 1,
+            class: protocol::OutputClass::Ordered,
+        },
+        bytes: b"text barrier".to_vec(),
+    });
+    for sequence in 103..=104 {
+        server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            metadata: independent_output(sequence, 1, 7),
+            bytes: sequence.to_be_bytes().to_vec(),
+        });
+    }
+    assert_eq!(server.client_mut(id).unwrap().outbox.len(), 4);
+}
+
+#[test]
+fn semantic_packetization_waits_for_complete_graphics_commands() {
+    let mut server = SessionServer::new_named("graphics");
+    let mut pane = test_pane(2);
+    pane.screen_without_change()
+        .process_bytes(b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,q=2,C=1;YWJj\x1b\\");
+    pane.screen_without_change()
+        .set_output_transaction_recording(true);
+    server.panes.insert(7, pane);
+    let (id, _stream) = attach_client(&mut server);
+    let frame = b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;ZGVm\x1b\\";
+    for bytes in [&frame[..10], &frame[10..]] {
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(bytes);
+        server.send_outbound(
+            None,
+            &ServerOutbound::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
+                pane_id: 7,
+                local: false,
+                generation: 2,
+                bytes: bytes.to_vec(),
+            },
+        );
+        if bytes.len() == 10 {
+            assert!(server.client_mut(id).unwrap().outbox.is_empty());
+        }
+    }
+    let client = server.client_mut(id).unwrap();
+    assert_eq!(client.outbox.len(), 1);
+    let bytes = client.outbox.front().unwrap().bytes.clone();
+    let mut decoder = protocol::FrameDecoder::default();
+    decoder.read_from_status(&mut bytes.as_ref()).unwrap();
+    let Some(Frame::PaneOutput {
+        metadata, bytes, ..
+    }) = decoder.next_frame::<ServerMessage>().unwrap()
+    else {
+        panic!("output frame")
+    };
+    assert_eq!(bytes, frame);
+    assert!(matches!(
+        metadata.class,
+        protocol::OutputClass::IndependentGraphics { image: 7, .. }
+    ));
+    assert_eq!(metadata.sequence, 1);
+}
+
+#[test]
+fn semantic_staging_coalesces_independent_transactions_before_client_outboxes() {
+    let mut server = SessionServer::new_named("graphics");
+    let mut pane = test_pane(2);
+    pane.screen_without_change()
+        .process_bytes(b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,q=2,C=1;YWJj\x1b\\");
+    pane.screen_without_change()
+        .set_output_transaction_recording(true);
+    server.panes.insert(7, pane);
+    let (id, _stream) = attach_client(&mut server);
+    let frame = b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;ZGVm\x1b\\";
+    let bytes = frame.repeat(100);
+    server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(&bytes);
+    server.send_outbound(
+        None,
+        &ServerOutbound::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            bytes,
+        },
+    );
+    assert_eq!(server.client_mut(id).unwrap().outbox.len(), 1);
+    assert_eq!(
+        server.client_mut(id).unwrap().coalesced_frames,
+        0,
+        "supersession happened before fanout"
+    );
+    let metrics = server.runtime_metrics().graphics;
+    assert_eq!(metrics.replaceable_transactions, 100);
+    assert_eq!(metrics.staged_coalesced_frames, 99);
+    assert_eq!(metrics.staged_coalesced_bytes, frame.len() as u64 * 99);
+}
+
+#[test]
+fn resize_flushes_incomplete_output_and_creates_a_coalescing_barrier() {
+    let mut server = SessionServer::new_named("graphics");
+    let mut pane = test_pane(2);
+    pane.screen_without_change()
+        .set_output_transaction_recording(true);
+    pane.output_seen = true;
+    server.panes.insert(7, pane);
+    let (id, _stream) = attach_client(&mut server);
+    server.controller = Some(id);
+    let prefix = b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;";
+    server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(prefix);
+    server.handle_resize_with(
+        id,
+        super::connection::PaneResizeRequest {
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            cols: 81,
+            rows: 25,
+            cell_width: 10,
+            cell_height: 20,
+        },
+        |_| Ok(()),
+    );
+    assert!(server.panes.get(&7).unwrap().output_coalesce_epoch > 0);
+    let frames = decode_outbox_frames(server.client_mut(id).unwrap());
+    assert!(
+        frames.iter().any(
+            |frame| matches!(frame, DecodedOutboxFrame::Pane { bytes, .. } if bytes == prefix)
+        )
     );
 }

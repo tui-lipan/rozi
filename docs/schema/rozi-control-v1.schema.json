@@ -418,6 +418,9 @@
         "client_resync": {
           "$ref": "#/$defs/ClientResyncMetrics"
         },
+        "graphics": {
+          "$ref": "#/$defs/GraphicsSessionMetrics"
+        },
         "pty_ingress": {
           "$ref": "#/$defs/QueueMetrics"
         },
@@ -452,6 +455,7 @@
         "attach_seed",
         "client_resync",
         "resurrection",
+        "graphics",
         "age_ms",
         "stale"
       ],
@@ -3710,6 +3714,68 @@
       ],
       "type": "object"
     },
+    "GraphicsSessionMetrics": {
+      "description": "Semantic graphics supersession is counted separately from overload/resync loss.",
+      "properties": {
+        "graphics_transactions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ordered_barriers": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presentation_ack_latency_max_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presentation_ack_latency_samples": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presentation_ack_latency_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presentation_acks": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaceable_transactions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "staged_coalesced_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "staged_coalesced_frames": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "graphics_transactions",
+        "replaceable_transactions",
+        "staged_coalesced_frames",
+        "staged_coalesced_bytes",
+        "ordered_barriers",
+        "presentation_acks",
+        "presentation_ack_latency_samples",
+        "presentation_ack_latency_us",
+        "presentation_ack_latency_max_us"
+      ],
+      "type": "object"
+    },
     "LayoutChange": {
       "description": "What `layout set` and `pane set` answer with.",
       "properties": {
@@ -4673,6 +4739,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "coalesced_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "coalesced_frames": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "current_bytes": {
           "format": "uint64",
           "minimum": 0,
@@ -4693,7 +4769,9 @@
         "current_bytes",
         "high_water_bytes",
         "capacity_bytes",
-        "queued_items"
+        "queued_items",
+        "coalesced_frames",
+        "coalesced_bytes"
       ],
       "type": "object"
     },
@@ -5781,6 +5859,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "coalesced_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "coalesced_frames": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "current_bytes": {
           "format": "uint64",
           "minimum": 0,
@@ -5796,7 +5884,9 @@
         "current_bytes",
         "high_water_bytes",
         "capacity_bytes",
-        "clients"
+        "clients",
+        "coalesced_frames",
+        "coalesced_bytes"
       ],
       "type": "object"
     },

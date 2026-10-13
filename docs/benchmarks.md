@@ -317,3 +317,17 @@ source.
 
 - [Performance archive](performance/README.md)
 - [Performance audit playbook](performance/audit-playbook.md)
+
+## Graphics transaction metrics
+
+Runtime metrics distinguish parser graphics transactions, independent replacements, ordered barriers
+and intentional supersession in server staging, per-client outboxes and the client inbox. These
+counters are separate from overload shedding and replay resynchronization. Presentation ACK latency
+measures the interval between server parsing of a completed independent replacement and receipt of
+the client's successful-host-write acknowledgement. It does not measure producer CPU work before
+its bytes reached the server. The timestamp window retains the newest 32 replacements; latency
+samples and acknowledgements have separate counters.
+
+DevTools exposes aggregate graphics and ACK rows. No per-frame logging is enabled. Report successful
+host presentation counts when comparing frame rates; producer updates and received packets can
+include frames intentionally superseded before presentation.

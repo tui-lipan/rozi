@@ -315,6 +315,10 @@ pub struct TerminalPane {
 /// What a chunk of pane output needs from the next frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFrame {
+    /// Completed output changed no visible state.
+    None,
+    /// Only retained graphics changed.
+    Graphics,
     /// Only the screen moved. The view hands the widget the screen itself, so the new contents reach
     /// the buffer without `view()` running again.
     Repaint,
@@ -325,6 +329,7 @@ pub enum OutputFrame {
 
 pub struct ProcessedOutput {
     pub frame: OutputFrame,
+    pub mutation: tui_lipan::TerminalMutation,
     pub clipboard_events: Vec<TerminalClipboardEvent>,
 }
 
@@ -489,6 +494,14 @@ impl TerminalPane {
     /// whole window. A handle holds still, so output is answered with [`Update::paint`].
     ///
     /// [`Update::paint`]: tui_lipan::prelude::Update::paint
+    pub(crate) fn stable_terminal_id(&self) -> u64 {
+        self.screen.borrow().stable_terminal_id()
+    }
+
+    pub(crate) fn set_presentation_token(&self, token: u64) {
+        self.screen.borrow_mut().set_presentation_token(token);
+    }
+
     pub fn screen_handle(&self) -> TerminalScreenHandle {
         TerminalScreenHandle::new(Rc::clone(&self.screen))
     }
@@ -580,7 +593,7 @@ impl TerminalPane {
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
     pub fn process_server_output(&mut self, bytes: &[u8]) -> ProcessedOutput {
         let mut screen = self.screen.borrow_mut();
-        screen.process_bytes(bytes);
+        let mutation = screen.process_bytes(bytes);
         self.output_seen = true;
         let _ = screen.drain_responses();
         let clipboard_events = screen.drain_clipboard_events();
@@ -603,11 +616,16 @@ impl TerminalPane {
         self.status = ManagedTerminalStatus::Ready;
         let frame = if chrome_changed {
             OutputFrame::Rebuild
-        } else {
+        } else if mutation.cells != tui_lipan::TerminalDamage::None || mutation.cursor_changed {
             OutputFrame::Repaint
+        } else if mutation.graphics != tui_lipan::GraphicsDamage::None {
+            OutputFrame::Graphics
+        } else {
+            OutputFrame::None
         };
         ProcessedOutput {
             frame,
+            mutation,
             clipboard_events,
         }
     }

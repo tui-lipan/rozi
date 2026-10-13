@@ -15,9 +15,18 @@ fn session_pipeline(c: &mut Criterion) {
             b.iter_batched(
                 || TerminalPane::new(5_000),
                 |mut pane| {
-                    let mut encoded = Vec::with_capacity(payload.len() + 18);
-                    write_pane_output_frame(&mut encoded, 41, 9, false, black_box(payload))
-                        .unwrap();
+                    let mut encoded = Vec::with_capacity(
+                        payload.len() + rozi::session::protocol::PANE_OUTPUT_FRAME_OVERHEAD,
+                    );
+                    write_pane_output_frame(
+                        &mut encoded,
+                        41,
+                        9,
+                        false,
+                        rozi::session::protocol::OutputMetadata::default(),
+                        black_box(payload),
+                    )
+                    .unwrap();
                     let frame = decode_one(Cursor::new(encoded));
                     process_frame(&mut pane, frame);
                     black_box(pane)
@@ -46,7 +55,15 @@ fn unix_socket_pipeline(c: &mut Criterion) {
                 (TerminalPane::new(5_000), writer, reader)
             },
             |(mut pane, mut writer, reader)| {
-                write_pane_output_frame(&mut writer, 41, 9, false, black_box(&payload)).unwrap();
+                write_pane_output_frame(
+                    &mut writer,
+                    41,
+                    9,
+                    false,
+                    rozi::session::protocol::OutputMetadata::default(),
+                    black_box(&payload),
+                )
+                .unwrap();
                 let frame = decode_one(reader);
                 process_frame(&mut pane, frame);
                 black_box(pane)
@@ -68,7 +85,7 @@ fn decode_one<R: Read>(mut reader: R) -> Frame<ServerMessage> {
 }
 
 fn process_frame(pane: &mut TerminalPane, frame: Frame<ServerMessage>) {
-    let Frame::PaneBytes {
+    let Frame::PaneOutput {
         pane_id,
         generation,
         bytes,

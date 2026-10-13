@@ -225,7 +225,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     controller.write_pane_input(PANE_ID, PANE_GENERATION, b"before\r");
     let mut first_output = Vec::new();
     read_until(&mut follower, |frame| {
-        if let Frame::PaneBytes { bytes, .. } = frame {
+        if let Frame::PaneOutput { bytes, .. } = frame {
             first_output.extend_from_slice(bytes);
         }
         // Only the helper emits this marker, so echoed input cannot satisfy the wait.
@@ -245,7 +245,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     let mut committed = false;
     read_until(&mut follower, |frame| {
         match frame {
-            Frame::PaneBytes { bytes, .. } => second_output.extend_from_slice(bytes),
+            Frame::PaneOutput { bytes, .. } => second_output.extend_from_slice(bytes),
             Frame::Control(ServerMessage::LayoutCommitted {
                 rev: 1,
                 author,

@@ -127,7 +127,7 @@ fn an_unbound_key_after_the_prefix_reaches_no_pane() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert!(
@@ -143,7 +143,7 @@ fn an_unbound_key_after_the_prefix_reaches_no_pane() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(inputs, vec![b"y".to_vec()]);
@@ -188,7 +188,7 @@ fn double_prefix_forwards_one_prefix_key() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { .. } => Some(message),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(

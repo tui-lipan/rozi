@@ -8,6 +8,8 @@ use crate::state::PaneId;
 struct PaneOutputEffects {
     indicator_raised: bool,
     chrome_changed: bool,
+    live_title_changed: bool,
+    mutation: TerminalMutation,
     clipboard_events: Vec<TerminalClipboardEvent>,
     bell_fired: bool,
     bell_alert_raised: bool,
@@ -42,11 +44,13 @@ fn apply_current_pane_output(
     let was_ready = pane.terminal.is_ready();
     let output = pane.terminal.process_server_output(bytes);
     let mut chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
+    let mut live_title_changed = false;
     if chrome_changed
         && was_ready
         && title_is_local
         && (pane.live_title.bound.get() || !show_titles)
     {
+        live_title_changed = show_titles && pane.live_title.bound.get();
         pane.live_title.refresh(pane.status_title(remote_attached));
         chrome_changed = false;
     }
@@ -55,7 +59,7 @@ fn apply_current_pane_output(
 
     let mut indicator_raised = false;
     let mut bell_alert_raised = false;
-    if !attended {
+    if !attended && (output.mutation.is_visual() || output.mutation.title_changed || bell_fired) {
         indicator_raised = !pane.activity.has_unseen_output;
         pane.activity.has_unseen_output = true;
         if bell_fired && bell_notifications {
@@ -67,6 +71,8 @@ fn apply_current_pane_output(
     Some(PaneOutputEffects {
         indicator_raised,
         chrome_changed,
+        live_title_changed,
+        mutation: output.mutation,
         clipboard_events: output.clipboard_events,
         bell_fired,
         bell_alert_raised,
@@ -139,15 +145,19 @@ fn output_frame_update(
     pane_id: PaneId,
     indicator_raised: bool,
     chrome_changed: bool,
+    mutation: &TerminalMutation,
+    live_title_changed: bool,
 ) -> Update {
     if indicator_raised || chrome_changed {
         Update::full()
     } else if state.pane_is_rendered(pane_id) {
-        // Nothing but the pane's own terminal content moved: the indicator and chrome checks
-        // above are exactly what would have made that untrue. Saying so lets the framework
-        // repaint the rows the emulator reports as damaged instead of the whole window, which is
-        // the difference between a spinner costing one row and costing every cell on screen.
-        Update::terminal_paint()
+        if live_title_changed || mutation.cells != TerminalDamage::None || mutation.cursor_changed {
+            Update::terminal_paint()
+        } else if mutation.graphics != GraphicsDamage::None {
+            Update::terminal_graphics()
+        } else {
+            Update::none()
+        }
     } else {
         Update::none()
     }
@@ -159,6 +169,7 @@ pub(crate) fn output(
     pane_id: PaneId,
     local: bool,
     generation: u64,
+    metadata: crate::session::protocol::OutputMetadata,
     bytes: Vec<u8>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
@@ -182,6 +193,34 @@ pub(crate) fn output(
         buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes);
         return Update::none();
     };
+    if metadata.sequence != 0
+        && let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
+    {
+        pane.terminal.set_presentation_token(metadata.sequence);
+    }
+    if !local && metadata.sequence != 0 {
+        let terminal_id = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
+            .map(|pane| pane.terminal.stable_terminal_id());
+        if let Some(terminal_id) = terminal_id {
+            let bindings = &mut ctx.state.current_mut().presentation_bindings;
+            let progress =
+                bindings
+                    .entry(terminal_id)
+                    .or_insert(crate::state::PresentationProgress {
+                        output: crate::session::protocol::PresentationAck {
+                            pane_id,
+                            generation,
+                            sequence: 0,
+                        },
+                        acknowledged: 0,
+                    });
+            if progress.output.generation != generation {
+                progress.output.generation = generation;
+                progress.acknowledged = 0;
+            }
+            progress.output.sequence = metadata.sequence;
+        }
+    }
     relay_output_clipboard(ctx, effects.clipboard_events);
     crate::ops::capture_wait::pane_output(ctx, pane_id, local);
     if effects.bell_fired {
@@ -204,21 +243,15 @@ pub(crate) fn output(
     // display. A chatty pane on an inactive workspace would otherwise drive the renderer at full
     // rate painting a view its output never appears in (see `State::pane_is_rendered`).
     //
-    // Output is a *repaint*: the view hands the widget the screen itself (`TerminalPane::screen_handle`),
-    // so nothing about the element tree depends on what the child program just drew and the runtime
-    // picks the new contents up on its way to the buffer. A full frame here would instead re-run
-    // `view()` and layout for every pane, workbar segment and sidebar row in the window on every
-    // chunk. That is a real saving but not the dominant one while a pane streams - parsing the bytes
-    // and diffing the buffer cost more - so the reason to keep this at `paint` is that the work is
-    // unnecessary, not that it is the bottleneck.
-    //
-    // A raised activity or bell indicator is different: those *are* view state (the workbar counts
-    // them), as is a changed OSC title, so those frames have to be full ones.
+    // Parser mutations select the narrowest frame after activity and chrome effects are known.
+    // Native graphics can present directly; invisible responses and metadata need no frame.
     output_frame_update(
         &ctx.state,
         pane_id,
         effects.indicator_raised,
         effects.chrome_changed,
+        &effects.mutation,
+        effects.live_title_changed,
     )
 }
 

@@ -116,8 +116,86 @@ impl SessionServer {
         }
     }
 
+    fn accept_presentation_acks(&mut self, id: ClientId, acks: Vec<protocol::PresentationAck>) {
+        if !self.client_attached(id) {
+            self.set_close_after_flush(id);
+            return;
+        }
+        for ack in acks {
+            let key = PaneSeedKey {
+                pane_id: ack.pane_id,
+                generation: ack.generation,
+            };
+            if !self.panes.get(&ack.pane_id).is_some_and(|pane| {
+                pane.generation == ack.generation && ack.sequence <= pane.output_sequence
+            }) {
+                continue;
+            }
+            let latency = self.panes.get(&ack.pane_id).and_then(|pane| {
+                pane.output_times
+                    .iter()
+                    .rev()
+                    .find(|(sequence, _)| *sequence == ack.sequence)
+                    .map(|(_, time)| crate::runtime_metrics::duration_micros(time.elapsed()))
+            });
+            let advanced = self.client_mut(id).is_some_and(|client| {
+                let presented = client.presented_sequences.entry(key).or_default();
+                if ack.sequence <= *presented {
+                    return false;
+                }
+                *presented = ack.sequence;
+                true
+            });
+            if advanced {
+                self.graphics_metrics.presentation_acks += 1;
+                if let Some(latency) = latency {
+                    self.graphics_metrics.presentation_ack_latency_samples += 1;
+                    self.graphics_metrics.presentation_ack_latency_us += latency;
+                    self.graphics_metrics.presentation_ack_latency_max_us = self
+                        .graphics_metrics
+                        .presentation_ack_latency_max_us
+                        .max(latency);
+                }
+            }
+        }
+    }
+
+    fn accept_presentation_interest(
+        &mut self,
+        id: ClientId,
+        interest: Vec<protocol::PanePresentationInterest>,
+    ) {
+        if !self.client_attached(id) {
+            self.set_close_after_flush(id);
+            return;
+        }
+        for pane in interest {
+            if self
+                .panes
+                .get(&pane.pane_id)
+                .is_none_or(|current| current.generation != pane.generation)
+            {
+                continue;
+            }
+            if let Some(client) = self.client_mut(id) {
+                client.presentation_interest.insert(
+                    PaneSeedKey {
+                        pane_id: pane.pane_id,
+                        generation: pane.generation,
+                    },
+                    pane,
+                );
+            }
+        }
+    }
+
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
         match frame {
+            Frame::PaneOutput { .. } => self.set_close_after_flush(id),
+            Frame::PresentationAcks(acks) => self.accept_presentation_acks(id, acks),
+            Frame::PresentationInterest(interest) => {
+                self.accept_presentation_interest(id, interest)
+            }
             Frame::PaneBytes {
                 pane_id,
                 local,
@@ -207,6 +285,29 @@ impl SessionServer {
         }
         let scrollback = self.settings.scrollback;
         let image_media_policy = self.image_media_policy();
+        let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
+            pane.generation == generation
+                && (pane.cols != cols.max(1)
+                    || pane.rows != rows.max(1)
+                    || cell_size(cell_width, cell_height).is_some_and(|cell| cell != pane.cell))
+        });
+        if boundary {
+            if let Some(pane) = self.pane_mut(owner, pane_id) {
+                pane.screen_without_change()
+                    .flush_output_transaction_boundary();
+                pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+            }
+            self.send_outbound(
+                owner,
+                &ServerOutbound::PaneOutput {
+                    metadata: protocol::OutputMetadata::default(),
+                    pane_id,
+                    local,
+                    generation,
+                    bytes: Vec::new(),
+                },
+            );
+        }
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             let (cols, rows) = (cols.max(1), rows.max(1));
             let reported_cell = cell_size(cell_width, cell_height);

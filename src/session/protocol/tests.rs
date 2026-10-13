@@ -744,14 +744,15 @@ fn golden_session_info_json_shape() {
 #[test]
 fn binary_pane_frame_has_golden_shape() {
     let mut buf = Vec::new();
-    write_pane_output_frame(&mut buf, 7, 9, false, b"abc").unwrap();
+    write_pane_output_frame(&mut buf, 7, 9, false, OutputMetadata::default(), b"abc").unwrap();
 
     let mut expected = Vec::new();
-    expected.extend_from_slice(&17_u32.to_be_bytes());
+    expected.extend_from_slice(&54_u32.to_be_bytes());
     expected.push(FRAME_KIND_PANE_OUTPUT);
     expected.extend_from_slice(&7_u32.to_be_bytes());
     expected.extend_from_slice(&9_u64.to_be_bytes());
     expected.push(0);
+    expected.extend_from_slice(&[0; 37]);
     expected.extend_from_slice(b"abc");
 
     assert_eq!(buf, expected);
@@ -1088,4 +1089,86 @@ fn a_refused_control_response_round_trips_through_the_session_wire() {
     assert!(!response.ok);
     assert_eq!(response.error.as_deref(), Some("pane 9 not found"));
     assert!(response.data.is_none());
+}
+
+#[test]
+fn semantic_output_and_presentation_frames_round_trip_at_every_wire_split() {
+    let metadata = OutputMetadata {
+        sequence: u64::MAX - 1,
+        coalesce_epoch: 17,
+        class: OutputClass::IndependentGraphics {
+            image: 7,
+            incarnation: 19,
+            revision: 23,
+        },
+    };
+    let acks = vec![PresentationAck {
+        pane_id: 7,
+        generation: 11,
+        sequence: 29,
+    }];
+    let interest = vec![PanePresentationInterest {
+        pane_id: 7,
+        generation: 11,
+        visible: true,
+        focused: true,
+        frames_per_second: 240,
+    }];
+    let mut wire = Vec::new();
+    write_pane_output_frame(&mut wire, 7, 11, false, metadata, b"original bytes").unwrap();
+    write_presentation_acks(&mut wire, &acks).unwrap();
+    write_presentation_interest(&mut wire, &interest).unwrap();
+    for split in 0..=wire.len() {
+        let mut decoder = FrameDecoder::default();
+        decoder.read_from_status(&mut &wire[..split]).unwrap();
+        let mut frames = Vec::new();
+        while let Some(frame) = decoder.next_frame::<serde_json::Value>().unwrap() {
+            frames.push(frame);
+        }
+        decoder.read_from_status(&mut &wire[split..]).unwrap();
+        while let Some(frame) = decoder.next_frame::<serde_json::Value>().unwrap() {
+            frames.push(frame);
+        }
+        assert_eq!(
+            frames,
+            vec![
+                Frame::PaneOutput {
+                    pane_id: 7,
+                    local: false,
+                    generation: 11,
+                    metadata,
+                    bytes: b"original bytes".to_vec(),
+                },
+                Frame::PresentationAcks(acks.clone()),
+                Frame::PresentationInterest(interest.clone())
+            ],
+            "split {split}"
+        );
+    }
+}
+
+#[test]
+fn invalid_graphics_classification_and_interest_flags_are_rejected() {
+    let mut wire = Vec::new();
+    write_pane_output_frame(&mut wire, 7, 11, false, OutputMetadata::default(), b"data").unwrap();
+    wire[4 + 1 + 13 + 16] = 3;
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut wire.as_slice()).unwrap();
+    assert!(decoder.next_frame::<serde_json::Value>().is_err());
+    let mut wire = Vec::new();
+    write_presentation_interest(
+        &mut wire,
+        &[PanePresentationInterest {
+            pane_id: 7,
+            generation: 11,
+            visible: true,
+            focused: false,
+            frames_per_second: 60,
+        }],
+    )
+    .unwrap();
+    wire[4 + 1 + 12] = 4;
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut wire.as_slice()).unwrap();
+    assert!(decoder.next_frame::<serde_json::Value>().is_err());
 }

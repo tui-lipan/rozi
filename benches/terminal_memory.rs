@@ -200,7 +200,9 @@ fn history_lifecycle_probe() {
             let allocs = ALLOCS.load(Ordering::Relaxed);
             PEAK.store(before, Ordering::Relaxed);
             match index {
-                0 => screen.process_bytes(&burst),
+                0 => {
+                    screen.process_bytes(&burst);
+                }
                 1 => screen.resize(64, 80),
                 _ => screen.resize(64, 320),
             }

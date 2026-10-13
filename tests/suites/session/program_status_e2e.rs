@@ -114,7 +114,7 @@ fn program_status_real_pty_multi_client_detached_output_and_keep_open() {
     // Wait for the replacement shell's runtime metadata, not a fixed sleep.
     read_until(
         &mut c,
-        |f| matches!(f, Frame::PaneBytes {pane_id:81,bytes,..} if crate::common::contains(bytes, b"command exited with status 0")),
+        |f| matches!(f, Frame::PaneOutput {pane_id:81,bytes,..} if crate::common::contains(bytes, b"command exited with status 0")),
     );
     let (mut d, attached) = attach_client(server.endpoint(), server.session(), "after replacement");
     let ServerMessage::Attached { panes, .. } = attached else {

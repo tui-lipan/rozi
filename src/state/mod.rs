@@ -408,6 +408,8 @@ pub struct State {
     /// its rows, and the same pane id in another session is another pane.
     pub publish_streams: std::collections::HashMap<PublishStreamKey, PublishStreamState>,
     /// Long-lived event subscriptions owned by extension generations.
+    pub(crate) terminal_presentation_subscription:
+        Option<tui_lipan::TerminalPresentationSubscription>,
     pub extension_subscriptions: HashMap<u64, ExtensionSubscriptionState>,
     /// Palette visibility extensions chose for their own commands, keyed by public command ID.
     /// See [`crate::ops::command_visibility`].
@@ -715,6 +717,7 @@ impl State {
             update_started: false,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
+            terminal_presentation_subscription: None,
             extension_subscriptions: HashMap::new(),
             command_visibility: HashMap::new(),
             services: ServicesState::default(),

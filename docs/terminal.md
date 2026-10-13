@@ -195,10 +195,18 @@ Limits:
   or shared memory, which can be read only once.
 
 On Kitty hosts such as Ghostty, natural-size patches can go directly to the host as clipped image
-placements. Unchanged images stay uploaded while the host blends new patches. rozi still retains
+placements. Sources and placements persist across frames. An unrelated pane update sends no image
+commands when their geometry and visibility are unchanged, and graphics-only changes can reach the
+host without repainting terminal cells. rozi still retains
 the source scene for reconnects and captures. Scaled images, unmeasured host cell sizes,
 same-depth overlaps, modal dimming, and overlapping later widgets use composition.
 Other host protocols keep their existing rendering path.
+
+Completed independent image replacements can supersede older queued frames for the same source.
+Text and control boundaries preserve ordering. Queries, image deletion, cursor changes, partial
+patches, chunked uploads and consuming media keep their original dependency order. Captures and
+recordings continue to use the retained scene. Session acknowledgements report successful host
+writes rather than receipt or parsing of producer bytes.
 
 Local sessions can retain immutable frame files and let a Kitty host load them directly. This
 avoids decoded frame buffers for both full frames and eligible patches. Captures and effects read

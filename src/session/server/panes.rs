@@ -150,6 +150,7 @@ impl SessionServer {
         if let Some(seed) = seed {
             recover_restored_screen(&mut screen, seed);
         }
+        screen.set_output_transaction_recording(true);
         stamp_session_instance(
             &mut request.env,
             owner.is_none().then_some(&self.instance_id),
@@ -231,6 +232,9 @@ impl SessionServer {
                         pty_resize_pending: false,
                         terminal: screen,
                         content_generation: 0,
+                        output_sequence: 0,
+                        output_coalesce_epoch: 0,
+                        output_times: VecDeque::new(),
                         output_seen: seed.is_some(),
                         cols: cols.max(1),
                         rows: rows.max(1),
@@ -281,6 +285,9 @@ impl SessionServer {
                             pty_resize_pending: false,
                             terminal: screen,
                             content_generation: 0,
+                            output_sequence: 0,
+                            output_coalesce_epoch: 0,
+                            output_times: VecDeque::new(),
                             output_seen: seed.is_some(),
                             cols: cols.max(1),
                             rows: rows.max(1),
@@ -438,6 +445,7 @@ impl SessionServer {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);
                         }
                         let output = ServerOutbound::PaneOutput {
+                            metadata: protocol::OutputMetadata::default(),
                             pane_id: id,
                             local: wire_local(owner),
                             generation,
@@ -464,6 +472,9 @@ impl SessionServer {
                         None
                     }
                     TerminalPtyEvent::Exited(code) => {
+                        pane.screen_without_change()
+                            .flush_output_transaction_boundary();
+                        pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
                         pane.screen_without_change().program_status_process_exited();
                         pane.pty = None;
                         pane.pty_resize_pending = false;
@@ -483,6 +494,16 @@ impl SessionServer {
                         if !keep_open {
                             pane.exited = Some(code);
                         }
+                        self.send_outbound(
+                            owner,
+                            &ServerOutbound::PaneOutput {
+                                metadata: protocol::OutputMetadata::default(),
+                                pane_id: id,
+                                local: wire_local(owner),
+                                generation,
+                                bytes: Vec::new(),
+                            },
+                        );
                         self.sync_program_status(owner, id, generation, true);
                         if keep_open {
                             let outbound = if id == crate::state::POPUP_PANE_ID {
@@ -491,7 +512,7 @@ impl SessionServer {
                                 self.replace_with_keep_open_shell(owner, id, generation, code)
                             };
                             if let (Some(owner), Some(outbound)) = (owner, outbound.as_ref()) {
-                                self.enqueue_outbound(owner, outbound);
+                                self.send_outbound(Some(owner), outbound);
                                 return None;
                             }
                             return outbound;
@@ -566,6 +587,7 @@ impl SessionServer {
         self.send_outbound(
             owner,
             &ServerOutbound::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: id,
                 local: wire_local(owner),
                 generation,
@@ -691,6 +713,7 @@ impl SessionServer {
             self.send_outbound(
                 owner,
                 &ServerOutbound::PaneOutput {
+                    metadata: protocol::OutputMetadata::default(),
                     pane_id: id,
                     local: wire_local(owner),
                     generation,
@@ -705,6 +728,7 @@ impl SessionServer {
             }));
         }
         Some(ServerOutbound::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: id,
             local: wire_local(owner),
             generation,
@@ -790,6 +814,18 @@ impl SessionServer {
     }
 
     pub(super) fn send_outbound(&mut self, owner: Option<ClientId>, outbound: &ServerOutbound) {
+        if let ServerOutbound::PaneOutput {
+            pane_id,
+            generation,
+            metadata,
+            bytes,
+            ..
+        } = outbound
+            && metadata.sequence == 0
+        {
+            self.send_parsed_output(owner, *pane_id, *generation, bytes);
+            return;
+        }
         if let Some(owner) = owner {
             self.enqueue_outbound(owner, outbound);
         } else {
@@ -978,7 +1014,9 @@ fn place_replacement_cursor(screen: &mut TerminalScreen) {
         Some(_) => {
             screen.process_bytes(format!("\x1b[{rows};1H\r\n").as_bytes());
         }
-        None => screen.process_bytes(b"\x1b[1;1H"),
+        None => {
+            screen.process_bytes(b"\x1b[1;1H");
+        }
     }
 }
 

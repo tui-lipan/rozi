@@ -115,11 +115,12 @@ title = { regex = true, any_of = ["^[\\x{2800}-\\x{28ff}]"] }
 #
 # Footer-scoped because a transcript quotes spinner frames constantly: an agent describing its own
 # output, or a log pasted into the conversation, puts braille anywhere on screen but not in the
-# chrome under it.
+# chrome under it. Captured spinners use one glyph, or two in Cursor's running indicator, followed
+# by whitespace or the end of the line. Longer runs of cells belong to artwork like Codex's logo.
 [[base]]
 state = "working"
 scope = "footer"
-screen = { regex = true, any_of = ["(?m)^\\s*[\\x{2800}-\\x{28ff}]"] }
+screen = { regex = true, any_of = ["(?m)^\\s*[\\x{2800}-\\x{28ff}]{1,2}(\\s|$)"] }
 
 # An interrupt hint in the live chrome means a run is in flight. Scoped to the footer because an
 # agent's transcript quotes these constantly while writing *about* interrupting.

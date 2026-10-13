@@ -6,6 +6,7 @@ pub(crate) type OverlayItemRenderer<T> =
     Arc<dyn Fn(&SearchItem<T>, &SearchHighlight) -> Option<ListItem>>;
 pub(crate) type OverlayGutterRenderer<T> =
     Arc<dyn Fn(&SearchItem<T>, &SearchHighlight) -> Option<ListItemGutter>>;
+pub(crate) type OverlayItemKey<T> = fn(&SearchItem<T>) -> Arc<str>;
 
 pub(super) fn picker_description(description: impl AsRef<str>) -> ItemDescription {
     ItemDescription::new().right(format!("  {}", description.as_ref()))
@@ -291,6 +292,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
     tabs: Option<OverlayTabs>,
+    item_key: Option<OverlayItemKey<T>>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -321,7 +323,16 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_gutter: None,
             fallback_interceptor: None,
             tabs: None,
+            item_key: None,
         }
+    }
+
+    /// Identify rows across refreshes by something other than label and aliases. The shared key
+    /// needs those to be unique; a picker whose rows can share both, but whose values are stable
+    /// identities, keys by value instead so the cursor stays on the row it was on.
+    pub(crate) fn item_key(mut self, key: OverlayItemKey<T>) -> Self {
+        self.item_key = Some(key);
+        self
     }
 
     /// Show `tabs` below the query. `entries`, `selected`, and `initial_query` then describe the
@@ -428,6 +439,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_gutter,
             fallback_interceptor,
             tabs,
+            item_key,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -444,6 +456,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             .initial_query(initial_query.into_owned())
             .initial_selected_item_index(selected)
             .sync_selection(true);
+        if let Some(key) = item_key {
+            palette = palette.item_key(key);
+        }
         palette = apply_palette_options(
             palette,
             empty_text,

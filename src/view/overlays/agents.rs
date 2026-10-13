@@ -83,7 +83,6 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             (row.location.clone(), glyph, color, working)
         })
         .collect::<Vec<_>>();
-    let description_width = width.min(ctx.viewport().w).saturating_sub(8) * 2 / 3;
     let render_rows = Arc::new(rows);
     let name_style = fg_only(&theme.primary).bold();
     let detail_style = fg_only(&theme.muted);
@@ -99,6 +98,9 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         width,
     )
     .entries(entries)
+    // Two agents can share a name and session (`Codex · dev` twice), which the shared label key
+    // would fold into one row, so every refresh would put the cursor back on the first of them.
+    .item_key(|item| Arc::from(format!("{:?}", item.value)))
     .render_item(Arc::new(move |item, _highlight| {
         let row = render_rows.iter().find(|row| row.location == item.value)?;
         let (_, color) = status_colors
@@ -127,8 +129,10 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         Some(
             ListItem::from_spans(label)
                 .description_spans(description)
+                // The state and location win the row, so a long one starts right after a short
+                // name, but a long name keeps a third of it. One that fits stays right-aligned.
                 .primary_truncate_description_first(false)
-                .primary_max_description_width(description_width)
+                .primary_min_label_width(Length::Percent(33))
                 .primary_description_gap(2),
         )
     }))

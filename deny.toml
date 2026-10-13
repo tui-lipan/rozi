@@ -39,4 +39,5 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# Temporary source for OSC 7501 framework PR #333. Remove when consuming its release.
+allow-git = ["https://github.com/tui-lipan/tui-lipan"]

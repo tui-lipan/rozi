@@ -1388,9 +1388,13 @@ fn help_section_item(title: &str, theme: &Theme) -> ListItem {
 /// Every binding row is selectable, including ones the editor cannot persist: those simply leave
 /// the change, unbind, and reset actions disabled.
 fn editable_help_row(row: &HelpRow, theme: &Theme) -> ListItem {
+    // The action name is what a reader scans for; a long key list (several bindings, or an
+    // override beside its default) gives way to it, down to a third of the row.
     ListItem::from_spans(help_key_spans(row, theme))
         .description_spans([Span::new(row.label.clone()).style(fg_only(&theme.primary))])
-        .primary_truncate_description_first(true)
+        .primary_truncate_description_first(false)
+        .primary_min_label_width(Length::Percent(33))
+        .primary_description_gap(PICKER_DESCRIPTION_GAP)
 }
 
 fn help_key_spans(row: &HelpRow, theme: &Theme) -> Vec<Span> {
@@ -1752,5 +1756,69 @@ mod palette_alias_tests {
         assert_eq!(rows[1].keys, "Super");
         assert!(rows[1].overridden);
         assert_eq!(rows[1].default_keys, "Alt");
+    }
+}
+
+#[cfg(test)]
+mod row_fit_tests {
+    use super::{HelpRow, editable_help_row};
+    use tui_lipan::TestBackend;
+    use tui_lipan::prelude::*;
+
+    const W: u16 = 48;
+
+    struct OneRow(ListItem);
+
+    impl Component for OneRow {
+        type Message = ();
+        type Properties = ();
+        type State = ();
+
+        fn create_state(&self, _props: &Self::Properties) -> Self::State {}
+
+        fn update(&mut self, _msg: Self::Message, _ctx: &mut Context<Self>) -> Update {
+            Update::none()
+        }
+
+        fn view(&self, _ctx: &Context<Self>) -> Element {
+            List::new()
+                .items([self.0.clone()])
+                .symbol_column(false)
+                .width(Length::Px(W))
+                .height(Length::Px(1))
+                .focusable(false)
+                .into()
+        }
+    }
+
+    fn rendered(row: &HelpRow) -> String {
+        let mut backend = TestBackend::new(OneRow(editable_help_row(row, &Theme::default())));
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: W,
+            h: 1,
+        });
+        backend.render();
+        let frame = backend.capture_frame();
+        (0..W).map(|x| frame.cell(x, 0).symbol.clone()).collect()
+    }
+
+    /// The action name is what a reader scans for. Several bindings and an override beside its
+    /// default give way to it, but keep a third of the row.
+    #[test]
+    fn a_long_key_list_leaves_the_action_name_readable() {
+        let mut row = HelpRow::global(
+            "Panes",
+            "Ctrl+Shift+h/Ctrl+Shift+Left/Alt+h",
+            "Move focus left",
+        );
+        row.overridden = true;
+        row.default_keys = "Ctrl+A h".into();
+        let line = rendered(&row);
+        assert!(line.ends_with("Move focus left"), "{line}");
+        let keys = line.split("  Move").next().unwrap_or_default();
+        assert!(keys.ends_with('…'), "the keys give way: {line}");
+        assert!(keys.chars().count() >= usize::from(W) / 3, "{line}");
     }
 }

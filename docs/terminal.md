@@ -296,3 +296,8 @@ create an agent or change native hooks, agent automation, keep-awake or conversa
 restoration. An agent and an OSC activity can appear beside one another, including
 when their labels look alike. Application identifiers do not establish a shared
 identity.
+
+OSC blocked and error attention also colors pane borders and content tints.
+Blocked uses the warning role and error uses the error role by default.
+The `blocked` and `error` keys in `[pane.alert]` independently override or disable
+these colors. Both retain the existing urgent animation and input acknowledgement.

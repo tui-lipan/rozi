@@ -510,7 +510,14 @@ pub fn program_status_summary(
 ) -> Option<&tui_lipan::ProgramStatusRecord> {
     snapshot.records.iter().min_by_key(|record| {
         (
-            ActivityState::from_status(record.state.as_str()).rank(),
+            match record.state {
+                tui_lipan::ProgramStatusState::Blocked => ActivityState::Blocked,
+                tui_lipan::ProgramStatusState::Error => ActivityState::Error,
+                tui_lipan::ProgramStatusState::Working => ActivityState::Working,
+                tui_lipan::ProgramStatusState::Done => ActivityState::Done,
+                tui_lipan::ProgramStatusState::Idle => ActivityState::Idle,
+            }
+            .rank(),
             std::cmp::Reverse(record.updated),
             record.id.as_ref(),
         )

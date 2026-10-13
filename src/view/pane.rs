@@ -421,6 +421,14 @@ pub(crate) fn pane_alert(
     }
     use crate::state::PaneAlert;
     let colors = config.alert_colors;
+    let osc_attention = pane
+        .terminal
+        .program_status_attention
+        .then(|| {
+            crate::session::protocol::program_status_summary(&pane.terminal.program_status)
+                .map(|record| record.state)
+        })
+        .flatten();
     // Blocked/working/idle are live conditions the focused pane already shows in its own content,
     // so marking its border would only ever restate what is on screen and would never clear on its
     // own. Finished is the exception: it is a latch, raised for news the user has not read yet, and
@@ -428,12 +436,14 @@ pub(crate) fn pane_alert(
     [
         (
             PaneAlert::Blocked,
-            (!focused && pane.awaits_input()) || pane.terminal.program_status_attention,
+            (!focused && pane.awaits_input())
+                || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
             colors.blocked,
         ),
         (
             PaneAlert::Error,
-            !focused && activity_failed(pane),
+            (!focused && activity_failed(pane))
+                || osc_attention == Some(tui_lipan::ProgramStatusState::Error),
             colors.error,
         ),
         (
@@ -2455,6 +2465,47 @@ mod tests {
             pane_alert(&pane, false, &config),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
+    }
+
+    #[test]
+    fn osc_error_attention_is_red_and_independent_of_blocked_and_agent_attention() {
+        let mut pane = alert_test_pane();
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        pane.terminal.program_status_attention = true;
+        pane.terminal.finished_unseen = true;
+        let mut config = PaneConfig::default();
+        assert_eq!(
+            pane_alert(&pane, true, &config),
+            Some((PaneAlert::Blocked, BadgeColor::Warning))
+        );
+        screen.process_bytes(b"\x1b]7501;state=error\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        config.alert_colors.blocked = None;
+        assert_eq!(
+            pane_alert(&pane, true, &config),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+        config.alert_colors.error = Some(BadgeColor::Info);
+        assert_eq!(
+            pane_alert(&pane, true, &config),
+            Some((PaneAlert::Error, BadgeColor::Info))
+        );
+        config.alert_colors.error = None;
+        assert_eq!(
+            pane_alert(&pane, true, &config),
+            Some((PaneAlert::Finished, BadgeColor::Success))
+        );
+        config.alert_colors.error = Some(BadgeColor::Error);
+        pane.terminal.program_status_attention = false;
+        assert_eq!(
+            pane_alert(&pane, true, &config),
+            Some((PaneAlert::Finished, BadgeColor::Success))
+        );
+        pane.terminal.finished_unseen = false;
+        assert_eq!(pane_alert(&pane, false, &config), None);
     }
 
     #[test]

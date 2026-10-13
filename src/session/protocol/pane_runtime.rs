@@ -60,7 +60,6 @@ pub struct PaneMeta {
     /// pane listing so a freshly attached client starts with current state rather than waiting for
     /// the next [`super::ServerMessage::PaneRuntimeChanged`].
     pub runtime: PaneRuntimeState,
-    pub program_status: tui_lipan::ProgramStatusSnapshot,
 }
 
 /// Which precedence tier produced [`PaneRuntimeState::cwd`].

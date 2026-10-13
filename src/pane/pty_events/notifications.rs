@@ -633,11 +633,11 @@ pub(crate) fn maybe_notify_program_status(
     title: &str,
     state: tui_lipan::ProgramStatusState,
     message: Option<&str>,
-) {
+) -> bool {
     let blocked = state == tui_lipan::ProgramStatusState::Blocked;
     let error = state == tui_lipan::ProgramStatusState::Error;
     if !should_notify_pane_status(config, controller, attended, blocked, error) {
-        return;
+        return false;
     }
     let detail = message.map(crate::session::protocol::program_status_display);
     let body = format!(
@@ -646,4 +646,5 @@ pub(crate) fn maybe_notify_program_status(
         detail.map_or(String::new(), |text| format!(": {text}"))
     );
     crate::platform::notifications::notify("rozi", &body);
+    true
 }

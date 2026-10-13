@@ -689,6 +689,151 @@ mod tests {
         });
     }
 
+    /// Two agents of one kind in one session share a label, which a label-keyed palette folds into
+    /// a single row. Every refresh then put the cursor back on the first of them.
+    #[test]
+    fn the_cursor_stays_on_one_of_several_identically_named_agents_across_refreshes() {
+        on_large_stack(|| {
+            let mut backend = backend_with_panes(&[]);
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
+            let summary = |pane| crate::session::protocol::AgentSummary {
+                session: "dev".into(),
+                pane,
+                generation: 0,
+                row: None,
+                agent: "codex".into(),
+                label: "Codex".into(),
+                state: "idle".into(),
+                changed_at: 0,
+                launch: 0,
+            };
+            backend.state_mut().local_agent_snapshot =
+                Some(crate::session::discovery::LocalAgentSnapshot {
+                    sessions: Vec::new(),
+                    agents: vec![summary(1), summary(2), summary(3)],
+                });
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+                .unwrap();
+            backend.render();
+            let down = KeyEvent {
+                code: KeyCode::Down,
+                mods: KeyMods::NONE,
+            };
+            let selected_pane = |backend: &TestBackend<AppRoot>| {
+                backend
+                    .state()
+                    .agent_picker
+                    .as_ref()
+                    .and_then(|picker| picker.selected.as_ref())
+                    .map(AgentLocation::pane)
+            };
+            backend.send_key(down).unwrap();
+            backend.render();
+            assert_eq!(selected_pane(&backend), Some(2));
+            // A poll that brings another row is a refresh of the palette's items.
+            backend
+                .state_mut()
+                .local_agent_snapshot
+                .as_mut()
+                .unwrap()
+                .agents
+                .push(summary(4));
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            backend.render();
+            backend.send_key(down).unwrap();
+            backend.render();
+            assert_eq!(selected_pane(&backend), Some(3));
+        });
+    }
+
+    /// The rendered Agents rows for `agents` (label, session) on a 100-column screen.
+    fn rendered_rows(agents: &[(&str, &str)]) -> Vec<String> {
+        let agents = agents
+            .iter()
+            .enumerate()
+            .map(
+                |(pane, (label, session))| crate::session::protocol::AgentSummary {
+                    session: (*session).into(),
+                    pane: pane as crate::state::PaneId + 1,
+                    generation: 0,
+                    row: None,
+                    agent: "codex".into(),
+                    label: (*label).into(),
+                    state: "idle".into(),
+                    changed_at: 0,
+                    launch: 0,
+                },
+            )
+            .collect::<Vec<_>>();
+        let mut backend = backend_with_panes(&[]);
+        backend.state_mut().config.animations.picker =
+            crate::layout::anim::PickerAnimationStyle::Off;
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents,
+            });
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+            .unwrap();
+        backend.render();
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .into_iter()
+            .filter(|line| line.contains("Idle"))
+            .collect()
+    }
+
+    /// Character column of `needle` in a rendered `row`.
+    fn column(row: &str, needle: &str) -> usize {
+        let byte = row
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} in {row:?}"));
+        row[..byte].chars().count()
+    }
+
+    /// A short description stays right-aligned like every picker's; a long one starts two columns
+    /// after the name instead of at a fixed column. When both sides are long the label gives way
+    /// down to a third of the row, and a long label beside a short description is cut only as far
+    /// as the description needs.
+    #[test]
+    fn row_descriptions_follow_the_name_and_share_the_row_with_long_labels() {
+        on_large_stack(|| {
+            let long_session = "s".repeat(120);
+            let long_label = format!("Codex {}", "l".repeat(120));
+
+            let short = rendered_rows(&[("Codex", "dev")]).remove(0);
+            assert!(
+                column(&short, "Idle") - column(&short, "Codex") > 40,
+                "a short description stays at the right edge: {short}"
+            );
+
+            let long = rendered_rows(&[("Codex", &long_session)]).remove(0);
+            assert!(long.contains("Codex  Idle · sss"), "{long}");
+            assert!(long.contains("s… │"), "truncated at the end: {long}");
+
+            // The label keeps a third of what the row draws between its borders.
+            let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
+            assert!(both.contains("…  Idle · sss"), "{both}");
+            let row_width = column(&both, " │") - column(&both, "│ ");
+            let label_width = column(&both, "…  Idle") + 1 - column(&both, "Codex");
+            assert!(
+                (row_width * 30 / 100..=row_width * 36 / 100).contains(&label_width),
+                "{label_width} of {row_width}: {both}"
+            );
+
+            let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
+            assert!(label.contains("…  Idle · dev │"), "{label}");
+            assert!(
+                column(&label, "…  Idle") + 1 - column(&label, "Codex") > row_width * 36 / 100,
+                "{label}"
+            );
+        });
+    }
+
     /// An empty list says which machines were asked. "Nothing running" on a client watching four
     /// hosts is a different fact from the same words on a client watching none.
     #[test]

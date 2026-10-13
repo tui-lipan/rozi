@@ -816,7 +816,6 @@ impl SessionServer {
                 exited: pane.exited,
                 logging: pane.log.is_some(),
                 runtime: pane.runtime.clone(),
-                program_status: pane.screen().program_status_snapshot(),
             })
             .collect()
     }

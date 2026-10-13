@@ -35,6 +35,72 @@ fn effective_changed(before: &ProgramStatusSnapshot, after: &ProgramStatusSnapsh
 }
 
 impl SessionServer {
+    /// Serialize at most one OSC baseline per pump, retaining only its current frame under
+    /// backpressure. Live updates wait behind the same attach barrier as terminal replay.
+    pub(super) fn pump_program_status_baseline(
+        &mut self,
+        id: ClientId,
+        key: super::PaneSeedKey,
+        remaining: &mut usize,
+    ) -> bool {
+        let cached = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_ref())
+            .and_then(|seed| seed.program_status_frame.clone());
+        let frame = cached.or_else(|| {
+            let pane = self
+                .panes
+                .get(&key.pane_id)
+                .filter(|pane| pane.generation == key.generation)?;
+            super::encode_control(&ServerMessage::ProgramStatusChanged {
+                pane_id: key.pane_id,
+                local: false,
+                generation: key.generation,
+                initial: true,
+                snapshot: pane.screen().program_status_snapshot(),
+            })
+        });
+        let Some(frame) = frame else {
+            self.finish_program_status_baseline(id);
+            return true;
+        };
+        let client = self.client_mut(id).expect("seeding client");
+        client
+            .seed
+            .as_mut()
+            .expect("active seed")
+            .program_status_frame = Some(frame.clone());
+        let available = super::SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes);
+        // A legal snapshot can exceed the ordinary per-tick byte budget after JSON escaping.
+        // Admit one such atomic frame at the start of a tick, still within the send window.
+        if frame.len() > available
+            || (frame.len() > *remaining && *remaining != super::SEED_PUMP_BYTES_PER_TICK)
+        {
+            return false;
+        }
+        let len = frame.len();
+        if !client.try_push_class(
+            frame,
+            super::SEED_SEND_WINDOW,
+            super::OutboxClass::SeedReplay,
+            None,
+        ) {
+            return false;
+        }
+        *remaining = remaining.saturating_sub(len);
+        self.finish_program_status_baseline(id);
+        true
+    }
+
+    fn finish_program_status_baseline(&mut self, id: ClientId) {
+        let seed = self
+            .client_mut(id)
+            .and_then(|client| client.seed.as_mut())
+            .expect("active seed");
+        seed.pending_program_status.pop_front();
+        seed.program_status_frame = None;
+    }
+
     /// A child can report before the controller's layout commit introduces it to followers.
     /// Repeat its current snapshot after that commit, where every recipient has its generation.
     pub(super) fn program_status_for_new_layout_panes(
@@ -65,6 +131,7 @@ impl SessionServer {
                         pane_id: identity.pane_id,
                         local: false,
                         generation: identity.generation,
+                        initial: false,
                         snapshot,
                     },
                 ))
@@ -114,6 +181,7 @@ impl SessionServer {
                 pane_id: id,
                 local: wire_local(owner),
                 generation,
+                initial: false,
                 snapshot,
             }),
         );

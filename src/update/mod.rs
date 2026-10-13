@@ -779,9 +779,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             pane_id,
             local,
             generation,
+            initial,
             snapshot,
         } => session::status::program_status_changed(
-            ctx, epoch, pane_id, local, generation, snapshot,
+            ctx, epoch, pane_id, local, generation, initial, snapshot,
         ),
         Msg::SessionPaneRuntimeChanged {
             epoch,

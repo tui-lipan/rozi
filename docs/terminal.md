@@ -290,6 +290,8 @@ notification switch and the error sound. Working, progress and done reports do n
 notify. Attention belongs to each window and clears through interaction with the
 pane; merely regaining window focus does not acknowledge it. Rapid message and
 progress changes are coalesced, and repeated reports do not repeat notifications.
+Suppressed alerts do not consume the notification cooldown, so attending a blocked
+pane does not silence a later failure after you switch away.
 
 OSC reports are generic activities. Even `app=codex` or `app=claude-code` does not
 create an agent or change native hooks, agent automation, keep-awake or conversation

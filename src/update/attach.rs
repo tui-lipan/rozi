@@ -57,8 +57,9 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.command_phase = meta.runtime.command_phase;
     pane.terminal.last_exit_status = meta.runtime.last_exit_status;
     pane.terminal.runtime_sequence = meta.runtime.sequence;
-    pane.terminal.program_status = meta.program_status.clone();
+    pane.terminal.program_status = Default::default();
     pane.terminal.program_status_attention = false;
+    pane.terminal.program_status_notification_at = None;
     pane.terminal.child_pid = meta.pid;
     let _ = pane
         .terminal
@@ -336,7 +337,6 @@ mod tests {
                 original_user: None,
                 exited: None,
                 logging: false,
-                program_status: Default::default(),
                 runtime: runtime.clone(),
             },
         );

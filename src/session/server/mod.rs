@@ -612,6 +612,7 @@ enum SeedKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachSeedWork {
+    ProgramStatus(PaneSeedKey),
     ReplayReset,
     FinishReplay,
     ReplayChunk,
@@ -727,6 +728,9 @@ struct AttachSeedState {
     kind: SeedKind,
     manifest: HashMap<PaneSeedKey, PaneSeedState>,
     pending: VecDeque<PaneSeedKey>,
+    /// OSC baselines use the replay send window rather than one aggregate attach frame.
+    pending_program_status: VecDeque<PaneSeedKey>,
+    program_status_frame: Option<Arc<[u8]>>,
     replay: Option<PaneSeedReplay>,
     catch_up: VecDeque<CatchUpFrame>,
     catch_up_bytes: usize,
@@ -749,6 +753,8 @@ impl AttachSeedState {
             kind: SeedKind::Attach,
             manifest,
             pending: panes.into(),
+            pending_program_status: VecDeque::new(),
+            program_status_frame: None,
             replay: None,
             catch_up: VecDeque::new(),
             catch_up_bytes: 0,

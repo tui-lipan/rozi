@@ -805,6 +805,8 @@ pub enum Msg {
         pane_id: crate::state::PaneId,
         local: bool,
         generation: u64,
+        /// Initial attach baseline, applied without attention or historical notifications.
+        initial: bool,
         snapshot: tui_lipan::ProgramStatusSnapshot,
     },
     SessionPaneRuntimeChanged {

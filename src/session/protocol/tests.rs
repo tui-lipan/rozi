@@ -155,7 +155,6 @@ fn pane_meta_from_older_peer_defaults_original_user() {
         original_user: Some("user".to_string()),
         exited: None,
         logging: false,
-        program_status: Default::default(),
         runtime: PaneRuntimeState::default(),
     })
     .unwrap();

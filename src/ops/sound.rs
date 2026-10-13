@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tui_lipan::prelude::Context;
 
-pub(crate) fn cue(ctx: &mut Context<AppRoot>, cue: Cue) {
+/// Whether an enabled, unthrottled sound was dispatched to the platform.
+pub(crate) fn cue(ctx: &mut Context<AppRoot>, cue: Cue) -> bool {
     let sounds = &ctx.state.config.sounds;
     if ctx.state.do_not_disturb
         || !sounds.enabled
@@ -16,13 +17,14 @@ pub(crate) fn cue(ctx: &mut Context<AppRoot>, cue: Cue) {
             sounds.throttle_ms,
         )
     {
-        return;
+        return false;
     }
     crate::platform::sound::play(
         cue,
         sounds.file_for(cue).map(std::path::PathBuf::as_path),
         sounds.player.as_deref(),
     );
+    true
 }
 
 pub(crate) fn should_play(

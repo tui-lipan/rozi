@@ -788,8 +788,20 @@ impl SessionServer {
                 generation: pane.generation,
             })
             .collect();
+        let mut statuses: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, pane)| pane.screen().program_status_snapshot().revision > 0)
+            .map(|(&pane_id, pane)| PaneSeedKey {
+                pane_id,
+                generation: pane.generation,
+            })
+            .collect();
+        statuses.sort_unstable();
         if let Some(client) = self.client_mut(id) {
-            client.seed = Some(AttachSeedState::new(panes));
+            let mut seed = AttachSeedState::new(panes);
+            seed.pending_program_status = statuses.into();
+            client.seed = Some(seed);
         }
         self.note_attach_seed_high_water();
     }
@@ -877,6 +889,14 @@ impl SessionServer {
         let mut activity = false;
         loop {
             let progressed = match self.next_attach_seed_work(id) {
+                AttachSeedWork::ProgramStatus(key) => {
+                    if !*export_available {
+                        return activity;
+                    }
+                    let progressed = self.pump_program_status_baseline(id, key, remaining);
+                    *export_available = false;
+                    progressed
+                }
                 AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
                 AttachSeedWork::FinishReplay => {
                     self.finish_pane_replay(id);
@@ -916,6 +936,9 @@ impl SessionServer {
         };
         if seed.baseline_queued {
             return AttachSeedWork::Done;
+        }
+        if let Some(key) = seed.pending_program_status.front() {
+            return AttachSeedWork::ProgramStatus(*key);
         }
         if let Some(replay) = seed.replay.as_ref() {
             if replay.reset_frame.is_some() {

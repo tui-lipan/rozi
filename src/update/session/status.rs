@@ -343,6 +343,7 @@ pub(crate) fn program_status_changed(
     pane_id: PaneId,
     local: bool,
     generation: u64,
+    initial: bool,
     snapshot: tui_lipan::ProgramStatusSnapshot,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
@@ -363,9 +364,14 @@ pub(crate) fn program_status_changed(
     }) else {
         return Update::none();
     };
+    if initial {
+        pane.terminal.program_status = snapshot;
+        pane.terminal.program_status_attention = false;
+        return Update::full();
+    }
     let alert = apply_program_status(pane, snapshot, attended);
     if let Some(alert) = alert {
-        notify_program_status(ctx, pane_id, attended, alert);
+        notify_program_status(ctx, pane_id, local, attended, alert);
     }
     Update::full()
 }
@@ -391,14 +397,31 @@ fn apply_background_program_status(
 fn notify_program_status(
     ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
+    local: bool,
     attended: bool,
     alert: ProgramStatusAlert,
 ) {
     let (title, state, message) = alert;
-    if ctx.state.do_not_disturb {
+    let Some(cue) = program_status_alert_cue(
+        &ctx.state.config,
+        ctx.state.is_controller(),
+        attended,
+        ctx.state.do_not_disturb,
+        state,
+    ) else {
+        return;
+    };
+    let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) else {
+        return;
+    };
+    if pane
+        .terminal
+        .program_status_notification_at
+        .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5))
+    {
         return;
     }
-    crate::pane::pty_events::maybe_notify_program_status(
+    let notified = crate::pane::pty_events::maybe_notify_program_status(
         &ctx.state.config,
         ctx.state.is_controller(),
         attended,
@@ -407,14 +430,39 @@ fn notify_program_status(
         state,
         message.as_deref(),
     );
-    if ctx.state.is_controller() && !attended {
-        let cue = if state == tui_lipan::ProgramStatusState::Blocked {
-            crate::platform::sound::Cue::Blocked
-        } else {
-            crate::platform::sound::Cue::Error
-        };
-        crate::ops::sound::cue(ctx, cue);
+    let sounded = crate::ops::sound::cue(ctx, cue);
+    if (notified || sounded)
+        && let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
+    {
+        pane.terminal.program_status_notification_at = Some(std::time::Instant::now());
     }
+}
+
+/// Eligibility precedes the cooldown, so an observed but suppressed alert cannot consume it.
+fn program_status_alert_cue(
+    config: &crate::config::Config,
+    controller: bool,
+    attended: bool,
+    dnd: bool,
+    state: tui_lipan::ProgramStatusState,
+) -> Option<crate::platform::sound::Cue> {
+    if !controller || attended || dnd {
+        return None;
+    }
+    let cue = if state == tui_lipan::ProgramStatusState::Blocked {
+        crate::platform::sound::Cue::Blocked
+    } else {
+        crate::platform::sound::Cue::Error
+    };
+    let desktop = crate::pane::pty_events::notifications::should_notify_pane_status(
+        config,
+        controller,
+        attended,
+        state == tui_lipan::ProgramStatusState::Blocked,
+        state == tui_lipan::ProgramStatusState::Error,
+    );
+    let sound = config.sounds.enabled && config.sounds.enabled_for(cue);
+    (desktop || sound).then_some(cue)
 }
 
 fn actionable_program_status(state: tui_lipan::ProgramStatusState) -> bool {
@@ -442,14 +490,7 @@ fn apply_program_status(
     if let Some(record) = current.filter(|r| actionable_program_status(r.state)) {
         if previous.as_ref() != Some(&(record.id.clone(), record.state)) {
             pane.terminal.program_status_attention = !attended;
-            if pane
-                .terminal
-                .program_status_notification_at
-                .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(5))
-            {
-                alert = Some((pane.display_title(None), record.state, record.msg.clone()));
-                pane.terminal.program_status_notification_at = Some(std::time::Instant::now());
-            }
+            alert = Some((pane.display_title(None), record.state, record.msg.clone()));
         }
     } else {
         pane.terminal.program_status_attention = false;
@@ -462,6 +503,179 @@ fn apply_program_status(
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    #[test]
+    fn suppressed_osc_alerts_leave_cooldown_available_for_unattended_error() {
+        use crate::Msg;
+        use crate::state::Pane;
+        use tui_lipan::TestBackend;
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                for suppressed in [
+                    "attended",
+                    "dnd",
+                    "follower",
+                    "disabled",
+                    "initial",
+                    "sound-throttled",
+                ] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    let mut pane = Pane::new(7, 100, FloatRect::default());
+                    pane.pty_generation = 4;
+                    {
+                        let state = backend.state_mut();
+                        state.current_mut().workspaces[0].panes = vec![pane];
+                        state.current_mut().focused_pane = (suppressed == "attended").then_some(7);
+                        state.window_focused = true;
+                        state.do_not_disturb = suppressed == "dnd";
+                        // Exercise the real sound dispatch without desktop popups or audible playback.
+                        state.config.notifications.enabled = false;
+                        state.config.sounds.enabled = suppressed != "disabled";
+                        state.config.sounds.player =
+                            Some("/nonexistent-rozi-test-sound-player".into());
+                        let mut shared = crate::state::SharedSessionState::new(1);
+                        shared.controller = Some(if suppressed == "follower" { 2 } else { 1 });
+                        state.current_mut().shared = Some(shared);
+                        if suppressed == "sound-throttled" {
+                            state.sound_cues.insert(
+                                crate::platform::sound::Cue::Blocked,
+                                std::time::Instant::now(),
+                            );
+                        }
+                    }
+                    let epoch = backend.state().runtime_epoch;
+                    let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+                    screen.set_program_status_enabled(true);
+                    screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+                    let update = |initial, snapshot| Msg::SessionProgramStatusChanged {
+                        epoch,
+                        pane_id: 7,
+                        local: false,
+                        generation: 4,
+                        initial,
+                        snapshot,
+                    };
+                    backend
+                        .dispatch(update(
+                            suppressed == "initial",
+                            screen.program_status_snapshot(),
+                        ))
+                        .unwrap();
+                    assert!(
+                        backend.state().current().workspaces[0].panes[0]
+                            .terminal
+                            .program_status_notification_at
+                            .is_none(),
+                        "{suppressed}"
+                    );
+                    assert!(
+                        !backend
+                            .state()
+                            .sound_cues
+                            .contains_key(&crate::platform::sound::Cue::Error),
+                        "{suppressed}"
+                    );
+                    assert_eq!(
+                        backend
+                            .state()
+                            .sound_cues
+                            .contains_key(&crate::platform::sound::Cue::Blocked),
+                        suppressed == "sound-throttled"
+                    );
+                    if suppressed == "initial" {
+                        assert!(
+                            !backend.state().current().workspaces[0].panes[0]
+                                .terminal
+                                .program_status_attention
+                        );
+                    }
+                    {
+                        let state = backend.state_mut();
+                        state.current_mut().focused_pane = None;
+                        state.do_not_disturb = false;
+                        state.config.sounds.enabled = true;
+                        state.sound_cues.clear();
+                        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
+                    }
+                    // No sleep: the failure is well within the five-second OSC cooldown.
+                    screen.process_bytes(b"\x1b]7501;state=error\x07");
+                    backend
+                        .dispatch(update(false, screen.program_status_snapshot()))
+                        .unwrap();
+                    assert!(
+                        backend.state().current().workspaces[0].panes[0]
+                            .terminal
+                            .program_status_notification_at
+                            .is_some(),
+                        "{suppressed}"
+                    );
+                    assert!(
+                        backend
+                            .state()
+                            .sound_cues
+                            .contains_key(&crate::platform::sound::Cue::Error),
+                        "{suppressed}"
+                    );
+                    assert!(
+                        !backend
+                            .state()
+                            .sound_cues
+                            .contains_key(&crate::platform::sound::Cue::Blocked)
+                    );
+                    // A genuinely delivered error consumes the cooldown for subsequent transitions.
+                    screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+                    backend
+                        .dispatch(update(false, screen.program_status_snapshot()))
+                        .unwrap();
+                    assert!(
+                        !backend
+                            .state()
+                            .sound_cues
+                            .contains_key(&crate::platform::sound::Cue::Blocked)
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn osc_desktop_eligibility_includes_policy_before_consuming_cooldown() {
+        use crate::platform::sound::Cue;
+        use tui_lipan::ProgramStatusState;
+        let mut config = crate::config::Config::default();
+        config.notifications.enabled = true;
+        config.notifications.pane_blocked = true;
+        config.notifications.pane_done = true;
+        config.sounds.enabled = false;
+        assert_eq!(
+            program_status_alert_cue(&config, true, false, false, ProgramStatusState::Error),
+            Some(Cue::Error)
+        );
+        for (controller, attended, dnd) in [
+            (true, true, false),
+            (true, false, true),
+            (false, false, false),
+        ] {
+            assert_eq!(
+                program_status_alert_cue(
+                    &config,
+                    controller,
+                    attended,
+                    dnd,
+                    ProgramStatusState::Blocked
+                ),
+                None
+            );
+        }
+        config.notifications.enabled = false;
+        assert_eq!(
+            program_status_alert_cue(&config, true, false, false, ProgramStatusState::Error),
+            None
+        );
+    }
 
     #[test]
     fn program_status_attention_is_per_client_and_does_not_touch_agents() {

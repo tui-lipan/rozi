@@ -59,6 +59,25 @@ fn snapshot(
     result.unwrap()
 }
 
+fn baseline(client: &mut TestConnection, id: u32) -> ProgramStatusSnapshot {
+    let mut result = None;
+    read_until(client, |frame| {
+        if let Frame::Control(ServerMessage::ProgramStatusChanged {
+            pane_id,
+            initial: true,
+            snapshot,
+            ..
+        }) = frame
+            && *pane_id == id
+        {
+            result = Some(snapshot.clone());
+            return true;
+        }
+        false
+    });
+    result.unwrap()
+}
+
 #[test]
 fn program_status_real_pty_multi_client_detached_output_and_keep_open() {
     let server = spawn_listener(ServerSettings {
@@ -86,7 +105,7 @@ fn program_status_real_pty_multi_client_detached_output_and_keep_open() {
         panic!()
     };
     let pane = panes.iter().find(|p| p.pane_id == 81).unwrap();
-    assert_eq!(pane.program_status, first);
+    assert_eq!(baseline(&mut c, 81), first);
     assert!(pane.runtime.detected_agent.is_none());
     c.write_pane_input(81, 1, b"continue\n");
     let failed = snapshot(&mut c, 81, ProgramStatusState::Error);
@@ -101,14 +120,8 @@ fn program_status_real_pty_multi_client_detached_output_and_keep_open() {
     let ServerMessage::Attached { panes, .. } = attached else {
         panic!()
     };
-    assert_eq!(
-        panes
-            .iter()
-            .find(|p| p.pane_id == 81)
-            .unwrap()
-            .program_status,
-        failed
-    );
+    assert!(panes.iter().any(|pane| pane.pane_id == 81));
+    assert_eq!(baseline(&mut d, 81), failed);
     // A second pane can use the same root ID independently; its active record clears at exit.
     spawn(
         &mut c,
@@ -126,23 +139,9 @@ fn program_status_real_pty_multi_client_detached_output_and_keep_open() {
     let ServerMessage::Attached { panes, .. } = attached else {
         panic!()
     };
-    assert_eq!(
-        panes
-            .iter()
-            .find(|p| p.pane_id == 81)
-            .unwrap()
-            .program_status,
-        failed
-    );
-    assert!(
-        panes
-            .iter()
-            .find(|p| p.pane_id == 82)
-            .unwrap()
-            .program_status
-            .records
-            .is_empty()
-    );
+    assert_eq!(panes.len(), 2);
+    assert_eq!(baseline(&mut e, 81), failed);
+    assert!(baseline(&mut e, 82).records.is_empty());
     for client in [&mut c, &mut d, &mut e] {
         client.write_control(&ClientMessage::Detach);
     }

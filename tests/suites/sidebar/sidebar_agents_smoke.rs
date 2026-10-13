@@ -463,7 +463,7 @@ fn osc_status_snapshot_rejects_old_generations_and_revisions_and_renders() {
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=working:app=cargo:title=QnVpbGQ=:progress=42:msg=Q29tcGlsaW5n\x07");
         let working = screen.program_status_snapshot();
-        let update = |generation, snapshot| Msg::SessionProgramStatusChanged {epoch, pane_id:7, local:false, generation, snapshot};
+        let update = |generation, snapshot| Msg::SessionProgramStatusChanged {epoch, pane_id:7, local:false, generation, initial:false, snapshot};
         backend.dispatch(update(3,working.clone())).unwrap();
         assert!(backend.state().current().workspaces[0].panes[0].terminal.program_status.records.is_empty());
         backend.dispatch(update(4,working.clone())).unwrap();

@@ -2730,7 +2730,6 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     session: "dev".into(),
                     client_id: 1,
                     panes: vec![crate::session::protocol::PaneMeta {
-                        program_status: Default::default(),
                         pane_id: 7,
                         generation: 1,
                         agent_refs: vec![agent_ref],

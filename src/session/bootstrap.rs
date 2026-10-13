@@ -928,12 +928,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 pane_id,
                 local,
                 generation,
+                initial,
                 snapshot,
             } => Msg::SessionProgramStatusChanged {
                 epoch,
                 pane_id,
                 local,
                 generation,
+                initial,
                 snapshot,
             },
             ServerMessage::PaneRuntimeChanged {

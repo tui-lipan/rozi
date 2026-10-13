@@ -815,19 +815,20 @@ mod tests {
             assert!(long.contains("Codex  Idle · sss"), "{long}");
             assert!(long.contains("s… │"), "truncated at the end: {long}");
 
-            // The 100-column screen leaves a 92-column row for label and description.
+            // The label keeps a third of what the row draws between its borders.
             let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
             assert!(both.contains("…  Idle · sss"), "{both}");
-            assert_eq!(
-                column(&both, "Idle") - column(&both, "Codex"),
-                92 / 3 + 2,
-                "{both}"
+            let row_width = column(&both, " │") - column(&both, "│ ");
+            let label_width = column(&both, "…  Idle") + 1 - column(&both, "Codex");
+            assert!(
+                (row_width * 30 / 100..=row_width * 36 / 100).contains(&label_width),
+                "{label_width} of {row_width}: {both}"
             );
 
             let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
             assert!(label.contains("…  Idle · dev │"), "{label}");
             assert!(
-                column(&label, "Idle") - column(&label, "Codex") > 92 / 3 + 2,
+                column(&label, "…  Idle") + 1 - column(&label, "Codex") > row_width * 36 / 100,
                 "{label}"
             );
         });

@@ -83,8 +83,6 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             (row.location.clone(), glyph, color, working)
         })
         .collect::<Vec<_>>();
-    // Label and description share what the frame, padding, gutter, and gap leave of the row.
-    let row_width = width.min(ctx.viewport().w).saturating_sub(8);
     let render_rows = Arc::new(rows);
     let name_style = fg_only(&theme.primary).bold();
     let detail_style = fg_only(&theme.muted);
@@ -131,8 +129,10 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         Some(
             ListItem::from_spans(label)
                 .description_spans(description)
+                // The state and location win the row, so a long one starts right after a short
+                // name, but a long name keeps a third of it. One that fits stays right-aligned.
                 .primary_truncate_description_first(false)
-                .primary_max_description_width(description_width(row, row_width))
+                .primary_min_label_width(Length::Percent(33))
                 .primary_description_gap(2),
         )
     }))
@@ -204,18 +204,6 @@ fn row_context(row: &crate::view::agents::GlobalAgentRow, show_location: bool) -
     }
 }
 
-/// How far a row's description may grow: everything the label leaves, so a long description starts
-/// right after a short name instead of at a fixed column. A short one is not stretched; it stays
-/// right-aligned. When the label is long too it reserves no more than a third of the row, so the
-/// label is cut there and the state and location keep the rest. A long label beside a short
-/// description is cut only as far as the description needs.
-fn description_width(row: &crate::view::agents::GlobalAgentRow, row_width: u16) -> u16 {
-    use unicode_width::UnicodeWidthStr;
-    let label = row.agent.width() + row.activity.as_deref().map_or(0, |text| text.width() + 2);
-    let label = u16::try_from(label).unwrap_or(u16::MAX).min(row_width / 3);
-    row_width.saturating_sub(label)
-}
-
 /// Size from all rows so filtering does not make the palette jump horizontally.
 fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: bool) -> u16 {
     use unicode_width::UnicodeWidthStr;
@@ -272,21 +260,6 @@ mod tests {
         assert_eq!(picker_width(&[row(&"界".repeat(20))], true), 102);
         assert_eq!(picker_width(&[row(&"界".repeat(20))], false), 88);
         assert_eq!(picker_width(&[row(&"x".repeat(400))], true), 160);
-    }
-
-    #[test]
-    fn description_starts_after_a_short_name_and_keeps_room_beside_a_long_one() {
-        let mut row = row("");
-        row.activity = None;
-        assert_eq!(description_width(&row, 64), 64 - 5);
-        row.activity = Some("fix login".into());
-        assert_eq!(
-            description_width(&row, 64),
-            64 - "Codex: fix login".len() as u16
-        );
-        row.activity = Some("x".repeat(80));
-        assert_eq!(description_width(&row, 64), 64 - 64 / 3);
-        assert_eq!(description_width(&row, 0), 0);
     }
 
     #[test]

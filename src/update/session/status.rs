@@ -69,14 +69,36 @@ pub(crate) fn update_agent_status_edge(
 ) -> AgentEdges {
     let current = pane.agent_status();
     let current = current.as_deref();
+    use crate::session::protocol::ActivityState;
+    let generic = pane.detected_agent.is_none()
+        && pane.agent_integration.is_none()
+        && !pane.published_rows.iter().any(|row| row.is_agent());
+    let previous_activity = previous.map(ActivityState::from_status);
+    let current_activity = current.map(ActivityState::from_status);
     if current != previous {
-        if status_is_active_run(previous) && status_is_quiescent(current) {
+        let ended = if generic {
+            previous_activity.is_some_and(|state| !state.is_terminal())
+                && current_activity.is_some_and(ActivityState::is_terminal)
+        } else {
+            status_is_active_run(previous) && status_is_quiescent(current)
+        };
+        if ended {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());
     }
-    let finished = agent_status_edges(previous, current).finished;
-    if status_is(current, crate::session::protocol::pane_status::WORKING) {
+    let finished = if generic {
+        previous_activity.is_some_and(|state| !state.is_terminal())
+            && current_activity.is_some_and(ActivityState::is_successful_terminal)
+    } else {
+        agent_status_edges(previous, current).finished
+    };
+    let clear_finish = if generic {
+        current_activity.is_some_and(|state| !state.is_successful_terminal())
+    } else {
+        status_is(current, crate::session::protocol::pane_status::WORKING)
+    };
+    if clear_finish {
         pane.finished_unseen = false;
     } else if finished {
         pane.finished_unseen = true;
@@ -319,6 +341,36 @@ pub(crate) fn pane_runtime_changed(
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    #[test]
+    fn generic_terminal_edges_distinguish_success_from_failure() {
+        use crate::session::protocol::PaneStatus;
+        for previous in ["working", "compacting", "blocked"] {
+            for current in ["done", "idle", "error"] {
+                let mut pane = crate::pane::TerminalPane::new(100);
+                pane.reported_status = Some(PaneStatus {
+                    value: current.into(),
+                    reason: None,
+                    set_at: 1,
+                });
+                // An old completion must not survive a new failure.
+                pane.finished_unseen = true;
+                let age = Some(std::time::Duration::from_secs(12));
+                let edges = update_agent_status_edge(&mut pane, Some(previous), age, false);
+                assert_eq!(pane.last_run, age, "{previous} -> {current}");
+                assert_eq!(
+                    edges.finished,
+                    current != "error",
+                    "{previous} -> {current}"
+                );
+                assert_eq!(pane.finished_unseen, current != "error");
+                let repeated = update_agent_status_edge(&mut pane, Some(current), age, false);
+                assert!(!repeated.finished);
+            }
+        }
+        assert!(agent_status_edges(Some("working"), Some("error")).finished);
+        assert!(!agent_status_edges(Some("compacting"), Some("done")).finished);
+    }
 
     #[test]
     fn a_first_detected_agent_alerts_when_it_is_blocked() {

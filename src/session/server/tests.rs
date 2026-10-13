@@ -5559,3 +5559,25 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
         Some(crate::control::ControlErrorCode::ReadOnly)
     );
 }
+
+#[test]
+fn generic_error_stops_server_run_clock_without_changing_agent_state() {
+    let mut server = SessionServer::new_named("activity-error");
+    let (client, _stream) = attach_client(&mut server);
+    server.panes.insert(1, status_test_pane(1, None));
+    let set = |status: &str| ClientMessage::SetPaneStatus {
+        pane_id: 1,
+        local: false,
+        generation: 1,
+        status: Some(status.into()),
+        reason: None,
+    };
+    server.handle_message(client, set("custom"));
+    assert!(server.panes[&1].runtime.work_started_at.is_some());
+    server.handle_message(client, set("error"));
+    assert!(server.panes[&1].runtime.work_started_at.is_none());
+    assert_eq!(
+        protocol::AgentState::from_status("error"),
+        protocol::AgentState::Working
+    );
+}

@@ -1829,6 +1829,20 @@ fn next_work_started_at(
     next_detected: Option<&DetectedAgent>,
     next_integration: Option<&protocol::AgentIntegrationReport>,
 ) -> Option<u64> {
+    if next_integration.is_none()
+        && next_detected.is_none()
+        && !previous.rows.iter().any(protocol::PublishedRow::is_agent)
+    {
+        return next_activity_run_start(
+            previous.status.as_ref().map(|s| s.value.as_str()),
+            previous.work_started_at,
+            next_status.map(|s| s.value.as_str()),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+    }
     let previous_status = crate::session::protocol::effective_semantic_agent_state(
         previous.integration.as_deref(),
         previous.status.as_ref(),
@@ -1867,6 +1881,23 @@ fn next_run_start(
         && !crate::session::protocol::status_is_quiescent(previous_status)
     {
         return previous_started_at;
+    }
+    Some(now)
+}
+
+fn next_activity_run_start(
+    previous: Option<&str>,
+    started: Option<u64>,
+    next: Option<&str>,
+    now: u64,
+) -> Option<u64> {
+    if next.is_none_or(|s| protocol::ActivityState::from_status(s).is_terminal()) {
+        return None;
+    }
+    if started.is_some()
+        && previous.is_some_and(|s| !protocol::ActivityState::from_status(s).is_terminal())
+    {
+        return started;
     }
     Some(now)
 }
@@ -1969,7 +2000,12 @@ fn sanitize_rows(
             let id = clean_text(&row.id, PANE_STATUS_MAX_LEN)?;
             let status = clean_text(&row.status, PANE_STATUS_MAX_LEN)?;
             let previous = previous.iter().find(|candidate| candidate.id == id);
-            let work_started_at = next_run_start(
+            let run_start = if is_agent {
+                next_run_start
+            } else {
+                next_activity_run_start
+            };
+            let work_started_at = run_start(
                 previous.map(|previous| previous.status.as_str()),
                 previous.and_then(|previous| previous.work_started_at),
                 Some(status.as_str()),
@@ -2035,7 +2071,12 @@ fn restamp_row_clocks(
         let before = previous
             .iter()
             .find(|candidate| candidate.publisher == row.publisher && candidate.id == row.id);
-        row.work_started_at = next_run_start(
+        let run_start = if row.is_agent() {
+            next_run_start
+        } else {
+            next_activity_run_start
+        };
+        row.work_started_at = run_start(
             before.map(|before| before.status.as_str()),
             before.and_then(|before| before.work_started_at),
             Some(effective.status.as_str()),

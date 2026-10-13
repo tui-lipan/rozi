@@ -129,6 +129,7 @@ pub(super) fn apply_pane_alert_colors(
     }
 
     apply(&mut colors.blocked, raw.blocked, "blocked", warnings);
+    apply(&mut colors.error, raw.error, "error", warnings);
     apply(&mut colors.finished, raw.finished, "finished", warnings);
     apply(&mut colors.working, raw.working, "working", warnings);
     apply(&mut colors.idle, raw.idle, "idle", warnings);
@@ -318,6 +319,15 @@ mod tests {
         assert_eq!(colors.idle, None);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains(BadgeColor::NAMES));
+    }
+
+    #[test]
+    fn pane_error_color_can_be_disabled_without_disabling_blocked() {
+        let raw: PaneFileConfig = toml::from_str("[alert]\nerror = \"off\"").unwrap();
+        let mut colors = PaneAlertColors::default();
+        apply_pane_alert_colors(&mut colors, raw.alert, &mut Vec::new());
+        assert_eq!(colors.error, None);
+        assert_eq!(colors.blocked, Some(BadgeColor::Warning));
     }
 
     #[test]

@@ -83,7 +83,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
             PaneBorderMode::None,
         ] {
             let mut backend = backend(mode);
-            backend.state_mut().theme.status.error = Color::rgb(255, 0, 1);
+            backend.state_mut().theme.status.warning = Color::rgb(255, 0, 1);
             // The focused seam intentionally wins; disable that independent accent to inspect the
             // alert layer itself on this two-pane split.
             backend.state_mut().config.pane.highlight_focused_border = false;
@@ -111,7 +111,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
         }
 
         let mut backend = backend(PaneBorderMode::Separate);
-        backend.state_mut().theme.status.error = Color::rgb(255, 0, 1);
+        backend.state_mut().theme.status.warning = Color::rgb(255, 0, 1);
         backend.state_mut().config.pane.alert_border = rozi::state::AlertMode::Off;
         block_second(&mut backend);
         backend.render();
@@ -188,7 +188,7 @@ fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
         {
             let state = finished.state_mut();
             state.theme.status.success = finished_color;
-            state.theme.status.error = blocked_color;
+            state.theme.status.warning = blocked_color;
             state.current_mut().workspaces[0].panes[0]
                 .terminal
                 .finished_unseen = true;
@@ -207,7 +207,7 @@ fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
         {
             let state = blocked.state_mut();
             state.theme.status.success = finished_color;
-            state.theme.status.error = blocked_color;
+            state.theme.status.warning = blocked_color;
             state.current_mut().workspaces[0].panes[0]
                 .terminal
                 .reported_status = Some(rozi::session::protocol::PaneStatus {
@@ -238,7 +238,7 @@ fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
         let alert = Color::rgb(255, 0, 1);
         let render = |mode: PaneBorderMode, paint: PaneAlertPaint| {
             let mut backend = backend(mode);
-            backend.state_mut().theme.status.error = alert;
+            backend.state_mut().theme.status.warning = alert;
             backend.state_mut().config.pane.highlight_focused_border = false;
             backend.state_mut().config.pane.alert_paint = paint;
             block_second(&mut backend);
@@ -300,7 +300,7 @@ fn breathing_config(backend: &mut TestBackend<AppRoot>, paint: rozi::state::Pane
     state.config.animations.enabled = true;
     state.config.animations.pane_open_style = rozi::layout::anim::PaneAnimationStyle::Off;
     state.config.animations.pane_close_style = rozi::layout::anim::PaneAnimationStyle::Off;
-    state.theme.status.error = Color::rgb(255, 0, 1);
+    state.theme.status.warning = Color::rgb(255, 0, 1);
     state.config.pane.highlight_focused_border = false;
     state.config.pane.alert_paint = paint;
 }
@@ -878,5 +878,67 @@ fn the_content_tint_leaves_inline_images_their_own_pixels() {
         blocked_surfaces(&mut backend);
         backend.advance(half_period(&backend) / 4);
         untouched(&mut backend, "pulse, a quarter of the way down");
+    });
+}
+
+#[test]
+fn blocked_and_error_color_border_and_content_independently() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let warning = Color::rgb(255, 160, 0);
+        let error = Color::rgb(255, 0, 0);
+        let render = |status: &str| {
+            let mut backend = backend(PaneBorderMode::Separate);
+            backend.state_mut().theme.status.warning = warning;
+            backend.state_mut().theme.status.error = error;
+            backend.state_mut().config.pane.highlight_focused_border = false;
+            backend.state_mut().config.pane.alert_paint = PaneAlertPaint::Both;
+            block_second(&mut backend);
+            backend.state_mut().current_mut().workspaces[0].panes[1]
+                .terminal
+                .reported_status
+                .as_mut()
+                .unwrap()
+                .value = status.into();
+            backend.render();
+            backend.capture_frame()
+        };
+        let blocked = render("blocked");
+        let failed = render("error");
+        assert!(blocked.cells.iter().any(|cell| cell.fg == warning));
+        assert!(failed.cells.iter().any(|cell| cell.fg == error));
+        let interior = |frame: &tui_lipan::CapturedFrame| frame.cells[5 * 30 + 22].bg;
+        let (Color::Rgb(_, blocked_green, _), Color::Rgb(_, error_green, _)) =
+            (interior(&blocked), interior(&failed))
+        else {
+            panic!("expected truecolor tints")
+        };
+        assert!(
+            blocked_green > error_green,
+            "blocked tints must be amber, failures red"
+        );
+    });
+}
+
+#[test]
+fn error_border_and_content_keep_the_existing_urgent_pulse_in_step() {
+    use rozi::state::PaneAlertPaint;
+    on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let ends = breathe_ends();
+        let mut backend = breathing_backend(PaneAlertPaint::Both);
+        backend.state_mut().theme.status.error = backend.state().theme.status.warning;
+        backend.state_mut().current_mut().workspaces[0].panes[1]
+            .terminal
+            .reported_status
+            .as_mut()
+            .unwrap()
+            .value = "error".into();
+        let quarter = half_period(&backend) / 4;
+        assert_eq!(blocked_surfaces(&mut backend), (ends.border.0, ends.tint.0));
+        first_turn(&mut backend);
+        assert_surfaces_breathe_together(&mut backend, &ends, &a_fade_down(quarter));
+        assert_eq!(backend.state().alert_pulse_turns, 2);
     });
 }

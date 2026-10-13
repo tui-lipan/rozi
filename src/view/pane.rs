@@ -383,8 +383,27 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     }
 }
 
+/// Generic activity failures do not change the pane's agent state.
+fn activity_failed(pane: &Pane) -> bool {
+    let terminal = &pane.terminal;
+    terminal
+        .published_rows
+        .iter()
+        .any(|row| !row.is_agent() && row.status.trim().eq_ignore_ascii_case("error"))
+        || (terminal.detected_agent.is_none()
+            && terminal.agent_integration.is_none()
+            && !terminal
+                .published_rows
+                .iter()
+                .any(crate::session::protocol::PublishedRow::is_agent)
+            && terminal
+                .reported_status
+                .as_ref()
+                .is_some_and(|status| status.value.trim().eq_ignore_ascii_case("error")))
+}
+
 /// The configured attention state this pane currently draws. Configured-off states deliberately
-/// fall through, so disabling `blocked` can still expose a finished/working/idle state.
+/// fall through, so disabling a state can still expose another enabled alert.
 /// The alert a pane draws, as the state that raised it plus its configured colour. The state is
 /// carried alongside the colour because the colour is user-configurable and so cannot identify it:
 /// `finished = "error"` would otherwise be indistinguishable from a blocked pane, and the two
@@ -411,6 +430,11 @@ pub(crate) fn pane_alert(
             PaneAlert::Blocked,
             !focused && pane.awaits_input(),
             colors.blocked,
+        ),
+        (
+            PaneAlert::Error,
+            !focused && activity_failed(pane),
+            colors.error,
         ),
         (
             PaneAlert::Finished,
@@ -2350,7 +2374,7 @@ mod tests {
         pane.terminal.finished_unseen = true;
         assert_eq!(
             pane_alert(&pane, false, &config),
-            Some((PaneAlert::Blocked, BadgeColor::Error))
+            Some((PaneAlert::Blocked, BadgeColor::Warning))
         );
 
         config.alert_colors.blocked = None;
@@ -2392,6 +2416,68 @@ mod tests {
         assert_eq!(pane_alert(&pane, false, &config), None);
         config.alert_border = AlertMode::Off;
         assert_eq!(pane_alert(&pane, false, &config), None);
+    }
+
+    #[test]
+    fn failed_generic_run_cannot_show_a_focused_success_border() {
+        let mut pane = alert_test_pane();
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "error".into(),
+            reason: None,
+            set_at: 0,
+        });
+        pane.terminal.finished_unseen = true;
+        let edges = crate::update::session::status::update_agent_status_edge(
+            &mut pane.terminal,
+            Some("working"),
+            Some(std::time::Duration::from_secs(12)),
+            false,
+        );
+        assert!(!edges.finished);
+        assert_eq!(pane_alert(&pane, true, &PaneConfig::default()), None);
+        assert_eq!(
+            pane_alert(&pane, false, &PaneConfig::default()),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+    }
+
+    #[test]
+    fn generic_error_has_an_independent_urgent_alert_without_changing_agents() {
+        let mut pane = alert_test_pane();
+        let mut config = PaneConfig::default();
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "error".into(),
+            reason: None,
+            set_at: 0,
+        });
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+        assert!(!PaneAlert::Error.is_calm());
+        assert_eq!(pane_alert(&pane, true, &config), None);
+        config.alert_colors.error = Some(BadgeColor::Info);
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Error, BadgeColor::Info))
+        );
+        config.alert_colors.error = None;
+        assert_eq!(pane_alert(&pane, false, &config), None);
+        config.alert_colors.error = Some(BadgeColor::Error);
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: crate::session::protocol::DetectedAgentState::Working,
+        });
+        assert_eq!(pane_alert(&pane, false, &config), None);
+        let row = serde_json::from_value(serde_json::json!({
+            "id": "build", "title": "Build", "status": "error", "kind": "activity"
+        }))
+        .unwrap();
+        pane.terminal.published_rows.push(row);
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
     }
 
     #[test]

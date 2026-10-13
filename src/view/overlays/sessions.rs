@@ -673,9 +673,11 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     });
     let render_item = (!ephemeral_entries.is_empty()).then(|| {
         Arc::new(move |item: &SearchItem<usize>, _hl: &SearchHighlight| {
-            ephemeral_entries
-                .contains(&item.value)
-                .then(|| render_ephemeral_session_item(item, &ephemeral_style, &description_style))
+            ephemeral_entries.contains(&item.value).then(|| {
+                render_ephemeral_session_item(item, &ephemeral_style, &description_style)
+                    .primary_truncate_description_first(false)
+                    .primary_min_label_width(Length::Percent(SESSION_LABEL_SHARE))
+            })
         }) as OverlayItemRenderer<usize>
     });
 
@@ -687,6 +689,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         64,
     )
     .entries(entries)
+    .description_wins(Length::Percent(SESSION_LABEL_SHARE))
     .actions(session_picker_actions(ctx))
     .armed_row(pending_kill.or(pending_restart))
     .placeholder("Search sessions…")
@@ -748,22 +751,33 @@ fn remote_tab_status(
 /// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's
 /// agents, already rendered by [`crate::view::session_status::host_agent_label`]; it goes last,
 /// after the facts about the session itself.
+/// How much of a session row its name keeps when the description wins the row.
+const SESSION_LABEL_SHARE: u16 = 40;
+
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
     agents: Option<String>,
 ) -> ItemDescription {
-    let description = session_status_description(entry, we_hold);
-    picker_description(match agents {
-        Some(agents) => format!("{description} · {agents}"),
-        None => description,
-    })
+    picker_description(session_status_description(
+        entry,
+        we_hold,
+        agents.as_deref(),
+    ))
 }
 
+/// What a session row says about the session. The agents' state follows the pane count rather
+/// than trailing the row, because a description cut short loses its end first and "blocked" is
+/// the part worth going to the session for.
 fn session_status_description(
     entry: &crate::session::discovery::DiscoveredSession,
     we_hold: bool,
+    agents: Option<&str>,
 ) -> String {
+    let with_agents = |label: String| match agents {
+        Some(agents) => format!("{label} · {agents}"),
+        None => label,
+    };
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
         DiscoveredSessionStatus::Running { panes, clients, .. } => {
@@ -772,11 +786,12 @@ fn session_status_description(
             // connection (current or retained in the background) so this reports only *other* people
             // sharing the session — the ones a new attach would join.
             let others = clients.saturating_sub(u32::from(we_hold));
-            let mut label = match others {
-                0 => panes_label,
-                1 => format!("{panes_label} · shared with 1 other"),
-                count => format!("{panes_label} · shared with {count} others"),
-            };
+            let mut label = with_agents(panes_label);
+            match others {
+                0 => {}
+                1 => label.push_str(" · shared with 1 other"),
+                count => label.push_str(&format!(" · shared with {count} others")),
+            }
             if let Some(profile) = &entry.origin.profile {
                 label.push_str(&format!(" · from {profile}"));
             }
@@ -786,11 +801,11 @@ fn session_status_description(
         // most useful thing to say about it, but on its own it is exactly what a live session says,
         // so it goes out qualified. Same words the sidebar's cached rows have always used.
         DiscoveredSessionStatus::LastSeen { panes } => {
-            format!("{} · last seen", panes_label(*panes))
+            with_agents(format!("{} · last seen", panes_label(*panes)))
         }
-        DiscoveredSessionStatus::Restorable => "restorable".to_string(),
-        DiscoveredSessionStatus::Busy => "busy".to_string(),
-        DiscoveredSessionStatus::Unknown => "unavailable".to_string(),
+        DiscoveredSessionStatus::Restorable => with_agents("restorable".to_string()),
+        DiscoveredSessionStatus::Busy => with_agents("busy".to_string()),
+        DiscoveredSessionStatus::Unknown => with_agents("unavailable".to_string()),
     }
 }
 

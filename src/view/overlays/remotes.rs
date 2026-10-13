@@ -155,6 +155,7 @@ fn remote_hosts_overlay(
         64,
     )
     .entries(entries)
+    .description_wins(Length::Percent(40))
     .actions(actions)
     .armed_row(pending_forget)
     .placeholder("Search hosts…")

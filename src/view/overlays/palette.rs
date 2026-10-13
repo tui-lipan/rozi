@@ -8,8 +8,11 @@ pub(crate) type OverlayGutterRenderer<T> =
     Arc<dyn Fn(&SearchItem<T>, &SearchHighlight) -> Option<ListItemGutter>>;
 pub(crate) type OverlayItemKey<T> = fn(&SearchItem<T>) -> Arc<str>;
 
+/// Blank columns between a picker row's label and its right-aligned description.
+pub(crate) const PICKER_DESCRIPTION_GAP: u16 = 2;
+
 pub(super) fn picker_description(description: impl AsRef<str>) -> ItemDescription {
-    ItemDescription::new().right(format!("  {}", description.as_ref()))
+    ItemDescription::new().right(description.as_ref().to_string())
 }
 
 pub(super) fn picker_row(
@@ -22,9 +25,10 @@ pub(super) fn picker_row(
     if description.is_empty() {
         item
     } else {
-        item.description(format!("  {description}"))
+        item.description(description)
             .description_style(description_style)
             .primary_truncate_description_first(true)
+            .primary_description_gap(PICKER_DESCRIPTION_GAP)
     }
 }
 
@@ -293,6 +297,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     fallback_interceptor: Option<KeyHandler>,
     tabs: Option<OverlayTabs>,
     item_key: Option<OverlayItemKey<T>>,
+    description_wins: Option<Length>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -324,7 +329,19 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             fallback_interceptor: None,
             tabs: None,
             item_key: None,
+            description_wins: None,
         }
+    }
+
+    /// Let row descriptions win the row over labels, down to `min_label` of it.
+    ///
+    /// For pickers whose description carries the state worth reading (a session's agents, a
+    /// host's failure) beside a label that can run long (`name@host`). A description that fits is
+    /// never cut, so a long one starts right after a short label; past that the label keeps
+    /// `min_label` of the row. Rows from a custom renderer set this themselves.
+    pub(crate) fn description_wins(mut self, min_label: Length) -> Self {
+        self.description_wins = Some(min_label);
+        self
     }
 
     /// Identify rows across refreshes by something other than label and aliases. The shared key
@@ -440,6 +457,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             fallback_interceptor,
             tabs,
             item_key,
+            description_wins,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -458,6 +476,11 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             .sync_selection(true);
         if let Some(key) = item_key {
             palette = palette.item_key(key);
+        }
+        if let Some(min_label) = description_wins {
+            palette = palette
+                .primary_truncate_description_first(false)
+                .primary_min_label_width(min_label);
         }
         palette = apply_palette_options(
             palette,

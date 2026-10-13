@@ -116,7 +116,8 @@ Sessions and the launcher to **Local**.
 
 A row can show that a session is attached in the background, shared with other clients,
 restorable, or created from a profile. The list of local sessions refreshes while the picker is
-open.
+open. When a row is too narrow for both, a long session name, such as `name@host` on the All tab,
+is shortened before what its agents are doing, keeping at least 40% of the row.
 
 Opening Sessions never contacts a remote host. Sessions on remote hosts are listed from the last
 time each host answered. A host's tab shows the host's state in the picker's top-right corner, and

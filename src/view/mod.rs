@@ -707,6 +707,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .description_style(fg_only(&theme.muted))
         .description_placement(DescriptionPlacement::Right)
         .primary_truncate_description_first(true)
+        .primary_description_gap(crate::view::overlays::PICKER_DESCRIPTION_GAP)
         .empty_text_style(fg_only(&theme.muted));
 
     if highlight_matches {

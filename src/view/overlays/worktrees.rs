@@ -90,7 +90,10 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .collect();
     let widest_row = rows
         .iter()
-        .map(|row| MARKER_WIDTH + row.branch.chars().count() + row.description().chars().count())
+        .map(|row| {
+            use unicode_width::UnicodeWidthStr;
+            MARKER_WIDTH + row.branch.width() + row.description().width()
+        })
         .max()
         .unwrap_or(0);
     let entries = (0..rows.len())
@@ -150,7 +153,9 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             Some(
                 ListItem::from_spans([Span::new(row.branch.clone()).style(branch_style)])
                     .description_spans(description)
-                    .primary_truncate_description_first(false),
+                    .primary_truncate_description_first(false)
+                    .primary_min_label_width(Length::Percent(40))
+                    .primary_description_gap(PICKER_DESCRIPTION_GAP),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {

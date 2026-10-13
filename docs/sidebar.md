@@ -367,7 +367,8 @@ width, because the controller sets the size of the pane area everyone sees. A fo
 does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).
 
 Generic activities reporting `error`, through `rozi status` or an activity
-publisher, show a failure glyph and stop their run duration. Arbitrary custom
+publisher, show a failure glyph and stop their run duration. Failures do not raise
+successful-completion notifications, sounds, or finish pulses. Arbitrary custom
 statuses remain active. Agent APIs retain their four-state classification, where
 an unrecognized status, including `error`, is interpreted as working.
 

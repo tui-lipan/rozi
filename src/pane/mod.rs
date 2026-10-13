@@ -965,21 +965,31 @@ impl TerminalPane {
                         .is_terminal()
                 }
             });
-            let now_working = if row.is_agent() {
-                row.status
+            let state = crate::session::protocol::ActivityState::from_status(&row.status);
+            let entry = self.published_row_ui.entry(key.clone()).or_default();
+            if row.is_agent() {
+                if row
+                    .status
                     .trim()
                     .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+                {
+                    entry.finished_unseen = false;
+                } else if was_working && !status_is_blocked(&row.status) {
+                    entry.last_run = row_run_age(previous_started(&previous, &key));
+                    entry.finished_unseen = true;
+                    finished.push(key);
+                }
             } else {
-                !crate::session::protocol::ActivityState::from_status(&row.status).is_terminal()
-                    && !status_is_blocked(&row.status)
-            };
-            let entry = self.published_row_ui.entry(key.clone()).or_default();
-            if now_working {
-                entry.finished_unseen = false;
-            } else if was_working && !status_is_blocked(&row.status) {
-                entry.last_run = row_run_age(previous_started(&previous, &key));
-                entry.finished_unseen = true;
-                finished.push(key);
+                if !state.is_successful_terminal() {
+                    entry.finished_unseen = false;
+                }
+                if was_working && state.is_terminal() {
+                    entry.last_run = row_run_age(previous_started(&previous, &key));
+                    if state.is_successful_terminal() {
+                        entry.finished_unseen = true;
+                        finished.push(key);
+                    }
+                }
             }
         }
         // A publisher that closed a tab should not leave its row's pulse behind.

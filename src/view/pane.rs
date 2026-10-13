@@ -2419,6 +2419,29 @@ mod tests {
     }
 
     #[test]
+    fn failed_generic_run_cannot_show_a_focused_success_border() {
+        let mut pane = alert_test_pane();
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "error".into(),
+            reason: None,
+            set_at: 0,
+        });
+        pane.terminal.finished_unseen = true;
+        let edges = crate::update::session::status::update_agent_status_edge(
+            &mut pane.terminal,
+            Some("working"),
+            Some(std::time::Duration::from_secs(12)),
+            false,
+        );
+        assert!(!edges.finished);
+        assert_eq!(pane_alert(&pane, true, &PaneConfig::default()), None);
+        assert_eq!(
+            pane_alert(&pane, false, &PaneConfig::default()),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+    }
+
+    #[test]
     fn generic_error_has_an_independent_urgent_alert_without_changing_agents() {
         let mut pane = alert_test_pane();
         let mut config = PaneConfig::default();

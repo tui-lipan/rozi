@@ -597,10 +597,8 @@ pub enum ServerMessage {
         path: Option<String>,
         error: Option<String>,
     },
-    /// A pane's [`PaneRuntimeState`] changed: broadcast after raw
-    /// pane output for the same event, once the server has both processed the bytes into the
-    /// screen and re-derived runtime state from them. `generation` guards against a message that
-    /// raced a respawn; `state.sequence` guards against out-of-order delivery.
+    /// Authoritative terminal program records. Revision and generation fence stale snapshots;
+    /// attach baselines initialize presentation without replaying historical alerts.
     ProgramStatusChanged {
         pane_id: PaneId,
         local: bool,
@@ -609,6 +607,10 @@ pub enum ServerMessage {
         initial: bool,
         snapshot: tui_lipan::ProgramStatusSnapshot,
     },
+    /// A pane's [`PaneRuntimeState`] changed: broadcast after raw
+    /// pane output for the same event, once the server has both processed the bytes into the
+    /// screen and re-derived runtime state from them. `generation` guards against a message that
+    /// raced a respawn; `state.sequence` guards against out-of-order delivery.
     PaneRuntimeChanged {
         pane_id: PaneId,
         local: bool,

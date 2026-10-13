@@ -889,39 +889,53 @@ impl SessionServer {
         let mut activity = false;
         loop {
             let progressed = match self.next_attach_seed_work(id) {
-                AttachSeedWork::ProgramStatus(key) => {
-                    if !*export_available {
-                        return activity;
-                    }
-                    let progressed = self.pump_program_status_baseline(id, key, remaining);
-                    *export_available = false;
-                    progressed
-                }
-                AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
-                AttachSeedWork::FinishReplay => {
-                    self.finish_pane_replay(id);
-                    true
-                }
-                AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
-                AttachSeedWork::BeginPane(key) => {
-                    if !*export_available {
-                        return activity;
-                    }
-                    self.begin_pane_replay(id, key);
-                    *export_available = false;
-                    true
-                }
-                AttachSeedWork::CatchUp => self.pump_seed_catch_up(id, remaining),
                 AttachSeedWork::Complete => {
                     self.complete_attach_baseline(id);
                     return true;
                 }
                 AttachSeedWork::Done => return activity,
+                work => self.pump_attach_seed_work(id, work, remaining, export_available),
             };
             if !progressed {
                 return activity;
             }
             activity = true;
+        }
+    }
+
+    /// Advance one nonterminal replay task within the shared export and byte budgets.
+    fn pump_attach_seed_work(
+        &mut self,
+        id: ClientId,
+        work: AttachSeedWork,
+        remaining: &mut usize,
+        export_available: &mut bool,
+    ) -> bool {
+        match work {
+            AttachSeedWork::ProgramStatus(key) => {
+                if !*export_available {
+                    return false;
+                }
+                let progressed = self.pump_program_status_baseline(id, key, remaining);
+                *export_available = false;
+                progressed
+            }
+            AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
+            AttachSeedWork::FinishReplay => {
+                self.finish_pane_replay(id);
+                true
+            }
+            AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
+            AttachSeedWork::BeginPane(key) => {
+                if !*export_available {
+                    return false;
+                }
+                self.begin_pane_replay(id, key);
+                *export_available = false;
+                true
+            }
+            AttachSeedWork::CatchUp => self.pump_seed_catch_up(id, remaining),
+            AttachSeedWork::Complete | AttachSeedWork::Done => false,
         }
     }
 

@@ -156,6 +156,7 @@ pub enum PaneBorderMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaneAlert {
     Blocked,
+    Error,
     Finished,
     Working,
     Idle,
@@ -165,6 +166,7 @@ impl PaneAlert {
     pub const fn id(self) -> &'static str {
         match self {
             Self::Blocked => "blocked",
+            Self::Error => "error",
             Self::Finished => "finished",
             Self::Working => "working",
             Self::Idle => "idle",
@@ -174,16 +176,16 @@ impl PaneAlert {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Blocked => "Blocked",
+            Self::Error => "Error",
             Self::Finished => "Finished",
             Self::Working => "Working",
             Self::Idle => "Idle",
         }
     }
 
-    /// Whether this state breathes at the slower calm rate. Only `Blocked` is a request for an
-    /// answer; everything else is information you will get to, and should not compete with it.
+    /// Blocked work and failures use the urgent pulse; other states use the slower calm rate.
     pub const fn is_calm(self) -> bool {
-        !matches!(self, Self::Blocked)
+        !matches!(self, Self::Blocked | Self::Error)
     }
 }
 

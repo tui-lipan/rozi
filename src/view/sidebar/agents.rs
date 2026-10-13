@@ -68,23 +68,12 @@ fn normalized_status(value: &str) -> &str {
     value.trim()
 }
 
-/// Sort rank for a row under the same four-state projection activation uses. The original status
-/// remains available for display, while extension-defined active words rank as working. A
-/// finished-unseen quiescent agent ranks with `done`, so it does not sink when its dot lights up.
+/// Activity ordering shared with keyboard activation, including unseen successful finishes.
 pub(crate) fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
-    let Some(status) = status.map(normalized_status) else {
-        return 5;
-    };
-    let semantic = crate::session::protocol::AgentState::from_status(status);
-    if is_finished_quiet(semantic.as_str(), finished_unseen) {
-        return 3;
-    }
-    match semantic {
-        crate::session::protocol::AgentState::Blocked => 0,
-        crate::session::protocol::AgentState::Working => 1,
-        crate::session::protocol::AgentState::Done => 3,
-        crate::session::protocol::AgentState::Idle => 4,
-    }
+    status.map_or(5, |status| {
+        crate::session::protocol::ActivityState::from_status(status)
+            .presentation_rank(finished_unseen)
+    })
 }
 
 /// What the agent is currently doing, for the row's detail line.
@@ -451,7 +440,9 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
     if value.eq_ignore_ascii_case(pane_status::WORKING) {
         ("⠋", theme.status.info)
     } else if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
-        ("!", theme.status.error)
+        ("▲", theme.status.warning)
+    } else if value.eq_ignore_ascii_case("error") {
+        ("×", theme.status.error)
     } else if value.eq_ignore_ascii_case(pane_status::DONE) {
         ("✓", theme.status.success)
     } else if value.eq_ignore_ascii_case(pane_status::IDLE) {
@@ -511,6 +502,7 @@ fn status_is_canonical(status: &str) -> bool {
         pane_status::BLOCKED,
         pane_status::DONE,
         pane_status::IDLE,
+        "error",
     ]
     .iter()
     .any(|known| status.eq_ignore_ascii_case(known))
@@ -530,7 +522,7 @@ fn row_duration(row: &AgentRow) -> Option<(String, bool)> {
     if label.eq_ignore_ascii_case(pane_status::IDLE) {
         return None;
     }
-    if label.eq_ignore_ascii_case(pane_status::DONE) {
+    if label.eq_ignore_ascii_case(pane_status::DONE) || label.eq_ignore_ascii_case("error") {
         // Absent when this client never saw the run start — better nothing than a wrong number.
         return row.run.map(|run| (format_age(run), false));
     }
@@ -594,9 +586,8 @@ pub(super) fn agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 /// Whether a row is in the "finished a run, not looked at yet" state: quiescent (neither working
 /// nor blocked, which keep their own louder presentation) with an unseen finish.
 fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
-    let working = status.trim().eq_ignore_ascii_case(pane_status::WORKING);
-    let blocked = status.trim().eq_ignore_ascii_case(pane_status::BLOCKED);
-    finished_unseen && !working && !blocked
+    finished_unseen
+        && crate::session::protocol::ActivityState::from_status(status).is_successful_terminal()
 }
 
 /// The status word a row displays. A finished-unseen agent reads "done" regardless of the raw
@@ -854,6 +845,106 @@ mod tests {
 
     /// A generic PR publisher beside a detected Codex: Activity lists Codex and every PR row, the
     /// Agents view lists only Codex, and no PR row is named after Codex.
+    #[test]
+    fn activity_render_and_activation_share_state_order() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let statuses = ["working", "idle", "done", "error", "blocked"];
+        state.current_mut().workspaces[0].panes = statuses
+            .iter()
+            .enumerate()
+            .map(|(i, status)| {
+                let mut pane = pane_in(i as PaneId + 1, Some(status), false, Some("/repo"));
+                pane.terminal.detected_agent = None;
+                pane.agent_refs.clear();
+                pane.terminal.finished_unseen = *status == "error";
+                pane
+            })
+            .collect();
+        let rendered = agent_groups(&state)
+            .into_iter()
+            .flat_map(|group| group.rows)
+            .map(|row| RowTarget::Pane(row.pane_id))
+            .collect::<Vec<_>>();
+        let projected = state
+            .activity_item_projections()
+            .into_iter()
+            .map(|item| item.target)
+            .filter(|target| *target != RowTarget::Inert)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                RowTarget::Pane(5),
+                RowTarget::Pane(4),
+                RowTarget::Pane(1),
+                RowTarget::Pane(3),
+                RowTarget::Pane(2)
+            ]
+        );
+        assert_eq!(projected, rendered);
+        assert_eq!(
+            status_rank(Some("compacting"), true),
+            status_rank(Some("working"), false)
+        );
+    }
+
+    #[test]
+    fn published_activity_errors_bank_time_without_success_notices() {
+        for previous in ["working", "compacting", "blocked"] {
+            for current in ["error", "done", "idle"] {
+                let mut terminal = crate::pane::TerminalPane::new(100);
+                let mut task = row("build", previous, false);
+                task.kind = crate::session::protocol::PublisherKind::Activity;
+                task.work_started_at = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        .saturating_sub(12),
+                );
+                assert!(terminal.apply_rows(vec![task.clone()], None).is_empty());
+                let key = task.key();
+                terminal
+                    .published_row_ui
+                    .get_mut(&key)
+                    .unwrap()
+                    .finished_unseen = true;
+                task.status = current.into();
+                let finished = terminal.apply_rows(vec![task.clone()], None);
+                assert_eq!(
+                    finished.is_empty(),
+                    current == "error",
+                    "{previous} -> {current}"
+                );
+                let ui = &terminal.published_row_ui[&key];
+                assert_eq!(ui.finished_unseen, current != "error");
+                assert!(ui.last_run.is_some());
+                assert!(terminal.apply_rows(vec![task], None).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn activity_error_rank_glyph_and_duration_are_terminal() {
+        let theme = Theme::default();
+        assert_eq!(status_glyph("blocked", &theme), ("▲", theme.status.warning));
+        assert_eq!(status_glyph("error", &theme), ("×", theme.status.error));
+        assert_eq!(row_glyph("error", true, &theme).0, "×");
+        assert_eq!(status_rank(Some("error"), true), 1);
+        for (left, right) in [
+            ("blocked", "error"),
+            ("error", "working"),
+            ("working", "done"),
+            ("done", "idle"),
+        ] {
+            assert!(status_rank(Some(left), false) < status_rank(Some(right), false));
+        }
+        assert_eq!(
+            status_rank(Some("compacting"), false),
+            status_rank(Some("working"), false)
+        );
+    }
+
     #[test]
     fn a_generic_publisher_beside_a_detected_agent_stays_out_of_the_agents_view() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
@@ -1280,7 +1371,7 @@ mod tests {
     #[test]
     fn glyph_matching_is_trimmed_and_case_insensitive() {
         let theme = Theme::default();
-        assert_eq!(status_glyph(" BLOCKED ", &theme).0, "!");
+        assert_eq!(status_glyph(" BLOCKED ", &theme).0, "▲");
         assert_eq!(status_glyph("Working", &theme).0, "⠋");
         assert_eq!(status_glyph("Waiting", &theme).0, "•");
     }
@@ -1294,7 +1385,7 @@ mod tests {
         assert_eq!(row_glyph("idle", true, &theme).1, theme.status.success);
         assert!(!row_glyph("idle", true, &theme).2);
         // Blocked and working keep their own glyph regardless of an unseen finish.
-        assert_eq!(row_glyph("blocked", true, &theme).0, "!");
+        assert_eq!(row_glyph("blocked", true, &theme).0, "▲");
         assert!(row_glyph("working", true, &theme).2);
         // Without the flag the glyph is unchanged.
         assert_eq!(row_glyph("idle", false, &theme).0, "○");
@@ -1814,6 +1905,10 @@ mod tests {
         // stops advancing, so the tick has nothing left to refresh.
         assert_eq!(
             row_duration(&row("idle", true)),
+            Some(("12m00s".into(), false))
+        );
+        assert_eq!(
+            row_duration(&row("error", false)),
             Some(("12m00s".into(), false))
         );
         assert_eq!(

@@ -648,7 +648,7 @@ pub struct PaneConfig {
     pub alert_border: AlertMode,
     /// What a pane alert colors: the frame, a faint wash over the terminal content, or both.
     pub alert_paint: PaneAlertPaint,
-    /// Per-state theme roles for pane-alert borders. `None` disables that state.
+    /// Per-state theme roles for pane-alert borders and content tints. `None` disables that state.
     pub alert_colors: PaneAlertColors,
     /// Keep frames around floating panes, popups, and the scratchpad when the selected
     /// border mode otherwise disables per-pane frames. On by default: a floating pane, popup, or
@@ -2404,10 +2404,11 @@ pub enum BadgeColor {
     Panel,
 }
 
-/// Per-state theme roles for pane-alert borders.
+/// Per-state theme roles for pane-alert borders and content tints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaneAlertColors {
     pub blocked: Option<BadgeColor>,
+    pub error: Option<BadgeColor>,
     pub finished: Option<BadgeColor>,
     pub working: Option<BadgeColor>,
     pub idle: Option<BadgeColor>,
@@ -2416,7 +2417,8 @@ pub struct PaneAlertColors {
 impl Default for PaneAlertColors {
     fn default() -> Self {
         Self {
-            blocked: Some(BadgeColor::Error),
+            blocked: Some(BadgeColor::Warning),
+            error: Some(BadgeColor::Error),
             finished: Some(BadgeColor::Success),
             working: None,
             idle: None,

@@ -43,6 +43,69 @@ impl AgentState {
     }
 }
 
+/// Presentation semantics for activities. Custom values remain active; agent APIs retain
+/// their existing four-state interpretation, including treating `error` as working.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityState {
+    Working,
+    Blocked,
+    Idle,
+    Done,
+    Error,
+    Custom,
+}
+
+impl ActivityState {
+    pub fn from_status(status: &str) -> Self {
+        match status.trim().to_ascii_lowercase().as_str() {
+            "working" => Self::Working,
+            "blocked" => Self::Blocked,
+            "idle" => Self::Idle,
+            "done" => Self::Done,
+            "error" => Self::Error,
+            _ => Self::Custom,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Working | Self::Custom => "working",
+            Self::Blocked => "blocked",
+            Self::Idle => "idle",
+            Self::Done => "done",
+            Self::Error => "error",
+        }
+    }
+
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Idle | Self::Done | Self::Error)
+    }
+
+    /// Successful terminal outcomes, distinct from a failed run ending.
+    pub const fn is_successful_terminal(self) -> bool {
+        matches!(self, Self::Idle | Self::Done)
+    }
+
+    /// Shared ordering for the drawn rows and their keyboard activation targets.
+    pub const fn presentation_rank(self, finished_unseen: bool) -> u8 {
+        if finished_unseen && self.is_successful_terminal() {
+            Self::Done.rank()
+        } else {
+            self.rank()
+        }
+    }
+
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Blocked => 0,
+            Self::Error => 1,
+            Self::Working | Self::Custom => 2,
+            Self::Done => 3,
+            Self::Idle => 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -83,7 +146,7 @@ pub struct PaneOccupant {
     /// Display name: the agent's label, or an activity row's title. Empty for an untitled row and
     /// for the pane's own status, whose presenters fall back to the pane title.
     pub label: String,
-    pub state: AgentState,
+    pub state: ActivityState,
     pub reason: Option<String>,
     pub source: AgentAuthority,
 }
@@ -107,7 +170,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             slot: None,
             agent: None,
             label: String::new(),
-            state: AgentState::from_status(&status.value),
+            state: ActivityState::from_status(&status.value),
             reason: status.reason.clone(),
             source: AgentAuthority::Reported,
         });
@@ -121,7 +184,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                 slot: Some(row.key()),
                 agent: None,
                 label: row.title.clone(),
-                state: AgentState::from_status(&row.status),
+                state: ActivityState::from_status(&row.status),
                 reason: row.reason.clone(),
                 source: AgentAuthority::Published,
             }),
@@ -154,7 +217,9 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     slot: Some(row.key()),
                     label: identity.label.clone(),
                     agent: Some(identity),
-                    state: AgentState::from_status(&row.status),
+                    state: ActivityState::from_status(
+                        AgentState::from_status(&row.status).as_str(),
+                    ),
                     reason: row.reason.clone(),
                     // A hook report folded into the row is the row's word now.
                     source: if row.reported {
@@ -164,7 +229,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     },
                 };
                 if let Some(report) = row_integration(runtime.integration.as_deref(), row) {
-                    occupant.state = report.state;
+                    occupant.state = ActivityState::from_status(report.state.as_str());
                     occupant.reason = report.reason.clone();
                     occupant.source = AgentAuthority::Reported;
                 }
@@ -177,7 +242,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             slot: None,
             label: report.identity.label.clone(),
             agent: Some(report.identity.clone()),
-            state: report.state,
+            state: ActivityState::from_status(report.state.as_str()),
             reason: report.reason.clone(),
             source: AgentAuthority::Reported,
         }];
@@ -193,7 +258,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         slot: None,
         label: identity.label.clone(),
         agent: Some(identity),
-        state: AgentState::from_status(status),
+        state: ActivityState::from_status(AgentState::from_status(status).as_str()),
         reason,
         source,
     }]
@@ -214,7 +279,13 @@ pub fn agent_occupant_identities(runtime: &PaneRuntimeState) -> Vec<(Option<RowK
 pub fn agent_signature(runtime: &PaneRuntimeState) -> Vec<(Option<RowKey>, String, AgentState)> {
     agent_occupants(runtime)
         .into_iter()
-        .filter_map(|occupant| Some((occupant.slot, occupant.agent?.id, occupant.state)))
+        .filter_map(|occupant| {
+            Some((
+                occupant.slot,
+                occupant.agent?.id,
+                AgentState::from_status(occupant.state.as_str()),
+            ))
+        })
         .collect()
 }
 
@@ -242,7 +313,7 @@ pub fn effective_agent_runtimes(
                 reference,
                 identity,
                 label: occupant.label,
-                state: occupant.state,
+                state: AgentState::from_status(occupant.state.as_str()),
                 reason: occupant.reason,
                 source: occupant.source,
             })
@@ -489,6 +560,23 @@ mod tests {
             live_session: None,
             reported: false,
         }
+    }
+
+    #[test]
+    fn generic_error_keeps_agent_api_compatibility() {
+        let runtime = PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: "error".into(),
+                reason: None,
+                set_at: 1,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(pane_occupants(&runtime)[0].state, ActivityState::Error);
+        assert_eq!(AgentState::from_status("error"), AgentState::Working);
+        assert!(!AgentState::from_status("error").is_quiescent());
+        assert_eq!(ActivityState::from_status("custom"), ActivityState::Custom);
+        assert!(!ActivityState::Custom.is_terminal());
     }
 
     #[test]

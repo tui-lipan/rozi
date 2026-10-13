@@ -365,3 +365,16 @@ The sidebar's visibility, tabs, panels, selection, and cached data belong to eac
 [shared session](shared-sessions.md), the controller's sidebar still narrows the shared terminal
 width, because the controller sets the size of the pane area everyone sees. A follower's sidebar
 does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).
+
+Generic activities reporting `error`, through `rozi status` or an activity
+publisher, show a failure glyph and stop their run duration. Failures do not raise
+successful-completion notifications, sounds, or finish pulses. Arbitrary custom
+statuses remain active. Agent APIs retain their four-state classification, where
+an unrecognized status, including `error`, is interpreted as working.
+
+Blocked agents and activities use `▲` in the theme's warning color. Errors use
+`×` in the error color, so waiting for input and failed work remain distinct.
+
+Pane alert borders and content tints use the same distinction by default.
+`[pane.alert]` lets you override or disable blocked and error colors independently.
+Both states use the existing urgent pulse when alert animation is enabled.

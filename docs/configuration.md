@@ -249,12 +249,13 @@ See [Layouts and panes](layouts-and-panes.md), [Sidebar](sidebar.md), and [Theme
 
 ### `[pane.alert]`
 
-Border colors for pane alert states. Each value is a theme role or `"off"`. Theme roles are
+Colors for pane alert borders and content tints. Each value is a theme role or `"off"`. Theme roles are
 `accent`, `info`, `success`, `warning`, `error`, `neutral`, and `panel`.
 
 | Key | Type | Default |
 | --- | --- | --- |
-| `blocked` | string | `"error"` |
+| `blocked` | string | `"warning"` |
+| `error` | string | `"error"` |
 | `finished` | string | `"success"` |
 | `working` | string | `"off"` |
 | `idle` | string | `"off"` |

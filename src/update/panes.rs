@@ -819,8 +819,8 @@ mod tests {
         state.current_mut().workspaces[0]
             .panes
             .push(blocked_pane(2));
-        state.theme.status.error = Color::rgb(255, 0, 1);
-        state.theme.border = Style::new().fg(state.theme.status.error);
+        state.theme.status.warning = Color::rgb(255, 0, 1);
+        state.theme.border = Style::new().fg(state.theme.status.warning);
         assert!(!alert_pulse_should_run(&state));
         // A border with nowhere to fade still leaves a truecolor tint to breathe over the content.
         state.config.pane.alert_paint = PaneAlertPaint::Both;

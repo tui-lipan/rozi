@@ -373,3 +373,7 @@ an unrecognized status, including `error`, is interpreted as working.
 
 Blocked agents and activities use `▲` in the theme's warning color. Errors use
 `×` in the error color, so waiting for input and failed work remain distinct.
+
+Pane alert borders and content tints use the same distinction by default.
+`[pane.alert]` lets you override or disable blocked and error colors independently.
+Both states use the existing urgent pulse when alert animation is enabled.

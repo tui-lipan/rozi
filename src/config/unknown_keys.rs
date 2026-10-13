@@ -141,7 +141,7 @@ const PANE_KEYS: &[&str] = &[
     "toast_opacity",
 ];
 
-const PANE_ALERT_KEYS: &[&str] = &["blocked", "finished", "working", "idle"];
+const PANE_ALERT_KEYS: &[&str] = &["blocked", "error", "finished", "working", "idle"];
 
 const NOTIFICATION_KEYS: &[&str] = &[
     "enabled",

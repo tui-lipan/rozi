@@ -541,6 +541,7 @@ pub(super) struct PaneFileConfig {
 #[serde(default)]
 pub(super) struct PaneAlertFileConfig {
     pub(super) blocked: Option<String>,
+    pub(super) error: Option<String>,
     pub(super) finished: Option<String>,
     pub(super) working: Option<String>,
     pub(super) idle: Option<String>,

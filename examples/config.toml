@@ -163,7 +163,8 @@
 #background_follows_terminal = false
 # Alert border colors by theme role; use "off" to suppress a state.
 #[pane.alert]
-#blocked = "error"
+#blocked = "warning"
+#error = "error"
 #finished = "success"
 #working = "off"
 #idle = "off"

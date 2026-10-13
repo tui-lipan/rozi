@@ -445,7 +445,7 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
     if value.eq_ignore_ascii_case(pane_status::WORKING) {
         ("⠋", theme.status.info)
     } else if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
-        ("!", theme.status.error)
+        ("▲", theme.status.warning)
     } else if value.eq_ignore_ascii_case("error") {
         ("×", theme.status.error)
     } else if value.eq_ignore_ascii_case(pane_status::DONE) {
@@ -855,6 +855,7 @@ mod tests {
     #[test]
     fn activity_error_rank_glyph_and_duration_are_terminal() {
         let theme = Theme::default();
+        assert_eq!(status_glyph("blocked", &theme), ("▲", theme.status.warning));
         assert_eq!(status_glyph("error", &theme), ("×", theme.status.error));
         assert_eq!(row_glyph("error", true, &theme).0, "×");
         assert_eq!(status_rank(Some("error"), true), 1);
@@ -1298,7 +1299,7 @@ mod tests {
     #[test]
     fn glyph_matching_is_trimmed_and_case_insensitive() {
         let theme = Theme::default();
-        assert_eq!(status_glyph(" BLOCKED ", &theme).0, "!");
+        assert_eq!(status_glyph(" BLOCKED ", &theme).0, "▲");
         assert_eq!(status_glyph("Working", &theme).0, "⠋");
         assert_eq!(status_glyph("Waiting", &theme).0, "•");
     }
@@ -1312,7 +1313,7 @@ mod tests {
         assert_eq!(row_glyph("idle", true, &theme).1, theme.status.success);
         assert!(!row_glyph("idle", true, &theme).2);
         // Blocked and working keep their own glyph regardless of an unseen finish.
-        assert_eq!(row_glyph("blocked", true, &theme).0, "!");
+        assert_eq!(row_glyph("blocked", true, &theme).0, "▲");
         assert!(row_glyph("working", true, &theme).2);
         // Without the flag the glyph is unchanged.
         assert_eq!(row_glyph("idle", false, &theme).0, "○");

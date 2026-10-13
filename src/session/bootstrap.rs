@@ -924,6 +924,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 path,
                 error,
             },
+            ServerMessage::ProgramStatusChanged {
+                pane_id,
+                local,
+                generation,
+                snapshot,
+            } => Msg::SessionProgramStatusChanged {
+                epoch,
+                pane_id,
+                local,
+                generation,
+                snapshot,
+            },
             ServerMessage::PaneRuntimeChanged {
                 pane_id,
                 local,

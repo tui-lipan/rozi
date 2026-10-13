@@ -35,5 +35,39 @@ fn terminal_ingest(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, terminal_ingest);
+fn program_status_ingest(c: &mut Criterion) {
+    let mut group = c.benchmark_group("program_status_ingest");
+    let progress = (0..1000)
+        .map(|i| {
+            format!(
+                "\x1b]7501;state=working:app=cargo:progress={}:msg=QnVpbGRpbmc=\x1b\\",
+                i % 101
+            )
+        })
+        .collect::<String>()
+        .into_bytes();
+    for (name, corpus) in [("plain", support::plain_lines()), ("progress", progress)] {
+        for enabled in [false, true] {
+            group.throughput(Throughput::Bytes(corpus.len() as u64));
+            group.bench_with_input(BenchmarkId::new(name, enabled), &corpus, |b, corpus| {
+                b.iter_batched(
+                    || {
+                        let mut terminal = support::screen(200, 60);
+                        terminal.set_program_status_enabled(enabled);
+                        terminal
+                    },
+                    |mut terminal| {
+                        terminal.process_bytes(black_box(corpus));
+                        terminal.drain_program_status_events();
+                        black_box(terminal);
+                    },
+                    BatchSize::PerIteration,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, terminal_ingest, program_status_ingest);
 criterion_main!(benches);

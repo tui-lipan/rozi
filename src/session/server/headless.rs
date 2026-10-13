@@ -682,6 +682,7 @@ impl SessionServer {
         layout: SharedLayout,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) {
+        let status = self.program_status_for_new_layout_panes(&layout);
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
         self.mark_dirty();
@@ -697,6 +698,7 @@ impl SessionServer {
                 live: false,
             },
         ));
+        broadcasts.extend(status);
     }
 
     /// The document a headless layout write starts from, once the write is allowed at all.

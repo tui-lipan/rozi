@@ -99,10 +99,12 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
     let changed = pane.activity.has_unseen_output
         || pane.activity.bell
         || pane.terminal.finished_unseen
-        || row_cleared;
+        || row_cleared
+        || pane.terminal.program_status_attention;
     pane.activity.has_unseen_output = false;
     pane.activity.bell = false;
     pane.terminal.finished_unseen = false;
+    pane.terminal.program_status_attention = false;
     changed
 }
 

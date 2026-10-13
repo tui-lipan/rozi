@@ -43,6 +43,55 @@ impl AgentState {
     }
 }
 
+/// Presentation semantics for activities. Custom values remain active; agent APIs retain
+/// their existing four-state interpretation, including treating `error` as working.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityState {
+    Working,
+    Blocked,
+    Idle,
+    Done,
+    Error,
+    Custom,
+}
+
+impl ActivityState {
+    pub fn from_status(status: &str) -> Self {
+        match status.trim().to_ascii_lowercase().as_str() {
+            "working" => Self::Working,
+            "blocked" => Self::Blocked,
+            "idle" => Self::Idle,
+            "done" => Self::Done,
+            "error" => Self::Error,
+            _ => Self::Custom,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Working | Self::Custom => "working",
+            Self::Blocked => "blocked",
+            Self::Idle => "idle",
+            Self::Done => "done",
+            Self::Error => "error",
+        }
+    }
+
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Idle | Self::Done | Self::Error)
+    }
+
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Blocked => 0,
+            Self::Error => 1,
+            Self::Working | Self::Custom => 2,
+            Self::Done => 3,
+            Self::Idle => 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -83,9 +132,10 @@ pub struct PaneOccupant {
     /// Display name: the agent's label, or an activity row's title. Empty for an untitled row and
     /// for the pane's own status, whose presenters fall back to the pane title.
     pub label: String,
-    pub state: AgentState,
+    pub state: ActivityState,
     pub reason: Option<String>,
     pub source: AgentAuthority,
+    pub program_status: Option<tui_lipan::ProgramStatusRecord>,
 }
 
 impl PaneOccupant {
@@ -104,10 +154,11 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         && let Some(status) = &runtime.status
     {
         occupants.push(PaneOccupant {
+            program_status: None,
             slot: None,
             agent: None,
             label: String::new(),
-            state: AgentState::from_status(&status.value),
+            state: ActivityState::from_status(&status.value),
             reason: status.reason.clone(),
             source: AgentAuthority::Reported,
         });
@@ -118,10 +169,11 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             .iter()
             .filter(|row| !row.is_agent())
             .map(|row| PaneOccupant {
+                program_status: None,
                 slot: Some(row.key()),
                 agent: None,
                 label: row.title.clone(),
-                state: AgentState::from_status(&row.status),
+                state: ActivityState::from_status(&row.status),
                 reason: row.reason.clone(),
                 source: AgentAuthority::Published,
             }),
@@ -151,10 +203,13 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     .map(|detected| detected.agent.as_ref().clone())
                     .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
                 let mut occupant = PaneOccupant {
+                    program_status: None,
                     slot: Some(row.key()),
                     label: identity.label.clone(),
                     agent: Some(identity),
-                    state: AgentState::from_status(&row.status),
+                    state: ActivityState::from_status(
+                        AgentState::from_status(&row.status).as_str(),
+                    ),
                     reason: row.reason.clone(),
                     // A hook report folded into the row is the row's word now.
                     source: if row.reported {
@@ -164,7 +219,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     },
                 };
                 if let Some(report) = row_integration(runtime.integration.as_deref(), row) {
-                    occupant.state = report.state;
+                    occupant.state = ActivityState::from_status(report.state.as_str());
                     occupant.reason = report.reason.clone();
                     occupant.source = AgentAuthority::Reported;
                 }
@@ -174,10 +229,11 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
     }
     if let Some(report) = &runtime.integration {
         return vec![PaneOccupant {
+            program_status: None,
             slot: None,
             label: report.identity.label.clone(),
             agent: Some(report.identity.clone()),
-            state: report.state,
+            state: ActivityState::from_status(report.state.as_str()),
             reason: report.reason.clone(),
             source: AgentAuthority::Reported,
         }];
@@ -190,10 +246,11 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
     };
     let identity = detected.agent.as_ref().clone();
     vec![PaneOccupant {
+        program_status: None,
         slot: None,
         label: identity.label.clone(),
         agent: Some(identity),
-        state: AgentState::from_status(status),
+        state: ActivityState::from_status(AgentState::from_status(status).as_str()),
         reason,
         source,
     }]
@@ -214,7 +271,13 @@ pub fn agent_occupant_identities(runtime: &PaneRuntimeState) -> Vec<(Option<RowK
 pub fn agent_signature(runtime: &PaneRuntimeState) -> Vec<(Option<RowKey>, String, AgentState)> {
     agent_occupants(runtime)
         .into_iter()
-        .filter_map(|occupant| Some((occupant.slot, occupant.agent?.id, occupant.state)))
+        .filter_map(|occupant| {
+            Some((
+                occupant.slot,
+                occupant.agent?.id,
+                AgentState::from_status(occupant.state.as_str()),
+            ))
+        })
         .collect()
 }
 
@@ -242,7 +305,7 @@ pub fn effective_agent_runtimes(
                 reference,
                 identity,
                 label: occupant.label,
-                state: occupant.state,
+                state: AgentState::from_status(occupant.state.as_str()),
                 reason: occupant.reason,
                 source: occupant.source,
             })
@@ -441,6 +504,32 @@ pub fn effective_semantic_agent_state(
         .or_else(|| effective_agent_state(reported, detected.map(detected_agent_status)))
 }
 
+/// Activity display aggregation only. No agent identity or parent state is inferred.
+pub fn program_status_summary(
+    snapshot: &tui_lipan::ProgramStatusSnapshot,
+) -> Option<&tui_lipan::ProgramStatusRecord> {
+    snapshot.records.iter().min_by_key(|record| {
+        (
+            ActivityState::from_status(record.state.as_str()).rank(),
+            std::cmp::Reverse(record.updated),
+            record.id.as_ref(),
+        )
+    })
+}
+
+/// Disarm invisible formatting when protocol text is shown outside the terminal grid.
+pub fn program_status_display(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c,
+                    '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' |
+                    '\u{2060}'..='\u{206f}' | '\u{feff}'
+                )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,6 +578,23 @@ mod tests {
             live_session: None,
             reported: false,
         }
+    }
+
+    #[test]
+    fn generic_error_keeps_agent_api_compatibility() {
+        let runtime = PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: "error".into(),
+                reason: None,
+                set_at: 1,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(pane_occupants(&runtime)[0].state, ActivityState::Error);
+        assert_eq!(AgentState::from_status("error"), AgentState::Working);
+        assert!(!AgentState::from_status("error").is_quiescent());
+        assert_eq!(ActivityState::from_status("custom"), ActivityState::Custom);
+        assert!(!ActivityState::Custom.is_terminal());
     }
 
     #[test]

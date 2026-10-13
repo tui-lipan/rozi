@@ -141,6 +141,7 @@ pub fn attached_message() -> ServerMessage {
             .iter()
             .flat_map(|workspace| workspace.panes.iter())
             .map(|pane| PaneMeta {
+                program_status: Default::default(),
                 pane_id: pane.pane_id,
                 generation: pane.generation,
                 agent_refs: Vec::new(),

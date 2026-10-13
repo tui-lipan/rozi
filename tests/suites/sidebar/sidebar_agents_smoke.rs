@@ -442,3 +442,45 @@ fn published_slots_render_one_numbered_row_each() {
         .join()
         .expect("published slots render completes");
 }
+
+#[test]
+fn osc_status_snapshot_rejects_old_generations_and_revisions_and_renders() {
+    std::thread::Builder::new().stack_size(8 * 1024 * 1024).spawn(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect { x:0, y:0, w:100, h:30 });
+        let mut pane = Pane::new(7,100,FloatRect::default());
+        pane.pty_generation = 4;
+        pane.title = "build pane".into();
+        {
+            let state = backend.state_mut();
+            agents_fill_the_sidebar(state);
+            state.current_mut().workspaces[0].panes = vec![pane];
+            state.current_mut().focused_pane = None;
+        }
+        let epoch = backend.state().runtime_epoch;
+        let mut screen = tui_lipan::prelude::TerminalScreen::new(24,80,100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=working:app=cargo:title=QnVpbGQ=:progress=42:msg=Q29tcGlsaW5n\x07");
+        let working = screen.program_status_snapshot();
+        let update = |generation, snapshot| Msg::SessionProgramStatusChanged {epoch, pane_id:7, local:false, generation, snapshot};
+        backend.dispatch(update(3,working.clone())).unwrap();
+        assert!(backend.state().current().workspaces[0].panes[0].terminal.program_status.records.is_empty());
+        backend.dispatch(update(4,working.clone())).unwrap();
+        backend.render();
+        let text = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        assert!(text.contains("Build"), "{text}");
+        assert!(text.contains("42%"), "{text}");
+        screen.process_bytes(b"\x1b]7501;state=error:msg=RmFpbGVk\x07");
+        let error = screen.program_status_snapshot();
+        backend.dispatch(update(4,error.clone())).unwrap();
+        backend.dispatch(update(4,working)).unwrap();
+        assert_eq!(backend.state().current().workspaces[0].panes[0].terminal.program_status, error);
+        assert!(backend.state().current().workspaces[0].panes[0].terminal.program_status_attention);
+        assert!(backend.state().current().workspaces[0].panes[0].agent_runtimes().is_empty());
+        backend.render();
+        let text = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        assert!(text.contains('×'), "{text}");
+        assert!(text.contains("Failed"), "{text}");
+    }).unwrap().join().unwrap();
+}

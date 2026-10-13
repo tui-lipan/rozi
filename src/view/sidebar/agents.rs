@@ -75,16 +75,10 @@ pub(crate) fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
     let Some(status) = status.map(normalized_status) else {
         return 5;
     };
-    let semantic = crate::session::protocol::AgentState::from_status(status);
-    if is_finished_quiet(semantic.as_str(), finished_unseen) {
+    if is_finished_quiet(status, finished_unseen) {
         return 3;
     }
-    match semantic {
-        crate::session::protocol::AgentState::Blocked => 0,
-        crate::session::protocol::AgentState::Working => 1,
-        crate::session::protocol::AgentState::Done => 3,
-        crate::session::protocol::AgentState::Idle => 4,
-    }
+    crate::session::protocol::ActivityState::from_status(status).rank()
 }
 
 /// What the agent is currently doing, for the row's detail line.
@@ -231,7 +225,38 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 .as_ref()
                                 .map_or("", |identity| identity.label.as_str());
                             let (title, status, activity, age, run, finished_unseen, slot) =
-                                if let Some((index, published_row)) = slot {
+                                if let Some(record) = &occupant.program_status {
+                                    let message = occupant.reason.as_deref().unwrap_or("");
+                                    let detail = record.progress.map_or_else(
+                                        || message.to_string(),
+                                        |p| {
+                                            if message.is_empty() {
+                                                format!("{p}%")
+                                            } else {
+                                                format!("{message} · {p}%")
+                                            }
+                                        },
+                                    );
+                                    (
+                                        if occupant.label.is_empty() {
+                                            pane.display_title(pane.terminal.title())
+                                        } else {
+                                            crate::session::protocol::program_status_display(
+                                                &occupant.label,
+                                            )
+                                        },
+                                        record.state.as_str().to_string(),
+                                        (!detail.is_empty()).then(|| {
+                                            crate::session::protocol::program_status_display(
+                                                &detail,
+                                            )
+                                        }),
+                                        None,
+                                        None,
+                                        pane.terminal.program_status_attention,
+                                        None,
+                                    )
+                                } else if let Some((index, published_row)) = slot {
                                     let key = published_row.key();
                                     let ui = pane.terminal.published_row_ui.get(&key);
                                     // Behind a detected agent its rows are that agent's sessions, so
@@ -452,6 +477,8 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
         ("⠋", theme.status.info)
     } else if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
         ("!", theme.status.error)
+    } else if value.eq_ignore_ascii_case("error") {
+        ("×", theme.status.error)
     } else if value.eq_ignore_ascii_case(pane_status::DONE) {
         ("✓", theme.status.success)
     } else if value.eq_ignore_ascii_case(pane_status::IDLE) {
@@ -511,6 +538,7 @@ fn status_is_canonical(status: &str) -> bool {
         pane_status::BLOCKED,
         pane_status::DONE,
         pane_status::IDLE,
+        "error",
     ]
     .iter()
     .any(|known| status.eq_ignore_ascii_case(known))
@@ -530,7 +558,7 @@ fn row_duration(row: &AgentRow) -> Option<(String, bool)> {
     if label.eq_ignore_ascii_case(pane_status::IDLE) {
         return None;
     }
-    if label.eq_ignore_ascii_case(pane_status::DONE) {
+    if label.eq_ignore_ascii_case(pane_status::DONE) || label.eq_ignore_ascii_case("error") {
         // Absent when this client never saw the run start — better nothing than a wrong number.
         return row.run.map(|run| (format_age(run), false));
     }
@@ -596,7 +624,8 @@ pub(super) fn agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
     let working = status.trim().eq_ignore_ascii_case(pane_status::WORKING);
     let blocked = status.trim().eq_ignore_ascii_case(pane_status::BLOCKED);
-    finished_unseen && !working && !blocked
+    let error = status.trim().eq_ignore_ascii_case("error");
+    finished_unseen && !working && !blocked && !error
 }
 
 /// The status word a row displays. A finished-unseen agent reads "done" regardless of the raw
@@ -854,6 +883,76 @@ mod tests {
 
     /// A generic PR publisher beside a detected Codex: Activity lists Codex and every PR row, the
     /// Agents view lists only Codex, and no PR row is named after Codex.
+    #[test]
+    fn activity_error_rank_glyph_and_duration_are_terminal() {
+        let theme = Theme::default();
+        assert_eq!(status_glyph("error", &theme), ("×", theme.status.error));
+        assert_eq!(row_glyph("error", true, &theme).0, "×");
+        assert_eq!(status_rank(Some("error"), true), 1);
+        for (left, right) in [
+            ("blocked", "error"),
+            ("error", "working"),
+            ("working", "done"),
+            ("done", "idle"),
+        ] {
+            assert!(status_rank(Some(left), false) < status_rank(Some(right), false));
+        }
+        assert_eq!(
+            status_rank(Some("compacting"), false),
+            status_rank(Some("working"), false)
+        );
+    }
+
+    #[test]
+    fn osc_activity_coexists_with_agent_and_generic_status() {
+        let mut pane = pane(1, Some("working"), false);
+        let before = pane.agent_runtimes();
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code\x07\x1b]7501;state=error:id=build:msg=ZmFpbGVk:progress=20\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        let occupants = pane.occupants();
+        assert_eq!(occupants.len(), 2);
+        assert!(!occupants[1].is_agent());
+        assert_eq!(
+            occupants[1].state,
+            crate::session::protocol::ActivityState::Error
+        );
+        assert_eq!(pane.agent_runtimes(), before);
+        pane.terminal.detected_agent = None;
+        assert_eq!(pane.occupants().len(), 2);
+        assert!(pane.agent_runtimes().is_empty());
+        let activity = crate::session::protocol::PublishedRow {
+            kind: crate::session::protocol::PublisherKind::Activity,
+            publisher: "client-a:jobs".into(),
+            ..row("build", "error", false)
+        };
+        let agent = crate::session::protocol::PublishedRow {
+            publisher: "client-b:agents".into(),
+            ..row("conversation", "working", true)
+        };
+        pane.terminal.published_rows = vec![activity, agent];
+        let published = pane.terminal.published_rows.clone();
+        let agents = pane.agent_runtimes();
+        assert_eq!(pane.occupants().len(), 3);
+        assert_eq!(
+            pane.occupants()
+                .last()
+                .unwrap()
+                .program_status
+                .as_ref()
+                .unwrap()
+                .id
+                .as_ref(),
+            "build"
+        );
+        screen.process_bytes(b"\x1b]7501;state=clear\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        assert_eq!(pane.occupants().len(), 2);
+        assert_eq!(pane.terminal.published_rows, published);
+        assert_eq!(pane.agent_runtimes(), agents);
+    }
+
     #[test]
     fn a_generic_publisher_beside_a_detected_agent_stays_out_of_the_agents_view() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
@@ -1814,6 +1913,10 @@ mod tests {
         // stops advancing, so the tick has nothing left to refresh.
         assert_eq!(
             row_duration(&row("idle", true)),
+            Some(("12m00s".into(), false))
+        );
+        assert_eq!(
+            row_duration(&row("error", false)),
             Some(("12m00s".into(), false))
         );
         assert_eq!(

@@ -624,3 +624,26 @@ pub(crate) fn host_agent_alert(
         None
     }
 }
+
+pub(crate) fn maybe_notify_program_status(
+    config: &crate::config::Config,
+    controller: bool,
+    attended: bool,
+    id: PaneId,
+    title: &str,
+    state: tui_lipan::ProgramStatusState,
+    message: Option<&str>,
+) {
+    let blocked = state == tui_lipan::ProgramStatusState::Blocked;
+    let error = state == tui_lipan::ProgramStatusState::Error;
+    if !should_notify_pane_status(config, controller, attended, blocked, error) {
+        return;
+    }
+    let detail = message.map(crate::session::protocol::program_status_display);
+    let body = format!(
+        "Pane {id} ({title}) is {}{}",
+        state.as_str(),
+        detail.map_or(String::new(), |text| format!(": {text}"))
+    );
+    crate::platform::notifications::notify("rozi", &body);
+}

@@ -283,6 +283,9 @@ pub struct TerminalPane {
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
+    pub program_status: tui_lipan::ProgramStatusSnapshot,
+    pub program_status_attention: bool,
+    pub program_status_notification_at: Option<std::time::Instant>,
     pub last_palette: Option<TerminalColorPalette>,
     /// Which out-of-band graphics media this pane's screen will read. It follows the attachment
     /// feeding the pane rather than the pane itself: pixels named as a path only exist for a
@@ -358,6 +361,14 @@ fn status_is_quiescent(value: &str) -> bool {
     let value = value.trim();
     value.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
         || value.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
+}
+
+fn activity_is_terminal(value: &str, agent: bool) -> bool {
+    if agent {
+        status_is_quiescent(value)
+    } else {
+        crate::session::protocol::ActivityState::from_status(value).is_terminal()
+    }
 }
 
 fn status_is_blocked(value: &str) -> bool {
@@ -447,6 +458,9 @@ impl TerminalPane {
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
+            program_status: Default::default(),
+            program_status_attention: false,
+            program_status_notification_at: None,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
             image_budget_bytes: PANE_IMAGE_BUDGET_BYTES,
@@ -514,6 +528,9 @@ impl TerminalPane {
             self.last_run = None;
             self.published_rows.clear();
             self.published_row_ui.clear();
+            self.program_status = Default::default();
+            self.program_status_attention = false;
+            self.program_status_notification_at = None;
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -524,6 +541,9 @@ impl TerminalPane {
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
+        self.program_status = Default::default();
+        self.program_status_attention = false;
+        self.program_status_notification_at = None;
         self.reset_screen();
     }
 
@@ -947,15 +967,24 @@ impl TerminalPane {
             let key = row.key();
             let before = previous.iter().find(|candidate| candidate.has_key(&key));
             let was_working = before.is_some_and(|before| {
-                before
-                    .status
+                if row.is_agent() {
+                    before
+                        .status
+                        .trim()
+                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+                } else {
+                    !crate::session::protocol::ActivityState::from_status(&before.status)
+                        .is_terminal()
+                }
+            });
+            let now_working = if row.is_agent() {
+                row.status
                     .trim()
                     .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
-            });
-            let now_working = row
-                .status
-                .trim()
-                .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING);
+            } else {
+                !crate::session::protocol::ActivityState::from_status(&row.status).is_terminal()
+                    && !status_is_blocked(&row.status)
+            };
             let entry = self.published_row_ui.entry(key.clone()).or_default();
             if now_working {
                 entry.finished_unseen = false;
@@ -988,7 +1017,7 @@ impl TerminalPane {
         &self,
         row: &crate::session::protocol::PublishedRow,
     ) -> Option<std::time::Duration> {
-        (!status_is_quiescent(&row.status))
+        (!activity_is_terminal(&row.status, row.is_agent()))
             .then(|| row_run_age(row.work_started_at))
             .flatten()
     }
@@ -1000,11 +1029,20 @@ impl TerminalPane {
     /// skew against a server on another host can only ever shorten the answer, never invent one,
     /// because the subtraction saturates at zero.
     pub fn status_age(&self) -> Option<std::time::Duration> {
-        if self
-            .agent_status()
-            .as_deref()
-            .is_some_and(|status| !status_is_quiescent(status))
-            && let Some(started_at) = self.work_started_at
+        if self.detected_agent.is_none()
+            && self.agent_integration.is_none()
+            && self.reported_status.as_ref().is_some_and(|s| {
+                crate::session::protocol::ActivityState::from_status(&s.value).is_terminal()
+            })
+        {
+            return None;
+        }
+        if self.agent_status().as_deref().is_some_and(|status| {
+            !activity_is_terminal(
+                status,
+                self.detected_agent.is_some() || self.agent_integration.is_some(),
+            )
+        }) && let Some(started_at) = self.work_started_at
         {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

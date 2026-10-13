@@ -601,6 +601,12 @@ pub enum ServerMessage {
     /// pane output for the same event, once the server has both processed the bytes into the
     /// screen and re-derived runtime state from them. `generation` guards against a message that
     /// raced a respawn; `state.sequence` guards against out-of-order delivery.
+    ProgramStatusChanged {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        snapshot: tui_lipan::ProgramStatusSnapshot,
+    },
     PaneRuntimeChanged {
         pane_id: PaneId,
         local: bool,

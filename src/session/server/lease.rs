@@ -65,10 +65,11 @@ impl SessionServer {
                 },
             )];
         }
+        let status = self.program_status_for_new_layout_panes(&layout);
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
         self.mark_dirty();
-        vec![(
+        let mut messages = vec![(
             Target::Broadcast,
             ServerMessage::LayoutCommitted {
                 rev: self.layout_rev,
@@ -76,7 +77,9 @@ impl SessionServer {
                 layout,
                 live,
             },
-        )]
+        )];
+        messages.extend(status);
+        messages
     }
 
     /// A request for the lease. Auto-grants when there is no controller (nobody to ask); otherwise

@@ -70,7 +70,17 @@ pub(crate) fn update_agent_status_edge(
     let current = pane.agent_status();
     let current = current.as_deref();
     if current != previous {
-        if status_is_active_run(previous) && status_is_quiescent(current) {
+        let generic = pane.detected_agent.is_none() && pane.agent_integration.is_none();
+        let ended = if generic {
+            previous.is_some_and(|s| {
+                !crate::session::protocol::ActivityState::from_status(s).is_terminal()
+            }) && current.is_some_and(|s| {
+                crate::session::protocol::ActivityState::from_status(s).is_terminal()
+            })
+        } else {
+            status_is_active_run(previous) && status_is_quiescent(current)
+        };
+        if ended {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());
@@ -315,10 +325,159 @@ pub(crate) fn pane_runtime_changed(
     Update::full()
 }
 
+pub(crate) fn program_status_changed(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    snapshot: tui_lipan::ProgramStatusSnapshot,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        apply_background_program_status(
+            &mut ctx.state,
+            epoch,
+            pane_id,
+            local,
+            generation,
+            snapshot,
+        );
+        return Update::none();
+    }
+    let attended = ctx.state.is_pane_attended(pane_id);
+    let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local).filter(|pane| {
+        pane.pty_generation == generation
+            && snapshot.revision > pane.terminal.program_status.revision
+    }) else {
+        return Update::none();
+    };
+    let alert = apply_program_status(pane, snapshot, attended);
+    if let Some(alert) = alert {
+        notify_program_status(ctx, pane_id, attended, alert);
+    }
+    Update::full()
+}
+
+fn apply_background_program_status(
+    state: &mut crate::state::State,
+    epoch: u64,
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    snapshot: tui_lipan::ProgramStatusSnapshot,
+) {
+    if !local
+        && let Some(attachment) = state.background.get_mut(&epoch)
+        && let Some(pane) = attachment.find_pane_mut(pane_id)
+        && pane.pty_generation == generation
+        && snapshot.revision > pane.terminal.program_status.revision
+    {
+        pane.terminal.program_status = snapshot;
+    }
+}
+
+fn notify_program_status(
+    ctx: &mut Context<AppRoot>,
+    pane_id: PaneId,
+    attended: bool,
+    alert: ProgramStatusAlert,
+) {
+    let (title, state, message) = alert;
+    if ctx.state.do_not_disturb {
+        return;
+    }
+    crate::pane::pty_events::maybe_notify_program_status(
+        &ctx.state.config,
+        ctx.state.is_controller(),
+        attended,
+        pane_id,
+        &title,
+        state,
+        message.as_deref(),
+    );
+    if ctx.state.is_controller() && !attended {
+        let cue = if state == tui_lipan::ProgramStatusState::Blocked {
+            crate::platform::sound::Cue::Blocked
+        } else {
+            crate::platform::sound::Cue::Error
+        };
+        crate::ops::sound::cue(ctx, cue);
+    }
+}
+
+fn actionable_program_status(state: tui_lipan::ProgramStatusState) -> bool {
+    matches!(
+        state,
+        tui_lipan::ProgramStatusState::Blocked | tui_lipan::ProgramStatusState::Error
+    )
+}
+
+type ProgramStatusAlert = (
+    String,
+    tui_lipan::ProgramStatusState,
+    Option<std::sync::Arc<str>>,
+);
+
+fn apply_program_status(
+    pane: &mut crate::state::Pane,
+    snapshot: tui_lipan::ProgramStatusSnapshot,
+    attended: bool,
+) -> Option<ProgramStatusAlert> {
+    let previous = crate::session::protocol::program_status_summary(&pane.terminal.program_status)
+        .map(|r| (r.id.clone(), r.state));
+    let current = crate::session::protocol::program_status_summary(&snapshot);
+    let mut alert = None;
+    if let Some(record) = current.filter(|r| actionable_program_status(r.state)) {
+        if previous.as_ref() != Some(&(record.id.clone(), record.state)) {
+            pane.terminal.program_status_attention = !attended;
+            if pane
+                .terminal
+                .program_status_notification_at
+                .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+            {
+                alert = Some((pane.display_title(None), record.state, record.msg.clone()));
+                pane.terminal.program_status_notification_at = Some(std::time::Instant::now());
+            }
+        }
+    } else {
+        pane.terminal.program_status_attention = false;
+    }
+    pane.terminal.program_status = snapshot;
+    alert
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    #[test]
+    fn program_status_attention_is_per_client_and_does_not_touch_agents() {
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=blocked:app=codex\x07");
+        let blocked = screen.program_status_snapshot();
+        let mut a = crate::state::Pane::new(1, 100, FloatRect::default());
+        let mut b = crate::state::Pane::new(1, 100, FloatRect::default());
+        a.terminal.finished_unseen = true;
+        assert!(apply_program_status(&mut a, blocked.clone(), false).is_some());
+        assert!(apply_program_status(&mut b, blocked.clone(), false).is_some());
+        assert!(a.terminal.program_status_attention && b.terminal.program_status_attention);
+        a.terminal.program_status_attention = false;
+        assert!(apply_program_status(&mut a, blocked.clone(), false).is_none());
+        assert!(!a.terminal.program_status_attention);
+        assert!(b.terminal.program_status_attention);
+        assert!(a.terminal.finished_unseen);
+        assert!(a.agent_runtimes().is_empty());
+        screen.process_bytes(b"\x1b]7501;state=working\x07");
+        apply_program_status(&mut b, screen.program_status_snapshot(), false);
+        assert!(!b.terminal.program_status_attention);
+        // Attach initializes the snapshot directly, so subsequent identical reports do not alert.
+        let mut attached = crate::state::Pane::new(1, 100, FloatRect::default());
+        attached.terminal.program_status = blocked.clone();
+        assert!(apply_program_status(&mut attached, blocked, false).is_none());
+        assert!(!attached.terminal.program_status_attention);
+    }
 
     #[test]
     fn a_first_detected_agent_alerts_when_it_is_blocked() {

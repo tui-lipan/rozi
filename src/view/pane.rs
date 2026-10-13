@@ -409,7 +409,7 @@ pub(crate) fn pane_alert(
     [
         (
             PaneAlert::Blocked,
-            !focused && pane.awaits_input(),
+            (!focused && pane.awaits_input()) || pane.terminal.program_status_attention,
             colors.blocked,
         ),
         (

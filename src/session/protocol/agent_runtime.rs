@@ -149,6 +149,7 @@ pub struct PaneOccupant {
     pub state: ActivityState,
     pub reason: Option<String>,
     pub source: AgentAuthority,
+    pub program_status: Option<tui_lipan::ProgramStatusRecord>,
 }
 
 impl PaneOccupant {
@@ -167,6 +168,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         && let Some(status) = &runtime.status
     {
         occupants.push(PaneOccupant {
+            program_status: None,
             slot: None,
             agent: None,
             label: String::new(),
@@ -181,6 +183,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             .iter()
             .filter(|row| !row.is_agent())
             .map(|row| PaneOccupant {
+                program_status: None,
                 slot: Some(row.key()),
                 agent: None,
                 label: row.title.clone(),
@@ -214,6 +217,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     .map(|detected| detected.agent.as_ref().clone())
                     .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
                 let mut occupant = PaneOccupant {
+                    program_status: None,
                     slot: Some(row.key()),
                     label: identity.label.clone(),
                     agent: Some(identity),
@@ -239,6 +243,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
     }
     if let Some(report) = &runtime.integration {
         return vec![PaneOccupant {
+            program_status: None,
             slot: None,
             label: report.identity.label.clone(),
             agent: Some(report.identity.clone()),
@@ -255,6 +260,7 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
     };
     let identity = detected.agent.as_ref().clone();
     vec![PaneOccupant {
+        program_status: None,
         slot: None,
         label: identity.label.clone(),
         agent: Some(identity),
@@ -510,6 +516,39 @@ pub fn effective_semantic_agent_state(
     integration
         .map(|integration| integration.state)
         .or_else(|| effective_agent_state(reported, detected.map(detected_agent_status)))
+}
+
+/// Activity display aggregation only. No agent identity or parent state is inferred.
+pub fn program_status_summary(
+    snapshot: &tui_lipan::ProgramStatusSnapshot,
+) -> Option<&tui_lipan::ProgramStatusRecord> {
+    snapshot.records.iter().min_by_key(|record| {
+        (
+            match record.state {
+                tui_lipan::ProgramStatusState::Blocked => ActivityState::Blocked,
+                tui_lipan::ProgramStatusState::Error => ActivityState::Error,
+                tui_lipan::ProgramStatusState::Working => ActivityState::Working,
+                tui_lipan::ProgramStatusState::Done => ActivityState::Done,
+                tui_lipan::ProgramStatusState::Idle => ActivityState::Idle,
+            }
+            .rank(),
+            std::cmp::Reverse(record.updated),
+            record.id.as_ref(),
+        )
+    })
+}
+
+/// Disarm invisible formatting when protocol text is shown outside the terminal grid.
+pub fn program_status_display(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c,
+                    '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' |
+                    '\u{2060}'..='\u{206f}' | '\u{feff}'
+                )
+        })
+        .collect()
 }
 
 #[cfg(test)]

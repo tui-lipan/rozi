@@ -220,7 +220,38 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 .as_ref()
                                 .map_or("", |identity| identity.label.as_str());
                             let (title, status, activity, age, run, finished_unseen, slot) =
-                                if let Some((index, published_row)) = slot {
+                                if let Some(record) = &occupant.program_status {
+                                    let message = occupant.reason.as_deref().unwrap_or("");
+                                    let detail = record.progress.map_or_else(
+                                        || message.to_string(),
+                                        |p| {
+                                            if message.is_empty() {
+                                                format!("{p}%")
+                                            } else {
+                                                format!("{message} · {p}%")
+                                            }
+                                        },
+                                    );
+                                    (
+                                        if occupant.label.is_empty() {
+                                            pane.display_title(pane.terminal.title())
+                                        } else {
+                                            crate::session::protocol::program_status_display(
+                                                &occupant.label,
+                                            )
+                                        },
+                                        record.state.as_str().to_string(),
+                                        (!detail.is_empty()).then(|| {
+                                            crate::session::protocol::program_status_display(
+                                                &detail,
+                                            )
+                                        }),
+                                        None,
+                                        None,
+                                        pane.terminal.program_status_attention,
+                                        None,
+                                    )
+                                } else if let Some((index, published_row)) = slot {
                                     let key = published_row.key();
                                     let ui = pane.terminal.published_row_ui.get(&key);
                                     // Behind a detected agent its rows are that agent's sessions, so
@@ -943,6 +974,86 @@ mod tests {
             status_rank(Some("compacting"), false),
             status_rank(Some("working"), false)
         );
+    }
+
+    #[test]
+    fn osc_activation_order_uses_its_own_attention_latch() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut osc = pane_in(1, None, false, Some("/repo"));
+        osc.terminal.detected_agent = None;
+        osc.agent_refs.clear();
+        osc.terminal.finished_unseen = true;
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=idle\x07");
+        osc.terminal.program_status = screen.program_status_snapshot();
+        let mut done = pane_in(2, Some("done"), false, Some("/repo"));
+        done.terminal.detected_agent = None;
+        done.agent_refs.clear();
+        state.current_mut().workspaces[0].panes = vec![osc, done];
+        let rendered = agent_groups(&state)
+            .into_iter()
+            .flat_map(|group| group.rows)
+            .map(|row| RowTarget::Pane(row.pane_id))
+            .collect::<Vec<_>>();
+        let projected = state
+            .activity_item_projections()
+            .into_iter()
+            .map(|item| item.target)
+            .filter(|target| *target != RowTarget::Inert)
+            .collect::<Vec<_>>();
+        assert_eq!(rendered, vec![RowTarget::Pane(2), RowTarget::Pane(1)]);
+        assert_eq!(projected, rendered);
+    }
+
+    #[test]
+    fn osc_activity_coexists_with_agent_and_generic_status() {
+        let mut pane = pane(1, Some("working"), false);
+        let before = pane.agent_runtimes();
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code\x07\x1b]7501;state=error:id=build:msg=ZmFpbGVk:progress=20\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        let occupants = pane.occupants();
+        assert_eq!(occupants.len(), 2);
+        assert!(!occupants[1].is_agent());
+        assert_eq!(
+            occupants[1].state,
+            crate::session::protocol::ActivityState::Error
+        );
+        assert_eq!(pane.agent_runtimes(), before);
+        pane.terminal.detected_agent = None;
+        assert_eq!(pane.occupants().len(), 2);
+        assert!(pane.agent_runtimes().is_empty());
+        let activity = crate::session::protocol::PublishedRow {
+            kind: crate::session::protocol::PublisherKind::Activity,
+            publisher: "client-a:jobs".into(),
+            ..row("build", "error", false)
+        };
+        let agent = crate::session::protocol::PublishedRow {
+            publisher: "client-b:agents".into(),
+            ..row("conversation", "working", true)
+        };
+        pane.terminal.published_rows = vec![activity, agent];
+        let published = pane.terminal.published_rows.clone();
+        let agents = pane.agent_runtimes();
+        assert_eq!(pane.occupants().len(), 3);
+        assert_eq!(
+            pane.occupants()
+                .last()
+                .unwrap()
+                .program_status
+                .as_ref()
+                .unwrap()
+                .id
+                .as_ref(),
+            "build"
+        );
+        screen.process_bytes(b"\x1b]7501;state=clear\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        assert_eq!(pane.occupants().len(), 2);
+        assert_eq!(pane.terminal.published_rows, published);
+        assert_eq!(pane.agent_runtimes(), agents);
     }
 
     #[test]

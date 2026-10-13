@@ -800,6 +800,15 @@ pub enum Msg {
         path: Option<String>,
         error: Option<String>,
     },
+    SessionProgramStatusChanged {
+        epoch: u64,
+        pane_id: crate::state::PaneId,
+        local: bool,
+        generation: u64,
+        /// Initial attach baseline, applied without attention or historical notifications.
+        initial: bool,
+        snapshot: tui_lipan::ProgramStatusSnapshot,
+    },
     SessionPaneRuntimeChanged {
         epoch: u64,
         pane_id: PaneId,

@@ -366,6 +366,11 @@ The sidebar's visibility, tabs, panels, selection, and cached data belong to eac
 width, because the controller sets the size of the pane area everyone sees. A follower's sidebar
 does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).
 
+OSC 7501 program reports appear in Activity as one summary per pane. The summary
+shows the most urgent record, its message and any reported percentage. These
+activities can coexist with agent and published activity rows. See
+[program status](./terminal.md#program-status) for states, lifecycle and notifications.
+
 Generic activities reporting `error`, through `rozi status` or an activity
 publisher, show a failure glyph and stop their run duration. Failures do not raise
 successful-completion notifications, sounds, or finish pulses. Arbitrary custom

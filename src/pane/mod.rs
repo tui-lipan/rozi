@@ -283,6 +283,9 @@ pub struct TerminalPane {
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
+    pub program_status: tui_lipan::ProgramStatusSnapshot,
+    pub program_status_attention: bool,
+    pub program_status_notification_at: Option<std::time::Instant>,
     pub last_palette: Option<TerminalColorPalette>,
     /// Which out-of-band graphics media this pane's screen will read. It follows the attachment
     /// feeding the pane rather than the pane itself: pixels named as a path only exist for a
@@ -455,6 +458,9 @@ impl TerminalPane {
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
+            program_status: Default::default(),
+            program_status_attention: false,
+            program_status_notification_at: None,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
             image_budget_bytes: PANE_IMAGE_BUDGET_BYTES,
@@ -522,6 +528,9 @@ impl TerminalPane {
             self.last_run = None;
             self.published_rows.clear();
             self.published_row_ui.clear();
+            self.program_status = Default::default();
+            self.program_status_attention = false;
+            self.program_status_notification_at = None;
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -532,6 +541,9 @@ impl TerminalPane {
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
+        self.program_status = Default::default();
+        self.program_status_attention = false;
+        self.program_status_notification_at = None;
         self.reset_screen();
     }
 

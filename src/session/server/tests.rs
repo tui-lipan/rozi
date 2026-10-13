@@ -37,6 +37,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         exited: None,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
+        program_status_sync: Default::default(),
         agent: AgentScratch::default(),
         program_on_path: None,
         borrowed_program_name: None,
@@ -3840,6 +3841,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,
@@ -3992,6 +3994,7 @@ fn duplicate_spawn_is_rejected() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,
@@ -4049,6 +4052,7 @@ fn exited_pane_can_be_respawned() {
             exited: Some(0),
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,
@@ -4088,6 +4092,127 @@ fn exited_pane_can_be_respawned() {
 }
 
 #[test]
+fn attach_streams_full_osc_stores_under_frame_and_backlog_limits() {
+    use base64::Engine as _;
+    const PANES: u32 = 16;
+    let mut server = SessionServer::new_named("osc-capacity");
+    let mut aggregate_bytes = 0;
+    for pane_id in 1..=PANES {
+        let mut pane = test_pane(1);
+        pane.screen_mut().set_program_status_enabled(true);
+        // The last pane also exercises JSON expansion beyond the per-tick byte budget.
+        let text = if pane_id == PANES { "\"" } else { "m" };
+        let msg = base64::engine::general_purpose::STANDARD.encode(text.repeat(2048));
+        let title = base64::engine::general_purpose::STANDARD.encode(text.repeat(192));
+        for record in 0..256 {
+            let id = format!(
+                "{record:032}/{}/{}/{}",
+                "b".repeat(32),
+                "c".repeat(32),
+                "d".repeat(29)
+            );
+            assert_eq!(id.len(), 128);
+            let wire = format!(
+                "\x1b]7501;state=working:id={id}:app={}:title={title}:msg={msg}\x07",
+                "a".repeat(32)
+            );
+            assert!(wire.len() <= 4096);
+            pane.screen_mut().process_bytes(wire.as_bytes());
+        }
+        let snapshot = pane.screen().program_status_snapshot();
+        assert_eq!(snapshot.records.len(), 256);
+        aggregate_bytes += serde_json::to_vec(&snapshot).unwrap().len();
+        server.panes.insert(pane_id, pane);
+    }
+    assert!(aggregate_bytes > protocol::MAX_FRAME_SIZE);
+    let (client, mut stream) = add_client(&mut server);
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    server.process_client_frame(
+        client,
+        Frame::Control(ClientMessage::Attach {
+            capabilities: None,
+            session: "osc-capacity".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "fresh client".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        }),
+    );
+    let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+    assert!(
+        matches!(&controls[0], ServerMessage::Attached { panes, .. } if panes.len() == PANES as usize)
+    );
+    assert!(
+        !controls
+            .iter()
+            .any(|message| matches!(message, ServerMessage::ProgramStatusChanged { .. }))
+    );
+    // A stalled client must pause the stream instead of filling an aggregate control outbox.
+    for _ in 0..32 {
+        server.pump_attach_seeds();
+    }
+    assert!(server.client_mut(client).unwrap().outbox_bytes <= SEED_SEND_WINDOW);
+    assert!(
+        !server
+            .client_mut(client)
+            .unwrap()
+            .seed
+            .as_ref()
+            .unwrap()
+            .pending_program_status
+            .is_empty()
+    );
+    let reader = std::thread::spawn(move || {
+        let mut received = std::collections::BTreeSet::new();
+        while received.len() < PANES as usize {
+            let message: ServerMessage = protocol::read_frame(&mut stream).unwrap();
+            if let ServerMessage::ProgramStatusChanged {
+                pane_id,
+                local: false,
+                generation: 1,
+                initial: true,
+                snapshot,
+            } = message
+            {
+                assert_eq!(snapshot.records.len(), 256);
+                assert_eq!(snapshot.revision, 256);
+                assert!(snapshot.records.iter().all(|record| record.id.len() == 128
+                    && record.msg.as_ref().unwrap().len() == 2048
+                    && record.title.as_ref().unwrap().len() == 192));
+                assert!(received.insert(pane_id));
+            }
+        }
+        // Stay connected until the server finishes terminal replay too.
+        let mut rest = Vec::new();
+        std::io::Read::read_to_end(&mut stream, &mut rest).ok();
+        received
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        server.pump_attach_seeds();
+        server.flush_clients();
+        let connection = server
+            .client_mut(client)
+            .expect("attach must remain connected");
+        assert!(connection.outbox_bytes <= SEED_SEND_WINDOW);
+        if connection.seed.is_none() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "attach failed to drain"
+        );
+        std::thread::yield_now();
+    }
+    server.remove_client(client);
+    assert_eq!(reader.join().unwrap().len(), PANES as usize);
+}
+
+#[test]
 fn attach_reports_layout_and_panes() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = ServerPane {
@@ -4112,6 +4237,7 @@ fn attach_reports_layout_and_panes() {
         exited: None,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
+        program_status_sync: Default::default(),
         agent: AgentScratch::default(),
         program_on_path: None,
         borrowed_program_name: None,
@@ -4308,6 +4434,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,
@@ -4390,6 +4517,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 exited,
                 log: None,
                 runtime: protocol::PaneRuntimeState::default(),
+                program_status_sync: Default::default(),
                 agent: AgentScratch::default(),
                 program_on_path: None,
                 borrowed_program_name: None,
@@ -5561,6 +5689,74 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
 }
 
 #[test]
+fn program_status_is_authoritative_without_clients_and_coalesces_progress() {
+    let mut server = SessionServer::new_named("osc-test");
+    let mut pane = test_pane(1);
+    pane.screen_mut().set_program_status_enabled(true);
+    server.panes.insert(1, pane);
+    let output = |text: &str| {
+        ServerEvent::Pty(
+            None,
+            1,
+            1,
+            TerminalPtyEvent::Output(text.as_bytes().to_vec().into()),
+        )
+    };
+    server.handle_event(output("\x1b]7501;state=working:app=codex:progress=0\x07"));
+    assert!(server.clients.is_empty());
+    let initial = server.panes[&1].screen().program_status_snapshot().clone();
+    assert_eq!(initial.records.len(), 1);
+    assert!(server.panes[&1].runtime.detected_agent.is_none());
+    let signature = protocol::agent_signature(&server.panes[&1].runtime);
+    server
+        .panes
+        .get_mut(&1)
+        .unwrap()
+        .program_status_sync
+        .last_sent = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
+    for i in 1..=100 {
+        server.handle_event(output(&format!(
+            "\x1b]7501;state=working:app=codex:progress={i}\x07"
+        )));
+    }
+    assert_eq!(server.panes[&1].program_status_sync.sent, initial);
+    assert!(server.panes[&1].program_status_sync.pending);
+    assert_eq!(
+        server.panes[&1].screen().program_status_snapshot().records[0].progress,
+        Some(100)
+    );
+    server.sync_program_status(None, 1, 1, true);
+    let latest = server.panes[&1].program_status_sync.sent.clone();
+    assert_eq!(latest.records[0].progress, Some(100));
+    server.handle_event(output("\x1b]7501;state=working:app=codex:progress=100\x07"));
+    assert_eq!(server.panes[&1].program_status_sync.sent, latest);
+    assert!(!server.panes[&1].program_status_sync.pending);
+    server.handle_event(output("\x1b]7501;state=error:app=codex\x07"));
+    assert_eq!(
+        server.panes[&1].program_status_sync.sent.records[0].state,
+        tui_lipan::ProgramStatusState::Error
+    );
+    assert_eq!(
+        protocol::agent_signature(&server.panes[&1].runtime),
+        signature
+    );
+    server.handle_event(ServerEvent::Pty(None, 1, 1, TerminalPtyEvent::Exited(1)));
+    assert_eq!(
+        server.panes[&1].screen().program_status_snapshot().records[0].state,
+        tui_lipan::ProgramStatusState::Error
+    );
+    // A fresh pane generation starts with a new, empty authoritative terminal.
+    server.panes.insert(1, test_pane(2));
+    assert!(
+        server.panes[&1]
+            .screen()
+            .program_status_snapshot()
+            .records
+            .is_empty()
+    );
+}
+
+#[test]
 fn generic_error_stops_server_run_clock_without_changing_agent_state() {
     let mut server = SessionServer::new_named("activity-error");
     let (client, _stream) = attach_client(&mut server);
@@ -5579,5 +5775,40 @@ fn generic_error_stops_server_run_clock_without_changing_agent_state() {
     assert_eq!(
         protocol::AgentState::from_status("error"),
         protocol::AgentState::Working
+    );
+}
+
+#[test]
+fn program_status_snapshot_follows_the_layout_that_introduces_a_pane() {
+    let mut server = SessionServer::new_named("osc-layout");
+    let (controller, _stream) = attach_client(&mut server);
+    let mut pane = test_pane(1);
+    pane.screen_mut().set_program_status_enabled(true);
+    pane.screen_mut()
+        .process_bytes(b"\x1b]7501;state=working:progress=42\x07");
+    server.panes.insert(1, pane);
+    let layout = shared_layout_for_panes(&[(1, 1)]);
+    let responses = server.handle_commit_layout(controller, 0, layout.clone(), false);
+    assert!(matches!(
+        responses[0],
+        (Target::Broadcast, ServerMessage::LayoutCommitted { .. })
+    ));
+    let (
+        Target::Broadcast,
+        ServerMessage::ProgramStatusChanged {
+            pane_id: 1,
+            generation: 1,
+            snapshot,
+            ..
+        },
+    ) = &responses[1]
+    else {
+        panic!("missing post-layout snapshot: {responses:?}");
+    };
+    assert_eq!(snapshot.records[0].progress, Some(42));
+    assert!(
+        server
+            .program_status_for_new_layout_panes(&layout)
+            .is_empty()
     );
 }

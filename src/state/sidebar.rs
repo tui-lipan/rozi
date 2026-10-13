@@ -462,7 +462,9 @@ impl State {
                     let path = place.group_path().map(str::to_string);
                     let label_path = place.label_path().map(str::to_string);
                     let host = place.host;
-                    let finished =
+                    let finished = if occupant.program_status.is_some() {
+                        pane.terminal.program_status_attention
+                    } else {
                         occupant
                             .slot
                             .as_ref()
@@ -471,7 +473,8 @@ impl State {
                                     .published_row_ui
                                     .get(key)
                                     .is_some_and(|ui| ui.finished_unseen)
-                            });
+                            })
+                    };
                     let state = occupant.state;
                     let target = match occupant.slot {
                         Some(row) => RowTarget::PublishedRow {

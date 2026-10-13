@@ -264,3 +264,42 @@ output, so store and share them with care.
 - Retained Kitty images are restored when you attach to a live session.
 
 See [Profiles](profiles.md) and [Shared sessions](shared-sessions.md) for those workflows.
+
+## Program status
+
+Applications can report activities through [OSC 7501 revision 0.4](https://www.superlogical.com/rex/docs/build/program-status).
+For example, `printf '\033]7501;state=working:app=cargo:progress=40\033\\'`
+reports a build at 40 percent. `state=blocked` requests user action; `state=done`
+marks completion; `state=error` marks failure. Messages and titles use base64 UTF-8.
+
+The Activity sidebar shows one summary per pane, alongside `rozi status` and
+published rows. Blocked outranks error, working, done and idle. Among records in
+the same state, the latest report wins. The selected record supplies its title,
+message and percentage. Selection focuses the pane. Hierarchical records are
+supported by the protocol, but the sidebar does not expand a task tree.
+
+Reports remain available while every window is detached. Newly attached windows
+receive current state without historical notifications. Prompts and process exit
+clear working and blocked records; done, error and idle remain in the same logical
+terminal. Full terminal reset clears everything. A newly created or resurrected
+terminal starts empty. No heartbeat or timeout is required.
+
+New blocked and error transitions use the existing notification settings,
+Do Not Disturb, attendance and sound policies. Error uses the completed-result
+notification switch and the error sound. Working, progress and done reports do not
+notify. Attention belongs to each window and clears through interaction with the
+pane; merely regaining window focus does not acknowledge it. Rapid message and
+progress changes are coalesced, and repeated reports do not repeat notifications.
+Suppressed alerts do not consume the notification cooldown, so attending a blocked
+pane does not silence a later failure after you switch away.
+
+OSC reports are generic activities. Even `app=codex` or `app=claude-code` does not
+create an agent or change native hooks, agent automation, keep-awake or conversation
+restoration. An agent and an OSC activity can appear beside one another, including
+when their labels look alike. Application identifiers do not establish a shared
+identity.
+
+OSC blocked and error attention also colors pane borders and content tints.
+Blocked uses the warning role and error uses the error role by default.
+The `blocked` and `error` keys in `[pane.alert]` independently override or disable
+these colors. Both retain the existing urgent animation and input acknowledgement.

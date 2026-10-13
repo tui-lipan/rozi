@@ -2400,6 +2400,7 @@ mod tests {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,

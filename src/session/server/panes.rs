@@ -137,6 +137,7 @@ impl SessionServer {
         // Pre-17 clients report no cell size; the PTY's own default stands in until one resizes.
         let cell = request.cell.unwrap_or_default();
         let mut screen = crate::pane::new_terminal_screen(rows, cols, self.settings.scrollback);
+        screen.set_program_status_enabled(true);
         screen.set_cell_size(cell);
         // The server exports this screen to seed later attachments, so it retains the same bounded
         // Kitty image state as a client parser even though it never renders those pixels itself.
@@ -239,6 +240,7 @@ impl SessionServer {
                         shell: request.shell,
                         env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
+                        program_status_sync: Default::default(),
                         agent: AgentScratch::default(),
                         program_on_path: None,
                         borrowed_program_name: None,
@@ -288,6 +290,7 @@ impl SessionServer {
                             shell: request.shell,
                             env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
+                            program_status_sync: Default::default(),
                             agent: AgentScratch::default(),
                             program_on_path: None,
                             borrowed_program_name: None,
@@ -454,12 +457,14 @@ impl SessionServer {
                                 }),
                             );
                         }
+                        self.sync_program_status(owner, id, generation, false);
                         if !semantic_events.is_empty() {
                             self.sync_pane_runtime(owner, id, generation);
                         }
                         None
                     }
                     TerminalPtyEvent::Exited(code) => {
+                        pane.screen_without_change().program_status_process_exited();
                         pane.pty = None;
                         pane.pty_resize_pending = false;
                         // A launch intent is what divides this from the client's
@@ -475,6 +480,10 @@ impl SessionServer {
                         let keep_open = !pane.command_completed
                             && (pane.agent_resume.is_some()
                                 || (pane.keep_open && pane.launch.is_some()));
+                        if !keep_open {
+                            pane.exited = Some(code);
+                        }
+                        self.sync_program_status(owner, id, generation, true);
                         if keep_open {
                             let outbound = if id == crate::state::POPUP_PANE_ID {
                                 self.retain_completed_popup(owner, id, generation, code)
@@ -487,7 +496,6 @@ impl SessionServer {
                             }
                             return outbound;
                         }
-                        pane.exited = Some(code);
                         if owner.is_none() {
                             self.mark_dirty();
                         }

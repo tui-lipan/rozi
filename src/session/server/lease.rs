@@ -65,10 +65,11 @@ impl SessionServer {
                 },
             )];
         }
+        let status = self.program_status_for_new_layout_panes(&layout);
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
         self.mark_dirty();
-        vec![(
+        let mut messages = vec![(
             Target::Broadcast,
             ServerMessage::LayoutCommitted {
                 rev: self.layout_rev,
@@ -76,7 +77,9 @@ impl SessionServer {
                 layout,
                 live,
             },
-        )]
+        )];
+        messages.extend(status);
+        messages
     }
 
     /// A request for the lease. Auto-grants when there is no controller (nobody to ask); otherwise
@@ -785,8 +788,20 @@ impl SessionServer {
                 generation: pane.generation,
             })
             .collect();
+        let mut statuses: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, pane)| pane.screen().program_status_snapshot().revision > 0)
+            .map(|(&pane_id, pane)| PaneSeedKey {
+                pane_id,
+                generation: pane.generation,
+            })
+            .collect();
+        statuses.sort_unstable();
         if let Some(client) = self.client_mut(id) {
-            client.seed = Some(AttachSeedState::new(panes));
+            let mut seed = AttachSeedState::new(panes);
+            seed.pending_program_status = statuses.into();
+            client.seed = Some(seed);
         }
         self.note_attach_seed_high_water();
     }
@@ -874,31 +889,53 @@ impl SessionServer {
         let mut activity = false;
         loop {
             let progressed = match self.next_attach_seed_work(id) {
-                AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
-                AttachSeedWork::FinishReplay => {
-                    self.finish_pane_replay(id);
-                    true
-                }
-                AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
-                AttachSeedWork::BeginPane(key) => {
-                    if !*export_available {
-                        return activity;
-                    }
-                    self.begin_pane_replay(id, key);
-                    *export_available = false;
-                    true
-                }
-                AttachSeedWork::CatchUp => self.pump_seed_catch_up(id, remaining),
                 AttachSeedWork::Complete => {
                     self.complete_attach_baseline(id);
                     return true;
                 }
                 AttachSeedWork::Done => return activity,
+                work => self.pump_attach_seed_work(id, work, remaining, export_available),
             };
             if !progressed {
                 return activity;
             }
             activity = true;
+        }
+    }
+
+    /// Advance one nonterminal replay task within the shared export and byte budgets.
+    fn pump_attach_seed_work(
+        &mut self,
+        id: ClientId,
+        work: AttachSeedWork,
+        remaining: &mut usize,
+        export_available: &mut bool,
+    ) -> bool {
+        match work {
+            AttachSeedWork::ProgramStatus(key) => {
+                if !*export_available {
+                    return false;
+                }
+                let progressed = self.pump_program_status_baseline(id, key, remaining);
+                *export_available = false;
+                progressed
+            }
+            AttachSeedWork::ReplayReset => self.pump_replay_reset(id, remaining),
+            AttachSeedWork::FinishReplay => {
+                self.finish_pane_replay(id);
+                true
+            }
+            AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
+            AttachSeedWork::BeginPane(key) => {
+                if !*export_available {
+                    return false;
+                }
+                self.begin_pane_replay(id, key);
+                *export_available = false;
+                true
+            }
+            AttachSeedWork::CatchUp => self.pump_seed_catch_up(id, remaining),
+            AttachSeedWork::Complete | AttachSeedWork::Done => false,
         }
     }
 
@@ -913,6 +950,9 @@ impl SessionServer {
         };
         if seed.baseline_queued {
             return AttachSeedWork::Done;
+        }
+        if let Some(key) = seed.pending_program_status.front() {
+            return AttachSeedWork::ProgramStatus(*key);
         }
         if let Some(replay) = seed.replay.as_ref() {
             if replay.reset_frame.is_some() {

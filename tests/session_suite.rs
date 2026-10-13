@@ -4,6 +4,9 @@ mod common;
 mod headless_control_e2e;
 #[path = "suites/session/pane_status_e2e.rs"]
 mod pane_status_e2e;
+#[cfg(unix)]
+#[path = "suites/session/program_status_e2e.rs"]
+mod program_status_e2e;
 #[path = "suites/session/published_rows_e2e.rs"]
 mod published_rows_e2e;
 #[cfg(unix)]

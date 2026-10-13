@@ -32,6 +32,7 @@ mod lease;
 mod pane_log;
 mod panes;
 mod power;
+mod program_status;
 mod recordings;
 mod resurrect;
 pub use pane_log::PaneLog;
@@ -366,6 +367,7 @@ pub struct ServerPane {
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
+    program_status_sync: program_status::ProgramStatusSync,
     /// Agent-detection scratch: never persisted, never on the wire, and reset as a unit whenever
     /// the program behind this pane is replaced.
     pub agent: AgentScratch,
@@ -610,6 +612,7 @@ enum SeedKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachSeedWork {
+    ProgramStatus(PaneSeedKey),
     ReplayReset,
     FinishReplay,
     ReplayChunk,
@@ -725,6 +728,9 @@ struct AttachSeedState {
     kind: SeedKind,
     manifest: HashMap<PaneSeedKey, PaneSeedState>,
     pending: VecDeque<PaneSeedKey>,
+    /// OSC baselines use the replay send window rather than one aggregate attach frame.
+    pending_program_status: VecDeque<PaneSeedKey>,
+    program_status_frame: Option<Arc<[u8]>>,
     replay: Option<PaneSeedReplay>,
     catch_up: VecDeque<CatchUpFrame>,
     catch_up_bytes: usize,
@@ -747,6 +753,8 @@ impl AttachSeedState {
             kind: SeedKind::Attach,
             manifest,
             pending: panes.into(),
+            pending_program_status: VecDeque::new(),
+            program_status_frame: None,
             replay: None,
             catch_up: VecDeque::new(),
             catch_up_bytes: 0,
@@ -1813,9 +1821,10 @@ impl ServerPane {
     }
 
     /// Replace a parser which has not consumed PTY output.
-    pub(super) fn replace_empty_screen(&mut self, screen: TerminalScreen) {
+    pub(super) fn replace_empty_screen(&mut self, mut screen: TerminalScreen) {
         debug_assert!(!self.output_seen);
         self.content_generation = self.content_generation.saturating_add(1);
+        screen.set_program_status_enabled(true);
         self.terminal = screen;
     }
 

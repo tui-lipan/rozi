@@ -1047,6 +1047,7 @@ impl SessionServer {
     }
 
     pub(super) fn poll_pane_runtime(&mut self) {
+        self.flush_program_status();
         if self.last_runtime_poll.elapsed() < RUNTIME_POLL_INTERVAL {
             return;
         }
@@ -2553,6 +2554,7 @@ mod tests {
             exited: None,
             log: None,
             runtime: PaneRuntimeState::default(),
+            program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             borrowed_program_name: None,

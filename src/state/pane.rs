@@ -264,7 +264,26 @@ impl Pane {
     /// The activity projection: everything happening in this pane, agents and activities alike,
     /// for the Activity sidebar.
     pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {
-        crate::session::protocol::pane_occupants(&self.semantic_runtime())
+        let mut occupants = crate::session::protocol::pane_occupants(&self.semantic_runtime());
+        if let Some(record) =
+            crate::session::protocol::program_status_summary(&self.terminal.program_status)
+        {
+            occupants.push(crate::session::protocol::PaneOccupant {
+                slot: None,
+                agent: None,
+                label: record
+                    .title
+                    .as_deref()
+                    .or_else(|| self.terminal.program_status.app_for(record))
+                    .unwrap_or("")
+                    .to_string(),
+                state: crate::session::protocol::ActivityState::from_status(record.state.as_str()),
+                reason: record.msg.as_deref().map(str::to_string),
+                source: crate::session::protocol::AgentAuthority::Reported,
+                program_status: Some(record.clone()),
+            });
+        }
+        occupants
     }
 
     /// Where one of this pane's occupants is working.

@@ -202,6 +202,11 @@ the source scene for reconnects and captures. Scaled images, unmeasured host cel
 same-depth overlaps, modal dimming, and overlapping later widgets use composition.
 Other host protocols keep their existing rendering path.
 
+Resizing the host window adds no fixed pause to image rendering. Static pictures remain visible
+after resizing even when their program sends no new output. `TUI_LIPAN_IMAGE_RESIZE_PAUSE_MS`
+defaults to `0`; set it to `180` to restore the previous delay on a host where repeated image
+uploads during a window drag are expensive.
+
 Completed independent image replacements can supersede older queued frames for the same source.
 Text and control boundaries preserve ordering. Queries, image deletion, cursor changes, partial
 patches, chunked uploads and consuming media keep their original dependency order. Captures and

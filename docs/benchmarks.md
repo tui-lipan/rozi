@@ -420,7 +420,11 @@ daemon. Processes that outlive the session are ended by run marker or by the ide
 for that tree. `tools/graphics-browser.sh BROWSER FPS PRESENTER URL` opens terminal-browser as a
 producer: it sets `render.fps`, `render.presenter` (`auto` or `full`) and disables telemetry,
 update checks and GPU rendering in the run's isolated configuration. `URL` may be `generated`,
-which serves `tools/graphics-page.html` over loopback:
+which serves `tools/graphics-page.html` over loopback. With
+`GRAPHICS_BROWSER_PROFILE=SOURCE:DESTINATION`, it first copies the user's profile (install
+suffixes of `terminal-browser-*`) into the run's isolated directories, so a page such as Raffles
+starts with its cookie notice already dismissed; it refuses unless the XDG directories are
+isolated. Delete the copy after the run, because it holds that profile's cookies. For example:
 
 ```bash
 python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
@@ -428,6 +432,10 @@ python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
   --wiretap /tmp/graphics-wiretap.so --fps 60 --seconds 20 \
   --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
 ```
+
+`--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its
+PTY. It measures receipt at the host terminal rather than the client's write, and it also sees
+multiplexers that write without libc, so use it for comparisons with other multiplexers.
 
 `--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
 `visibility` reports frames presented while hidden and producer writes in that time. On reveal it

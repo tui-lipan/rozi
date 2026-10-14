@@ -349,6 +349,13 @@ def benchmark(args):
                 lambda: next((path for path in (root / "run/rozi").glob("control-*.sock")
                               if path != socket), None), "follower control socket")
             follower_pid = int(follower_socket.stem.removeprefix("control-"))
+            if args.follower == "writable":
+                # A writable attach to a session in use asks whether to follow or take control;
+                # its default, Follow, keeps the first client in control.
+                follower_class = json.loads((follower_root / "window.json").read_text())["class"]
+                time.sleep(.5)
+                run(["hyprctl", "eval", "hl.dispatch(hl.dsp.send_shortcut({mods=\"\",key=\"Return\","
+                     f"window={json.dumps('class:' + follower_class)}}}))"])
 
         def metrics():
             return json.loads(run([binary, "--socket", str(socket), "metrics", "--format", "json"], env))["data"]

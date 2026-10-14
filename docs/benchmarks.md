@@ -414,8 +414,9 @@ first client. A stopped client reads and acknowledges nothing. The report adds t
 presentation, its latency and the delay to a current frame after resume, plus the leader's latency
 while the follower is stopped and the follower's while the leader is. Matching re-anchors after a
 presentation gap longer than one fixture cycle, assuming the consumer resumed with current state,
-and counts those re-anchors. A follower that composes the pane (for example a writable client
-showing it unfocused) uploads direct pixels and reports no latency samples.
+and counts those re-anchors. A writable follower answers the attach prompt with its default,
+Follow, so the first client keeps control. A follower that composes the pane, such as one still
+showing a prompt over it, uploads direct pixels and reports no latency samples.
 
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and

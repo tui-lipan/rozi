@@ -111,6 +111,62 @@ def wire_summary(path, started, ended, frame_period_us=None):
             if stalls else None}
 
 
+def media_marks(path):
+    """Yield (monotonic ns, fixture index) for each upload whose pixel 0 carries a fixture mark."""
+    data = path.read_bytes()
+    if len(data) % 16:
+        raise ValueError("truncated media record")
+    for offset in range(0, len(data), 16):
+        timestamp, pixel, read = struct.unpack_from("=Q4sI", data, offset)
+        if read and pixel[2:] == bytes((0xA5, 0x5A)):
+            yield timestamp, pixel[0] | pixel[1] << 8
+
+
+def producer_writes(path):
+    data = path.read_bytes()
+    if len(data) % 10:
+        raise ValueError("truncated producer write record")
+    return [struct.unpack_from("=QH", data, offset) for offset in range(0, len(data), 10)]
+
+
+def frame_ends(path):
+    wire = bytearray()
+    ends, times = [], []
+    for timestamp, data in wire_records(path):
+        wire.extend(data)
+        ends.append(len(wire))
+        times.append(timestamp)
+    return [times[bisect.bisect_left(ends, match.end())]
+            for match in re.finditer(rb"\x1b\[\?2026l", wire)]
+
+
+def latency_summary(writes, marks, ends, started, ended, pool):
+    """Producer write completion to the host write that ends the frame carrying that upload.
+
+    Frames may be skipped but never reordered, so each presented fixture matches the next
+    producer write of that fixture. A skip of a whole pool cycle is indistinguishable and would
+    overstate latency by one cycle, so the longest skip is reported alongside the result.
+    """
+    latencies, unmatched, longest_skip, cursor = [], 0, 0, 0
+    for marked, index in marks:
+        position = bisect.bisect_left(ends, marked)
+        end = ends[position] if position < len(ends) else None
+        match = next((position for position in range(cursor, len(writes))
+                      if writes[position][1] == index), None)
+        if end is None or match is None or writes[match][0] > end:
+            unmatched += 1
+            continue
+        longest_skip = max(longest_skip, match - cursor)
+        cursor = match + 1
+        if started <= end <= ended:
+            latencies.append((end - writes[match][0]) / 1000)
+    return {"boundary": "producer write return -> host write ending the frame with that upload",
+            "samples": len(latencies), "unmatched_uploads": unmatched,
+            "longest_skipped_producer_frames": longest_skip,
+            "ambiguous": longest_skip >= pool - 1,
+            "latency_us": percentiles(latencies)}
+
+
 def isolated_environment(root):
     # The owned window is always local; an inherited SSH session would select remote transport.
     env = {key: value for key, value in os.environ.items()
@@ -146,6 +202,7 @@ def benchmark(args):
                      "--duration", str(args.seconds + 2), "--mode", args.mode,
                      "--width", str(args.image_width), "--height", str(args.image_height),
                      "--ready-file", str(root / "producer-ready.json"),
+                     "--write-log", str(root / "producer-writes.bin"),
                      "--files", str(root / "frames"), "--report", str(root / "producer.json")]
     wrapper.write_text("import os,pathlib,time\n"
                        f"root=pathlib.Path({str(root)!r})\n"
@@ -172,7 +229,8 @@ def benchmark(args):
         if args.wiretap:
             launch += ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}",
                        "--env", f"GRAPHICS_WIRETAP_EXE={binary}",
-                       "--env", f"GRAPHICS_WIRETAP_PATH={root / 'host-wire.bin'}"]
+                       "--env", f"GRAPHICS_WIRETAP_PATH={root / 'host-wire.bin'}",
+                       "--env", f"GRAPHICS_WIRETAP_MEDIA_PATH={root / 'host-media.bin'}"]
         run([*launch, "--", binary, "sessions", "new", session, "--cwd", str(root)])
         launched = True
         socket = wait_for(lambda: next((root / "run/rozi").glob("control-*.sock"), None),
@@ -211,6 +269,13 @@ def benchmark(args):
         if args.wiretap:
             report["host_wire"] = wire_summary(root / "host-wire.bin", started_ns, ended_ns,
                                                1e6 / args.fps)
+            media = root / "host-media.bin"
+            marks = list(media_marks(media)) if media.exists() else []
+            report["latency"] = latency_summary(
+                producer_writes(root / "producer-writes.bin"), marks,
+                frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
+                report["producer"]["fixture_files"])
+            report["latency"]["marked_uploads"] = len(marks)
         (root / "result.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"result": str(root / "result.json"), "seconds": elapsed}))
     finally:

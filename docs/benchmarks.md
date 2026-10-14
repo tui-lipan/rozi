@@ -379,8 +379,18 @@ framework's separately opened TTY descriptor. Its binary records contain a nativ
 monotonic timestamp, u32 length and that many output bytes. This captures host traffic rather
 than inferring it from uploads requested by the producer. The interposer adds measurement
 overhead; use it consistently on both sides of a comparison and run an uninstrumented control.
-GPU scanout and producer-to-presentation latency need separate measurements; host write counters
-do not establish those boundaries.
+GPU scanout is not measured; host write counters do not establish that boundary.
+
+Producer latency is measured without changing what the pipeline transports. Pixel 0 of each
+immutable fixture carries its pool index, and the producer logs each write's completion time and
+index. Before a host write is forwarded, the interposer reads pixel 0 of each file that a complete
+`t=t` upload names. Each write gets one timestamp, shared by its wire and media records. `latency`
+in `result.json` matches each presented upload to the next producer write of that fixture. Frames
+are skipped but never reordered, so the match is exact unless a whole pool cycle is skipped, which
+the report flags as `ambiguous`. The boundary is producer write return to the host write that ends
+the frame carrying the upload. Composed or remote presentation sends pixels directly, carries no
+mark and reports no samples. A `t=t` APC split across `writev` buffers is not recognised; compare
+`marked_uploads` with the upload count.
 
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and

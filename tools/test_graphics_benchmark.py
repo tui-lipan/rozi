@@ -39,6 +39,26 @@ class WireMeasurements(unittest.TestCase):
         self.assertEqual(report["intervals_over_two_frames"], 2)
         self.assertEqual(report["first_long_interval_offset_s"], 2010 / 1e9)
 
+    def test_presented_uploads_match_the_next_producer_write_of_their_fixture(self):
+        writes = [(100, 0), (200, 1), (300, 2), (400, 0), (500, 1)]
+        # Fixture 1's first write is skipped; the second upload of 0 precedes its write.
+        marks = [(150, 0), (350, 2), (390, 0), (520, 1)]
+        report = benchmark.latency_summary(writes, marks, [160, 360, 395, 530], 0, 1000, 3)
+        self.assertEqual(report["samples"], 3)
+        self.assertEqual(report["unmatched_uploads"], 1)
+        self.assertEqual(report["longest_skipped_producer_frames"], 1)
+        self.assertFalse(report["ambiguous"])
+        self.assertEqual(report["latency_us"]["max"], 0.06)
+
+    def test_an_upload_and_the_frame_end_written_with_it_share_a_timestamp(self):
+        report = benchmark.latency_summary([(100, 0)], [(150, 0)], [150, 200], 0, 1000, 2)
+        self.assertEqual(report["latency_us"]["max"], 0.05)
+
+    def test_skipping_a_whole_pool_cycle_is_flagged_ambiguous(self):
+        writes = [(100 * step, step % 2) for step in range(1, 6)]
+        report = benchmark.latency_summary(writes, [(510, 0)], [520], 0, 1000, 2)
+        self.assertTrue(report["ambiguous"])
+
     def test_truncated_record_cannot_silently_undercount_output(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "wire.bin"

@@ -4,6 +4,9 @@
 No files are rewritten or deleted while queued frames might still refer to them.
 The bounded fixture pool is retained after exit; its path appears in the report.
 Producer writes are measured separately from successful host presentations.
+Pixel 0 of every fixture carries its pool index, so a measurement interposer can recognise which
+fixture a host upload holds. `--write-log` records each write's monotonic completion time and
+index as native-endian u64 nanoseconds plus u16, written after the run.
 """
 import argparse
 import base64
@@ -52,6 +55,15 @@ def pixels(width, height, mode, frame):
     return result
 
 
+FIXTURE_MARK = bytes((0xA5, 0x5A))
+
+
+def stamp(data, index):
+    """Mark pixel 0 with `index` so its host upload can be matched to this fixture."""
+    data[0:4] = bytes((index & 0xFF, index >> 8 & 0xFF)) + FIXTURE_MARK
+    return data
+
+
 def fixture_pool(root, width, height, mode, budget):
     frame_bytes = width * height * 4
     count = min(1 if mode == "unchanged" else 64, budget // frame_bytes)
@@ -60,7 +72,7 @@ def fixture_pool(root, width, height, mode, budget):
     packets = []
     for frame in range(count):
         path = root / f"{width}x{height}-{mode}-{frame}.rgba"
-        path.write_bytes(pixels(width, height, mode, frame))
+        path.write_bytes(stamp(bytearray(pixels(width, height, mode, frame)), frame))
         packets.append(replacement(path, width, height))
     return packets, count * frame_bytes
 
@@ -87,6 +99,7 @@ def run(options):
     interval = 1 / options.fps
     frames = wire_bytes = 0
     blocked_seconds = 0.0
+    writes = []
     mixed_deadline = started + 1
     input_echoes = resize_events = 0
     write_all(1, b"\x1b[?25l\x1b[2J\x1b[H")
@@ -113,6 +126,7 @@ def run(options):
             before = time.monotonic()
             write_all(1, packet)
             after = time.monotonic()
+            writes.append((time.monotonic_ns(), frames % len(packets)))
             blocked_seconds += after - before
             wire_bytes += len(packet)
             frames += 1
@@ -127,6 +141,8 @@ def run(options):
                       kitty_bytes=wire_bytes, fixture_bytes=fixture_bytes,
                       fixture_files=len(packets), files=str(root), width=width, height=height,
                       input_echoes=input_echoes, resize_events=resize_events)
+        if options.write_log:
+            options.write_log.write_bytes(b"".join(struct.pack("=QH", *entry) for entry in writes))
         if options.report:
             options.report.write_text(json.dumps(report, indent=2) + "\n")
         else:
@@ -145,6 +161,7 @@ def main():
     parser.add_argument("--files", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--ready-file", type=Path)
+    parser.add_argument("--write-log", type=Path)
     options = parser.parse_args()
     if options.duration <= 0 or options.max_file_mib <= 0 or any(
             value is not None and value <= 0 for value in [options.width, options.height]):

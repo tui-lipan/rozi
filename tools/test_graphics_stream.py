@@ -24,6 +24,13 @@ class GraphicsStreamTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 stream.fixture_pool(Path(directory), 16, 8, "whole", 511)
 
+    def test_fixtures_carry_their_pool_index_in_pixel_zero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stream.fixture_pool(Path(directory), 16, 8, "moving", 2048)
+            for frame in range(4):
+                data = (Path(directory) / f"16x8-moving-{frame}.rgba").read_bytes()
+                self.assertEqual(data[:4], bytes((frame, 0)) + stream.FIXTURE_MARK)
+
     def test_unchanged_mode_reuses_one_file(self):
         with tempfile.TemporaryDirectory() as directory:
             packets, used = stream.fixture_pool(Path(directory), 16, 8, "unchanged", 4096)

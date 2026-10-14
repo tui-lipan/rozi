@@ -2359,3 +2359,86 @@ fn remote_directory_requests_reject_old_sessions_but_survive_configuration_chang
         assert_eq!(paths, ["/current"], "valid requests remain deduplicated");
     });
 }
+
+fn monitored_agent(
+    session: &str,
+    pane: crate::state::PaneId,
+    state: &str,
+) -> crate::session::protocol::AgentSummary {
+    crate::session::protocol::AgentSummary {
+        session: session.into(),
+        pane,
+        generation: 0,
+        row: None,
+        agent: "codex".into(),
+        label: "Codex".into(),
+        state: state.into(),
+        changed_at: 0,
+        launch: 0,
+    }
+}
+
+/// The Agents tab lists every agent this client knows about with the one that wants an answer on
+/// top, wherever it runs, and Enter lands on an agent in the session on screen.
+#[test]
+fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Agents]);
+        let pane = {
+            let state = backend.state_mut();
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state: crate::session::protocol::DetectedAgentState::Idle,
+            });
+            let id = pane.id;
+            pane.agent_refs = vec![crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: crate::session::protocol::SessionInstanceId::generate(),
+                    pane_id: id,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            }];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+            state.remote.agents.insert(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                vec![monitored_agent("backend", 4, "blocked")],
+            );
+            id
+        };
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let line = |needle: &str| {
+            lines
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", lines.join("\n")))
+        };
+        assert!(
+            line("workbox/backend") < line("Claude Code"),
+            "the blocked remote agent leads"
+        );
+
+        let targets: Vec<_> = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Agents)
+            .into_iter()
+            .map(|item| item.target)
+            .collect();
+        assert_eq!(targets.len(), 2);
+        assert!(matches!(
+            &targets[1],
+            crate::state::RowTarget::Agent(crate::state::AgentLocation::Here { pane: here, .. })
+                if *here == pane
+        ));
+
+        backend.state_mut().current_mut().focused_pane = None;
+        send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::NONE);
+        send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);
+        assert_eq!(backend.state().current().focused_pane, Some(pane));
+    });
+}

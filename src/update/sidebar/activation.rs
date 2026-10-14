@@ -94,6 +94,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::PublishedRow { pane_id, row } => activate_published_row(ctx, pane_id, row),
+        RowTarget::Agent(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
         RowTarget::Session(entry) => {
             crate::update::sidebar::sessions::activate_session(ctx, *entry)
         }

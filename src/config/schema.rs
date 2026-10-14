@@ -1792,6 +1792,8 @@ impl SidebarTreeConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarTab {
     Activity,
+    /// Every agent this client knows about, in every session and on every connected host.
+    Agents,
     Panes,
     Sessions,
     /// The focused pane's repository's Git worktrees.
@@ -1835,6 +1837,7 @@ impl SidebarTab {
     pub fn id(&self) -> SidebarTabId {
         match self {
             Self::Activity => SidebarTabId::new("activity"),
+            Self::Agents => SidebarTabId::new("agents"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
             Self::Worktrees => SidebarTabId::new("worktrees"),
@@ -1846,6 +1849,7 @@ impl SidebarTab {
     pub fn label(&self) -> &str {
         match self {
             Self::Activity => "Activity",
+            Self::Agents => "Agents",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
             Self::Worktrees => "Worktrees",
@@ -1951,7 +1955,12 @@ impl Default for SidebarDockLayout {
                 panels: vec![
                     SidebarDockPanel {
                         weight: 0.4,
-                        tabs: vec!["activity".into(), "panes".into(), "sessions".into()],
+                        tabs: vec![
+                            "activity".into(),
+                            "agents".into(),
+                            "panes".into(),
+                            "sessions".into(),
+                        ],
                     },
                     SidebarDockPanel {
                         weight: 0.6,
@@ -2128,6 +2137,7 @@ impl Default for SidebarConfig {
         // spends sidebar rows, not work.
         let tabs = vec![
             SidebarTab::Activity,
+            SidebarTab::Agents,
             SidebarTab::Panes,
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),

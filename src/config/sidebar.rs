@@ -8,7 +8,15 @@ use super::schema::{
     SidebarTreeRoot, SidebarTreeView,
 };
 
-const BUILTIN_TABS: &[&str] = &["activity", "panes", "sessions", "files", "git", "worktrees"];
+const BUILTIN_TABS: &[&str] = &[
+    "activity",
+    "agents",
+    "panes",
+    "sessions",
+    "files",
+    "git",
+    "worktrees",
+];
 
 /// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
 /// take no options, so a table naming one is a mistake worth warning about.
@@ -352,6 +360,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
         let tab = match spec {
             SidebarTabSpec::Name(name) => match name.trim().to_ascii_lowercase().as_str() {
                 "activity" => SidebarTab::Activity,
+                "agents" => SidebarTab::Agents,
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
                 "worktrees" => SidebarTab::Worktrees,
@@ -798,7 +807,7 @@ mod tests {
     fn launcher_entries_cluster_under_their_groups_with_ungrouped_ones_leading() {
         let (config, warnings) = parse(
             r#"
-            tabs = [{ name = "agents", label = "Agents", entries = [
+            tabs = [{ name = "launch", label = "Launch", entries = [
               { label = "Claude here", group = "claude", run = "claude" },
               { label = "Loose", run = "date" },
               { label = "Codex here", group = " codex ", run = "codex" },

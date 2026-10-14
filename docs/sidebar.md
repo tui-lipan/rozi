@@ -1,6 +1,6 @@
 # Sidebar
 
-The sidebar provides optional left and right docks beside your panes with tabs for agent activity,
+The sidebar provides optional left and right docks beside your panes with tabs for activity, agents,
 panes, sessions, files, Git changes, and worktrees. This page covers opening and navigating it, what each tab shows, and how to
 configure tabs or add your own.
 
@@ -105,10 +105,35 @@ run stays marked `done` until you visit its pane. Agent state comes from the ses
 attached client sees the same thing.
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
-use the [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`).
+use the [Agents](#agents) tab or the [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then
+`a`).
 
 rozi ships definitions for common coding-agent CLIs. To add or override one, see
 [Agent definitions](agents.md).
+
+## Agents
+
+Agents lists every coding agent rozi knows about: in the session on screen, in your other running
+local sessions, and on every [connected host](remote.md#connected-host-monitoring). It is the
+sidebar form of the [Agents view](sessions.md#go-to-an-agent) and lists the same agents in the same
+order — blocked first, then working, then done, then idle — so the agent that needs an answer is
+at the top wherever it runs.
+
+```text
+▲ Codex           workbox/backend
+  Blocked
+⠋ Claude Code 4m00s           dev
+  Working · rozi (fix-login)
+```
+
+Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
+The second line gives its status and, for the session on screen, what it is working on or the
+project and branch it works in. Agents in the session on screen also show how long their current
+status has held. A marker in the left margin shows the agent in the focused pane.
+
+Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
+or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
+activities such as `rozi status` reports or published activity rows.
 
 ## Panes
 
@@ -245,9 +270,9 @@ lists the global and individual sidebar toggles and **Focus sidebar**.
 ```toml
 [sidebar]
 startup = false
-tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
+tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees"]
 layout = { left = { width = 32, panel_count = 2, panels = [
-  { weight = 0.4, tabs = ["activity", "panes", "sessions"] },
+  { weight = 0.4, tabs = ["activity", "agents", "panes", "sessions"] },
   { weight = 0.6, tabs = ["files", "git", "worktrees"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false
@@ -304,7 +329,7 @@ Groups appear in the order they first occur, and entries without a group come fi
 header. For example, a tab that starts an agent in a project, grouped by agent:
 
 ```toml
-{ name = "agents", label = "Agents", entries = [
+{ name = "launch", label = "Launch", entries = [
   { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
   { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
 ] }

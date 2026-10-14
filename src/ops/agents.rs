@@ -139,47 +139,87 @@ pub(crate) fn select(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Upd
 /// gesture — immediately when the session was merely parked in the background, and after the
 /// attach lands otherwise.
 pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
-    match location {
+    match location.clone() {
         AgentLocation::Here { pane, row } => {
             // Landed on before the overlay closes, so the focus the close returns to the "current"
             // pane is the pane the user just asked for rather than the one they came from.
             land_on_pane(ctx, pane, row.as_ref());
             close_agent_picker(ctx)
         }
-        AgentLocation::OtherSession {
-            target,
-            session,
-            pane,
-            row,
-        } => {
-            let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
-                // Session rows and agent summaries come from the same poll, so a summary without
-                // its session row can no longer be activated.
-                return Update::none();
-            };
-            ctx.state.pending_agent_jump = Some(PendingAgentJump {
-                target,
-                session,
-                pane,
-                row,
-            });
-            let update = crate::ops::session::activate_discovered_session(ctx, entry);
+        AgentLocation::OtherSession { .. } => jump_to_other_session(ctx, location, |ctx, _| {
             // Installing a session dismisses the pickers that led into it, so an overlay still
             // standing here means the activation refused (an incompatible server, say) and left
-            // its reason on screen. Nothing is coming, so the destination is dropped rather than
-            // left to fire on some unrelated later attach to the same name.
-            if ctx.state.agent_picker.is_some() {
-                ctx.state.pending_agent_jump = None;
-                return update;
+            // its reason on screen.
+            ctx.state.agent_picker.is_some()
+        }),
+    }
+}
+
+/// Go to the agent a sidebar row describes. The same destination as [`activate`], from a surface
+/// that stays on screen: there is no overlay to close, and none whose survival could say the
+/// attach was refused.
+pub(crate) fn activate_from_sidebar(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
+    match location {
+        AgentLocation::Here { pane, row } => {
+            if land_on_pane(ctx, pane, row.as_ref()) {
+                Update::full()
+            } else {
+                Update::none()
             }
-            // A session already parked in the background switches in synchronously, so its panes
-            // are on screen by the time this returns and there is no attach to wait for.
-            if land_on_pending_agent(ctx) {
-                return Update::full();
-            }
-            update
+        }
+        AgentLocation::OtherSession { .. } => {
+            jump_to_other_session(ctx, location, |_, entry| {
+                // The one refusal `activate_discovered_session` makes before attaching: discovery
+                // already found the server unable to speak to this client.
+                matches!(
+                    entry.status,
+                    crate::session::discovery::DiscoveredSessionStatus::Unknown
+                )
+            })
         }
     }
+}
+
+/// Open the session an agent lives in, then land on its pane once that session is on screen.
+///
+/// `refused` reports, after activation, whether the session is not coming. A refused destination is
+/// dropped rather than left to fire on some unrelated later attach to the same name.
+fn jump_to_other_session(
+    ctx: &mut Context<AppRoot>,
+    location: AgentLocation,
+    refused: impl FnOnce(&Context<AppRoot>, &crate::session::discovery::DiscoveredSession) -> bool,
+) -> Update {
+    let AgentLocation::OtherSession {
+        target,
+        session,
+        pane,
+        row,
+    } = location
+    else {
+        return Update::none();
+    };
+    let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
+        // Session rows and agent summaries come from the same poll, so a summary without its
+        // session row can no longer be activated.
+        return Update::none();
+    };
+    ctx.state.pending_agent_jump = Some(PendingAgentJump {
+        target,
+        session,
+        pane,
+        row,
+    });
+    let update = crate::ops::session::activate_discovered_session(ctx, entry.clone());
+    if refused(ctx, &entry) {
+        ctx.state.pending_agent_jump = None;
+        return update;
+    }
+    // A session already parked in the background switches in synchronously, so its panes are on
+    // screen by the time this returns and there is no attach to wait for.
+    if land_on_pending_agent(ctx) {
+        return Update::full();
+    }
+    update
 }
 
 fn session_for_agent(

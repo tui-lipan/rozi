@@ -573,7 +573,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
+| `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
 | `startup` | bool | `false` | Open the remembered dock combination at client launch. When false, start hidden and restore with `b` or `B`. Memory is saved on exit or detach; toggles stay client-local. |
@@ -629,7 +629,7 @@ with no header.
 ```toml
 [sidebar]
 tabs = [
-  { name = "agents", label = "Agents", entries = [
+  { name = "launch", label = "Launch", entries = [
     { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
     { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
     { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },

@@ -43,6 +43,9 @@ pub enum RowTarget {
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// An offline host row in the Sessions tab: connect (probe) that host.
     HostConnect(crate::session::remote::RemoteTarget),
+    /// One agent in the Agents tab, wherever it is running: a focus change for the session on
+    /// screen, a switch or attach first for any other.
+    Agent(crate::state::AgentLocation),
     /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
     NewSession(Option<crate::session::remote::RemoteTarget>),
     /// A "New pane" action row. Spawns an interactive pane on that workspace.
@@ -189,6 +192,14 @@ impl State {
                 items
             }
             SidebarTab::Activity => self.activity_item_projections(),
+            // The same projection the view draws from, so a row index means one agent to both.
+            SidebarTab::Agents => crate::view::agents::global_agent_rows(self)
+                .into_iter()
+                .map(|row| SidebarItemProjection {
+                    target: RowTarget::Agent(row.location),
+                    close: None,
+                })
+                .collect(),
             SidebarTab::Worktrees => self
                 .worktree_tab_items()
                 .into_iter()
@@ -1219,7 +1230,14 @@ mod docking_tests {
                 .iter()
                 .map(|id| id.as_str())
                 .collect::<Vec<_>>(),
-            ["activity", "sessions", "files", "git", "worktrees"]
+            [
+                "activity",
+                "agents",
+                "sessions",
+                "files",
+                "git",
+                "worktrees"
+            ]
         );
         assert!(state.panels[1].tabs.is_empty());
         state.panels[0].active_tab = Some(SidebarTabId::new("git"));
@@ -1278,7 +1296,7 @@ mod docking_tests {
         let config = SidebarConfig::default();
         let mut state = SidebarState::new(&config);
         state.panels[0].active_tab = Some(SidebarTab::Panes.id());
-        assert!(state.transfer_tab(0, 2, 1, 0));
+        assert!(state.transfer_tab(0, 2, 2, 0));
         assert_eq!(state.panels[0].active_tab, Some(SidebarTab::Sessions.id()));
         assert_eq!(state.panels[2].active_tab, Some(SidebarTab::Panes.id()));
         let epoch = state.layout_epoch;

@@ -54,6 +54,14 @@ class WireMeasurements(unittest.TestCase):
         report = benchmark.latency_summary([(100, 0)], [(150, 0)], [150, 200], 0, 1000, 2)
         self.assertEqual(report["latency_us"]["max"], 0.05)
 
+    def test_a_presentation_gap_longer_than_a_cycle_reanchors_on_current_state(self):
+        # Two-fixture pool written every 10 ns; a consumer stalls between 15 and 1000.
+        writes = [(10 * step, step % 2) for step in range(1, 110)]
+        marks = [(12, 1), (1003, 0)]
+        report = benchmark.latency_summary(writes, marks, [12, 1003], 0, 2000, 2)
+        self.assertEqual(report["reanchored"], 1)
+        self.assertEqual(report["latency_us"]["max"], 0.003)
+
     def test_skipping_a_whole_pool_cycle_is_flagged_ambiguous(self):
         writes = [(100 * step, step % 2) for step in range(1, 6)]
         report = benchmark.latency_summary(writes, [(510, 0)], [520], 0, 1000, 2)

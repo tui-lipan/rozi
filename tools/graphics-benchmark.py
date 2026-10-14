@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -143,14 +144,25 @@ def frame_ends(path):
 def latency_summary(writes, marks, ends, started, ended, pool):
     """Producer write completion to the host write that ends the frame carrying that upload.
 
-    Frames may be skipped but never reordered, so each presented fixture matches the next
-    producer write of that fixture. A skip of a whole pool cycle is indistinguishable and would
-    overstate latency by one cycle, so the longest skip is reported alongside the result.
+    Frames may be skipped but never reordered, so during continuous presentation each presented
+    fixture matches the next producer write of that fixture. That stays exact while a skip is
+    shorter than the fixture pool; a longer skip is reported as `ambiguous`. A presentation gap
+    longer than one pool cycle (a stalled or hidden consumer) re-anchors on the newest write of
+    that fixture before presentation, assuming the consumer resumed with current state;
+    `reanchored` counts those assumptions.
     """
-    latencies, unmatched, longest_skip, cursor = [], 0, 0, 0
+    cycle = (writes[-1][0] - writes[0][0]) / max(1, len(writes) - 1) * pool if writes else 0
+    latencies, unmatched, longest_skip, reanchored, cursor, previous = [], 0, 0, 0, 0, None
     for marked, index in marks:
         position = bisect.bisect_left(ends, marked)
         end = ends[position] if position < len(ends) else None
+        if end is not None and previous is not None and marked - previous > cycle:
+            newest = next((position for position in range(len(writes) - 1, cursor - 1, -1)
+                           if writes[position][1] == index and writes[position][0] <= end), None)
+            if newest is not None:
+                reanchored += 1
+                cursor = newest
+        previous = marked
         match = next((position for position in range(cursor, len(writes))
                       if writes[position][1] == index), None)
         if end is None or match is None or writes[match][0] > end:
@@ -163,7 +175,7 @@ def latency_summary(writes, marks, ends, started, ended, pool):
     return {"boundary": "producer write return -> host write ending the frame with that upload",
             "samples": len(latencies), "unmatched_uploads": unmatched,
             "longest_skipped_producer_frames": longest_skip,
-            "ambiguous": longest_skip >= pool - 1,
+            "ambiguous": longest_skip >= pool - 1, "reanchored": reanchored,
             "latency_us": percentiles(latencies)}
 
 
@@ -212,6 +224,29 @@ def visibility_summary(visibility, writes, marks):
                       default=None)
         report["reveal_to_first_presentation_us"] = (mark - revealed) / 1000
         report["first_revealed_frame_age_us"] = None if written is None else (mark - written) / 1000
+    return report
+
+
+def follower_summary(root, events, pool, frames_per_second):
+    """Frames the follower presented, and how its first frames after a stall caught up."""
+    writes = producer_writes(root / "producer-writes.bin")
+    marks = list(media_marks(root / "follower-media.bin"))
+    ends = frame_ends(root / "follower-wire.bin")
+    times = {event["action"]: event["ns"] for event in events}
+    report = {"presented_uploads": len(marks),
+              "latency": latency_summary(writes, marks, ends, 0, 2**63, pool)}
+    resumed = times.get("resume")
+    if resumed:
+        report["presented_while_stalled"] = sum(
+            times.get("stall", resumed) <= mark < resumed for mark, _ in marks)
+        fresh = None
+        for mark, index in (item for item in marks if item[0] >= resumed):
+            written = max((write for write, fixture in writes
+                           if fixture == index and write <= mark), default=None)
+            if written is not None and mark - written <= 2e9 / frames_per_second:
+                fresh = mark
+                break
+        report["resume_to_current_frame_us"] = None if fresh is None else (fresh - resumed) / 1000
     return report
 
 
@@ -267,8 +302,11 @@ def benchmark(args):
         '[animations]\nenabled = false\n[confirm]\nkill_session = false\n'
         '[shell_integration]\nmode = "off"\n')
     lab = [sys.executable, helper, "--root", str(root)]
+    follower_root = root / "follower"
+    follower_lab = [sys.executable, helper, "--root", str(follower_root)]
     session = "graphics-benchmark"
-    launched = False
+    launched = follower_launched = False
+    follower_pid = client_pid = None
     try:
         launch = [*lab, "launch", "--width", str(args.width), "--height", str(args.height),
                   "--workspace", str(args.workspace), "--font-size", "8", "--cwd", str(root)]
@@ -287,6 +325,31 @@ def benchmark(args):
         wait_for(lambda: (root / "producer.pid").exists(), "producer")
         client_pid = int(socket.stem.removeprefix("control-"))
 
+        if args.follower:
+            # A second owned window attaches to the same session with its own frame rate.
+            (follower_root / "config" / "rozi").mkdir(mode=0o700, parents=True)
+            (follower_root / "config" / "rozi" / "config.toml").write_text(
+                f"frame_rate = {args.follower_fps}\n[animations]\nenabled = false\n")
+            follow = [*follower_lab, "launch", "--width", str(args.width), "--height",
+                      str(args.height), "--workspace", str(args.workspace), "--x", "1020",
+                      "--font-size", "8", "--cwd", str(root),
+                      "--env", f"XDG_RUNTIME_DIR={root / 'run'}"]
+            for key in sorted(os.environ):
+                if key.startswith("SSH_"):
+                    follow += ["--unset", key]
+            if args.wiretap:
+                follow += ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}",
+                           "--env", f"GRAPHICS_WIRETAP_EXE={binary}",
+                           "--env", f"GRAPHICS_WIRETAP_PATH={root / 'follower-wire.bin'}",
+                           "--env", f"GRAPHICS_WIRETAP_MEDIA_PATH={root / 'follower-media.bin'}"]
+            run([*follow, "--", binary, "sessions", "attach", session,
+                 *(["--read-only"] if args.follower == "read-only" else [])])
+            follower_launched = True
+            follower_socket = wait_for(
+                lambda: next((path for path in (root / "run/rozi").glob("control-*.sock")
+                              if path != socket), None), "follower control socket")
+            follower_pid = int(follower_socket.stem.removeprefix("control-"))
+
         def metrics():
             return json.loads(run([binary, "--socket", str(socket), "metrics", "--format", "json"], env))["data"]
 
@@ -296,20 +359,30 @@ def benchmark(args):
         time.sleep(1)
         start_metrics = metrics()
         pids = owned_processes(root, client_pid)
+        if follower_pid:
+            pids["follower"] = follower_pid
         initial = {name: process_sample(pid) for name, pid in pids.items()}
         started = time.monotonic()
         started_ns = time.monotonic_ns()
         probes, visibility = [], []
         schedule = [(args.seconds * (number + 1) / (args.input_probes + 1), "probe", number)
                     for number in range(args.input_probes)]
-        schedule += [(at, action, None) for at, action in [(args.hide_at, "hide"),
-                                                           (args.reveal_at, "reveal")] if at]
+        schedule += [(at, action, None) for at, action in [
+            (args.hide_at, "hide"), (args.reveal_at, "reveal"),
+            (args.stall_follower_at, "stall"), (args.resume_follower_at, "resume"),
+            (args.stall_leader_at, "stall-leader"), (args.resume_leader_at, "resume-leader")] if at]
         if schedule:
             pane = str(json.loads(run([binary, "--socket", str(socket), "list-panes",
                                        "--format", "json"], env))["data"][0]["id"])
             window_class = json.loads((root / "window.json").read_text())["class"]
         for at, action, number in sorted(schedule):
             time.sleep(max(0, started + at - time.monotonic()))
+            if action in ("stall", "resume", "stall-leader", "resume-leader"):
+                # A stopped client reads nothing and acknowledges nothing.
+                visibility.append({"action": action, "ns": time.monotonic_ns()})
+                os.kill(client_pid if action.endswith("leader") else follower_pid,
+                        signal.SIGSTOP if action.startswith("stall") else signal.SIGCONT)
+                continue
             if action != "probe":
                 # Another Rozi workspace hides the pane inside the owned window only.
                 visibility.append({"action": action, "ns": time.monotonic_ns()})
@@ -353,19 +426,46 @@ def benchmark(args):
                 frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
                 report["producer"]["fixture_files"])
             report["latency"]["marked_uploads"] = len(marks)
-            if visibility:
+            if any(event["action"] in ("hide", "reveal") for event in visibility):
                 report["visibility"] = visibility_summary(
                     visibility, producer_writes(root / "producer-writes.bin"), marks)
+            if args.follower:
+                report["follower"] = follower_summary(
+                    root, visibility, report["producer"]["fixture_files"], args.follower_fps)
+                writes = producer_writes(root / "producer-writes.bin")
+                stalled = {event["action"]: event["ns"] for event in visibility}
+                if "stall-leader" in stalled:
+                    follower_writes = producer_writes(root / "producer-writes.bin")
+                    report["follower_while_leader_stalled"] = latency_summary(
+                        follower_writes, list(media_marks(root / "follower-media.bin")),
+                        frame_ends(root / "follower-wire.bin"), stalled["stall-leader"],
+                        stalled.get("resume-leader", ended_ns),
+                        report["producer"]["fixture_files"])
+                    report["follower_while_leader_stalled"]["presented"] = sum(
+                        stalled["stall-leader"] <= mark < stalled.get("resume-leader", ended_ns)
+                        for mark, _ in media_marks(root / "follower-media.bin"))
+                if "stall" in stalled:
+                    report["leader_latency_while_follower_stalled"] = latency_summary(
+                        writes, marks, frame_ends(root / "host-wire.bin"), stalled["stall"],
+                        stalled.get("resume", ended_ns), report["producer"]["fixture_files"])
             if probes:
                 report["input_echo"] = echo_summary(
                     probes, report["producer"]["echoes"], root / "host-wire.bin")
         (root / "result.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"result": str(root / "result.json"), "seconds": elapsed}))
     finally:
+        for pid in [follower_pid, client_pid]:
+            try:
+                if pid:
+                    os.kill(pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
         subprocess.run([binary, "sessions", "kill", session], env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
         if launched:
             subprocess.run([*lab, "close"], timeout=20)
+        if follower_launched:
+            subprocess.run([*follower_lab, "close"], timeout=20)
 
 
 def main():
@@ -383,6 +483,17 @@ def main():
                         help="seconds into the sample to switch the Rozi UI to workspace 2")
     parser.add_argument("--reveal-at", type=float,
                         help="seconds into the sample to switch back to workspace 1")
+    parser.add_argument("--follower", choices=["read-only", "writable"],
+                        help="attach a second owned window to the same session")
+    parser.add_argument("--follower-fps", type=int, choices=[30, 60, 120, 144, 240], default=60)
+    parser.add_argument("--stall-follower-at", type=float,
+                        help="seconds into the sample to SIGSTOP the follower client")
+    parser.add_argument("--resume-follower-at", type=float,
+                        help="seconds into the sample to SIGCONT the follower client")
+    parser.add_argument("--stall-leader-at", type=float,
+                        help="seconds into the sample to SIGSTOP the leading client")
+    parser.add_argument("--resume-leader-at", type=float,
+                        help="seconds into the sample to SIGCONT the leading client")
     parser.add_argument("--input-via", choices=["control", "host"], default="host",
                         help="host keys go through Ghostty and the client's input path; control "
                              "keys enter through the session control socket")
@@ -397,6 +508,9 @@ def main():
         parser.error("--seconds must be positive")
     if args.reveal_at and not (args.hide_at and args.hide_at < args.reveal_at < args.seconds):
         parser.error("--reveal-at needs an earlier --hide-at, both within --seconds")
+    if (args.stall_follower_at or args.resume_follower_at or args.stall_leader_at
+            or args.resume_leader_at) and not args.follower:
+        parser.error("stalling a follower needs --follower")
     if args.input_via == "host" and args.input_probes > 26:
         parser.error("host input probes use distinct letters; at most 26")
     benchmark(args)

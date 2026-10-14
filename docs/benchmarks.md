@@ -407,6 +407,16 @@ real echoes do.
 reports the delay to the first presented frame and that frame's age since its producer write. The
 first frame shown is retained state; compare the following frames' latency to see convergence.
 
+`--follower read-only|writable` attaches a second owned window to the same session at
+`--follower-fps`, with its own wire capture. `--stall-follower-at`/`--resume-follower-at` stop and
+continue the follower client, and `--stall-leader-at`/`--resume-leader-at` do the same to the
+first client. A stopped client reads and acknowledges nothing. The report adds the follower's
+presentation, its latency and the delay to a current frame after resume, plus the leader's latency
+while the follower is stopped and the follower's while the leader is. Matching re-anchors after a
+presentation gap longer than one fixture cycle, assuming the consumer resumed with current state,
+and counts those re-anchors. A follower that composes the pane (for example a writable client
+showing it unfocused) uploads direct pixels and reports no latency samples.
+
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and
 placement changes. The server's snapshot counts its authoritative parser mutations. DevTools

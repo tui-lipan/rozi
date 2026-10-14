@@ -86,6 +86,14 @@ pub(crate) fn open(
     ack: std::sync::mpsc::Sender<std::result::Result<(SidebarTabId, String), ControlResponse>>,
 ) -> Update {
     let admitted = (|| {
+        if open.extension.as_ref().is_some_and(|provenance| {
+            !crate::config::provenance_is_active(&ctx.state.extension_generations, provenance)
+        }) {
+            return Err(refuse(
+                ControlErrorCode::ExtensionInactive,
+                "extension is not active",
+            ));
+        }
         let tab = admitted_tab(&ctx.state, &open.tab, open.extension.as_ref())?;
         let binding = match open.worker {
             Some(worker) => Some(
@@ -126,6 +134,7 @@ pub(crate) fn open(
         id.clone(),
         SidebarProducer {
             key,
+            extension: open.extension.map(|provenance| provenance.id),
             stream_id: open.stream_id,
             sender,
             rows,
@@ -214,6 +223,23 @@ pub(crate) fn reconcile(state: &mut State) {
     state.sidebar_streams.tabs.retain(|tab, producers| {
         producers.retain(|_, producer| !producer.wedged.get());
         tabs.contains(tab) && !producers.is_empty()
+    });
+}
+
+/// Drop the producers of extensions whose generation retired: disabled, removed, or changed in a
+/// way that restarts their processes.
+pub(crate) fn unload_extensions(
+    state: &mut State,
+    stale_extensions: &std::collections::HashSet<String>,
+) {
+    state.sidebar_streams.tabs.retain(|_, producers| {
+        producers.retain(|_, producer| {
+            producer
+                .extension
+                .as_ref()
+                .is_none_or(|extension| !stale_extensions.contains(extension))
+        });
+        !producers.is_empty()
     });
 }
 

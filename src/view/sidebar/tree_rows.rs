@@ -107,6 +107,23 @@ fn tree_row(
     if let Some(description) = content.description {
         row = row.badge_text(description, muted.dim());
     }
+    // A keyed action waiting for its second press says so on the row it will act on. The ✕'s own
+    // arming is drawn by the ✕.
+    if let crate::state::RowTarget::StreamRow(reference) = &line.row.target
+        && let Some(crate::state::SidebarClose::StreamAction { row: armed, action }) =
+            &ctx.state.sidebar.pending_row_close
+        && armed == reference
+        && line.row.close.as_ref() != ctx.state.sidebar.pending_row_close.as_ref()
+        && let Some(label) = ctx.state.stream_row(reference).and_then(|(producer, _)| {
+            producer
+                .actions
+                .iter()
+                .find(|candidate| &candidate.id == action)
+                .map(|candidate| candidate.label.clone())
+        })
+    {
+        row = row.armed(format!("Again to {label}"));
+    }
     match (content.disabled, content.detail) {
         (Some(reason), _) => row = row.detail(reason, muted.dim()),
         (None, Some(detail)) => {

@@ -2814,3 +2814,50 @@ fn a_json_tab_row_runs_on_click_with_its_id() {
         );
     });
 }
+
+/// A producer's confirming action arms on its key, says so on the row, and fires on the second
+/// press; its `close` action is the row's ✕, confirmed the same way.
+#[test]
+fn stream_actions_confirm_on_the_row_before_they_fire() {
+    on_test_thread(|| {
+        let id = SidebarTabId::new("deploys");
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Stream {
+            name: id.clone(),
+            label: "Deploys".into(),
+        }]);
+        let (events, admitted) = open_stream(&mut backend, 1, "deploys", None);
+        let (_, producer) = admitted.expect("admitted");
+        backend
+            .dispatch(crate::Msg::SidebarStreamSnapshot {
+                stream_id: 1,
+                tab: id.clone(),
+                producer,
+                snapshot: stream_snapshot(
+                    r#"{"rows":[{"id":"api","label":"api"}],
+                        "actions":[{"id":"rollback","key":"r","label":"roll back","confirm":true},
+                                   {"id":"remove","key":"d","label":"remove","close":true}]}"#,
+                ),
+            })
+            .expect("snapshot");
+        backend.render();
+        while events.try_recv().is_ok() {}
+
+        send_sidebar_key(&mut backend, KeyCode::Char('r'), KeyMods::NONE);
+        assert!(events.try_recv().is_err(), "the first press only arms");
+        let text = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        assert!(text.contains("Again to roll back"), "{text}");
+        send_sidebar_key(&mut backend, KeyCode::Char('r'), KeyMods::NONE);
+        assert_eq!(
+            events.try_recv().as_deref(),
+            Ok("{\"action\":\"rollback\",\"row\":\"api\"}\n")
+        );
+
+        send_sidebar_key(&mut backend, KeyCode::Char('x'), KeyMods::NONE);
+        assert!(events.try_recv().is_err(), "the ✕ arms first");
+        send_sidebar_key(&mut backend, KeyCode::Char('x'), KeyMods::NONE);
+        assert_eq!(
+            events.try_recv().as_deref(),
+            Ok("{\"action\":\"remove\",\"row\":\"api\"}\n")
+        );
+    });
+}

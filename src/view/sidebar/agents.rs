@@ -578,7 +578,7 @@ pub(super) fn duration_digest(state: &State) -> Option<String> {
 /// so the width actually available to it — the configured sidebar width less the row chrome and
 /// whatever the duration column took — beats a fixed guess that overflows a narrow sidebar and
 /// wastes a wide one.
-fn activity_budget(width: u16) -> usize {
+pub(super) fn activity_budget(width: u16) -> usize {
     // Gutter, glyph, their gaps, the divider, and the scrollbar column.
     let chrome = 5;
     (usize::from(width)).saturating_sub(chrome).max(8)

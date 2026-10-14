@@ -123,6 +123,8 @@ pub(crate) struct Row {
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
     armed_prompt: Option<String>,
+    /// Armed by something other than its ✕: a keyed action waiting for its second press.
+    armed: bool,
     tree: Option<RowTree>,
 }
 
@@ -141,8 +143,17 @@ impl Row {
             meta: None,
             detail: Vec::new(),
             armed_prompt: None,
+            armed: false,
             tree: None,
         }
+    }
+
+    /// Show the row armed, asking `prompt` of its detail line, for a confirmation that is not its
+    /// ✕'s.
+    pub(super) fn armed(mut self, prompt: impl Into<String>) -> Self {
+        self.armed = true;
+        self.armed_prompt = Some(prompt.into());
+        self
     }
 
     /// Indent the row under its parent in a hierarchical tab.
@@ -246,7 +257,7 @@ impl Row {
         // the title strikes through, because that is the thing about to go, and the detail line
         // gives up whatever it was saying to ask for the second gesture. The ✕ itself stays a plain ✕
         // — it is the target, and a target that changes shape under the pointer is one you can miss.
-        if close.is_some_and(|close| close.armed) {
+        if self.armed || close.is_some_and(|close| close.armed) {
             self.title_style = self.title_style.strikethrough();
             self.detail = vec![(
                 self.armed_prompt

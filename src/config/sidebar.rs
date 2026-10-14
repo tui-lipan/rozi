@@ -199,6 +199,22 @@ pub(super) fn apply_sidebar_config(
         sidebar.startup = startup;
     }
     sidebar.layout.validate(warnings);
+    // A tab nobody placed yet - a built-in added by a newer rozi, a new extension tab - joins the
+    // dock you use: the left one, unless only the right one holds tabs. Otherwise a new tab would
+    // open a dock someone who keeps everything on the right never asked for.
+    let holds_tabs = |side| {
+        sidebar
+            .layout
+            .dock(side)
+            .panels
+            .iter()
+            .any(|panel| !panel.tabs.is_empty())
+    };
+    let home = if !holds_tabs(SidebarPosition::Left) && holds_tabs(SidebarPosition::Right) {
+        SidebarPosition::Right
+    } else {
+        SidebarPosition::Left
+    };
     for tab in &sidebar.tabs {
         let id = tab.id();
         if sidebar.layout.location(id.as_str()).is_none() {
@@ -214,9 +230,7 @@ pub(super) fn apply_sidebar_config(
                     location.panel - 1,
                 );
             } else {
-                sidebar
-                    .layout
-                    .place(id.as_str(), SidebarPosition::Left, panel);
+                sidebar.layout.place(id.as_str(), home, panel);
             }
         }
     }
@@ -593,6 +607,31 @@ mod tests {
                 "{expected}: {warnings:?}"
             );
         }
+    }
+
+    /// A layout that keeps every tab on the right gets new tabs on the right too, rather than a left
+    /// dock it never had.
+    #[test]
+    fn unplaced_tabs_join_the_dock_in_use() {
+        let (config, _) = parse(
+            r#"layout = { right = { panel_count = 2, panels = [
+              { weight = 0.5, tabs = ["activity", "panes", "sessions"] },
+              { weight = 0.5, tabs = ["files", "git", "worktrees"] },
+            ] }, left = { panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] } }"#,
+        );
+        assert_eq!(
+            config.layout.location("agents"),
+            Some((SidebarPosition::Right, 0))
+        );
+        assert_eq!(
+            config.layout.location("projects"),
+            Some((SidebarPosition::Right, 1))
+        );
+        let (config, _) = parse("startup = true\n");
+        assert_eq!(
+            config.layout.location("agents"),
+            Some((SidebarPosition::Left, 0))
+        );
     }
 
     #[test]

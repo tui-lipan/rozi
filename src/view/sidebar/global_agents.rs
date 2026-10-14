@@ -69,15 +69,19 @@ fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
     if let Some(age) = row.age {
         content = content.meta(super::agents::format_age(age), Style::new().fg(color));
     }
-    // The status word leads the detail line: unlike the Activity tab, nothing above this row says
-    // which session it is in, so the glyph alone is too little to read a remote agent by.
+    // The status word leads the detail line. Rows from other sessions carry no activity, so for
+    // most of them it is all the second line has to say.
     content = content.detail(
         super::agents::row_status_label(&row.status, row.finished_unseen),
         Style::new().fg(color),
     );
     if let Some(what) = row.activity.as_deref().or(row.place.as_deref()) {
+        let budget = super::agents::activity_budget(
+            ctx.state
+                .sidebar_tab_width(&crate::config::SidebarTabId::new("agents")),
+        );
         content = content.detail(
-            super::row::truncate(what, 40),
+            super::row::truncate(what, budget),
             super::super::fg_only(&theme.muted).dim(),
         );
     }

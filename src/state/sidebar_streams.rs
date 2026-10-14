@@ -54,6 +54,9 @@ impl SidebarProducerKey {
 /// One producer's live contribution to a tab.
 pub struct SidebarProducer {
     pub key: SidebarProducerKey,
+    /// The extension whose process this is. Its producers go when its generation retires, as its
+    /// other streams do.
+    pub extension: Option<String>,
     /// The stream currently speaking for this producer. A replaced stream's late close carries an
     /// older id and withdraws nothing.
     pub stream_id: u64,

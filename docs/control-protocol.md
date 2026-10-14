@@ -1091,7 +1091,7 @@ After `{"ok":true}`, the producer writes complete snapshots of its rows, one JSO
   empty `label`, strips control sequences, and shortens labels to 160 characters, descriptions to
   80, and details to 160. A line that is not a snapshot is ignored and the last good one stays.
 - End of input or any stream failure withdraws the producer's rows. So does removing the tab from
-  the configuration.
+  the configuration, and, for an extension's process, the extension's generation retiring.
 
 rozi writes events back, one JSON object per line:
 
@@ -1136,5 +1136,5 @@ rozi sidebar publish --tab TAB [--name NAME]
 The CLI attaches the extension `id` and `generation` when both are present in its environment, and
 a placed process's `credential`.
 Picker, publisher, and subscription streams owned by an extension close when its generation
-retires: when the extension is disabled, removed, or has a change that affects its processes.
+retires, and its sidebar streams' rows are withdrawn: when the extension is disabled, removed, or has a change that affects its processes.
 Changes to metadata only keep the generation.

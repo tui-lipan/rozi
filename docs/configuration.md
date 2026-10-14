@@ -585,7 +585,8 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
 
-Unplaced tabs join the first left panel; Files, Git, Worktrees, and Projects join the second. Extension
+Unplaced tabs join the first panel of the left dock, or of the right dock when only it holds tabs;
+Files, Git, Worktrees, and Projects join that dock's second panel. Extension
 suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
 and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
 for restoration rules, the tab manager, and migration from the former geometry keys.

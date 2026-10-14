@@ -5920,7 +5920,7 @@ fn semantic_packetization_waits_for_complete_graphics_commands() {
         .set_output_transaction_recording(true);
     server.panes.insert(7, pane);
     let (id, _stream) = attach_client(&mut server);
-    let frame = b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;ZGVm\x1b\\";
+    let frame = b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,C=1,q=2;ZGVm\x1b\\";
     for bytes in [&frame[..10], &frame[10..]] {
         server
             .panes
@@ -5971,7 +5971,7 @@ fn semantic_staging_coalesces_independent_transactions_before_client_outboxes() 
         .set_output_transaction_recording(true);
     server.panes.insert(7, pane);
     let (id, _stream) = attach_client(&mut server);
-    let frame = b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;ZGVm\x1b\\";
+    let frame = b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,C=1,q=2;ZGVm\x1b\\";
     let bytes = frame.repeat(100);
     server
         .panes

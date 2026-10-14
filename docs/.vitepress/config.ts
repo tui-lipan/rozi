@@ -371,6 +371,7 @@ export default defineConfig({
           { text: "Release process", link: "/release-process" },
           { text: "Benchmarks and profiling", link: "/benchmarks" },
           { text: "Performance audit archive", link: "/performance/" },
+          { text: "Graphics resize latency", link: "/performance/audits/2026-10-14-graphics-resize" },
           { text: "Ryzen 9700X benchmark baseline", link: "/performance/audits/2026-10-08" },
           { text: "Active TUI CPU investigation", link: "/performance/audits/2026-10-07-active-tui" },
           { text: "Active TUI CPU improvements", link: "/performance/audits/2026-10-08-active-tui-improvements" },

@@ -155,6 +155,7 @@ impl SessionServer {
                     return false;
                 }
                 *presented = ack.sequence;
+                client.presented_at.insert(key, Instant::now());
                 true
             });
             if advanced {
@@ -168,6 +169,37 @@ impl SessionServer {
                         .max(latency);
                 }
             }
+        }
+        self.prune_presentation_state(id);
+    }
+
+    /// Forget a client's presentation state for pane generations that no longer exist, so its
+    /// maps stay bounded by the panes it can still see.
+    fn prune_presentation_state(&mut self, id: ClientId) {
+        let live: HashSet<PresentationKey> = self
+            .clients
+            .iter()
+            .filter(|client| client.id == id)
+            .flat_map(|client| {
+                client
+                    .presentation_interest
+                    .keys()
+                    .chain(client.presented_sequences.keys())
+                    .copied()
+            })
+            .filter(|key| {
+                self.pane(key.local.then_some(id), key.pane_id)
+                    .is_some_and(|pane| pane.generation == key.generation)
+            })
+            .collect();
+        if let Some(client) = self.client_mut(id) {
+            client
+                .presentation_interest
+                .retain(|key, _| live.contains(key));
+            client
+                .presented_sequences
+                .retain(|key, _| live.contains(key));
+            client.presented_at.retain(|key, _| live.contains(key));
         }
     }
 
@@ -198,6 +230,7 @@ impl SessionServer {
                 );
             }
         }
+        self.prune_presentation_state(id);
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {

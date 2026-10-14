@@ -97,12 +97,11 @@ impl ServerPane {
             self.output_coalesce_epoch = self.output_coalesce_epoch.saturating_add(1);
         }
         self.output_sequence = self.output_sequence.saturating_add(1);
-        if independent {
-            self.output_times
-                .push_back((self.output_sequence, Instant::now()));
-            if self.output_times.len() > 32 {
-                self.output_times.pop_front();
-            }
+        // Every sequence is timed, so a presenter's oldest unacknowledged output has a known age.
+        self.output_times
+            .push_back((self.output_sequence, Instant::now()));
+        if self.output_times.len() > 32 {
+            self.output_times.pop_front();
         }
         protocol::OutputMetadata {
             sequence: self.output_sequence,
@@ -155,6 +154,29 @@ impl SessionServer {
     }
 }
 
+/// A visible client whose oldest unacknowledged output is older than this is not presenting.
+/// It exceeds the pacer's safety hold, so a client only loses the lead after the pacer has
+/// already had to release without its acknowledgement.
+const STALLED_PRESENTER: Duration = Duration::from_millis(250);
+
+impl ServerPane {
+    /// When the oldest output a client has not acknowledged was produced, if any is pending.
+    fn oldest_unacknowledged(&self, presented: u64, acked_at: Option<Instant>) -> Option<Instant> {
+        if presented >= self.output_sequence {
+            return None;
+        }
+        match self
+            .output_times
+            .iter()
+            .find(|(sequence, _)| *sequence > presented)
+        {
+            Some((sequence, at)) if *sequence == presented + 1 => Some(*at),
+            // It fell behind the timed window, and has waited at least since its last advance.
+            oldest => acked_at.or(oldest.map(|(_, at)| *at)),
+        }
+    }
+}
+
 impl SessionServer {
     pub(super) fn graphics_presenter(
         &self,
@@ -167,6 +189,8 @@ impl SessionServer {
             generation,
             local: owner.is_some(),
         };
+        let pane = self.pane(owner, pane_id)?;
+        let now = Instant::now();
         self.clients
             .iter()
             .filter_map(|client| {
@@ -189,11 +213,22 @@ impl SessionServer {
                     1
                 };
                 let presented = client.presented_sequences.get(&key).copied().unwrap_or(0);
-                Some((priority, interest.frames_per_second, presented, client.id))
+                // A stopped or wedged client would hold the pane for its safety timeout on every
+                // frame; any responsive visible client leads before it.
+                let responsive = pane
+                    .oldest_unacknowledged(presented, client.presented_at.get(&key).copied())
+                    .is_none_or(|since| now.saturating_duration_since(since) < STALLED_PRESENTER);
+                Some((
+                    responsive,
+                    priority,
+                    interest.frames_per_second,
+                    presented,
+                    client.id,
+                ))
             })
             .max()
             .map(
-                |(_, frames_per_second, presented, client)| super::graphics_pacer::Presenter {
+                |(_, _, frames_per_second, presented, client)| super::graphics_pacer::Presenter {
                     client,
                     frames_per_second: frames_per_second.clamp(1, 1000),
                     presented,

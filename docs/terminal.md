@@ -315,15 +315,18 @@ these colors. Both retain the existing urgent animation and input acknowledgemen
 ### Presentation pacing
 
 After a sustained run of complete, independent Kitty replacements, the session server gives that
-pane bounded PTY read credits. Visible streams use the leading client's configured frame rate and
-allow at most two unpresented replacements per image stream. Focused visible controllers take
-priority over writable clients and read-only followers. A slow follower cannot pace a faster
-controller. With no visible consumer, graphics streams run at 15 Hz; active recordings use their
+pane PTY read credits. Visible streams use the leading client's configured frame rate and allow at
+most two unpresented replacements per image stream. While a credit is withheld, the producer's
+output waits in the kernel; each release drains that backlog (up to 64 KiB) so only its newest
+replacement is forwarded, rather than the oldest. Focused visible controllers take priority over
+writable clients and read-only followers. A slow follower cannot pace a faster controller. A
+client whose oldest unacknowledged output is more than 250 ms old, such as a stopped or wedged
+one, leads only when no responsive visible client remains. With no visible consumer, graphics streams run at 15 Hz; active recordings use their
 configured capture rate and successfully queued capture progress instead.
 
 Ordinary output and dependent patches remove pacing immediately. Keys, paste, clicks, releases,
 wheel events and explicit control input open a 50 ms answer window. Pointer motion stays paced.
-Each PTY has its own gate, with one bounded read in flight and a 200 ms safety release. Resize,
+Each PTY has its own gate, with one bounded drain in flight and a 200 ms safety release. Resize,
 pane replacement and exit release the gate; final child output drains before the exit event.
 Presentation ACKs are sent after a successful host frame, including composed frames. Parsing and
 receiving bytes do not acknowledge presentation.

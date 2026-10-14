@@ -6090,6 +6090,98 @@ fn focused_controller_paces_independently_of_a_slow_read_only_follower() {
     assert_eq!(server.graphics_presenter(7, 11, None), None);
 }
 
+fn report_visible(server: &mut SessionServer, client: ClientId, generation: u64, fps: u16) {
+    server.process_client_frame(
+        client,
+        Frame::PresentationInterest(vec![protocol::PanePresentationInterest {
+            pane_id: 7,
+            generation,
+            local: false,
+            visible: true,
+            focused: true,
+            frames_per_second: fps,
+        }]),
+    );
+}
+
+#[test]
+fn a_stalled_leader_yields_pacing_to_a_responsive_follower() {
+    let mut server = SessionServer::new_named("graphics-stalled-leader");
+    let mut pane = test_pane(11);
+    pane.output_sequence = 10;
+    let long_ago = Instant::now() - Duration::from_secs(1);
+    pane.output_times = (6..=10).map(|sequence| (sequence, long_ago)).collect();
+    server.panes.insert(7, pane);
+    let (leader, _leader_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_read_only_client(&mut server);
+    report_visible(&mut server, leader, 11, 240);
+    report_visible(&mut server, follower, 11, 60);
+    let key = PresentationKey {
+        pane_id: 7,
+        generation: 11,
+        local: false,
+    };
+    // The leader stopped acknowledging at 5; the follower has presented everything.
+    for (client, sequence) in [(leader, 5), (follower, 10)] {
+        let client = server.client_mut(client).unwrap();
+        client.presented_sequences.insert(key, sequence);
+        client.presented_at.insert(key, long_ago);
+    }
+    assert_eq!(
+        server.graphics_presenter(7, 11, None).unwrap().client,
+        follower
+    );
+
+    // With no responsive alternative, the leader keeps the lead rather than none leading.
+    server
+        .client_mut(follower)
+        .unwrap()
+        .presentation_interest
+        .clear();
+    assert_eq!(
+        server.graphics_presenter(7, 11, None).unwrap().client,
+        leader
+    );
+}
+
+#[test]
+fn presentation_state_forgets_replaced_pane_generations() {
+    let mut server = SessionServer::new_named("graphics-pruning");
+    let mut pane = test_pane(11);
+    pane.output_sequence = 3;
+    server.panes.insert(7, pane);
+    let (client, _stream) = attach_client(&mut server);
+    report_visible(&mut server, client, 11, 60);
+    server.process_client_frame(
+        client,
+        Frame::PresentationAcks(vec![protocol::PresentationAck {
+            pane_id: 7,
+            generation: 11,
+            local: false,
+            sequence: 3,
+        }]),
+    );
+    assert_eq!(
+        server.client_mut(client).unwrap().presented_sequences.len(),
+        1
+    );
+
+    server.panes.get_mut(&7).unwrap().generation = 12;
+    report_visible(&mut server, client, 12, 60);
+    let state = server.client_mut(client).unwrap();
+    let generations = |keys: Vec<&PresentationKey>| {
+        keys.into_iter()
+            .map(|key| key.generation)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        generations(state.presentation_interest.keys().collect()),
+        [12]
+    );
+    assert!(state.presented_sequences.is_empty());
+    assert!(state.presented_at.is_empty());
+}
+
 #[test]
 fn local_presentation_interest_and_acknowledgements_are_owner_scoped() {
     let mut server = SessionServer::new_named("graphics-local");

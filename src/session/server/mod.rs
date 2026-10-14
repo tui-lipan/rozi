@@ -887,6 +887,8 @@ struct ClientConn {
     requeued_panes: u64,
     presentation_interest: HashMap<PresentationKey, protocol::PanePresentationInterest>,
     presented_sequences: HashMap<PresentationKey, u64>,
+    /// When each presented sequence last advanced.
+    presented_at: HashMap<PresentationKey, Instant>,
 }
 
 impl ClientConn {
@@ -924,6 +926,7 @@ impl ClientConn {
             requeued_panes: 0,
             presentation_interest: HashMap::new(),
             presented_sequences: HashMap::new(),
+            presented_at: HashMap::new(),
         }
     }
 

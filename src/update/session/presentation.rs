@@ -58,7 +58,7 @@ pub(crate) fn sync_interest(ctx: &mut Context<AppRoot>) {
         }
     }
     let focused = ctx.state.focused_pane();
-    let rate = ctx.state.config.frame_rate;
+    let rate = ctx.state.runtime_frame_rate();
     let mut current = HashMap::new();
     let mut terminals = HashSet::new();
     for (pane, local) in ctx

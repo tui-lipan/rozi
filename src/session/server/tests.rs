@@ -5961,6 +5961,64 @@ fn semantic_packetization_waits_for_complete_graphics_commands() {
     assert_eq!(metadata.sequence, 1);
 }
 
+/// `InputMarked` is a send's wait baseline: an independent graphics frame produced after the mark
+/// must not replace one queued ahead of it, or the change it carries would land before the mark.
+#[test]
+fn independent_graphics_after_an_input_mark_never_replace_frames_ahead_of_it() {
+    let mut server = SessionServer::new_named("graphics");
+    let mut pane = test_pane(2);
+    pane.screen_without_change()
+        .process_bytes(b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,q=2,C=1;YWJj\x1b\\");
+    pane.screen_without_change()
+        .set_output_transaction_recording(true);
+    server.panes.insert(7, pane);
+    let (id, _stream) = attach_client(&mut server);
+    let send_frame = |server: &mut SessionServer, payload: &[u8]| {
+        let mut bytes = b"\x1b_Ga=T,i=7,p=9,f=24,s=1,v=1,C=1,q=2;".to_vec();
+        bytes.extend_from_slice(payload);
+        bytes.extend_from_slice(b"\x1b\\");
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(&bytes);
+        server.send_outbound(
+            None,
+            &ServerOutbound::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
+                pane_id: 7,
+                local: false,
+                generation: 2,
+                bytes: bytes.clone(),
+            },
+        );
+        bytes
+    };
+
+    let before = send_frame(&mut server, b"QUFB");
+    server.process_client_frame(
+        id,
+        Frame::Control(ClientMessage::MarkedInput {
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            bytes: b"x".to_vec(),
+            token: 9,
+        }),
+    );
+    send_frame(&mut server, b"QkJC");
+    let after = send_frame(&mut server, b"Q0ND");
+
+    let frames = decode_outbox_frames(server.client_mut(id).unwrap());
+    assert_eq!(frames.len(), 3, "frames: {frames:?}");
+    assert!(matches!(&frames[0], DecodedOutboxFrame::Pane { bytes, .. } if *bytes == before));
+    assert!(matches!(&frames[1], DecodedOutboxFrame::Control(message)
+        if matches!(**message, ServerMessage::InputMarked { token: 9 })));
+    // Frames behind the mark still replace one another.
+    assert!(matches!(&frames[2], DecodedOutboxFrame::Pane { bytes, .. } if *bytes == after));
+}
+
 #[test]
 fn semantic_staging_coalesces_independent_transactions_before_client_outboxes() {
     let mut server = SessionServer::new_named("graphics");

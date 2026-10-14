@@ -1002,33 +1002,11 @@ impl InboundMailbox {
         self: &Arc<Self>,
         frame: Frame<ServerMessage>,
     ) -> std::result::Result<(), ()> {
-        let bytes = inbound_frame_bytes(&frame);
         // Parsing terminal graphics can briefly take longer than the socket reader needs to fill
         // this bounded mailbox. Backpressure that reader instead of tearing down a healthy local
         // session: the server still owns per-client outbox isolation, so a genuinely slow client
         // cannot stall broadcasts to everyone else.
-        //
-        // Keep each pane's output in one entry within the current output-only segment. This retains
-        // per-pane byte order and control-frame boundaries while avoiding one queue lock and parser
-        // call per tiny interleaved frame. The first frame is still scheduled immediately.
-        let replacement = match &frame {
-            Frame::PaneOutput {
-                pane_id,
-                local,
-                generation,
-                metadata,
-                ..
-            } => metadata.replacement_key(*pane_id, *local, *generation),
-            _ => None,
-        };
-        invalidate_inbound_replacements(&self.queue, &frame);
-        let event = InboundEvent::Frame(Box::new(frame));
-        let result = if let Some(key) = replacement {
-            self.queue.push_blocking_latest(event, bytes, key)
-        } else {
-            self.queue
-                .push_blocking_within_segment(event, bytes, coalesce_inbound_segment)
-        };
+        let result = enqueue_inbound_frame(&self.queue, frame);
         if let Err(error) = result {
             let message = match error {
                 PushError::TooLarge(_) => "session inbound frame exceeded 8 MiB",
@@ -1101,9 +1079,39 @@ impl InboundMailbox {
     }
 }
 
+/// Keep each pane's output in one entry within the current output-only segment. This retains
+/// per-pane byte order and control-frame boundaries while avoiding one queue lock and parser call
+/// per tiny interleaved frame. Independent graphics instead replace their queued predecessor.
+fn enqueue_inbound_frame(
+    queue: &ByteQueue<InboundEvent>,
+    frame: Frame<ServerMessage>,
+) -> std::result::Result<(), PushError<InboundEvent>> {
+    let bytes = inbound_frame_bytes(&frame);
+    let replacement = match &frame {
+        Frame::PaneOutput {
+            pane_id,
+            local,
+            generation,
+            metadata,
+            ..
+        } => metadata.replacement_key(*pane_id, *local, *generation),
+        _ => None,
+    };
+    invalidate_inbound_replacements(queue, &frame);
+    let event = InboundEvent::Frame(Box::new(frame));
+    if let Some(key) = replacement {
+        queue.push_blocking_latest(event, bytes, key)
+    } else {
+        queue.push_blocking_within_segment(event, bytes, coalesce_inbound_segment)
+    }
+}
+
 fn invalidate_inbound_replacements(queue: &ByteQueue<InboundEvent>, frame: &Frame<ServerMessage>) {
     match frame {
-        Frame::Control(ServerMessage::Attached { .. }) => queue.clear_replacements(),
+        // A send's wait takes its baseline at the mark: nothing after it may overtake it.
+        Frame::Control(ServerMessage::Attached { .. } | ServerMessage::InputMarked { .. }) => {
+            queue.clear_replacements()
+        }
         Frame::Control(ServerMessage::PaneReset { pane_id, .. }) => {
             queue.invalidate_replacements(*pane_id, false)
         }
@@ -1885,6 +1893,54 @@ mod tests {
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
                 if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. } if bytes == b"a3")
+        ));
+    }
+
+    /// A send's wait takes its baseline at `InputMarked`, so graphics behind the mark must never
+    /// replace an older frame ahead of it, even when the server reuses the replacement key.
+    #[test]
+    fn inbound_independent_graphics_never_overtake_an_input_mark() {
+        let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
+        let graphics = |sequence: u64, bytes: &[u8]| Frame::PaneOutput {
+            metadata: protocol::OutputMetadata {
+                sequence,
+                coalesce_epoch: 0,
+                class: protocol::OutputClass::IndependentGraphics {
+                    image: 7,
+                    incarnation: 1,
+                    revision: sequence,
+                },
+            },
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: bytes.to_vec(),
+        };
+        enqueue_inbound_frame(&queue, graphics(1, b"A")).unwrap();
+        enqueue_inbound_frame(
+            &queue,
+            Frame::Control(ServerMessage::InputMarked { token: 9 }),
+        )
+        .unwrap();
+        enqueue_inbound_frame(&queue, graphics(2, b"B")).unwrap();
+        // Frames on the same side of the mark still replace one another.
+        enqueue_inbound_frame(&queue, graphics(3, b"C")).unwrap();
+
+        assert_eq!(queue.stats().len, 3);
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneOutput { bytes, .. } if bytes == b"A")
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::Control(ServerMessage::InputMarked { token: 9 }))
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneOutput { bytes, .. } if bytes == b"C")
         ));
     }
 

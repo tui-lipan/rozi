@@ -3259,3 +3259,39 @@ fn parsed_output_is_acknowledged_only_by_successful_presentation_reports() {
         assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
     }).unwrap().join().unwrap();
 }
+
+/// The renderer keeps its startup cadence across config reloads, so the cadence it reports to the
+/// session server must too: a reloaded `frame_rate` would otherwise throttle graphics to a rate the
+/// UI is not presenting at.
+#[test]
+fn presentation_interest_reports_the_runtime_frame_rate_not_a_reloaded_one() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            let runtime = backend.state().runtime_frame_rate();
+            let reloaded = if runtime == 30 { 60 } else { 30 };
+            backend.state_mut().config.frame_rate = reloaded;
+            let pane_id = backend.state().current().focused_pane.unwrap();
+            backend.dispatch(Msg::FocusPane(pane_id)).unwrap();
+
+            let interest = &backend.state().current().presentation_interest;
+            assert!(!interest.is_empty());
+            assert!(
+                interest
+                    .values()
+                    .all(|pane| pane.frames_per_second == runtime),
+                "interest must follow the runtime cadence {runtime}, not {reloaded}: {interest:?}"
+            );
+            assert!(outbound.try_iter().any(|message| matches!(message,
+                crate::session::client::ClientOutbound::PresentationInterest(panes)
+                    if !panes.is_empty()
+                        && panes.iter().all(|pane| pane.frames_per_second == runtime))));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

@@ -917,6 +917,14 @@ impl SessionServer {
                 bytes,
                 token,
             } => {
+                // The mark divides the pane's output for the sender's wait, so output after it must
+                // not replace independent graphics queued ahead of it, in any outbox or mailbox.
+                if let Some(pane) = self
+                    .pane_mut(local.then_some(client_id), pane_id)
+                    .filter(|pane| pane.generation == generation)
+                {
+                    pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+                }
                 self.accept_pane_input(client_id, pane_id, local, generation, &bytes, true);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }

@@ -198,6 +198,13 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     {
         return Some(update);
     }
+    // A stream tab's producer may have bound a key to an action on the row under the cursor; `x`
+    // stays the ✕, which a `close` action is reached through.
+    if !key.is(KeyCode::Char('x'))
+        && let Some(update) = crate::ops::sidebar_streams::key(ctx, key)
+    {
+        return Some(update);
+    }
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),
         KeyCode::Down | KeyCode::Char('j') => Some(sidebar::move_cursor(ctx, 1)),

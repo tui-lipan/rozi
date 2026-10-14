@@ -40,8 +40,9 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `out-of-scope` error codes, and `extension-runtime-status`, and version 18 with image capture
 /// `fill_cell_box`, `z_index`, and `underlying_cells`, and version 19 with `publish`'s `kind` and
 /// `name`, published rows' `publisher`, `kind`, `live_session`, and `reported`, and an agent
-/// reference's structured `slot`.
-pub const API_SCHEMA_VERSION: u32 = 19;
+/// reference's structured `slot`, and version 20 with `sidebar-publish` and the sidebar snapshot,
+/// row, action, and stream event shapes, `agents-overview`, and `agent-go`.
+pub const API_SCHEMA_VERSION: u32 = 20;
 
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -88,6 +89,12 @@ pub const COMMAND_VISIBILITY_CAPABILITY: &str = "command-visibility";
 /// several publishers share a pane, each owning its own rows. Without it every published row is
 /// treated as an agent and a pane holds one publisher.
 pub const PUBLISH_KIND_CAPABILITY: &str = "publish-kind";
+/// `sidebar-publish` streams rows into a sidebar stream tab, several producers to a tab, and
+/// command tabs accept `format = "json"`.
+pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
+/// A UI answers `agents-overview`, every agent it knows about in every session and on every
+/// connected host, and `agent-go`, which goes to one of them.
+pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -117,6 +124,7 @@ impl ApiDescription {
                 CAPTURE_WAIT_CAPABILITY,
                 COMMAND_VISIBILITY_CAPABILITY,
                 "extension-link-handlers",
+                GLOBAL_AGENTS_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PANE_REVEAL_CAPABILITY,
@@ -127,6 +135,7 @@ impl ApiDescription {
                 REMOTE_CONTROL_CAPABILITY,
                 crate::extension_runtime::protocol::CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
+                SIDEBAR_STREAMS_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,
             ],
         }
@@ -442,6 +451,14 @@ pub enum ControlCommand {
         if_revision: Option<u64>,
     },
     AgentsList,
+    /// Every agent this UI knows about: the session on screen, its other local sessions, and every
+    /// connected host, the ones that want attention first. Reached through `agents list --all`.
+    AgentsOverview,
+    /// Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or
+    /// attach its session first. Takes a `location` from `agents-overview`.
+    AgentGo {
+        location: AgentLocationSpec,
+    },
     AgentGet {
         target: AgentTarget,
     },
@@ -588,6 +605,17 @@ pub enum ControlCommand {
         kind: crate::session::protocol::PublisherKind,
         /// Distinguishes several publishers of one caller in the same pane; see
         /// [`crate::state::PublisherIdentity`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// Publish rows into a sidebar stream tab and receive activations, expansions, actions, and
+    /// visibility for them. Like `publish`, the connection stays open both ways, and closing it
+    /// withdraws this producer's rows. Reached through `rozi sidebar publish`.
+    SidebarPublish {
+        /// The tab: an extension names its own tab's local name, anything else a `config.toml`
+        /// stream tab's id.
+        tab: String,
+        /// Distinguishes several producers of one caller in the same place.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -1511,6 +1539,40 @@ impl FractionRect {
 #[serde(transparent)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentListPayload(pub Vec<AgentInfo>);
+
+/// Where an agent runs, as `agents-overview` reports it and `agent-go` takes it back.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentLocationSpec {
+    /// The connected host, spelled the way `--remote` takes it. Absent for this machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub session: String,
+    pub pane: PaneId,
+    /// The published row, for a program running several agents in one pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<crate::session::protocol::RowKey>,
+}
+
+/// One agent anywhere this UI knows about.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct GlobalAgentInfo {
+    pub location: AgentLocationSpec,
+    /// The agent's name, numbered per row where a pane runs several (`Codex`, `Claude #2`).
+    pub label: String,
+    /// `working`, `blocked`, `done`, `idle`, or a publisher's own word. `done` covers a finished
+    /// run the user has not looked at yet.
+    pub state: String,
+    /// In the session on screen.
+    pub here: bool,
+}
+
+/// `agents-overview`: most urgent first, the order the Agents view and tab use.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct GlobalAgentListPayload(pub Vec<GlobalAgentInfo>);
 
 /// `extension-runtime-status`: what this client runs where.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -2456,6 +2518,105 @@ fn run_publish_stream(
     let _ = writer.join();
 }
 
+/// How many unread events a sidebar stream producer may accumulate before rozi drops them. Like
+/// publish activations, these follow user gestures; a producer this far behind has stopped reading.
+const SIDEBAR_STREAM_BACKLOG: usize = 64;
+
+/// Serve one `sidebar-publish` stream until its producer goes away.
+///
+/// The same two-way shape as [`run_publish_stream`]: after the acknowledgement the producer writes
+/// one snapshot per line and rozi writes one event per line back, each direction on its own thread.
+fn run_sidebar_stream(
+    mut stream: IpcConnection,
+    link: CommandLink<Msg>,
+    open: crate::ops::sidebar_streams::StreamOpen,
+) {
+    let stream_id = open.stream_id;
+    let Ok(reader_stream) = control_stream_reader(&stream) else {
+        return;
+    };
+    let Ok(mut writer_stream) = stream.try_clone() else {
+        return;
+    };
+    let (tx, rx) = mpsc::sync_channel::<String>(SIDEBAR_STREAM_BACKLOG);
+    let (ack_tx, ack_rx) = mpsc::channel();
+    link.send(Msg::SidebarStreamOpen {
+        open: Box::new(open),
+        sender: tx,
+        ack: ack_tx,
+    });
+    let (tab, producer) = match ack_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(owner)) => {
+            let _ = writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&ControlResponse::empty()).unwrap()
+            );
+            owner
+        }
+        Ok(Err(response)) => {
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+            return;
+        }
+        Err(_) => {
+            let _ = writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&ControlResponse::error_with(
+                    ControlErrorCode::RequestTimeout,
+                    "sidebar-publish request timed out",
+                ))
+                .unwrap()
+            );
+            return;
+        }
+    };
+    let writer = std::thread::spawn(move || {
+        while let Ok(line) = rx.recv() {
+            if writer_stream.write_all(line.as_bytes()).is_err() {
+                return;
+            }
+        }
+    });
+    for line in control_lines(reader_stream) {
+        let line = match line {
+            Ok(line) => line,
+            Err(error) if is_oversized_control_line(&error) => {
+                let _ = writeln!(
+                    stream,
+                    "{}",
+                    serde_json::to_string(&ControlResponse::error_with(
+                        ControlErrorCode::MessageTooLarge,
+                        OVERSIZED_CONTROL_MESSAGE,
+                    ))
+                    .unwrap()
+                );
+                break;
+            }
+            Err(_) => break,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        // A malformed line is the producer's bug; its last good snapshot stays on screen.
+        if let Ok(snapshot) = serde_json::from_str::<crate::state::SidebarSnapshot>(&line) {
+            link.send(Msg::SidebarStreamSnapshot {
+                stream_id,
+                tab: tab.clone(),
+                producer: producer.clone(),
+                snapshot,
+            });
+        }
+    }
+    link.send(Msg::SidebarStreamClosed {
+        stream_id,
+        tab,
+        producer,
+    });
+    drop(stream);
+    let _ = writer.join();
+}
+
 /// Serve one `pick` stream until the user makes a choice, cancels, or the caller disconnects.
 ///
 /// After acknowledging the request on the UI thread, the caller may write row updates, each
@@ -2854,6 +3015,23 @@ pub(crate) fn serve_connection(
                 requested_pane: request.source_pane,
                 source_session: request.source_session.clone(),
                 kind: *kind,
+                name: name.clone(),
+                extension: request.extension.clone(),
+                worker,
+            },
+        );
+        return;
+    }
+    if let ControlCommand::SidebarPublish { tab, name } = &request.command {
+        static NEXT_SIDEBAR_STREAM_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let stream_id = NEXT_SIDEBAR_STREAM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_sidebar_stream(
+            stream,
+            link,
+            crate::ops::sidebar_streams::StreamOpen {
+                stream_id,
+                tab: tab.clone(),
                 name: name.clone(),
                 extension: request.extension.clone(),
                 worker,

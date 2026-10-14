@@ -97,6 +97,179 @@ impl SidebarTone {
     }
 }
 
+fn is_normal(tone: &SidebarTone) -> bool {
+    *tone == SidebarTone::Normal
+}
+
+/// One row a JSON command tab prints or a `rozi sidebar publish` stream sends.
+///
+/// The fields say what a row means; rozi decides how it looks. `id` is the row's identity, unique
+/// within one producer and stable across snapshots: expansion, the cursor, and activations follow
+/// it, never a position.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SidebarRowSpec {
+    pub id: String,
+    /// The row this one sits under. A parent that is not in the snapshot makes it a top-level row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub label: String,
+    /// Right-aligned on the label's line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// A second line under the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "is_normal")]
+    pub tone: SidebarTone,
+    /// The current one of its kind. At most one row per producer should set it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub active: bool,
+    /// Shown but not selectable, with this reason as its second line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<String>,
+    /// Has children even before any are listed. A stream is told when the user expands it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expandable: bool,
+    /// Initial expansion. The user's own choice wins once made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expanded: Option<bool>,
+    /// Stream tabs: which of the producer's actions apply to this row, by id. Absent means all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<String>>,
+}
+
+/// A key a stream producer offers on its rows.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SidebarActionSpec {
+    /// Returned as `action`.
+    pub id: String,
+    /// The chord that fires it on the row under the cursor, spelled as in `[keys]` (`d`,
+    /// `ctrl-r`). The sidebar's own navigation keys are refused.
+    pub key: String,
+    /// What it does, in a few words.
+    pub label: String,
+    /// Require a second press on the same row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// Show it as the row's ✕ and bind `x` to it too. Always confirms, like every sidebar ✕.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub close: bool,
+}
+
+/// What a JSON command tab prints, and each line a stream producer writes: the complete current
+/// set of its rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SidebarSnapshot {
+    #[serde(default)]
+    pub rows: Vec<SidebarRowSpec>,
+    /// Stream tabs only: this producer's actions. Replaces the previous set when present and keeps
+    /// it when absent, so a producer can declare them once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<SidebarActionSpec>>,
+}
+
+/// What rozi writes back on a stream, one JSON object per line.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum SidebarStreamEvent {
+    /// The row was clicked, or Enter was pressed on it.
+    Activate { activate: String },
+    /// An `expandable` row was expanded: list its children.
+    Expand { expand: String },
+    /// One of the producer's actions fired on a row.
+    Action { action: String, row: String },
+    /// Whether the tab is on screen. Sent when the stream opens and whenever it changes, so a
+    /// producer can stop working while nobody looks.
+    Visible { visible: bool },
+}
+
+/// Rows kept from one snapshot. More is a producer describing something a sidebar cannot show.
+pub const SIDEBAR_MAX_ROWS: usize = 500;
+/// Actions kept from one producer.
+pub const SIDEBAR_MAX_ACTIONS: usize = 16;
+
+fn clean(text: &str, max_chars: usize) -> String {
+    let text = tui_lipan::utils::sanitize_display_text(text);
+    let text = text.trim();
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut short: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    short.push('…');
+    short
+}
+
+fn clean_optional(text: Option<String>, max_chars: usize) -> Option<String> {
+    text.map(|text| clean(&text, max_chars))
+        .filter(|text| !text.is_empty())
+}
+
+/// Make a producer's rows safe to show: control sequences stripped, text bounded, ids unique, and
+/// rows without an id or a label dropped. Never trusts a producer, which is any program the user
+/// or an extension runs.
+pub fn sanitize_rows(rows: Vec<SidebarRowSpec>) -> Vec<SidebarRowSpec> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .take(SIDEBAR_MAX_ROWS)
+        .filter_map(|row| {
+            let id = clean(&row.id, 256);
+            let label = clean(&row.label, 160);
+            if id.is_empty() || label.is_empty() || !seen.insert(id.clone()) {
+                return None;
+            }
+            Some(SidebarRowSpec {
+                id,
+                parent: clean_optional(row.parent, 256),
+                label,
+                description: clean_optional(row.description, 80),
+                detail: clean_optional(row.detail, 160),
+                tone: row.tone,
+                active: row.active,
+                disabled: clean_optional(row.disabled, 80),
+                expandable: row.expandable,
+                expanded: row.expanded,
+                actions: row.actions.map(|actions| {
+                    actions
+                        .into_iter()
+                        .take(SIDEBAR_MAX_ACTIONS)
+                        .map(|action| clean(&action, 64))
+                        .collect()
+                }),
+            })
+        })
+        .collect()
+}
+
+impl TreeRow {
+    /// A producer's row, doing `target` when activated.
+    pub fn from_spec(
+        spec: &SidebarRowSpec,
+        target: RowTarget,
+        close: Option<SidebarClose>,
+    ) -> Self {
+        Self {
+            id: spec.id.clone(),
+            parent: spec.parent.clone(),
+            content: RowContent {
+                label: spec.label.clone(),
+                description: spec.description.clone(),
+                detail: spec.detail.clone(),
+                tone: spec.tone,
+                active: spec.active,
+                disabled: spec.disabled.clone(),
+            },
+            target,
+            close,
+            expandable: spec.expandable,
+            expanded: spec.expanded,
+        }
+    }
+}
+
 /// What a row shows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowContent {
@@ -444,6 +617,59 @@ mod tests {
         assert_eq!(labels(&items), ["a", "  b", "-", "#TWO", "c"]);
         assert!(matches!(items[0].target(), RowTarget::TreeToggle(_)));
         assert_eq!(items[1].target(), RowTarget::Inert);
+    }
+
+    /// A producer is any program: its text is stripped of control sequences and bounded, a repeated
+    /// id keeps only its first row, and a row with nothing to show is dropped.
+    #[test]
+    fn rows_are_sanitized_before_they_are_shown() {
+        let spec = |id: &str, label: &str| SidebarRowSpec {
+            id: id.into(),
+            parent: None,
+            label: label.into(),
+            description: Some("\u{1b}[31mred\u{1b}[0m".into()),
+            detail: Some("   ".into()),
+            tone: SidebarTone::Normal,
+            active: false,
+            disabled: None,
+            expandable: false,
+            expanded: None,
+            actions: None,
+        };
+        let rows = sanitize_rows(vec![
+            spec("a", "first"),
+            spec("a", "duplicate"),
+            spec("", "no id"),
+            spec("b", ""),
+            spec("c", &"x".repeat(400)),
+        ]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "first");
+        assert_eq!(rows[0].description.as_deref(), Some("red"));
+        assert_eq!(rows[0].detail, None);
+        assert_eq!(rows[1].label.chars().count(), 160);
+    }
+
+    /// The wire form a producer writes: tones by name, absent fields defaulted, unknown ones
+    /// ignored so a newer producer still works against an older rozi.
+    #[test]
+    fn snapshots_parse_from_the_documented_wire_form() {
+        let snapshot: SidebarSnapshot = serde_json::from_str(
+            r#"{"rows":[{"id":"r","label":"main","tone":"blocked","parent":"p","future":1}],
+               "actions":[{"id":"rm","key":"d","label":"remove","close":true}]}"#,
+        )
+        .expect("parses");
+        assert_eq!(snapshot.rows[0].tone, SidebarTone::Blocked);
+        assert_eq!(snapshot.rows[0].parent.as_deref(), Some("p"));
+        assert!(snapshot.actions.unwrap()[0].close);
+        assert_eq!(
+            serde_json::to_string(&SidebarStreamEvent::Action {
+                action: "rm".into(),
+                row: "r".into()
+            })
+            .unwrap(),
+            r#"{"action":"rm","row":"r"}"#
+        );
     }
 
     #[test]

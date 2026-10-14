@@ -19,6 +19,9 @@ pub struct SidebarCommandRow {
 pub struct SidebarCommandOutput {
     pub epoch: u64,
     pub rows: Vec<SidebarCommandRow>,
+    /// A JSON command tab's rows. `None` for a line tab, and for a JSON tab whose command failed or
+    /// printed something that is not a snapshot, whose `rows` then say why.
+    pub tree: Option<Vec<crate::state::SidebarRowSpec>>,
     /// Directory the command was run in. Output describes one project, so it stops being an answer
     /// the moment the focused pane moves to another one - including while the tab is off screen,
     /// where nothing else would notice before it is shown again.
@@ -72,6 +75,15 @@ pub enum RowTarget {
         output_epoch: u64,
         line: String,
     },
+    /// A row of a JSON command tab, by the id its command gave it.
+    CommandTreeRow {
+        config_epoch: u64,
+        tab_id: SidebarTabId,
+        output_epoch: u64,
+        id: String,
+    },
+    /// A row a stream producer published: activating it is reported back to that producer.
+    StreamRow(crate::state::StreamRowRef),
 }
 
 /// What a row's ✕ destroys. Held by identity rather than by row index or by the discovered entry
@@ -88,6 +100,11 @@ pub enum SidebarClose {
     Session {
         name: String,
         remote_target: Option<crate::session::remote::RemoteTarget>,
+    },
+    /// Fire a stream producer's `close` action on one of its rows.
+    StreamAction {
+        row: crate::state::StreamRowRef,
+        action: String,
     },
     /// Disconnect the host: close every attachment to it — their servers keep running — and return
     /// it to offline. Not a kill, but destructive enough to deserve the same two-step ✕ as one.
@@ -149,6 +166,39 @@ impl State {
     pub fn tree_sections(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeSection>> {
         match tab {
             SidebarTab::Projects => Some(self.project_sections()),
+            SidebarTab::Command {
+                name,
+                format: crate::config::SidebarCommandFormat::Json,
+                on_click,
+                ..
+            } => {
+                let output = self.fresh_command_output(name)?;
+                let rows = output.tree.as_ref()?;
+                let config_epoch = self.sidebar.config_epoch;
+                Some(vec![crate::state::TreeSection {
+                    key: "rows".into(),
+                    header: None,
+                    rows: rows
+                        .iter()
+                        .map(|spec| {
+                            // With nothing to run, a row only expands or collapses.
+                            let target = if on_click.is_some() {
+                                RowTarget::CommandTreeRow {
+                                    config_epoch,
+                                    tab_id: name.clone(),
+                                    output_epoch: output.epoch,
+                                    id: spec.id.clone(),
+                                }
+                            } else {
+                                RowTarget::Inert
+                            };
+                            crate::state::TreeRow::from_spec(spec, target, None)
+                        })
+                        .collect(),
+                    lazy: false,
+                }])
+            }
+            SidebarTab::Stream { name, .. } => Some(self.stream_sections(name)),
             _ => None,
         }
     }
@@ -222,7 +272,7 @@ impl State {
                 items
             }
             // Hierarchical, and projected above.
-            SidebarTab::Projects => Vec::new(),
+            SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
             SidebarTab::Activity => self.activity_item_projections(),
             // The same projection the view draws from, so a row index means one agent to both.
             SidebarTab::Agents => crate::view::agents::global_agent_rows(self)

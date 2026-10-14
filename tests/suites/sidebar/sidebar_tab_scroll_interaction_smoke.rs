@@ -139,6 +139,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                         on_click: None,
                         group_prefix: None,
                         env: Vec::new(),
+                        format: rozi::config::SidebarCommandFormat::Lines,
                     },
                 ];
                 // One panel holding exactly these two tabs, so nothing the default split would
@@ -150,6 +151,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                     files.clone(),
                     SidebarCommandOutput {
                         epoch: 1,
+                        tree: None,
                         cwd: None,
                         rows: vec![SidebarCommandRow {
                             raw: "file-row".to_string(),

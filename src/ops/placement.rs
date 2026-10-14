@@ -955,16 +955,12 @@ fn worker_failed(ctx: &mut Context<AppRoot>, worker: WorkerId, reason: Unavailab
                 format!("`{label}` on {}: {reason}", process.host.label()),
             );
         }
-        WorkerPurpose::TabListing {
-            tab,
-            epoch,
-            group_prefix: _,
-        } => {
+        WorkerPurpose::TabListing { tab, epoch, .. } => {
             let rows = vec![crate::update::sidebar::polling::error_row(&format!(
                 "unavailable on {}: {reason}",
                 process.host.label()
             ))];
-            let _ = crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows);
+            let _ = crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows, None);
         }
     }
 }
@@ -1001,21 +997,17 @@ fn worker_exited(
             }
             Update::full()
         }
-        WorkerPurpose::TabListing {
-            tab,
-            epoch,
-            group_prefix,
-        } => {
-            let rows = crate::update::sidebar::polling::command_rows(
+        WorkerPurpose::TabListing { tab, epoch, parse } => {
+            let (rows, tree) = crate::update::sidebar::polling::command_listing(
                 Ok(crate::platform::command::CommandOutput {
                     stdout: output.unwrap_or_default().into_bytes(),
                     stderr: Vec::new(),
                     status: code,
                     timed_out,
                 }),
-                group_prefix.as_deref(),
+                &parse,
             );
-            crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows)
+            crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows, tree)
         }
     }
 }
@@ -1205,14 +1197,14 @@ pub(crate) fn poll_tab(
     placements: SharedPlacements,
     placed: &crate::config::PlacedTab,
     env: Vec<(String, String)>,
-    group_prefix: Option<String>,
+    parse: crate::update::sidebar::polling::CommandParse,
 ) -> Update {
     let Some(binding) = active_binding(&ctx.state) else {
         let rows = vec![crate::update::sidebar::polling::error_row(&format!(
             "unavailable: {}",
             Unavailable::NoSession
         ))];
-        return crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows);
+        return crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows, None);
     };
     let spec = LaunchSpec {
         placements,
@@ -1224,7 +1216,7 @@ pub(crate) fn poll_tab(
         purpose: WorkerPurpose::TabListing {
             tab: tab.clone(),
             epoch,
-            group_prefix,
+            parse,
         },
         launch: LaunchTemplate::Shell(placed.command.clone()),
         cwd: session_cwd(&ctx.state),
@@ -1243,7 +1235,7 @@ pub(crate) fn poll_tab(
             let rows = vec![crate::update::sidebar::polling::error_row(&format!(
                 "unavailable on {host}: {reason}"
             ))];
-            crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows)
+            crate::update::sidebar::polling::command_output(ctx, epoch, tab, rows, None)
         }
     }
 }

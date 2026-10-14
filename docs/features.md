@@ -49,8 +49,13 @@ See [Sessions](sessions.md), [Remote sessions](remote.md), [Profiles](profiles.m
 - List every agent on every connected machine in one view, and go to any of them with one key.
 - Keep that list in the sidebar's Agents tab, so the agent that is blocked on any machine stays in
   sight while you work.
+- See every repository you work in, on every machine, in the sidebar's Projects tab: its checkouts
+  by branch and the sessions working in each, marked with their most urgent agent.
+- Add sidebar tabs of your own that list a tree of rows from a script, or that running programs and
+  extensions keep up to date as things change, one section per machine.
 
 See [Sidebar](sidebar.md#activity), [the Agents tab](sidebar.md#agents),
+[the Projects tab](sidebar.md#projects), [custom tabs](sidebar.md#custom-tabs),
 [the Agents view](sessions.md#go-to-an-agent),
 [agent definitions](configuration.md#agents),
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in), and

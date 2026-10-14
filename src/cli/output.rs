@@ -898,6 +898,8 @@ pub(super) fn format_control_text(
         control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
             format_agents_text(data, styles)
         }
+        control::ControlCommand::AgentsOverview => format_global_agents_text(data, styles),
+        control::ControlCommand::AgentGo { .. } => String::new(),
         control::ControlCommand::AgentRead { .. } => format_capture_text(data),
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
         control::ControlCommand::AgentPrompt { .. } => {
@@ -1131,6 +1133,48 @@ fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) ->
         &rows,
         styles,
     )
+}
+
+fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let agents: Vec<&serde_json::Value> = match data {
+        Some(serde_json::Value::Array(agents)) => agents.iter().collect(),
+        _ => Vec::new(),
+    };
+    if agents.is_empty() {
+        return "No agents found.\n".to_string();
+    }
+    let rows = agents
+        .into_iter()
+        .map(|agent| {
+            let text = |value: Option<&serde_json::Value>| {
+                value
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("—")
+                    .to_string()
+            };
+            let location = agent.get("location");
+            let session = text(location.and_then(|location| location.get("session")));
+            let place = match location
+                .and_then(|location| location.get("host"))
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(host) => format!("{host}/{session}"),
+                None => session,
+            };
+            vec![
+                TableCell::plain(text(agent.get("label"))),
+                TableCell::plain(text(agent.get("state"))),
+                TableCell::plain(place),
+                TableCell::plain(
+                    location
+                        .and_then(|location| location.get("pane"))
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or_else(|| "—".to_string(), |value| value.to_string()),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
+    format_table(&["AGENT", "STATE", "SESSION", "PANE"], &rows, styles)
 }
 
 fn format_agent_wait_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {

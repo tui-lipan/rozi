@@ -40,9 +40,11 @@ fn build_tree_tab(
         || table.command.is_some()
         || table.interval.is_some()
         || table.group_prefix.is_some()
+        || table.format.is_some()
+        || table.stream.is_some()
     {
         warnings.push(format!(
-            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix` (rename the tab to keep those as a custom tab)"
+            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix`/`format`/`stream` (rename the tab to keep those as a custom tab)"
         ));
     }
     if let Some(root) = table.root {
@@ -251,6 +253,10 @@ pub(super) struct CustomTabParts {
     pub(super) interval: Option<u64>,
     pub(super) on_click: Option<super::file::UserCommandTableSpec>,
     pub(super) group_prefix: Option<String>,
+    /// Command tabs: `lines` (the default) or `json`.
+    pub(super) format: Option<String>,
+    /// A tab whose rows programs publish over `rozi sidebar publish`.
+    pub(super) stream: bool,
 }
 
 /// Build one launcher or command tab under an already-resolved id.
@@ -269,11 +275,39 @@ pub(super) fn build_custom_tab(
     if label.is_empty() {
         return Err(format!("Sidebar tab `{name}` label must not be empty"));
     }
+    if parts.stream {
+        if parts.entries.is_some() || parts.command.is_some() {
+            return Err(format!(
+                "Sidebar tab `{name}` needs exactly one of `entries`, `command`, or `stream = true`"
+            ));
+        }
+        for (field, present) in [
+            ("interval", parts.interval.is_some()),
+            ("on_click", parts.on_click.is_some()),
+            ("group_prefix", parts.group_prefix.is_some()),
+            ("format", parts.format.is_some()),
+        ] {
+            if present {
+                warnings.push(format!(
+                    "Sidebar tab `{name}` is a stream tab; ignoring `{field}` (its producers handle activation)"
+                ));
+            }
+        }
+        return Ok(SidebarTab::Stream {
+            name: id.clone(),
+            label: label.to_string(),
+        });
+    }
     match (parts.entries, parts.command) {
         (Some(entries), None) => {
             if parts.group_prefix.is_some() {
                 warnings.push(format!(
                     "Sidebar tab `{name}` is a launcher; ignoring `group_prefix` (group its entries with `group` instead)"
+                ));
+            }
+            if parts.format.is_some() {
+                warnings.push(format!(
+                    "Sidebar tab `{name}` is a launcher; ignoring `format`, which applies to command tabs"
                 ));
             }
             let entries = entries
@@ -338,6 +372,26 @@ pub(super) fn build_custom_tab(
                 }
                 !prefix.is_empty()
             });
+            let format = match parts.format.as_deref() {
+                None => super::schema::SidebarCommandFormat::Lines,
+                Some(value) => super::schema::SidebarCommandFormat::parse(value).unwrap_or_else(|| {
+                    warnings.push(format!(
+                        "Sidebar tab `{name}` format `{value}` is unknown (expected `lines` or `json`); using `lines`"
+                    ));
+                    super::schema::SidebarCommandFormat::Lines
+                }),
+            };
+            // A JSON command describes its own tree; a line marker has nothing to mark.
+            let group_prefix = if format == super::schema::SidebarCommandFormat::Json
+                && group_prefix.is_some()
+            {
+                warnings.push(format!(
+                    "Sidebar tab `{name}` prints JSON; ignoring `group_prefix` (nest rows with `parent` instead)"
+                ));
+                None
+            } else {
+                group_prefix
+            };
             Ok(SidebarTab::Command {
                 name: id.clone(),
                 label: label.to_string(),
@@ -346,10 +400,11 @@ pub(super) fn build_custom_tab(
                 on_click,
                 group_prefix,
                 env: parts.env,
+                format,
             })
         }
         _ => Err(format!(
-            "Sidebar tab `{name}` needs exactly one of `entries` or `command`"
+            "Sidebar tab `{name}` needs exactly one of `entries`, `command`, or `stream = true`"
         )),
     }
 }
@@ -407,6 +462,8 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                     interval: table.interval,
                     on_click: table.on_click,
                     group_prefix: table.group_prefix,
+                    format: table.format,
+                    stream: table.stream.unwrap_or(false),
                     env: Vec::new(),
                 };
                 match build_custom_tab(SidebarTabId::new(name), parts, warnings) {
@@ -490,6 +547,51 @@ mod tests {
                 group: None,
                 action: crate::config::UserCommandAction::run("claude"),
             }],
+        }
+    }
+
+    /// `format = "json"` makes a command tab print a tree; `stream = true` makes a tab that only
+    /// producers fill, and it takes neither a command nor entries.
+    #[test]
+    fn command_tabs_take_a_format_and_stream_tabs_stand_alone() {
+        let (config, warnings) = parse(
+            r#"tabs = [
+              { name = "deps", label = "Deps", command = "deps --json", format = "json", group_prefix = "> " },
+              { name = "deploys", label = "Deploys", stream = true },
+              { name = "both", label = "Both", stream = true, command = "x" },
+              { name = "odd", label = "Odd", command = "x", format = "yaml" },
+            ]"#,
+        );
+        assert!(matches!(
+            &config.tabs[0],
+            SidebarTab::Command {
+                format: crate::config::SidebarCommandFormat::Json,
+                group_prefix: None,
+                ..
+            }
+        ));
+        assert!(matches!(&config.tabs[1], SidebarTab::Stream { .. }));
+        assert_eq!(
+            config.tabs.len(),
+            3,
+            "a stream tab with a command is refused"
+        );
+        assert!(matches!(
+            &config.tabs[2],
+            SidebarTab::Command {
+                format: crate::config::SidebarCommandFormat::Lines,
+                ..
+            }
+        ));
+        for expected in [
+            "ignoring `group_prefix`",
+            "`stream = true`",
+            "format `yaml` is unknown",
+        ] {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(expected)),
+                "{expected}: {warnings:?}"
+            );
         }
     }
 

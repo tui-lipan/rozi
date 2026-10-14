@@ -40,6 +40,9 @@ pub fn bundle() -> Value {
     add::<crate::control::PaneClosed>(&mut generator, &mut roots);
     add::<crate::control::PaneRevealed>(&mut generator, &mut roots);
     add::<crate::control::AgentListPayload>(&mut generator, &mut roots);
+    add::<crate::control::GlobalAgentListPayload>(&mut generator, &mut roots);
+    add::<crate::control::GlobalAgentInfo>(&mut generator, &mut roots);
+    add::<crate::control::AgentLocationSpec>(&mut generator, &mut roots);
     add::<crate::control::ExtensionRuntimeReport>(&mut generator, &mut roots);
     add::<crate::control::PaneCapture>(&mut generator, &mut roots);
     add::<crate::control::UiCapture>(&mut generator, &mut roots);
@@ -63,6 +66,12 @@ pub fn bundle() -> Value {
 
     // Published activity, and the events `subscribe` streams.
     add::<crate::session::protocol::PublishedRow>(&mut generator, &mut roots);
+
+    // Sidebar stream tabs and JSON command tabs: what a producer writes, and what rozi writes back.
+    add::<crate::state::SidebarSnapshot>(&mut generator, &mut roots);
+    add::<crate::state::SidebarRowSpec>(&mut generator, &mut roots);
+    add::<crate::state::SidebarActionSpec>(&mut generator, &mut roots);
+    add::<crate::state::SidebarStreamEvent>(&mut generator, &mut roots);
     add::<crate::events::WireEvent>(&mut generator, &mut roots);
     add::<crate::events::EventKind>(&mut generator, &mut roots);
 

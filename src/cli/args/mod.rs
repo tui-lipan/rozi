@@ -878,6 +878,47 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     command,
                 }));
             }
+            "sidebar" => {
+                let Some(verb) = iter.next() else {
+                    return Err("sidebar requires a subcommand: publish".to_string());
+                };
+                if verb != "publish" {
+                    return Err(format!(
+                        "unknown sidebar subcommand `{verb}`; expected `publish`"
+                    ));
+                }
+                let mut tab = None;
+                let mut name = None;
+                while let Some(arg) = iter.next() {
+                    let (flag, inline) = match arg.split_once('=') {
+                        Some((flag, value)) => (flag.to_string(), Some(value.to_string())),
+                        None => (arg.clone(), None),
+                    };
+                    match flag.as_str() {
+                        "--tab" | "--name" => {
+                            let value = inline
+                                .or_else(|| iter.next())
+                                .ok_or_else(|| format!("{flag} requires a value"))?;
+                            if flag == "--tab" {
+                                tab = Some(value);
+                            } else {
+                                name = Some(value);
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "unexpected argument `{arg}` after sidebar publish"
+                            ));
+                        }
+                    }
+                }
+                let tab = tab.ok_or_else(|| "sidebar publish requires --tab".to_string())?;
+                let command = control::ControlCommand::SidebarPublish { tab, name };
+                return Ok(ParsedCli::Publish(PublishCli {
+                    socket: ui_stream_socket(&cli, socket, &command)?,
+                    command,
+                }));
+            }
             "subscribe" => {
                 let mut events = Vec::new();
                 let mut passthrough = false;

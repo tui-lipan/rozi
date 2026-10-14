@@ -1031,6 +1031,106 @@ CLI bridge:
 rozi publish [--kind agent|activity] [--name NAME]
 ```
 
+## Sidebar stream
+
+A sidebar stream publishes rows into a [stream tab](sidebar.md#stream-tabs) and hears what the user
+does with them. Unlike a published activity stream, it belongs to no pane: the rows belong to the
+tab.
+
+Open with:
+
+```json
+{"cmd":"sidebar-publish","tab":"deploys"}
+{"cmd":"sidebar-publish","tab":"machines","name":"prod"}
+```
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `tab` | string | required | An extension process names its own extension's tab by its local name (`machines` for `<extension>.machines`). Any other caller names a `config.toml` stream tab by its ID. |
+| `name` | string or null | null | Tells apart several producers of one caller in the same place. Validated like a [publisher's](#published-activity-stream) `name`. |
+
+A tab that does not exist or is not a stream tab is refused with `invalid-argument`; another
+extension's tab, or an extension's tab from any other caller, with `not-permitted`.
+
+After `{"ok":true}`, the producer writes complete snapshots of its rows, one JSON object per line:
+
+```json
+{"rows":[
+  {"id":"api","label":"api","tone":"working","description":"deploying"},
+  {"id":"api/eu","parent":"api","label":"eu-west-1","tone":"success","expandable":true}
+],
+ "actions":[{"id":"rollback","key":"r","label":"roll back","confirm":true},
+            {"id":"remove","key":"d","label":"remove","close":true}]}
+```
+
+| Row field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | string | required | Stable identity, unique among this producer's rows. Another producer may use the same ID. |
+| `label` | string | required | The row's text. |
+| `parent` | string or null | null | The `id` of the row this one sits under. A parent missing from the snapshot makes it a top-level row; rows in a parent cycle are not shown. |
+| `description` | string or null | null | Right-aligned on the label's line. |
+| `detail` | string or null | null | A second line under the label. |
+| `tone` | string | `"normal"` | `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. rozi picks the marker and colour. |
+| `active` | bool | `false` | The current one of its kind. |
+| `disabled` | string or null | null | Shows the row dimmed with this reason as its second line; it cannot be activated and takes no actions. |
+| `expandable` | bool | `false` | The row has children, even before any are listed. Expanding it writes an `expand` event. |
+| `expanded` | bool or null | null | Initial expansion. A row with listed children starts expanded, one with none starts collapsed. The user's own choice wins once made. |
+| `actions` | string array or null | null | IDs of this producer's actions that apply to the row. Absent means all of them. |
+
+| Action field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | string | required | Returned as `action`. |
+| `key` | string | required | One key, spelled as in [`[keys]`](configuration.md#keys), such as `d` or `ctrl-r`. Keys the focused sidebar uses for itself — arrows, `h`, `j`, `k`, `l` with any modifier, `g`, `G`, `x`, `?`, `Space`, `Enter`, `Esc`, `Tab`, `Home`, `End`, `Page Up`, and `Page Down` — and chords of more than one key are dropped. |
+| `label` | string | required | What it does, in a few words. |
+| `confirm` | bool | `false` | Require a second press on the same row. |
+| `close` | bool | `false` | Show the action as the row's `✕`, reached also with `x`. Always confirms. Only the first such action gets the `✕`. |
+
+- Each snapshot replaces this producer's rows and nobody else's. `actions` replaces the producer's
+  actions when present and keeps them when absent, so a producer can declare them once.
+- rozi keeps the first 500 rows and 16 actions, drops rows with an empty or repeated `id` or an
+  empty `label`, strips control sequences, and shortens labels to 160 characters, descriptions to
+  80, and details to 160. A line that is not a snapshot is ignored and the last good one stays.
+- End of input or any stream failure withdraws the producer's rows. So does removing the tab from
+  the configuration.
+
+rozi writes events back, one JSON object per line:
+
+```json
+{"visible":true}
+{"activate":"api/eu"}
+{"expand":"api/eu"}
+{"action":"rollback","row":"api"}
+```
+
+| Event | When |
+| --- | --- |
+| `visible` | When the stream opens, and whenever the tab starts or stops being on screen. A producer can stop its work while nobody looks. |
+| `activate` | The user clicked the row or pressed `Enter` on it. |
+| `expand` | The user expanded an `expandable` row. List its children in the next snapshot; until then rozi shows a loading line under it. |
+| `action` | The user fired an action on a row, confirmed when it asks for confirmation. |
+
+The producer must keep reading events. If its backlog of unread events fills up, rozi withdraws
+its rows.
+
+### Several producers in one tab
+
+A tab may have several producers at once. A producer is identified by where it runs — for a
+[placed extension process](extensions.md#run-on-the-session-host), the host and, for a
+session-bound placement, the session it was placed for; for anything else, this client — plus its
+`name`. A producer that opens a new stream with the same identity replaces its own earlier stream:
+the rows it published stay until its first snapshot, and the earlier stream closing afterwards
+withdraws nothing. Events reach only the producer that owns the row.
+
+With more than one producer, the tab heads each producer's rows with where it runs: `LOCAL` for
+this machine or the host's name, then the session and the `name` when there are any, such as
+`WORKBOX · backend`.
+
+CLI bridge:
+
+```sh
+rozi sidebar publish --tab TAB [--name NAME]
+```
+
 ## Stream ownership
 
 The CLI attaches the extension `id` and `generation` when both are present in its environment, and

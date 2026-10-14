@@ -312,6 +312,25 @@ active one, the same row session restore resumes. A row that is not on screen, e
 is reached with `--ref`. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
+### Every agent, everywhere
+
+`agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows
+about — the session on screen, your other local sessions, and every
+[connected host](remote.md#agents-on-a-machine-you-are-not-in) — most urgent first, the same list as
+the [Agents view](sessions.md#go-to-an-agent) and the sidebar's [Agents tab](sidebar.md#agents):
+
+```bash
+rozi agents list --all
+rozi agents list --all --format json
+rozi agents go --location '{"host":"workbox","session":"backend","pane":4}'
+```
+
+In JSON, each agent has a `location`: its host (absent for this machine), session, pane, and its
+published `row` when it is one of several in its pane. `agents go --location '<json>'` goes there
+the way activating the row does: it focuses the pane in the session on screen, and switches to or
+attaches the session first anywhere else. A location naming a session rozi does not know is refused.
+Both need a running rozi; a session server knows only its own agents.
+
 ### Wait for a state
 
 `agents wait` and `agents prompt` run in the session server, so a wait cannot miss a change that

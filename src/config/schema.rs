@@ -1824,7 +1824,34 @@ pub enum SidebarTab {
         group_prefix: Option<String>,
         /// Environment for the polling process and for `on_click`. Empty for a `config.toml` tab.
         env: Vec<(String, String)>,
+        /// How the command's output becomes rows.
+        format: SidebarCommandFormat,
     },
+    /// Rows published by programs over `rozi sidebar publish` streams, one or more at once.
+    Stream {
+        name: SidebarTabId,
+        label: String,
+    },
+}
+
+/// How a command tab reads its command's output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarCommandFormat {
+    /// One row per output line.
+    #[default]
+    Lines,
+    /// One JSON object, `{"rows":[...]}`, describing a tree of rows.
+    Json,
+}
+
+impl SidebarCommandFormat {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "lines" => Some(Self::Lines),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
 }
 
 impl SidebarTab {
@@ -1845,7 +1872,9 @@ impl SidebarTab {
             Self::Sessions => SidebarTabId::new("sessions"),
             Self::Worktrees => SidebarTabId::new("worktrees"),
             Self::Tree { view, .. } => SidebarTabId::new(view.id()),
-            Self::Launcher { name, .. } | Self::Command { name, .. } => name.clone(),
+            Self::Launcher { name, .. }
+            | Self::Command { name, .. }
+            | Self::Stream { name, .. } => name.clone(),
         }
     }
 
@@ -1858,7 +1887,9 @@ impl SidebarTab {
             Self::Sessions => "Sessions",
             Self::Worktrees => "Worktrees",
             Self::Tree { view, .. } => view.label(),
-            Self::Launcher { label, .. } | Self::Command { label, .. } => label,
+            Self::Launcher { label, .. }
+            | Self::Command { label, .. }
+            | Self::Stream { label, .. } => label,
         }
     }
 

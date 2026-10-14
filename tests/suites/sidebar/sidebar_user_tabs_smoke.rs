@@ -171,6 +171,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
                     on_click: None,
                     group_prefix: None,
                     env: Vec::new(),
+                    format: rozi::config::SidebarCommandFormat::Lines,
                 }];
                 state.sidebar.panels[0].tabs = vec![tab_id.clone()];
                 state.sidebar.panels[0].active_tab = Some(tab_id.clone());
@@ -178,6 +179,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
                     tab_id,
                     SidebarCommandOutput {
                         epoch: 1,
+                        tree: None,
                         cwd: None,
                         rows: vec![SidebarCommandRow {
                             raw: "master".into(),

@@ -272,8 +272,8 @@ are not listed.
 
 ### Expand and collapse
 
-Projects is a tree. Click the `▾` or `▸` beside a row to show or hide what is under it. In a focused
-sidebar:
+Projects, [JSON command tabs](#json-command-tabs), and [stream tabs](#stream-tabs) are trees. Click
+the `▾` or `▸` beside a row to show or hide what is under it. In a focused sidebar:
 
 | Key | Action |
 | --- | --- |
@@ -355,13 +355,16 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 
 ## Custom tabs
 
-You can add two kinds of tab of your own:
+You can add three kinds of tab of your own:
 
 - A launcher tab lists configured entries. Each entry runs a `run`, `send`, or `popup` action, the
   same actions custom key commands use.
-- A command tab runs a command and shows its output as rows.
+- A command tab runs a command and shows its output as rows: one row per line, or a tree of rows
+  when the command prints JSON.
+- A stream tab shows rows that running programs publish to it, and tells them when you click,
+  expand, or act on a row.
 
-Extensions can add tabs of either kind; see [Extension sidebar tabs](#extension-sidebar-tabs).
+Extensions can add tabs of every kind; see [Extension sidebar tabs](#extension-sidebar-tabs).
 
 ### Launcher tabs
 
@@ -399,12 +402,80 @@ working in and runs again when you `cd`. If the tab was off screen while you cha
 shows its placeholder until the new result arrives, not the previous project's rows. With
 `--remote`, the pane's directory is on the server, so the tab runs in the client's own directory.
 
+### JSON command tabs
+
+With `format = "json"`, a command tab's command prints one JSON object describing its rows instead
+of one row per line. Rows can nest, carry a state, and say more than a line of text can:
+
+```toml
+{ name = "deps", label = "Deps", command = "deps-report --json", format = "json", on_click = { run = "deps-open \"$ROZI_ROW_ID\"" } }
+```
+
+```json
+{"rows":[
+  {"id":"serde","label":"serde","description":"1.0.219","tone":"warning","detail":"1.0.228 available"},
+  {"id":"serde/derive","parent":"serde","label":"serde_derive","description":"1.0.219"}
+]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Required. The row's identity, unique in the output. Expansion and clicks follow it. |
+| `label` | Required. The row's text. |
+| `parent` | The `id` of the row it sits under. A missing parent makes it a top-level row. |
+| `description` | Right-aligned text on the label's line. |
+| `detail` | A second line under the label. |
+| `tone` | The row's state, which picks its marker and colour: `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. |
+| `active` | Marks the current one of its kind. |
+| `disabled` | Shows the row dimmed with this reason as its second line, and makes it inert. |
+| `expanded` | Whether the row starts expanded. Your own choice wins once you make one. |
+
+A row with children starts expanded unless it says otherwise. Activating a row runs the tab's
+`on_click` with the row's `id` in `ROZI_ROW_ID` and its label as the row text, so `send` may use
+`{line}` for the label. Without `on_click`, activating a row with children shows or hides them.
+
+The same limits apply as for line output, and unknown fields are ignored. Output that is not such
+an object, a command that fails, or one that writes to standard error shows error rows instead.
+rozi strips control sequences and shortens long text. A command tab cannot use `group_prefix`
+with `format = "json"`; nest rows with `parent` instead.
+
+### Stream tabs
+
+A stream tab has no command of its own. Programs publish its rows with
+[`rozi sidebar publish`](control.md#sidebar-streams) while they run, and rozi tells them what you do
+with those rows. Use one for something a program already watches: deployments, build jobs, a test
+watcher, the machines a service is connected to.
+
+```toml
+{ name = "deploys", label = "Deploys", stream = true }
+```
+
+```sh
+deploy-watch | rozi sidebar publish --tab deploys
+```
+
+Each line a program writes is a complete snapshot of its rows, in the same row format as a
+[JSON command tab](#json-command-tabs). When you activate a row, expand a row marked `expandable`,
+or press one of the program's action keys on a row, rozi writes a line back. Several programs can
+publish to one tab at once; each owns only its own rows, and each gets a heading when there is more
+than one, such as `LOCAL · prod` or `WORKBOX`. A program that exits takes its rows with it.
+
+A program can offer actions on its rows, each bound to a key that works while the sidebar is
+focused. One action can be the row's `✕`, which, like every `✕` in the sidebar, asks for a second
+click or `x`. The sidebar's own keys are never available to a program. See the
+[protocol](control-protocol.md#sidebar-stream) for the full format.
+
+Only processes you run and the extension that owns a tab can publish to it: an extension's
+processes publish only to that extension's own stream tabs, and other programs only to stream tabs
+in your `config.toml`.
+
 ### Pass the selected row or path
 
 | Action | Tab | How the selection is passed |
 | --- | --- | --- |
 | `send` | Command | `{line}` in the text is replaced with the row |
 | `run`, `popup`, `exec` | Command | `ROZI_ROW` environment variable |
+| any | JSON command | the row's `id` in `ROZI_ROW_ID`, its label as above |
 | `send` | File tree | `{path}` in the text is replaced with the path |
 | `run`, `popup` | File tree | `ROZI_FILE` environment variable |
 
@@ -415,8 +486,8 @@ evaluate it. `{line}` is rejected in `run` and
 
 ### Extension sidebar tabs
 
-Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher and command
-forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
+Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher, command, and
+stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
 disablement, failed loads, updates, removal, and reinstallation. See
 [Extensions](extensions.md#sidebar-tabs).
 

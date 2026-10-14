@@ -381,10 +381,11 @@
 #tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
 # A tab may also be a table, which is how built-ins take options and how custom tabs are
 # defined. Fields: name, label, exactly one of entries (a launcher list of
-# { label, group, run|send|popup, keep_open }) or command (+ interval seconds and
-# group_prefix), and on_click.
+# { label, group, run|send|popup, keep_open }), command (+ interval seconds, format "lines" or
+# "json", and group_prefix), or stream = true, and on_click.
 # An entry's `group` files it under a section header; a command tab's `group_prefix` turns
-# every output line starting with it into one.
+# every output line starting with it into one. A `format = "json"` command prints a tree of rows,
+# and programs publish a stream tab's rows with `rozi sidebar publish --tab <name>`.
 # For the files/git trees: root, show_hidden, icons, explorer, diff_stats, max_entries.
 # A table cannot live in this file's `tabs` line without displacing the default above -
 # examples/sidebar.toml is a working two-panel setup using every form.

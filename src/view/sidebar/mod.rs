@@ -465,7 +465,7 @@ fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Sideba
         }
         // The tree owns its own rows inside the widget; nothing to enumerate here. Projects is
         // hierarchical and drawn above.
-        SidebarTab::Tree { .. } | SidebarTab::Projects => Vec::new(),
+        SidebarTab::Tree { .. } | SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
     }
 }
 
@@ -494,6 +494,7 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
                 "Loading…"
             }
         }
+        SidebarTab::Stream { .. } => "Nothing published",
         SidebarTab::Tree { .. } => "",
     }
 }

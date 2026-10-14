@@ -46,6 +46,10 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
         crate::state::SidebarClose::Worktree { path, force } => {
             crate::ops::worktrees::remove_from_sidebar(ctx, path, force)
         }
+        crate::state::SidebarClose::StreamAction { row, action } => {
+            crate::ops::sidebar_streams::fire_action(&ctx.state, &row, &action);
+            Update::full()
+        }
     }
 }
 
@@ -96,6 +100,13 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::PublishedRow { pane_id, row } => activate_published_row(ctx, pane_id, row),
         RowTarget::Agent(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
         RowTarget::TreeToggle(key) => crate::update::sidebar::tree_rows::toggle_key(ctx, key),
+        RowTarget::StreamRow(row) => crate::ops::sidebar_streams::activate(ctx, row),
+        RowTarget::CommandTreeRow {
+            config_epoch,
+            tab_id,
+            output_epoch,
+            id,
+        } => command_tree_row_activate(ctx, config_epoch, tab_id, output_epoch, id),
         RowTarget::Session(entry) => {
             crate::update::sidebar::sessions::activate_session(ctx, *entry)
         }
@@ -206,6 +217,60 @@ pub(crate) fn command_row_activate(
         env.push(("ROZI_ROW".to_string(), line.clone()));
         crate::ops::user_command::execute_with_env(ctx, &resolve_row_action(&action, &line), env)
     })
+}
+
+/// A JSON command tab's row was activated: run the tab's `on_click` for it, with the row's id in
+/// `$ROZI_ROW_ID` and its label as the row text.
+pub(crate) fn command_tree_row_activate(
+    ctx: &mut Context<AppRoot>,
+    config_epoch: u64,
+    tab_id: SidebarTabId,
+    output_epoch: u64,
+    id: String,
+) -> Update {
+    if config_epoch != ctx.state.sidebar.config_epoch {
+        return Update::none();
+    }
+    let Some(label) = ctx
+        .state
+        .fresh_command_output(&tab_id)
+        .filter(|output| output.epoch == output_epoch)
+        .and_then(|output| output.tree.as_ref())
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.id == id && row.disabled.is_none())
+        })
+        .map(|row| row.label.clone())
+    else {
+        return Update::none();
+    };
+    let found = ctx
+        .state
+        .config
+        .sidebar
+        .tabs
+        .iter()
+        .find_map(|tab| match tab {
+            SidebarTab::Command {
+                name,
+                on_click: Some(action),
+                env,
+                ..
+            } if name == &tab_id => Some((action.clone(), env.clone())),
+            _ => None,
+        });
+    let Some((action, mut env)) = found else {
+        return Update::none();
+    };
+    env.push(("ROZI_ROW_ID".to_string(), id));
+    if let Some((placements, placed)) = crate::ops::placement::placed_tab(&ctx.state, &tab_id)
+        && placed.on_click_exec.is_some()
+        && matches!(action, UserCommandAction::Exec { .. })
+    {
+        return crate::ops::placement::click_tab(ctx, &tab_id, placements, &placed, &label, env);
+    }
+    env.push(("ROZI_ROW".to_string(), label.clone()));
+    crate::ops::user_command::execute_with_env(ctx, &resolve_row_action(&action, &label), env)
 }
 
 pub(crate) fn resolve_row_action(action: &UserCommandAction, line: &str) -> UserCommandAction {

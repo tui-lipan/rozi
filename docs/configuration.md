@@ -593,18 +593,20 @@ for restoration rules, the tab manager, and migration from the former geometry k
 ### Tab tables
 
 An entry in `tabs` can be a table instead of an ID. A table can configure the built-in `files` or
-`git` tree tab, or define a custom tab: a launcher tab with fixed rows, or a command tab that lists
-a command's output.
+`git` tree tab, or define a custom tab: a launcher tab with fixed rows, a command tab that lists a
+command's output, or a stream tab that programs publish rows to.
 
 | Tab key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `name` | string | required | Unique tab ID. `activity`, `panes`, and `sessions` are reserved. |
+| `name` | string | required | Unique tab ID. Built-in tab IDs are reserved. |
 | `label` | string | required for custom tabs | Built-in tree tab labels are fixed. |
-| `entries` | array of tables | none | Launcher rows. A custom tab needs exactly one of `entries` or `command`. |
-| `command` | string | none | Command whose output lines become the tab's rows. |
+| `entries` | array of tables | none | Launcher rows. A custom tab needs exactly one of `entries`, `command`, or `stream = true`. |
+| `command` | string | none | Command whose output becomes the tab's rows. |
+| `format` | string | `"lines"` | `"lines"` or `"json"`. Command tabs only. See [JSON command tabs](sidebar.md#json-command-tabs). |
+| `stream` | bool | `false` | A tab programs publish rows to. See [Stream tabs](sidebar.md#stream-tabs). |
 | `interval` | integer seconds | `30` | Minimum `5`. Command tabs only. |
 | `on_click` | action table | none; tree tabs type `{path}` | Action for a command or tree row. |
-| `group_prefix` | string | none | Command tabs only. Output lines starting with it become section headers. |
+| `group_prefix` | string | none | Line command tabs only. Output lines starting with it become section headers. |
 | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
 | `show_hidden` | bool | `true` | Tree tabs only. |
 | `icons` | bool | `false` | Tree tabs only. Also needs `nerd_icons`. |

@@ -50,6 +50,10 @@ pub(super) struct ExtensionSidebarTabFile {
     pub(super) interval: Option<u64>,
     pub(super) on_click: Option<super::super::file::UserCommandTableSpec>,
     pub(super) group_prefix: Option<String>,
+    /// Command tabs only: `lines` or `json`.
+    pub(super) format: Option<String>,
+    /// A tab fed by the extension's own `rozi sidebar publish` streams.
+    pub(super) stream: Option<bool>,
     /// Where the listing command and an `on_click` `exec` run. See [`super::placement`].
     pub(super) placement: Option<String>,
 }

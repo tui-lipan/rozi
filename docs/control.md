@@ -166,6 +166,8 @@ attached.
 | `pane close --target ID [--if-revision N]` | Close a pane without asking. | yes |
 | `pane reveal --target ID` | Scroll a Scrollable strip to a pane without focusing it. | no |
 | `agents list [--format text\|json]` | List effective agent runtimes and exact references. | yes |
+| `agents list --all [--format text\|json]` | List every agent in every session and on every connected host. | no |
+| `agents go --location JSON` | Go to an agent wherever it runs, by a `location` from `agents list --all`. | no |
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
 | `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
@@ -199,6 +201,7 @@ attached.
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
+| `sidebar publish --tab TAB [--name NAME]` | Publish rows to a sidebar [stream tab](sidebar.md#stream-tabs) over stdin and receive what the user does with them on stdout. | no |
 | `extensions status [--json]` | Report where the UI runs [placed extension processes](extensions.md#run-on-the-session-host). | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 
@@ -231,8 +234,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 19,
-  "session_protocol": 29,
+  "schema": 20,
+  "session_protocol": 30,
   "capabilities": [
     "agent-waits",
     "attached-control",
@@ -243,6 +246,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-wait",
     "command-visibility",
     "extension-link-handlers",
+    "global-agents",
     "layout-control",
     "pane-control",
     "pane-reveal",
@@ -253,6 +257,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "remote-control",
     "remote-extension-runtime",
     "session-control",
+    "sidebar-streams",
     "split-size"
   ]
 }
@@ -913,6 +918,27 @@ replaces its own earlier stream. See
 
 See [Published activity protocol](control-protocol.md#published-activity-stream) and
 [Sidebar](sidebar.md).
+
+## Sidebar streams
+
+`sidebar publish` keeps a two-way stream open to a sidebar [stream tab](sidebar.md#stream-tabs).
+Write complete snapshots of your rows to stdin:
+
+```json
+{"rows":[{"id":"api","label":"api","tone":"working"},{"id":"api/eu","parent":"api","label":"eu-west-1"}]}
+```
+
+Read what the user does on stdout:
+
+```json
+{"visible":true}
+{"activate":"api/eu"}
+```
+
+An extension process names its own tab by its local name; any other program names a stream tab
+from `config.toml`. Several programs can publish to one tab, each owning only its own rows, and a
+program that exits takes its rows with it. See the
+[Sidebar stream protocol](control-protocol.md#sidebar-stream) for every field, actions, and events.
 
 ## Drive a detached session
 

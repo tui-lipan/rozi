@@ -327,6 +327,10 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) on_click: Option<UserCommandTableSpec>,
     /// Command tabs only: the marker that turns an output line into a section header.
     pub(super) group_prefix: Option<String>,
+    /// Command tabs only: `lines` or `json`.
+    pub(super) format: Option<String>,
+    /// A tab fed by `rozi sidebar publish` streams.
+    pub(super) stream: Option<bool>,
     // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
     pub(super) root: Option<String>,
     pub(super) show_hidden: Option<bool>,
@@ -3430,7 +3434,7 @@ command = "open"
         );
 
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(sidebar.tabs.len(), 11);
+        assert_eq!(sidebar.tabs.len(), 13);
         assert_eq!(sidebar.layout.left.panel_count, 2);
     }
 

@@ -204,6 +204,31 @@ pub enum Msg {
         panel: usize,
         index: usize,
     },
+    /// A `sidebar-publish` stream asks to join a stream tab. `ack` answers with the tab and
+    /// producer it was admitted as, or the refusal to send back.
+    SidebarStreamOpen {
+        open: Box<crate::ops::sidebar_streams::StreamOpen>,
+        sender: std::sync::mpsc::SyncSender<String>,
+        ack: std::sync::mpsc::Sender<
+            std::result::Result<
+                (crate::config::SidebarTabId, String),
+                crate::control::ControlResponse,
+            >,
+        >,
+    },
+    /// A stream producer's new snapshot of its rows.
+    SidebarStreamSnapshot {
+        stream_id: u64,
+        tab: crate::config::SidebarTabId,
+        producer: String,
+        snapshot: crate::state::SidebarSnapshot,
+    },
+    /// A stream producer went away; its rows go with it, unless a newer stream replaced it.
+    SidebarStreamClosed {
+        stream_id: u64,
+        tab: crate::config::SidebarTabId,
+        producer: String,
+    },
     /// The disclosure toggle on a hierarchical sidebar row was clicked: show or hide its children.
     SidebarRowToggle {
         panel: usize,
@@ -251,6 +276,8 @@ pub enum Msg {
         epoch: u64,
         tab_id: crate::config::SidebarTabId,
         rows: Vec<crate::state::SidebarCommandRow>,
+        /// A JSON command tab's rows, when its output parsed. `rows` then holds nothing.
+        tree: Option<Vec<crate::state::SidebarRowSpec>>,
     },
     SidebarCommandRowActivate {
         config_epoch: u64,

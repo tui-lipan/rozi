@@ -13,7 +13,11 @@
  * GRAPHICS_WIRETAP_READ_EXE instead measures the host terminal: in that executable, reads from a
  * PTY master go to GRAPHICS_WIRETAP_READ_PATH (and marks to GRAPHICS_WIRETAP_READ_MEDIA_PATH) in
  * the same formats, timestamped on receipt. It sees any multiplexer's output, including programs
- * that bypass libc, and keeps LD_PRELOAD for the programs it starts. */
+ * that bypass libc, and keeps LD_PRELOAD for the programs it starts.
+ *
+ * GRAPHICS_WIRETAP_PTY_EXE does the same for the multiplexer's own PTY reads, recording producer
+ * output as it arrives (GRAPHICS_WIRETAP_PTY_PATH, GRAPHICS_WIRETAP_PTY_MEDIA_PATH). Setting it
+ * keeps LD_PRELOAD in the measured client, so the session server it starts loads the library. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -56,9 +60,14 @@ __attribute__((constructor)) static void open_sink(void) {
         if (read_output >= 0) read_media = open_record(getenv("GRAPHICS_WIRETAP_READ_MEDIA_PATH"));
         return;
     }
+    const char *pty_exe = getenv("GRAPHICS_WIRETAP_PTY_EXE");
+    if (is_executable(pty_exe)) {
+        read_output = open_record(getenv("GRAPHICS_WIRETAP_PTY_PATH"));
+        if (read_output >= 0) read_media = open_record(getenv("GRAPHICS_WIRETAP_PTY_MEDIA_PATH"));
+    }
     const char *path = getenv("GRAPHICS_WIRETAP_PATH");
     if (!path || !is_executable(getenv("GRAPHICS_WIRETAP_EXE"))) return;
-    unsetenv("LD_PRELOAD");
+    if (!pty_exe) unsetenv("LD_PRELOAD");
     output = open_record(path);
     if (output >= 0) media = open_record(getenv("GRAPHICS_WIRETAP_MEDIA_PATH"));
 }

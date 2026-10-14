@@ -350,6 +350,37 @@ def owned_processes(root, client_pid):
     return pids
 
 
+def tuios_windows(binary, env):
+    listed = json.loads(subprocess.run([binary, "list-windows", "--json"], env=env, text=True,
+                                       capture_output=True, timeout=20).stdout or "{}")
+    return listed.get("windows", listed) if isinstance(listed, dict) else listed
+
+
+def start_tuios(binary, env, root, wrapper, launch):
+    """Run the producer as TuiOS's only window and return (client, daemon) process IDs.
+
+    TuiOS passes graphics through, so it has no frame rate to configure.
+    """
+    run([*launch, "--", binary, "new", "graphics-benchmark", "--no-animations"])
+    wait_for(lambda: "graphics-benchmark" in subprocess.run(
+        [binary, "ls"], env=env, text=True, capture_output=True, timeout=20).stdout, "TuiOS session")
+    initial = [window.get("id") for window in tuios_windows(binary, env)]
+    run([binary, "new-window", "producer", "--", sys.executable, str(wrapper)], env)
+    for window in initial:
+        subprocess.run([binary, "close-window", str(window)], env=env, capture_output=True,
+                       timeout=20)
+    wait_for(lambda: (root / "producer.pid").exists(), "producer")
+    host = json.loads((root / "window.json").read_text())["pid"]
+    tuios = [pid for pid in descendants(host) | set(isolated_processes(root, set()))
+             if Path(f"/proc/{pid}/exe").exists()
+             and os.path.realpath(f"/proc/{pid}/exe") == binary]
+    daemon = [pid for pid in tuios if b"daemon" in Path(f"/proc/{pid}/cmdline").read_bytes()]
+    client = [pid for pid in tuios if pid in descendants(host)]
+    if not client:
+        raise RuntimeError("TuiOS client not found")
+    return client[0], (daemon or [None])[0]
+
+
 def wiretap_environment(args, binary, wire, media):
     """Window-lab arguments that load the interposer on the chosen side of the host terminal.
 
@@ -363,6 +394,10 @@ def wiretap_environment(args, binary, wire, media):
     else:
         names = {"GRAPHICS_WIRETAP_EXE": binary, "GRAPHICS_WIRETAP_PATH": wire,
                  "GRAPHICS_WIRETAP_MEDIA_PATH": media}
+    if args.pty_tap:
+        names |= {"GRAPHICS_WIRETAP_PTY_EXE": binary,
+                  "GRAPHICS_WIRETAP_PTY_PATH": wire.with_name("pty-wire.bin"),
+                  "GRAPHICS_WIRETAP_PTY_MEDIA_PATH": wire.with_name("pty-media.bin")}
     result = ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}"]
     for name, value in names.items():
         result += ["--env", f"{name}={value}"]
@@ -393,7 +428,7 @@ def benchmark(args):
                        "while not (root/'start').exists(): time.sleep(.01)\n"
                        f"os.execv({producer_args[0]!r},{producer_args!r})\n")
     config = root / "config" / "rozi"
-    config.mkdir()
+    config.mkdir(parents=True)
     (config / "config.toml").write_text(
         f"frame_rate = {args.fps}\nshell = {json.dumps([sys.executable, str(wrapper)])}\n"
         '[session]\nautosave = false\nresurrect = false\n'
@@ -415,12 +450,16 @@ def benchmark(args):
         if args.wiretap:
             launch += wiretap_environment(args, binary, root / "host-wire.bin",
                                           root / "host-media.bin")
-        run([*launch, "--", binary, "sessions", "new", session, "--cwd", str(root)])
-        launched = True
-        socket = wait_for(lambda: next((root / "run/rozi").glob("control-*.sock"), None),
-                          "UI control socket")
-        wait_for(lambda: (root / "producer.pid").exists(), "producer")
-        client_pid = int(socket.stem.removeprefix("control-"))
+        if args.multiplexer == "tuios":
+            launched = True
+            client_pid, daemon_pid = start_tuios(binary, env, root, wrapper, launch)
+        else:
+            run([*launch, "--", binary, "sessions", "new", session, "--cwd", str(root)])
+            launched = True
+            socket = wait_for(lambda: next((root / "run/rozi").glob("control-*.sock"), None),
+                              "UI control socket")
+            wait_for(lambda: (root / "producer.pid").exists(), "producer")
+            client_pid = int(socket.stem.removeprefix("control-"))
 
         if args.follower:
             # A second owned window attaches to the same session with its own frame rate.
@@ -453,6 +492,8 @@ def benchmark(args):
                      f"window={json.dumps('class:' + follower_class)}}}))"])
 
         def metrics():
+            if args.multiplexer == "tuios":
+                return None
             return json.loads(run([binary, "--socket", str(socket), "metrics", "--format", "json"], env))["data"]
 
         before = metrics()
@@ -463,7 +504,13 @@ def benchmark(args):
             wait_for(lambda: (root / "producer-ready.json").exists(), "immutable fixture pool")
             time.sleep(1)
         start_metrics = metrics()
-        pids = owned_processes(root, client_pid)
+        if args.multiplexer == "tuios":
+            pids = {"client": client_pid, "producer": int((root / "producer.pid").read_text()),
+                    "ghostty": json.loads((root / "window.json").read_text())["pid"]}
+            if daemon_pid:
+                pids["server"] = daemon_pid
+        else:
+            pids = owned_processes(root, client_pid)
         if follower_pid:
             pids["follower"] = follower_pid
         initial = {name: process_sample(pid) for name, pid in pids.items()}
@@ -539,6 +586,18 @@ def benchmark(args):
         if args.wiretap:
             report["host_wire"] = wire_summary(root / "host-wire.bin", started_ns, ended_ns,
                                                1e6 / args.fps)
+        if args.wiretap and args.pty_tap and (root / "pty-wire.bin").exists():
+            # What the multiplexer read from its PTYs: the producer's own output.
+            report["pty_wire"] = wire_summary(root / "pty-wire.bin", started_ns, ended_ns,
+                                              1e6 / args.fps)
+            if not args.command and (root / "pty-media.bin").exists():
+                received = list(media_marks(root / "pty-media.bin"))
+                report["producer_to_received"] = latency_summary(
+                    producer_writes(root / "producer-writes.bin"), received,
+                    [mark for mark, _ in received], started_ns, ended_ns,
+                    report["producer"]["fixture_files"])
+                report["producer_to_received"]["boundary"] = (
+                    "producer write return -> multiplexer PTY read carrying that frame")
         if args.wiretap and not args.command:
             media = root / "host-media.bin"
             marks = list(media_marks(media)) if media.exists() else []
@@ -588,7 +647,8 @@ def benchmark(args):
                     os.kill(pid, signal.SIGCONT)
             except ProcessLookupError:
                 pass
-        subprocess.run([binary, "sessions", "kill", session], env=env,
+        subprocess.run([binary, "kill-server"] if args.multiplexer == "tuios"
+                       else [binary, "sessions", "kill", session], env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
         if launched:
             subprocess.run([*lab, "close"], timeout=20)
@@ -603,8 +663,12 @@ def main():
     parser.add_argument("--window-lab", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--wiretap", type=Path)
+    parser.add_argument("--multiplexer", choices=["rozi", "tuios"], default="rozi",
+                        help="the program under test; --binary is its executable")
     parser.add_argument("--tap", choices=["client-write", "host-read"], default="client-write",
                         help="record the client's successful TTY writes, or Ghostty's PTY reads")
+    parser.add_argument("--pty-tap", action="store_true",
+                        help="also record what the multiplexer reads from its PTYs")
     parser.add_argument("--fps", type=int, choices=[60, 120, 144, 240], default=120)
     parser.add_argument("--producer-fps", type=int, choices=[30, 60, 120, 144, 240], default=240)
     parser.add_argument("--seconds", type=float, default=20)
@@ -651,6 +715,9 @@ def main():
     if (args.stall_follower_at or args.resume_follower_at or args.stall_leader_at
             or args.resume_leader_at) and not args.follower:
         parser.error("stalling a follower needs --follower")
+    if args.multiplexer == "tuios" and (args.tap != "host-read" or args.follower or args.hide_at
+                                        or args.input_probes):
+        parser.error("TuiOS runs need --tap host-read and support only the plain sample")
     if args.command and (args.input_probes or args.follower or args.hide_at or args.mixed):
         parser.error("--command supports only the plain sample and --resize-at")
     if args.input_via == "host" and args.input_probes > 26:

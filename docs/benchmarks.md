@@ -436,6 +436,9 @@ python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
 `--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its
 PTY. It measures receipt at the host terminal rather than the client's write, and it also sees
 multiplexers that write without libc, so use it for comparisons with other multiplexers.
+`--pty-tap` additionally records what the multiplexer reads from its PTYs, the producer's own output,
+as `pty_wire`. For the synthetic stream, `producer_to_received` times each frame from producer write
+to that read.
 
 `--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
 `visibility` reports frames presented while hidden and producer writes in that time. On reveal it

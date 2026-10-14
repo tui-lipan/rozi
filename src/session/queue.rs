@@ -95,6 +95,23 @@ impl<T> ByteQueue<T> {
         }
     }
 
+    /// A replay/reset is a dependency barrier even when the server's producer epoch is unchanged.
+    /// Invalidate the replacement index; queued original entries retain their position and bytes.
+    pub(crate) fn invalidate_replacements(&self, pane: u32, local: bool) {
+        let mut state = self.state.lock().expect("byte queue poisoned");
+        state
+            .replacements
+            .retain(|key, _| key.pane != pane || key.local != local);
+    }
+
+    pub(crate) fn clear_replacements(&self) {
+        self.state
+            .lock()
+            .expect("byte queue poisoned")
+            .replacements
+            .clear();
+    }
+
     pub(crate) fn try_push(&self, value: T, bytes: usize) -> Result<(), PushError<T>> {
         self.try_push_with(value, bytes, |_, _| false)
     }
@@ -386,6 +403,20 @@ mod tests {
             image,
             incarnation: 1,
         }
+    }
+
+    #[test]
+    fn reset_barriers_prevent_same_epoch_replacement_across_replay() {
+        let queue = ByteQueue::new(8);
+        let key = replacement(7, 1);
+        queue.try_push_latest(1, 1, Some(key)).unwrap();
+        queue.invalidate_replacements(1, false);
+        queue.try_push(2, 1).unwrap();
+        queue.try_push_latest(3, 1, Some(key)).unwrap();
+        queue.try_push_latest(4, 1, Some(key)).unwrap();
+        assert_eq!(queue.try_pop(), Some(1));
+        assert_eq!(queue.try_pop(), Some(2));
+        assert_eq!(queue.try_pop(), Some(4));
     }
 
     #[test]

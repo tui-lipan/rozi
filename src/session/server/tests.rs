@@ -34,6 +34,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         output_sequence: 0,
         output_coalesce_epoch: 0,
         output_times: VecDeque::new(),
+        graphics_pacer: Default::default(),
         output_seen: false,
         cols: 20,
         rows: 5,
@@ -3179,6 +3180,7 @@ fn colliding_local_and_shared_pane_input_is_namespaced() {
     server.process_client_frame(
         owner,
         Frame::PaneBytes {
+            latency_sensitive: true,
             pane_id: PANE,
             local: false,
             generation: GENERATION,
@@ -3188,6 +3190,7 @@ fn colliding_local_and_shared_pane_input_is_namespaced() {
     server.process_client_frame(
         owner,
         Frame::PaneBytes {
+            latency_sensitive: true,
             pane_id: PANE,
             local: true,
             generation: GENERATION,
@@ -3846,6 +3849,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4002,6 +4006,7 @@ fn duplicate_spawn_is_rejected() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4063,6 +4068,7 @@ fn exited_pane_can_be_respawned() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4251,6 +4257,7 @@ fn attach_reports_layout_and_panes() {
         output_sequence: 0,
         output_coalesce_epoch: 0,
         output_times: VecDeque::new(),
+        graphics_pacer: Default::default(),
         output_seen: false,
         cols: 20,
         rows: 5,
@@ -4451,6 +4458,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
             rows: 5,
@@ -4537,6 +4545,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 output_sequence: 0,
                 output_coalesce_epoch: 0,
                 output_times: VecDeque::new(),
+                graphics_pacer: Default::default(),
                 output_seen: true,
                 cols: 20,
                 rows: 5,
@@ -6029,4 +6038,101 @@ fn resize_flushes_incomplete_output_and_creates_a_coalescing_barrier() {
             |frame| matches!(frame, DecodedOutboxFrame::Pane { bytes, .. } if bytes == prefix)
         )
     );
+}
+
+#[test]
+fn focused_controller_paces_independently_of_a_slow_read_only_follower() {
+    let mut server = SessionServer::new_named("graphics-priority");
+    server.panes.insert(7, test_pane(11));
+    let (fast, _fast_stream) = attach_client(&mut server);
+    let (slow, _slow_stream) = attach_read_only_client(&mut server);
+    for (client, fps, sequence) in [(fast, 240, 100), (slow, 30, 1)] {
+        server.process_client_frame(
+            client,
+            Frame::PresentationInterest(vec![protocol::PanePresentationInterest {
+                pane_id: 7,
+                generation: 11,
+                local: false,
+                visible: true,
+                focused: true,
+                frames_per_second: fps,
+            }]),
+        );
+        server
+            .client_mut(client)
+            .unwrap()
+            .presented_sequences
+            .insert(
+                PresentationKey {
+                    pane_id: 7,
+                    generation: 11,
+                    local: false,
+                },
+                sequence,
+            );
+    }
+    let presenter = server.graphics_presenter(7, 11, None).unwrap();
+    assert_eq!(
+        (
+            presenter.client,
+            presenter.frames_per_second,
+            presenter.presented
+        ),
+        (fast, 240, 100)
+    );
+    server.client_mut(fast).unwrap().parked = true;
+    assert_eq!(server.graphics_presenter(7, 11, None).unwrap().client, slow);
+    server
+        .client_mut(slow)
+        .unwrap()
+        .presentation_interest
+        .clear();
+    assert_eq!(server.graphics_presenter(7, 11, None), None);
+}
+
+#[test]
+fn local_presentation_interest_and_acknowledgements_are_owner_scoped() {
+    let mut server = SessionServer::new_named("graphics-local");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    for owner in [first, second] {
+        let mut pane = test_pane(11);
+        pane.output_sequence = 10;
+        server.local_panes.insert((owner, 7), pane);
+        server.process_client_frame(
+            owner,
+            Frame::PresentationInterest(vec![protocol::PanePresentationInterest {
+                pane_id: 7,
+                generation: 11,
+                local: true,
+                visible: true,
+                focused: true,
+                frames_per_second: 120,
+            }]),
+        );
+    }
+    server.process_client_frame(
+        first,
+        Frame::PresentationAcks(vec![protocol::PresentationAck {
+            pane_id: 7,
+            generation: 11,
+            local: true,
+            sequence: 10,
+        }]),
+    );
+    assert_eq!(
+        server
+            .graphics_presenter(7, 11, Some(first))
+            .unwrap()
+            .presented,
+        10
+    );
+    assert_eq!(
+        server
+            .graphics_presenter(7, 11, Some(second))
+            .unwrap()
+            .presented,
+        0
+    );
+    assert_eq!(server.graphics_presenter(7, 12, Some(first)), None);
 }

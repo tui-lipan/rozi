@@ -3252,7 +3252,7 @@ fn parsed_output_is_acknowledged_only_by_successful_presentation_reports() {
         backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
         let sent: Vec<_> = outbound.try_iter().collect();
         assert!(sent.iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(acks)
-            if acks == &[crate::session::protocol::PresentationAck { pane_id, generation, sequence: 7 }])));
+            if acks == &[crate::session::protocol::PresentationAck { local: false, pane_id, generation, sequence: 7 }])));
         backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
         assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
         backend.dispatch(Msg::TerminalPresented(vec![tui_lipan::PresentedTerminal { stable_terminal_id: u64::MAX, token: 8 }])).unwrap();

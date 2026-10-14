@@ -198,7 +198,7 @@ pub(crate) fn output(
     {
         pane.terminal.set_presentation_token(metadata.sequence);
     }
-    if !local && metadata.sequence != 0 {
+    if metadata.sequence != 0 {
         let terminal_id = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
             .map(|pane| pane.terminal.stable_terminal_id());
         if let Some(terminal_id) = terminal_id {
@@ -208,6 +208,7 @@ pub(crate) fn output(
                     .entry(terminal_id)
                     .or_insert(crate::state::PresentationProgress {
                         output: crate::session::protocol::PresentationAck {
+                            local,
                             pane_id,
                             generation,
                             sequence: 0,

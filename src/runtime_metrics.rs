@@ -142,6 +142,10 @@ pub struct ServerRuntimeMetrics {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct GraphicsSessionMetrics {
+    pub pacer_holds: u64,
+    pub pacer_hold_us: u64,
+    pub pacer_forced_releases: u64,
+    pub frames_ahead_of_presenter: u64,
     pub graphics_transactions: u64,
     pub replaceable_transactions: u64,
     pub staged_coalesced_frames: u64,
@@ -272,6 +276,16 @@ impl RuntimeMetrics {
                     graphics.staged_coalesced_frames,
                     server_out.coalesced_frames,
                     inbound.coalesced_frames
+                ),
+            ),
+            DevToolsMetric::new(
+                "Gfx pacing",
+                format!(
+                    "{} holds · {}ms held · {} safety releases · {} ahead",
+                    graphics.pacer_holds,
+                    format_millis(graphics.pacer_hold_us),
+                    graphics.pacer_forced_releases,
+                    graphics.frames_ahead_of_presenter
                 ),
             ),
             DevToolsMetric::new(
@@ -514,7 +528,7 @@ mod tests {
                 },
                 "server": {
                     "sampled_at_unix_ms": 90,
-                    "graphics": { "graphics_transactions": 0, "replaceable_transactions": 0,
+                    "graphics": { "pacer_holds": 0, "pacer_hold_us": 0, "pacer_forced_releases": 0, "frames_ahead_of_presenter": 0, "graphics_transactions": 0, "replaceable_transactions": 0,
                         "staged_coalesced_frames": 0, "staged_coalesced_bytes": 0,
                         "ordered_barriers": 0, "presentation_acks": 0,
                         "presentation_ack_latency_samples": 0, "presentation_ack_latency_us": 0, "presentation_ack_latency_max_us": 0 },

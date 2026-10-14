@@ -1272,7 +1272,7 @@ mod tests {
             .send_input(pane_id, generation, true, b"after-switch".to_vec());
         assert!(matches!(
             receiver.recv().expect("scratch input"),
-            crate::session::client::ClientOutbound::PaneInput {
+            crate::session::client::ClientOutbound::PaneInput {latency_sensitive: true,
                 pane_id: id,
                 local: true,
                 generation: 9,
@@ -1298,7 +1298,7 @@ mod tests {
             .send_input(pane_id, generation, true, b"after-attach".to_vec());
         assert!(matches!(
             receiver.recv().expect("input on original transport"),
-            crate::session::client::ClientOutbound::PaneInput {
+            crate::session::client::ClientOutbound::PaneInput {latency_sensitive: true,
                 pane_id: id,
                 generation: 9,
                 local: true,

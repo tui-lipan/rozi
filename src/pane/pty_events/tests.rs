@@ -71,6 +71,7 @@ fn server_key_forwarding_enqueues_session_input_bytes() {
     assert_eq!(
         rx.recv().expect("first message"),
         crate::session::client::ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id: 7,
             local: false,
             generation: 9,
@@ -80,6 +81,7 @@ fn server_key_forwarding_enqueues_session_input_bytes() {
     assert_eq!(
         rx.recv().expect("second message"),
         crate::session::client::ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id: 7,
             local: false,
             generation: 9,
@@ -194,6 +196,7 @@ fn double_prefix_forwards_one_prefix_key() {
             assert_eq!(
                 inputs,
                 vec![ClientOutbound::PaneInput {
+                    latency_sensitive: true,
                     pane_id: 1,
                     local: false,
                     generation: 0,

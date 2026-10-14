@@ -27,6 +27,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod graphics;
+mod graphics_pacer;
 mod headless;
 pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
@@ -305,6 +306,7 @@ impl Default for ServerSettings {
 }
 
 pub struct ServerPane {
+    graphics_pacer: graphics_pacer::GraphicsPacer,
     output_sequence: u64,
     output_coalesce_epoch: u64,
     output_times: VecDeque<(u64, Instant)>,
@@ -554,6 +556,13 @@ pub struct AgentHold {
     /// When `state` was last positively observed. A silent sweep does not refresh this, so
     /// [`AGENT_HOLD_MAX`](super::runtime::AGENT_HOLD_MAX) measures from the last real evidence.
     pub observed_at: std::time::Instant,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct PresentationKey {
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -876,8 +885,8 @@ struct ClientConn {
     shed_bytes: u64,
     /// Panes this client fell behind again while their replay was still queued or in flight.
     requeued_panes: u64,
-    presentation_interest: HashMap<PaneSeedKey, protocol::PanePresentationInterest>,
-    presented_sequences: HashMap<PaneSeedKey, u64>,
+    presentation_interest: HashMap<PresentationKey, protocol::PanePresentationInterest>,
+    presented_sequences: HashMap<PresentationKey, u64>,
 }
 
 impl ClientConn {
@@ -1681,6 +1690,7 @@ impl SessionServer {
             }
             let activity = self.pump_iteration(&mut listener, &mut no_client_since)?;
             let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
+            let timeout = self.graphics_pacing_timeout(timeout);
             self.events.wait_for_item(timeout);
         }
         self.shutdown_listener()
@@ -1750,6 +1760,7 @@ impl SessionServer {
         self.heartbeat();
         activity |= self.pump_attach_seeds();
         activity |= self.flush_clients();
+        self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);
         Ok(activity)
     }
@@ -1844,7 +1855,7 @@ impl SessionServer {
         };
         ServerRuntimeMetrics {
             sampled_at_unix_ms: unix_time_millis(),
-            graphics: self.graphics_metrics,
+            graphics: self.graphics_pacing_metrics(),
             pty_ingress: QueueMetrics {
                 bytes: ByteBufferMetrics::new(
                     ingress.bytes,

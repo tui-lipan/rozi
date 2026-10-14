@@ -717,6 +717,10 @@ fn agent_picker() {
             ("unicode", "Review 日本語 changes", "idle"),
         ] {
             pane.terminal.published_rows.push(PublishedRow {
+                publisher: "sketch".into(),
+                kind: rozi::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
                 id: id.into(),
                 title: title.into(),
                 status: status.into(),
@@ -733,14 +737,14 @@ fn agent_picker() {
                     pane_id: 1,
                     generation: 0,
                 },
-                slot: Some(id.into()),
+                slot: Some(rozi::session::protocol::RowKey::new("sketch", id)),
                 incarnation: pane.agent_refs.len() as u64 + 1,
             });
         }
         state.current_mut().workspaces[0].panes = vec![pane];
         state.agent_picker = Some(AgentPickerState::new(Some(AgentLocation::Here {
             pane: 1,
-            row: Some("fix".into()),
+            row: Some(rozi::session::protocol::RowKey::new("sketch", "fix")),
         })));
     }
     backend.state_mut().local_agent_snapshot = Some(rozi::session::discovery::LocalAgentSnapshot {
@@ -754,6 +758,7 @@ fn agent_picker() {
             label: "Codex".into(),
             state: "blocked".into(),
             changed_at: 0,
+            launch: 0,
         }],
     });
     for (width, height) in [(64, 22), (100, 30), (180, 40)] {

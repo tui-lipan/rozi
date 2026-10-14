@@ -797,6 +797,7 @@ fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
     assert_eq!(
         decoder.next_frame::<ClientMessage>().unwrap(),
         Some(Frame::PaneBytes {
+            latency_sensitive: true,
             pane_id: 7,
             local: false,
             generation: 9,
@@ -1103,11 +1104,13 @@ fn semantic_output_and_presentation_frames_round_trip_at_every_wire_split() {
         },
     };
     let acks = vec![PresentationAck {
+        local: false,
         pane_id: 7,
         generation: 11,
         sequence: 29,
     }];
     let interest = vec![PanePresentationInterest {
+        local: false,
         pane_id: 7,
         generation: 11,
         visible: true,
@@ -1159,6 +1162,7 @@ fn invalid_graphics_classification_and_interest_flags_are_rejected() {
     write_presentation_interest(
         &mut wire,
         &[PanePresentationInterest {
+            local: false,
             pane_id: 7,
             generation: 11,
             visible: true,
@@ -1167,8 +1171,26 @@ fn invalid_graphics_classification_and_interest_flags_are_rejected() {
         }],
     )
     .unwrap();
-    wire[4 + 1 + 12] = 4;
+    wire[4 + 1 + 12] = 8;
     let mut decoder = FrameDecoder::default();
     decoder.read_from_status(&mut wire.as_slice()).unwrap();
     assert!(decoder.next_frame::<serde_json::Value>().is_err());
+}
+
+#[test]
+fn continuous_input_priority_round_trips_without_changing_bytes() {
+    let mut bytes = Vec::new();
+    write_pane_input_with_priority(&mut bytes, 7, 11, true, false, b"pointer bytes").unwrap();
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut bytes.as_slice()).unwrap();
+    assert_eq!(
+        decoder.next_frame::<ClientMessage>().unwrap(),
+        Some(Frame::PaneBytes {
+            pane_id: 7,
+            generation: 11,
+            local: true,
+            latency_sensitive: false,
+            bytes: b"pointer bytes".to_vec(),
+        })
+    );
 }

@@ -3717,12 +3717,32 @@
     "GraphicsSessionMetrics": {
       "description": "Semantic graphics supersession is counted separately from overload/resync loss.",
       "properties": {
+        "frames_ahead_of_presenter": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "graphics_transactions": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "ordered_barriers": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pacer_forced_releases": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pacer_hold_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pacer_holds": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3764,6 +3784,10 @@
         }
       },
       "required": [
+        "pacer_holds",
+        "pacer_hold_us",
+        "pacer_forced_releases",
+        "frames_ahead_of_presenter",
         "graphics_transactions",
         "replaceable_transactions",
         "staged_coalesced_frames",

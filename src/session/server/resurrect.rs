@@ -2397,6 +2397,7 @@ mod tests {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            graphics_pacer: Default::default(),
             output_seen: false,
             cols: 40,
             rows: 5,

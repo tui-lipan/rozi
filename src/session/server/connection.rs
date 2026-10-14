@@ -104,6 +104,7 @@ impl SessionServer {
         local: bool,
         generation: u64,
         bytes: &[u8],
+        latency_sensitive: bool,
     ) {
         let owner = local.then_some(id);
         let may_operate = if local {
@@ -112,6 +113,13 @@ impl SessionServer {
             self.client_may_input(id)
         };
         if may_operate {
+            if latency_sensitive && let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
+            {
+                pane.graphics_pacer.input(Instant::now());
+                if let Some(pty) = &pane.pty {
+                    pty.read_gate().resume();
+                }
+            }
             self.handle_pane_input(owner, pane_id, generation, bytes);
         }
     }
@@ -122,22 +130,28 @@ impl SessionServer {
             return;
         }
         for ack in acks {
-            let key = PaneSeedKey {
+            let key = PresentationKey {
+                local: ack.local,
                 pane_id: ack.pane_id,
                 generation: ack.generation,
             };
-            if !self.panes.get(&ack.pane_id).is_some_and(|pane| {
-                pane.generation == ack.generation && ack.sequence <= pane.output_sequence
-            }) {
+            if !self
+                .pane(ack.local.then_some(id), ack.pane_id)
+                .is_some_and(|pane| {
+                    pane.generation == ack.generation && ack.sequence <= pane.output_sequence
+                })
+            {
                 continue;
             }
-            let latency = self.panes.get(&ack.pane_id).and_then(|pane| {
-                pane.output_times
-                    .iter()
-                    .rev()
-                    .find(|(sequence, _)| *sequence == ack.sequence)
-                    .map(|(_, time)| crate::runtime_metrics::duration_micros(time.elapsed()))
-            });
+            let latency = self
+                .pane(ack.local.then_some(id), ack.pane_id)
+                .and_then(|pane| {
+                    pane.output_times
+                        .iter()
+                        .rev()
+                        .find(|(sequence, _)| *sequence == ack.sequence)
+                        .map(|(_, time)| crate::runtime_metrics::duration_micros(time.elapsed()))
+                });
             let advanced = self.client_mut(id).is_some_and(|client| {
                 let presented = client.presented_sequences.entry(key).or_default();
                 if ack.sequence <= *presented {
@@ -171,15 +185,15 @@ impl SessionServer {
         }
         for pane in interest {
             if self
-                .panes
-                .get(&pane.pane_id)
+                .pane(pane.local.then_some(id), pane.pane_id)
                 .is_none_or(|current| current.generation != pane.generation)
             {
                 continue;
             }
             if let Some(client) = self.client_mut(id) {
                 client.presentation_interest.insert(
-                    PaneSeedKey {
+                    PresentationKey {
+                        local: pane.local,
                         pane_id: pane.pane_id,
                         generation: pane.generation,
                     },
@@ -197,11 +211,12 @@ impl SessionServer {
                 self.accept_presentation_interest(id, interest)
             }
             Frame::PaneBytes {
+                latency_sensitive,
                 pane_id,
                 local,
                 generation,
                 bytes,
-            } => self.accept_pane_input(id, pane_id, local, generation, &bytes),
+            } => self.accept_pane_input(id, pane_id, local, generation, &bytes, latency_sensitive),
             Frame::Control(message) => {
                 let is_attach = matches!(message, ClientMessage::Attach { .. });
                 // Both answer one question and hang up: neither ever becomes a client, so both
@@ -293,6 +308,10 @@ impl SessionServer {
         });
         if boundary {
             if let Some(pane) = self.pane_mut(owner, pane_id) {
+                pane.graphics_pacer.reset();
+                if let Some(pty) = &pane.pty {
+                    pty.read_gate().resume();
+                }
                 pane.screen_without_change()
                     .flush_output_transaction_boundary();
                 pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
@@ -868,7 +887,7 @@ impl SessionServer {
                 bytes,
                 token,
             } => {
-                self.accept_pane_input(client_id, pane_id, local, generation, &bytes);
+                self.accept_pane_input(client_id, pane_id, local, generation, &bytes, true);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
             ClientMessage::Pong { seq: _ } => {

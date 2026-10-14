@@ -311,3 +311,19 @@ OSC blocked and error attention also colors pane borders and content tints.
 Blocked uses the warning role and error uses the error role by default.
 The `blocked` and `error` keys in `[pane.alert]` independently override or disable
 these colors. Both retain the existing urgent animation and input acknowledgement.
+
+### Presentation pacing
+
+After a sustained run of complete, independent Kitty replacements, the session server gives that
+pane bounded PTY read credits. Visible streams use the leading client's configured frame rate and
+allow at most two unpresented replacements per image stream. Focused visible controllers take
+priority over writable clients and read-only followers. A slow follower cannot pace a faster
+controller. With no visible consumer, graphics streams run at 15 Hz; active recordings use their
+configured capture rate and successfully queued capture progress instead.
+
+Ordinary output and dependent patches remove pacing immediately. Keys, paste, clicks, releases,
+wheel events and explicit control input open a 50 ms answer window. Pointer motion stays paced.
+Each PTY has its own gate, with one bounded read in flight and a 200 ms safety release. Resize,
+pane replacement and exit release the gate; final child output drains before the exit event.
+Presentation ACKs are sent after a successful host frame, including composed frames. Parsing and
+receiving bytes do not acknowledge presentation.

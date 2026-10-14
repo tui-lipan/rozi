@@ -237,6 +237,7 @@ pub(crate) enum ClientOutbound {
     PresentationAcks(Vec<protocol::PresentationAck>),
     PresentationInterest(Vec<protocol::PanePresentationInterest>),
     PaneInput {
+        latency_sensitive: bool,
         pane_id: PaneId,
         local: bool,
         generation: u64,
@@ -484,15 +485,17 @@ impl SessionClient {
                         protocol::write_presentation_interest(&mut stream, &interest)
                     }
                     ClientOutbound::PaneInput {
+                        latency_sensitive,
                         pane_id,
                         local,
                         generation,
                         bytes,
-                    } => protocol::write_pane_input_frame(
+                    } => protocol::write_pane_input_with_priority(
                         &mut stream,
                         pane_id,
                         generation,
                         local,
+                        latency_sensitive,
                         &bytes,
                     ),
                 };
@@ -650,9 +653,25 @@ impl SessionClient {
 
     pub fn send_input(&self, pane_id: PaneId, generation: u64, local: bool, bytes: Vec<u8>) {
         self.send(ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id,
             local,
             generation,
+            bytes,
+        });
+    }
+    pub fn send_continuous_input(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        bytes: Vec<u8>,
+    ) {
+        self.send(ClientOutbound::PaneInput {
+            latency_sensitive: false,
+            pane_id,
+            generation,
+            local,
             bytes,
         });
     }
@@ -1002,6 +1021,7 @@ impl InboundMailbox {
             } => metadata.replacement_key(*pane_id, *local, *generation),
             _ => None,
         };
+        invalidate_inbound_replacements(&self.queue, &frame);
         let event = InboundEvent::Frame(Box::new(frame));
         let result = if let Some(key) = replacement {
             self.queue.push_blocking_latest(event, bytes, key)
@@ -1081,13 +1101,40 @@ impl InboundMailbox {
     }
 }
 
+fn invalidate_inbound_replacements(queue: &ByteQueue<InboundEvent>, frame: &Frame<ServerMessage>) {
+    match frame {
+        Frame::Control(ServerMessage::Attached { .. }) => queue.clear_replacements(),
+        Frame::Control(ServerMessage::PaneReset { pane_id, .. }) => {
+            queue.invalidate_replacements(*pane_id, false)
+        }
+        Frame::Control(
+            ServerMessage::Resized { pane_id, local, .. }
+            | ServerMessage::Exited { pane_id, local, .. }
+            | ServerMessage::SpawnResult { pane_id, local, .. },
+        ) => queue.invalidate_replacements(*pane_id, *local),
+        Frame::PaneOutput {
+            pane_id,
+            local,
+            metadata,
+            ..
+        } if !matches!(
+            metadata.class,
+            protocol::OutputClass::IndependentGraphics { .. }
+        ) =>
+        {
+            queue.invalidate_replacements(*pane_id, *local)
+        }
+        _ => {}
+    }
+}
+
 fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
     match frame {
         Frame::PaneBytes { bytes, .. } => bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD),
         Frame::PaneOutput { bytes, .. } => bytes
             .len()
             .saturating_add(protocol::PANE_OUTPUT_FRAME_OVERHEAD),
-        Frame::PresentationAcks(acks) => 5 + acks.len() * 20,
+        Frame::PresentationAcks(acks) => 5 + acks.len() * 21,
         Frame::PresentationInterest(interest) => 5 + interest.len() * 15,
         Frame::Control(message) => serde_json::to_vec(message)
             .map(|bytes| bytes.len().saturating_add(5))
@@ -1146,7 +1193,7 @@ impl ClientOutbound {
             Self::Control(message) => serde_json::to_vec(message)
                 .map(|bytes| bytes.len().saturating_add(5))
                 .unwrap_or(5),
-            Self::PresentationAcks(acks) => 5 + acks.len() * 20,
+            Self::PresentationAcks(acks) => 5 + acks.len() * 21,
             Self::PresentationInterest(interest) => 5 + interest.len() * 15,
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)

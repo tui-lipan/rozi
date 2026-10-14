@@ -328,6 +328,23 @@ the client's successful-host-write acknowledgement. It does not measure producer
 its bytes reached the server. The timestamp window retains the newest 32 replacements; latency
 samples and acknowledgements have separate counters.
 
-DevTools exposes aggregate graphics and ACK rows. No per-frame logging is enabled. Report successful
+DevTools exposes aggregate graphics, ACK and pacing rows. Pacing metrics include actual reader
+holds, total hold duration, forced safety releases and the largest per-stream presentation gap. No per-frame logging is enabled. Report successful
 host presentation counts when comparing frame rates; producer updates and received packets can
 include frames intentionally superseded before presentation.
+
+### Independent full-frame producer
+
+Run `python3 tools/graphics-stream.py --fps 240 --mode moving --duration 20
+--report /tmp/graphics-producer.json` in an owned test pane. Supported rates are 30, 60, 120 and
+240 Hz; modes are `unchanged`, `moving` and `whole`. Each complete replacement uses the same image
+and placement IDs. Only initial setup and optional mixed-workload barriers move the cursor.
+`--mixed` adds title/text/query/delete barriers and input echo; SIGWINCH adds a resize barrier.
+Use `tools/graphics-patches.py` for overlapping producer patches that must remain ordered.
+
+The immutable RGBA pool is bounded by `--max-file-mib` (128 MiB by default) and remains on disk
+at the reported `files` path after exit, so delayed clients can still open every queued filename.
+Remove that directory after all clients finish. Report fixture/page-cache memory alongside process
+RSS. Pool creation happens before timing; no full-frame files are rewritten during the stream.
+The producer skips missed cadence slots after blocked writes rather than emitting a catch-up burst.
+Its report counts completed producer writes; obtain presented FPS from successful host frames.

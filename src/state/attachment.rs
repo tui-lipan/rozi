@@ -66,7 +66,7 @@ pub struct Attachment {
     pub(crate) presentation_bindings: HashMap<u64, PresentationProgress>,
     pub(crate) presentation_connection: Option<crate::session::client::ConnectionToken>,
     pub(crate) presentation_interest:
-        HashMap<PaneId, crate::session::protocol::PanePresentationInterest>,
+        HashMap<(PaneId, bool), crate::session::protocol::PanePresentationInterest>,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     pub session_instance: Option<crate::session::protocol::SessionInstanceId>,

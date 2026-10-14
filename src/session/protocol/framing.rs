@@ -59,6 +59,7 @@ impl OutputMetadata {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PresentationAck {
+    pub local: bool,
     pub pane_id: PaneId,
     pub generation: u64,
     pub sequence: u64,
@@ -66,6 +67,7 @@ pub struct PresentationAck {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PanePresentationInterest {
+    pub local: bool,
     pub pane_id: PaneId,
     pub generation: u64,
     pub visible: bool,
@@ -86,6 +88,7 @@ pub enum Frame<C> {
     PresentationAcks(Vec<PresentationAck>),
     PresentationInterest(Vec<PanePresentationInterest>),
     PaneBytes {
+        latency_sensitive: bool,
         pane_id: PaneId,
         local: bool,
         generation: u64,
@@ -151,14 +154,23 @@ pub fn write_pane_input_frame<W: Write>(
     local: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    write_pane_frame(
-        writer,
-        FRAME_KIND_PANE_INPUT,
-        pane_id,
-        generation,
-        local,
-        bytes,
-    )
+    write_pane_input_with_priority(writer, pane_id, generation, local, true, bytes)
+}
+
+pub fn write_pane_input_with_priority<W: Write>(
+    writer: &mut W,
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
+    latency_sensitive: bool,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let mut body = Vec::with_capacity(PANE_FRAME_HEADER_LEN + bytes.len());
+    body.extend_from_slice(&pane_id.to_be_bytes());
+    body.extend_from_slice(&generation.to_be_bytes());
+    body.push(u8::from(local) | (u8::from(!latency_sensitive) << 1));
+    body.extend_from_slice(bytes);
+    write_frame_body(writer, FRAME_KIND_PANE_INPUT, &body)
 }
 
 fn write_pane_frame<W: Write>(
@@ -336,17 +348,13 @@ fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
     }
     let pane_id = u32::from_be_bytes(payload[..4].try_into().expect("slice length"));
     let generation = u64::from_be_bytes(payload[4..12].try_into().expect("slice length"));
-    let local = match payload[12] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("pane byte frame has invalid locality {other}"),
-            ));
-        }
-    };
+    if payload[12] & !3 != 0 {
+        return Err(invalid_frame("invalid input flags"));
+    }
+    let local = payload[12] & 1 != 0;
+    let latency_sensitive = payload[12] & 2 == 0;
     Ok(Frame::PaneBytes {
+        latency_sensitive,
         pane_id,
         local,
         generation,
@@ -359,7 +367,11 @@ fn invalid_frame(message: &str) -> std::io::Error {
 }
 
 fn decode_output_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
+    if payload.get(12).is_some_and(|flags| *flags > 1) {
+        return Err(invalid_frame("invalid output flags"));
+    }
     let Frame::PaneBytes {
+        latency_sensitive: _,
         pane_id,
         local,
         generation,
@@ -407,23 +419,28 @@ pub fn write_presentation_acks<W: Write>(
     writer: &mut W,
     acks: &[PresentationAck],
 ) -> std::io::Result<()> {
-    let mut payload = Vec::with_capacity(acks.len().saturating_mul(20));
+    let mut payload = Vec::with_capacity(acks.len().saturating_mul(21));
     for ack in acks {
         payload.extend_from_slice(&ack.pane_id.to_be_bytes());
         payload.extend_from_slice(&ack.generation.to_be_bytes());
         payload.extend_from_slice(&ack.sequence.to_be_bytes());
+        payload.push(u8::from(ack.local));
     }
     write_frame_body(writer, FRAME_KIND_PRESENTATION_ACK, &payload)
 }
 
 fn decode_ack_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
-    if !payload.len().is_multiple_of(20) {
+    if !payload.len().is_multiple_of(21) {
         return Err(invalid_frame("invalid presentation ACK length"));
+    }
+    if payload.chunks_exact(21).any(|chunk| chunk[20] > 1) {
+        return Err(invalid_frame("invalid presentation ACK flags"));
     }
     Ok(Frame::PresentationAcks(
         payload
-            .chunks_exact(20)
+            .chunks_exact(21)
             .map(|chunk| PresentationAck {
+                local: chunk[20] != 0,
                 pane_id: u32::from_be_bytes(chunk[..4].try_into().expect("checked chunk")),
                 generation: u64::from_be_bytes(chunk[4..12].try_into().expect("checked chunk")),
                 sequence: u64::from_be_bytes(chunk[12..20].try_into().expect("checked chunk")),
@@ -440,7 +457,9 @@ pub fn write_presentation_interest<W: Write>(
     for pane in interest {
         payload.extend_from_slice(&pane.pane_id.to_be_bytes());
         payload.extend_from_slice(&pane.generation.to_be_bytes());
-        payload.push(u8::from(pane.visible) | (u8::from(pane.focused) << 1));
+        payload.push(
+            u8::from(pane.visible) | (u8::from(pane.focused) << 1) | (u8::from(pane.local) << 2),
+        );
         payload.extend_from_slice(&pane.frames_per_second.to_be_bytes());
     }
     write_frame_body(writer, FRAME_KIND_PRESENTATION_INTEREST, &payload)
@@ -452,7 +471,7 @@ fn decode_interest_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
     }
     let mut interest = Vec::with_capacity(payload.len() / 15);
     for chunk in payload.chunks_exact(15) {
-        if chunk[12] & !3 != 0 {
+        if chunk[12] & !7 != 0 {
             return Err(invalid_frame("invalid presentation interest flags"));
         }
         let frames_per_second =
@@ -461,6 +480,7 @@ fn decode_interest_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
             return Err(invalid_frame("invalid presentation rate"));
         }
         interest.push(PanePresentationInterest {
+            local: chunk[12] & 4 != 0,
             pane_id: u32::from_be_bytes(chunk[..4].try_into().expect("checked chunk")),
             generation: u64::from_be_bytes(chunk[4..12].try_into().expect("checked chunk")),
             visible: chunk[12] & 1 != 0,

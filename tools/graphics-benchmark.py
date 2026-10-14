@@ -375,7 +375,7 @@ def start_tuios(binary, env, root, wrapper, launch):
              if Path(f"/proc/{pid}/exe").exists()
              and os.path.realpath(f"/proc/{pid}/exe") == binary]
     daemon = [pid for pid in tuios if b"daemon" in Path(f"/proc/{pid}/cmdline").read_bytes()]
-    client = [pid for pid in tuios if pid in descendants(host)]
+    client = [pid for pid in tuios if pid in descendants(host) and pid not in daemon]
     if not client:
         raise RuntimeError("TuiOS client not found")
     return client[0], (daemon or [None])[0]
@@ -606,6 +606,9 @@ def benchmark(args):
                 frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
                 report["producer"]["fixture_files"])
             report["latency"]["marked_uploads"] = len(marks)
+            if args.tap == "host-read":
+                report["latency"]["boundary"] = (
+                    "producer write return -> Ghostty PTY read ending the frame with that upload")
             # Frames that change nothing still end a synchronized update, so frame intervals can
             # hide a visual stall; intervals between presented uploads cannot.
             uploads = [mark for mark, _ in marks if started_ns <= mark <= ended_ns]

@@ -436,6 +436,9 @@ python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
 `--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its
 PTY. It measures receipt at the host terminal rather than the client's write, and it also sees
 multiplexers that write without libc, so use it for comparisons with other multiplexers.
+`--multiplexer tuios --binary /path/to/tuios` runs the same workload under TuiOS: the runner creates
+a session, opens the producer as its only window and stops the daemon afterwards. TuiOS has no
+client frame rate, so `--fps` only sets the interval thresholds, and it needs `--tap host-read`.
 `--pty-tap` additionally records what the multiplexer reads from its PTYs, the producer's own output,
 as `pty_wire`. For the synthetic stream, `producer_to_received` times each frame from producer write
 to that read.

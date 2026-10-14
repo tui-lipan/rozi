@@ -316,7 +316,9 @@ these colors. Both retain the existing urgent animation and input acknowledgemen
 
 After a sustained run of complete, independent Kitty replacements, the session server gives that
 pane PTY read credits. Visible streams use the leading client's configured frame rate and allow at
-most two unpresented replacements per image stream. While a credit is withheld, the producer's
+most two unpresented replacements per image stream. Each acknowledged presentation schedules the
+next release 3 ms before the leader's next frame, so the newest replacement arrives just in time
+rather than at an arbitrary point in the frame. While a credit is withheld, the producer's
 output waits in the kernel; each release drains that backlog (up to 64 KiB) so only its newest
 replacement is forwarded, rather than the oldest. Focused visible controllers take priority over
 writable clients and read-only followers. A slow follower cannot pace a faster controller. A

@@ -15,6 +15,13 @@ const HISTORY_LIMIT: usize = 256;
 /// the newest replacement. A one-frame credit would present the oldest queued frame instead.
 const DRAIN_BYTES: usize = 64 * 1024;
 
+/// How long before the presenter's next frame a release drains the producer: enough for the
+/// output to reach and be drawn by the client (about 2 ms measured locally), and short enough
+/// that what it drains is still current.
+fn release_lead(interval: Duration) -> Duration {
+    Duration::from_millis(3).min(interval)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Presenter {
     pub client: u64,
@@ -100,6 +107,18 @@ impl GraphicsPacer {
             self.deadline = Some(now);
             self.read_in_flight = false;
         }
+        let interval = Duration::from_secs_f64(
+            1.0 / f64::from(presenter.map_or(15, |p| p.frames_per_second.max(1))),
+        );
+        if let (Some(previous), Some(current)) = (self.presenter, presenter)
+            && previous.client == current.client
+            && current.presented > previous.presented
+        {
+            // The presenter has just shown a frame, and its next one is about an interval away.
+            // Releasing on that phase, rather than on an unrelated grid, hands it fresh output
+            // just in time instead of up to a frame early.
+            self.deadline = Some(now + interval.saturating_sub(release_lead(interval)));
+        }
         self.presenter = presenter;
         if let Some(presenter) = presenter {
             while self
@@ -110,9 +129,6 @@ impl GraphicsPacer {
                 self.pending.pop_front();
             }
         }
-        let interval = Duration::from_secs_f64(
-            1.0 / f64::from(presenter.map_or(15, |p| p.frames_per_second.max(1))),
-        );
         let deadline = *self.deadline.get_or_insert(now);
         let ahead = presenter.is_some() && self.frames_ahead() >= PRESENTATION_WINDOW;
         let due = now >= deadline && !ahead;
@@ -277,15 +293,23 @@ mod tests {
                 ..
             }
         ));
+        // Catching up re-phases the next release to just before the presenter's next frame.
+        let caught_up = Some(Presenter {
+            presented: 8,
+            client: 1,
+            frames_per_second: 120,
+        });
+        let interval = Duration::from_secs_f64(1.0 / 120.0);
+        let acknowledged = now + Duration::from_millis(1051);
         assert!(matches!(
-            pacer.policy(
-                now + Duration::from_millis(1051),
-                Some(Presenter {
-                    presented: 8,
-                    client: 1,
-                    frames_per_second: 120
-                })
-            ),
+            pacer.policy(acknowledged, caught_up),
+            ReadPolicy::Credit {
+                available: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            pacer.policy(acknowledged + interval - release_lead(interval), caught_up),
             ReadPolicy::Credit {
                 available: true,
                 ..
@@ -317,6 +341,52 @@ mod tests {
                 pacer.read_completed(false);
             }
         }
+    }
+
+    #[test]
+    fn releases_follow_the_presenter_phase_after_each_acknowledgement() {
+        let start = Instant::now();
+        let mut pacer = streaming(start - Duration::from_secs(1));
+        let presenter = |presented| {
+            Some(Presenter {
+                client: 1,
+                frames_per_second: 60,
+                presented,
+            })
+        };
+        assert!(matches!(
+            pacer.policy(start, presenter(8)),
+            ReadPolicy::Credit {
+                available: true,
+                ..
+            }
+        ));
+        pacer.read_completed(false);
+        // Acknowledged 7 ms into the old grid's slot: the next release moves to that phase.
+        let acknowledged = start + Duration::from_millis(7);
+        let next = acknowledged + Duration::from_secs_f64(1.0 / 60.0)
+            - release_lead(Duration::from_secs_f64(1.0 / 60.0));
+        assert!(matches!(
+            pacer.policy(acknowledged, presenter(9)),
+            ReadPolicy::Credit {
+                available: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            pacer.policy(next - Duration::from_micros(100), presenter(9)),
+            ReadPolicy::Credit {
+                available: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            pacer.policy(next, presenter(9)),
+            ReadPolicy::Credit {
+                available: true,
+                ..
+            }
+        ));
     }
 
     #[test]

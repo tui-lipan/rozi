@@ -195,6 +195,26 @@ def echo_summary(probes, echoes, path):
         name: percentiles(values) for name, values in legs.items()}
 
 
+def visibility_summary(visibility, writes, marks):
+    """Presentation while hidden, and how fresh the first frame after reveal is."""
+    events = {event["action"]: event["ns"] for event in visibility}
+    hidden, revealed = events.get("hide"), events.get("reveal")
+    if hidden is None:
+        return None
+    end = revealed or (marks[-1][0] if marks else hidden)
+    report = {"hidden_seconds": (end - hidden) / 1e9,
+              "presented_while_hidden": sum(hidden <= mark < end for mark, _ in marks),
+              "producer_writes_while_hidden": sum(hidden <= write < end for write, _ in writes)}
+    after = [(mark, index) for mark, index in marks if revealed and mark >= revealed]
+    if after:
+        mark, index = after[0]
+        written = max((write for write, fixture in writes if fixture == index and write <= mark),
+                      default=None)
+        report["reveal_to_first_presentation_us"] = (mark - revealed) / 1000
+        report["first_revealed_frame_age_us"] = None if written is None else (mark - written) / 1000
+    return report
+
+
 def isolated_environment(root):
     # The owned window is always local; an inherited SSH session would select remote transport.
     env = {key: value for key, value in os.environ.items()
@@ -279,25 +299,34 @@ def benchmark(args):
         initial = {name: process_sample(pid) for name, pid in pids.items()}
         started = time.monotonic()
         started_ns = time.monotonic_ns()
-        probes = []
-        if args.input_probes:
+        probes, visibility = [], []
+        schedule = [(args.seconds * (number + 1) / (args.input_probes + 1), "probe", number)
+                    for number in range(args.input_probes)]
+        schedule += [(at, action, None) for at, action in [(args.hide_at, "hide"),
+                                                           (args.reveal_at, "reveal")] if at]
+        if schedule:
             pane = str(json.loads(run([binary, "--socket", str(socket), "list-panes",
                                        "--format", "json"], env))["data"][0]["id"])
             window_class = json.loads((root / "window.json").read_text())["class"]
-            spacing = args.seconds / (args.input_probes + 1)
-            for number in range(args.input_probes):
-                time.sleep(max(0, started + spacing * (number + 1) - time.monotonic()))
-                # A host key arrives as one keystroke, so its token is one letter.
-                token = chr(ord("a") + number % 26) if args.input_via == "host" else f"k{number}"
-                probes.append({"token": token, "send_ns": time.monotonic_ns()})
-                if args.input_via == "host":
-                    # Delivered to the owned window by class, without moving desktop focus.
-                    shortcut = '{mods="",key=%s,window=%s}' % (
-                        json.dumps(token), json.dumps(f"class:{window_class}"))
-                    run(["hyprctl", "eval", f"hl.dispatch(hl.dsp.send_shortcut({shortcut}))"])
-                else:
-                    run([binary, "--socket", str(socket), "send-text", "--target", pane, token],
-                        env)
+        for at, action, number in sorted(schedule):
+            time.sleep(max(0, started + at - time.monotonic()))
+            if action != "probe":
+                # Another Rozi workspace hides the pane inside the owned window only.
+                visibility.append({"action": action, "ns": time.monotonic_ns()})
+                run([binary, "--socket", str(socket), "switch-workspace",
+                     "2" if action == "hide" else "1"], env)
+                continue
+            # A host key arrives as one keystroke, so its token is one letter.
+            token = chr(ord("a") + number % 26) if args.input_via == "host" else f"k{number}"
+            probes.append({"token": token, "send_ns": time.monotonic_ns()})
+            if args.input_via == "host":
+                # Delivered to the owned window by class, without moving desktop focus.
+                shortcut = '{mods="",key=%s,window=%s}' % (
+                    json.dumps(token), json.dumps(f"class:{window_class}"))
+                run(["hyprctl", "eval", f"hl.dispatch(hl.dsp.send_shortcut({shortcut}))"])
+            else:
+                run([binary, "--socket", str(socket), "send-text", "--target", pane, token],
+                    env)
         time.sleep(max(0, started + args.seconds - time.monotonic()))
         ended_ns = time.monotonic_ns()
         elapsed = time.monotonic() - started
@@ -324,6 +353,9 @@ def benchmark(args):
                 frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
                 report["producer"]["fixture_files"])
             report["latency"]["marked_uploads"] = len(marks)
+            if visibility:
+                report["visibility"] = visibility_summary(
+                    visibility, producer_writes(root / "producer-writes.bin"), marks)
             if probes:
                 report["input_echo"] = echo_summary(
                     probes, report["producer"]["echoes"], root / "host-wire.bin")
@@ -347,6 +379,10 @@ def main():
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--input-probes", type=int, default=0,
                         help="send this many keys during the sample and time their echoes")
+    parser.add_argument("--hide-at", type=float,
+                        help="seconds into the sample to switch the Rozi UI to workspace 2")
+    parser.add_argument("--reveal-at", type=float,
+                        help="seconds into the sample to switch back to workspace 1")
     parser.add_argument("--input-via", choices=["control", "host"], default="host",
                         help="host keys go through Ghostty and the client's input path; control "
                              "keys enter through the session control socket")
@@ -359,6 +395,8 @@ def main():
     args = parser.parse_args()
     if args.seconds <= 0:
         parser.error("--seconds must be positive")
+    if args.reveal_at and not (args.hide_at and args.hide_at < args.reveal_at < args.seconds):
+        parser.error("--reveal-at needs an earlier --hide-at, both within --seconds")
     if args.input_via == "host" and args.input_probes > 26:
         parser.error("host input probes use distinct letters; at most 26")
     benchmark(args)

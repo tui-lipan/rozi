@@ -402,6 +402,11 @@ splits each key into send to producer read, which includes starting the injectin
 producer echo to host write, and their total. Echoes are ordered output and reset pacing as
 real echoes do.
 
+`--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
+`visibility` reports frames presented while hidden and producer writes in that time. On reveal it
+reports the delay to the first presented frame and that frame's age since its producer write. The
+first frame shown is retained state; compare the following frames' latency to see convergence.
+
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and
 placement changes. The server's snapshot counts its authoritative parser mutations. DevTools

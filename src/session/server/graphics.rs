@@ -251,6 +251,7 @@ impl SessionServer {
         self.panes
             .values()
             .chain(self.local_panes.values())
+            .filter(|pane| pane.pty.is_some() && pane.exited.is_none())
             .filter_map(|pane| pane.graphics_pacer.wake_after(now))
             .fold(timeout, Duration::min)
     }

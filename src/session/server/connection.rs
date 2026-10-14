@@ -113,14 +113,11 @@ impl SessionServer {
             self.client_may_input(id)
         };
         if may_operate {
-            if latency_sensitive && let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
-            {
-                pane.graphics_pacer.input(Instant::now());
-                if let Some(pty) = &pane.pty {
-                    pty.read_gate().resume();
-                }
+            if latency_sensitive {
+                self.handle_pane_input(owner, pane_id, generation, bytes);
+            } else {
+                self.write_pane_input(owner, pane_id, generation, bytes);
             }
-            self.handle_pane_input(owner, pane_id, generation, bytes);
         }
     }
 

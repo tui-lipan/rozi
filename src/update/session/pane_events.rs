@@ -194,6 +194,7 @@ pub(crate) fn output(
         return Update::none();
     };
     if metadata.sequence != 0
+        && (effects.mutation.is_visual() || effects.chrome_changed || effects.live_title_changed)
         && let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
     {
         pane.terminal.set_presentation_token(metadata.sequence);

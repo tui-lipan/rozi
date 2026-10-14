@@ -327,6 +327,22 @@ impl SessionServer {
         generation: u64,
         bytes: &[u8],
     ) {
+        if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
+            pane.graphics_pacer.input(Instant::now());
+            if let Some(pty) = &pane.pty {
+                pty.read_gate().resume();
+            }
+        }
+        self.write_pane_input(owner, pane_id, generation, bytes);
+    }
+
+    pub(super) fn write_pane_input(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: &[u8],
+    ) {
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
             && let Some(pty) = &pane.pty
         {

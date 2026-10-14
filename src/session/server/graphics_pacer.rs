@@ -54,14 +54,18 @@ impl GraphicsPacer {
             image, incarnation, ..
         } = class
         else {
+            let answer_until = self.answer_until;
             self.reset();
+            self.answer_until = answer_until;
             return;
         };
         if self
             .last_observation
             .is_some_and(|last| now.saturating_duration_since(last) > MAXIMUM_HOLD)
         {
+            let answer_until = self.answer_until;
             self.reset();
+            self.answer_until = answer_until;
         }
         self.last_observation = Some(now);
         let (since, count) = self.candidate.get_or_insert((now, 0));
@@ -149,6 +153,9 @@ impl GraphicsPacer {
     }
 
     pub fn wake_after(&self, now: Instant) -> Option<Duration> {
+        if self.read_in_flight {
+            return None;
+        }
         self.streaming.then(|| {
             self.answer_until
                 .filter(|until| *until > now)
@@ -173,6 +180,40 @@ pub(super) fn apply_policy(gate: &tui_lipan::TerminalReadGate, policy: ReadPolic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inflight_read_needs_no_polling_deadline() {
+        let now = Instant::now();
+        let mut pacer = streaming(now - Duration::from_secs(1));
+        assert!(matches!(
+            pacer.policy(now, None),
+            ReadPolicy::Credit {
+                available: true,
+                ..
+            }
+        ));
+        assert_eq!(pacer.wake_after(now + Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn ordered_output_preserves_the_input_answer_window() {
+        let now = Instant::now();
+        let mut pacer = streaming(now - Duration::from_secs(1));
+        pacer.input(now);
+        pacer.observe(now, 9, OutputClass::Ordered, 1);
+        for sequence in 10..18 {
+            pacer.observe(
+                now + Duration::from_millis((sequence - 10) * 5),
+                sequence,
+                independent(),
+                180,
+            );
+        }
+        assert_eq!(
+            pacer.policy(now + Duration::from_millis(40), None),
+            ReadPolicy::Open
+        );
+    }
 
     fn independent() -> OutputClass {
         OutputClass::IndependentGraphics {

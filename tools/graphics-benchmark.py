@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import struct
 import subprocess
@@ -95,6 +96,11 @@ def wire_summary(path, started, ended, frame_period_us=None):
 
     frame_times = [times[bisect.bisect_left(ends, match.end())]
                    for match in re.finditer(rb"\x1b\[\?2026l", wire) if in_sample(match)]
+    # Synchronized updates that carry any Kitty command; empty updates do not show new pixels.
+    graphics_times = [times[bisect.bisect_left(ends, match.end())]
+                      for match in re.finditer(rb"\x1b\[\?2026h(?:(?!\x1b\[\?2026l).)*?\x1b_G"
+                                               rb"(?:(?!\x1b\[\?2026l).)*\x1b\[\?2026l", wire,
+                                               re.S) if in_sample(match)]
     commands = [match for match in re.finditer(rb"\x1b_G[^\x1b]*\x1b\\", wire) if in_sample(match)]
     headers = [match.group().split(b";", 1)[0] for match in commands]
     intervals = [(right - left) / 1000 for left, right in zip(frame_times, frame_times[1:])]
@@ -107,6 +113,9 @@ def wire_summary(path, started, ended, frame_period_us=None):
             "deletes": sum(b"a=d," in header for header in headers),
             "synchronized_frame_ends": len(frame_times),
             "synchronized_frame_interval_us": percentiles(intervals),
+            "graphics_frames": len(graphics_times),
+            "graphics_frame_interval_us": percentiles(
+                [(right - left) / 1000 for left, right in zip(graphics_times, graphics_times[1:])]),
             "intervals_over_two_frames": len(stalls),
             "first_long_interval_offset_s": (frame_times[stalls[0][0]] - started) / 1e9
             if stalls else None}
@@ -262,6 +271,74 @@ def isolated_environment(root):
     return env
 
 
+def producer_tree(initial, final, elapsed):
+    """Summed CPU and PSS of the producer and its helpers alive for the whole sample."""
+    reports = [cpu_report(initial[pid], final[pid], elapsed) for pid in initial]
+    reports = [report for report in reports if report]
+    return {"processes": len(reports),
+            "cpu_percent_one_core": sum(report["cpu_percent_one_core"] for report in reports),
+            "pss_after_bytes": sum(report["pss_after_bytes"].get("Pss", 0) for report in reports)}
+
+
+def descendants(pid):
+    """Every process below `pid`; a detached daemon keeps its spawning parent until that exits."""
+    parents = {}
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            try:
+                parents[int(entry.name)] = int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            except (OSError, ValueError, IndexError):
+                continue
+    found, frontier = set(), {pid}
+    while frontier:
+        frontier = {child for child, parent in parents.items() if parent in frontier} - found
+        found |= frontier
+    return found
+
+
+def isolated_processes(root, exclude):
+    """Processes started for this run, such as a browser's helpers and detached daemon."""
+    markers = {f"XDG_RUNTIME_DIR={root / 'run'}".encode(),
+               f"GRAPHICS_BENCHMARK_RUN={root}".encode()}
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) in exclude:
+            continue
+        try:
+            if markers.intersection((entry / "environ").read_bytes().split(b"\0")):
+                found.append(int(entry.name))
+        except OSError:
+            continue
+    return found
+
+
+def start_time(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def stop_isolated_processes(root, known=()):
+    """End processes that outlived the session, such as a producer's detached daemon.
+
+    Only processes started for this run carry its runtime directory or run marker. `known` adds
+    (pid, start time) pairs seen in the producer's tree, ended only while still the same process.
+    """
+    for sig in [signal.SIGTERM, signal.SIGKILL]:
+        remaining = isolated_processes(root, {os.getpid()}) + [
+            pid for pid, started in known if started and start_time(pid) == started]
+        for pid in remaining:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 3
+        while remaining and time.monotonic() < deadline:
+            remaining = [pid for pid in remaining if Path(f"/proc/{pid}").exists()]
+            time.sleep(.05)
+
+
 def owned_processes(root, client_pid):
     pids = {"client": client_pid, "producer": int((root / "producer.pid").read_text()),
             "ghostty": json.loads((root / "window.json").read_text())["pid"]}
@@ -273,6 +350,25 @@ def owned_processes(root, client_pid):
     return pids
 
 
+def wiretap_environment(args, binary, wire, media):
+    """Window-lab arguments that load the interposer on the chosen side of the host terminal.
+
+    `client-write` records what the measured client wrote; `host-read` records what Ghostty read
+    from its PTY, which also covers multiplexers that write without libc.
+    """
+    if args.tap == "host-read":
+        ghostty = os.path.realpath(subprocess.check_output(["which", "ghostty"], text=True).strip())
+        names = {"GRAPHICS_WIRETAP_READ_EXE": ghostty, "GRAPHICS_WIRETAP_READ_PATH": wire,
+                 "GRAPHICS_WIRETAP_READ_MEDIA_PATH": media}
+    else:
+        names = {"GRAPHICS_WIRETAP_EXE": binary, "GRAPHICS_WIRETAP_PATH": wire,
+                 "GRAPHICS_WIRETAP_MEDIA_PATH": media}
+    result = ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}"]
+    for name, value in names.items():
+        result += ["--env", f"{name}={value}"]
+    return result
+
+
 def benchmark(args):
     root = args.output.resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -281,7 +377,7 @@ def benchmark(args):
     producer = Path(__file__).with_name("graphics-stream.py").resolve()
     env = isolated_environment(root)
     wrapper = root / "producer.py"
-    producer_args = [sys.executable, str(producer), "--fps", str(args.producer_fps),
+    producer_args = shlex.split(args.command) if args.command else [sys.executable, str(producer), "--fps", str(args.producer_fps),
                      "--duration", str(args.seconds + 2), "--mode", args.mode,
                      "--width", str(args.image_width), "--height", str(args.image_height),
                      "--ready-file", str(root / "producer-ready.json"),
@@ -291,10 +387,11 @@ def benchmark(args):
                      "--files", str(root / "frames"), "--report", str(root / "producer.json")]
     wrapper.write_text("import os,pathlib,time\n"
                        f"root=pathlib.Path({str(root)!r})\n"
+                       f"os.environ['GRAPHICS_BENCHMARK_RUN']={str(root)!r}\n"
                        "(root/'producer.pid').write_text(str(os.getpid()))\n"
                        "print('graphics benchmark ready',flush=True)\n"
                        "while not (root/'start').exists(): time.sleep(.01)\n"
-                       f"os.execv({sys.executable!r},{producer_args!r})\n")
+                       f"os.execv({producer_args[0]!r},{producer_args!r})\n")
     config = root / "config" / "rozi"
     config.mkdir()
     (config / "config.toml").write_text(
@@ -308,6 +405,7 @@ def benchmark(args):
     session = "graphics-benchmark"
     launched = follower_launched = False
     follower_pid = client_pid = None
+    tree_identities = []
     try:
         launch = [*lab, "launch", "--width", str(args.width), "--height", str(args.height),
                   "--workspace", str(args.workspace), "--font-size", "8", "--cwd", str(root)]
@@ -315,10 +413,8 @@ def benchmark(args):
             if key.startswith("SSH_"):
                 launch += ["--unset", key]
         if args.wiretap:
-            launch += ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}",
-                       "--env", f"GRAPHICS_WIRETAP_EXE={binary}",
-                       "--env", f"GRAPHICS_WIRETAP_PATH={root / 'host-wire.bin'}",
-                       "--env", f"GRAPHICS_WIRETAP_MEDIA_PATH={root / 'host-media.bin'}"]
+            launch += wiretap_environment(args, binary, root / "host-wire.bin",
+                                          root / "host-media.bin")
         run([*launch, "--", binary, "sessions", "new", session, "--cwd", str(root)])
         launched = True
         socket = wait_for(lambda: next((root / "run/rozi").glob("control-*.sock"), None),
@@ -339,10 +435,8 @@ def benchmark(args):
                 if key.startswith("SSH_"):
                     follow += ["--unset", key]
             if args.wiretap:
-                follow += ["--env", f"LD_PRELOAD={args.wiretap.resolve(strict=True)}",
-                           "--env", f"GRAPHICS_WIRETAP_EXE={binary}",
-                           "--env", f"GRAPHICS_WIRETAP_PATH={root / 'follower-wire.bin'}",
-                           "--env", f"GRAPHICS_WIRETAP_MEDIA_PATH={root / 'follower-media.bin'}"]
+                follow += wiretap_environment(args, binary, root / "follower-wire.bin",
+                                              root / "follower-media.bin")
             run([*follow, "--", binary, "sessions", "attach", session,
                  *(["--read-only"] if args.follower == "read-only" else [])])
             follower_launched = True
@@ -363,13 +457,22 @@ def benchmark(args):
 
         before = metrics()
         (root / "start").touch()
-        wait_for(lambda: (root / "producer-ready.json").exists(), "immutable fixture pool")
-        time.sleep(1)
+        if args.command:
+            time.sleep(args.warmup)
+        else:
+            wait_for(lambda: (root / "producer-ready.json").exists(), "immutable fixture pool")
+            time.sleep(1)
         start_metrics = metrics()
         pids = owned_processes(root, client_pid)
         if follower_pid:
             pids["follower"] = follower_pid
         initial = {name: process_sample(pid) for name, pid in pids.items()}
+        # Chromium rewrites its environment block for process titles, so also follow the tree.
+        tree = sorted((set(isolated_processes(root, set(pids.values())))
+                       | descendants(pids["producer"]) | {pids["producer"]})
+                      - {pid for name, pid in pids.items() if name != "producer"})
+        tree_initial = {pid: process_sample(pid) for pid in tree}
+        tree_identities = [(pid, start_time(pid)) for pid in tree]
         started = time.monotonic()
         started_ns = time.monotonic_ns()
         probes, visibility = [], []
@@ -418,21 +521,25 @@ def benchmark(args):
         ended_ns = time.monotonic_ns()
         elapsed = time.monotonic() - started
         final = {name: process_sample(pid) for name, pid in pids.items()}
+        tree_final = {pid: process_sample(pid) for pid in tree}
         end_metrics = metrics()
         report = {"binary": binary, "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
                   "version": run([binary, "--version"], env).strip(), "fps": args.fps,
                   "producer_fps": args.producer_fps, "mode": args.mode, "sample_seconds": elapsed,
                   "sample_started_ns": started_ns, "sample_ended_ns": ended_ns,
                   "processes": {name: cpu_report(initial[name], final[name], elapsed) for name in pids},
+                  "producer_tree": producer_tree(tree_initial, tree_final, elapsed),
                   "before_stream": before, "start_metrics": start_metrics, "end_metrics": end_metrics,
                   "window": json.loads(run([*lab, "status"])),
                   "qualification": "Host frame counters measure successful writes, not monitor scanout."
                   " Interval percentiles include the newest 1024 frames; idle intervals can remain."}
-        wait_for(lambda: (root / "producer.json").exists(), "producer completion")
-        report["producer"] = json.loads((root / "producer.json").read_text())
+        if not args.command:
+            wait_for(lambda: (root / "producer.json").exists(), "producer completion")
+            report["producer"] = json.loads((root / "producer.json").read_text())
         if args.wiretap:
             report["host_wire"] = wire_summary(root / "host-wire.bin", started_ns, ended_ns,
                                                1e6 / args.fps)
+        if args.wiretap and not args.command:
             media = root / "host-media.bin"
             marks = list(media_marks(media)) if media.exists() else []
             report["latency"] = latency_summary(
@@ -487,6 +594,7 @@ def benchmark(args):
             subprocess.run([*lab, "close"], timeout=20)
         if follower_launched:
             subprocess.run([*follower_lab, "close"], timeout=20)
+        stop_isolated_processes(root, tree_identities)
 
 
 def main():
@@ -495,11 +603,18 @@ def main():
     parser.add_argument("--window-lab", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--wiretap", type=Path)
+    parser.add_argument("--tap", choices=["client-write", "host-read"], default="client-write",
+                        help="record the client's successful TTY writes, or Ghostty's PTY reads")
     parser.add_argument("--fps", type=int, choices=[60, 120, 144, 240], default=120)
     parser.add_argument("--producer-fps", type=int, choices=[30, 60, 120, 144, 240], default=240)
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--input-probes", type=int, default=0,
                         help="send this many keys during the sample and time their echoes")
+    parser.add_argument("--command",
+                        help="run this producer command line in the pane instead of the "
+                             "synthetic stream; marks, latency and probes need the stream")
+    parser.add_argument("--warmup", type=float, default=6,
+                        help="seconds between starting --command and sampling")
     parser.add_argument("--mixed", action="store_true",
                         help="add the producer's titles, text, queries and image delete/recreate")
     parser.add_argument("--resize-at", type=float,
@@ -536,6 +651,8 @@ def main():
     if (args.stall_follower_at or args.resume_follower_at or args.stall_leader_at
             or args.resume_leader_at) and not args.follower:
         parser.error("stalling a follower needs --follower")
+    if args.command and (args.input_probes or args.follower or args.hide_at or args.mixed):
+        parser.error("--command supports only the plain sample and --resize-at")
     if args.input_via == "host" and args.input_probes > 26:
         parser.error("host input probes use distinct letters; at most 26")
     benchmark(args)

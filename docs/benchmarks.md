@@ -377,7 +377,10 @@ update, so for graphics streams also check `presented_upload_interval_us` and
 `presented_upload_intervals_over_two_frames`, which time presented uploads. Percentiles can hide
 a stall that recurs in only part of the sample. The optional Linux
 interposer records only successful TTY writes from the selected executable; it also sees the
-framework's separately opened TTY descriptor. Its binary records contain a native-endian u64
+framework's separately opened TTY descriptor. Every other process that loads it passes calls
+straight through, and the selected executable removes `LD_PRELOAD` from its environment, so the
+session server, panes and producers never load it. Chromium's sandboxed helpers are killed by
+the terminal ioctl behind `isatty()`, so an inherited interposer would break a browser producer. Its binary records contain a native-endian u64
 monotonic timestamp, u32 length and that many output bytes. This captures host traffic rather
 than inferring it from uploads requested by the producer. The interposer adds measurement
 overhead; use it consistently on both sides of a comparison and run an uninstrumented control.
@@ -408,6 +411,23 @@ real echoes do.
 `--resize-at` shrinks the owned window by 160x120 pixels through the window lab. A resize removes
 the producer's placements and Rozi redraws the pane. The baseline before this work took about
 200 ms to present the next upload as well, so compare that gap against the same baseline binary.
+
+`--command` runs any producer command line in the pane instead of the synthetic stream, with
+`--warmup` seconds before sampling. Fixture marks, latency and input probes need the synthetic
+stream. `graphics_frame_interval_us` times synchronized updates that carry any Kitty command, and
+`producer_tree` sums CPU and PSS over the producer and its descendants, including a detached
+daemon. Processes that outlive the session are ended by run marker or by the identities recorded
+for that tree. `tools/graphics-browser.sh BROWSER FPS PRESENTER URL` opens terminal-browser as a
+producer: it sets `render.fps`, `render.presenter` (`auto` or `full`) and disables telemetry,
+update checks and GPU rendering in the run's isolated configuration. `URL` may be `generated`,
+which serves `tools/graphics-page.html` over loopback:
+
+```bash
+python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+  --window-lab /absolute/path/to/window_lab.py --output /tmp/graphics-browser-60 \
+  --wiretap /tmp/graphics-wiretap.so --fps 60 --seconds 20 \
+  --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
+```
 
 `--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
 `visibility` reports frames presented while hidden and producer writes in that time. On reveal it

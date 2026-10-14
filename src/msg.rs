@@ -725,7 +725,6 @@ pub enum Msg {
     CaptureWaitTick,
     SessionRuntimeMetrics {
         epoch: u64,
-        metrics: crate::runtime_metrics::ServerRuntimeMetrics,
     },
     /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).
     FlushPaneResizes {
@@ -762,7 +761,9 @@ pub enum Msg {
         local: bool,
         generation: u64,
     },
+    TerminalPresented(Vec<tui_lipan::PresentedTerminal>),
     SessionOutput {
+        metadata: crate::session::protocol::OutputMetadata,
         epoch: u64,
         pane_id: PaneId,
         local: bool,

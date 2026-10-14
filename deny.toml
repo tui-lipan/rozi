@@ -39,4 +39,6 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# Temporary framework pin during coordinated graphics development.
+# Restore registry-only sources before merging.
+allow-git = ["https://github.com/tui-lipan/tui-lipan.git"]

@@ -311,6 +311,9 @@ For development or CI:
 
 ### Version compatibility
 
+The graphics pipeline uses session protocol 30. Update both clients and servers from protocol 29,
+and restart existing sessions before attaching.
+
 The client and the session server must speak the same session protocol version. This release
 supports only one, so after an update that changes it, update both ends and restart any running
 named sessions on the host. Optional features are agreed per connection: when one side lacks a

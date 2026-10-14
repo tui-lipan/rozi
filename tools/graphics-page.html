@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Graphics benchmark page</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1626; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+<canvas id="scene"></canvas>
+<script>
+  const canvas = document.getElementById("scene");
+  const context = canvas.getContext("2d");
+  let frame = 0;
+
+  function resize() {
+    canvas.width = canvas.clientWidth * devicePixelRatio;
+    canvas.height = canvas.clientHeight * devicePixelRatio;
+  }
+
+  function draw() {
+    const { width, height } = canvas;
+    context.fillStyle = "#0e1626";
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = "#1e3a6e";
+    context.fillRect(0, 0, width, height * 0.12);
+    for (let index = 0; index < 6; index += 1) {
+      const phase = frame * 0.02 + index;
+      const size = height * 0.16;
+      const x = (Math.sin(phase) * 0.5 + 0.5) * (width - size);
+      const y = height * 0.15 + (index / 6) * (height * 0.8 - size);
+      context.fillStyle = `hsl(${(index * 57 + frame) % 360} 70% 55%)`;
+      context.fillRect(x, y, size, size);
+    }
+    context.fillStyle = "#e6ecf5";
+    context.font = `${Math.round(height * 0.06)}px monospace`;
+    context.fillText(`frame ${frame}`, width * 0.02, height * 0.08);
+    frame += 1;
+    requestAnimationFrame(draw);
+  }
+
+  addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(draw);
+</script>

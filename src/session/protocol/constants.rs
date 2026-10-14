@@ -8,7 +8,7 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 29;
+pub const PROTOCOL_VERSION: u32 = 30;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
@@ -40,3 +40,10 @@ pub(crate) const PANE_FRAME_HEADER_LEN: usize = 13;
 pub(crate) const FRAME_KIND_CONTROL_JSON: u8 = 1;
 pub(crate) const FRAME_KIND_PANE_OUTPUT: u8 = 2;
 pub(crate) const FRAME_KIND_PANE_INPUT: u8 = 3;
+
+pub(crate) const FRAME_KIND_PRESENTATION_ACK: u8 = 4;
+pub(crate) const FRAME_KIND_PRESENTATION_INTEREST: u8 = 5;
+pub(crate) const PANE_OUTPUT_METADATA_LEN: usize = 37;
+
+/// Complete v30 output frame overhead including semantic metadata.
+pub const PANE_OUTPUT_FRAME_OVERHEAD: usize = PANE_FRAME_OVERHEAD + PANE_OUTPUT_METADATA_LEN;

@@ -234,7 +234,10 @@ pub struct SpawnPaneRequest {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ClientOutbound {
     Control(ClientMessage),
+    PresentationAcks(Vec<protocol::PresentationAck>),
+    PresentationInterest(Vec<protocol::PanePresentationInterest>),
     PaneInput {
+        latency_sensitive: bool,
         pane_id: PaneId,
         local: bool,
         generation: u64,
@@ -475,16 +478,24 @@ impl SessionClient {
                         }
                         result
                     }
+                    ClientOutbound::PresentationAcks(acks) => {
+                        protocol::write_presentation_acks(&mut stream, &acks)
+                    }
+                    ClientOutbound::PresentationInterest(interest) => {
+                        protocol::write_presentation_interest(&mut stream, &interest)
+                    }
                     ClientOutbound::PaneInput {
+                        latency_sensitive,
                         pane_id,
                         local,
                         generation,
                         bytes,
-                    } => protocol::write_pane_input_frame(
+                    } => protocol::write_pane_input_with_priority(
                         &mut stream,
                         pane_id,
                         generation,
                         local,
+                        latency_sensitive,
                         &bytes,
                     ),
                 };
@@ -566,6 +577,8 @@ impl SessionClient {
         let queue_metrics = |stats: crate::session::queue::QueueStats| QueueMetrics {
             bytes: ByteBufferMetrics::new(stats.bytes, stats.high_water_bytes, stats.capacity),
             queued_items: stats.len as u64,
+            coalesced_frames: stats.coalesced_frames,
+            coalesced_bytes: stats.coalesced_bytes,
         };
         ClientRuntimeStats {
             inbound: self
@@ -626,11 +639,39 @@ impl SessionClient {
         });
     }
 
+    pub fn acknowledge_presentations(&self, acks: Vec<protocol::PresentationAck>) {
+        if !acks.is_empty() {
+            self.send(ClientOutbound::PresentationAcks(acks));
+        }
+    }
+
+    pub fn set_presentation_interest(&self, interest: Vec<protocol::PanePresentationInterest>) {
+        if !interest.is_empty() {
+            self.send(ClientOutbound::PresentationInterest(interest));
+        }
+    }
+
     pub fn send_input(&self, pane_id: PaneId, generation: u64, local: bool, bytes: Vec<u8>) {
         self.send(ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id,
             local,
             generation,
+            bytes,
+        });
+    }
+    pub fn send_continuous_input(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        bytes: Vec<u8>,
+    ) {
+        self.send(ClientOutbound::PaneInput {
+            latency_sensitive: false,
+            pane_id,
+            generation,
+            local,
             bytes,
         });
     }
@@ -961,20 +1002,11 @@ impl InboundMailbox {
         self: &Arc<Self>,
         frame: Frame<ServerMessage>,
     ) -> std::result::Result<(), ()> {
-        let bytes = inbound_frame_bytes(&frame);
         // Parsing terminal graphics can briefly take longer than the socket reader needs to fill
         // this bounded mailbox. Backpressure that reader instead of tearing down a healthy local
         // session: the server still owns per-client outbox isolation, so a genuinely slow client
         // cannot stall broadcasts to everyone else.
-        //
-        // Keep each pane's output in one entry within the current output-only segment. This retains
-        // per-pane byte order and control-frame boundaries while avoiding one queue lock and parser
-        // call per tiny interleaved frame. The first frame is still scheduled immediately.
-        let result = self.queue.push_blocking_within_segment(
-            InboundEvent::Frame(Box::new(frame)),
-            bytes,
-            coalesce_inbound_segment,
-        );
+        let result = enqueue_inbound_frame(&self.queue, frame);
         if let Err(error) = result {
             let message = match error {
                 PushError::TooLarge(_) => "session inbound frame exceeded 8 MiB",
@@ -1047,9 +1079,71 @@ impl InboundMailbox {
     }
 }
 
+/// Keep each pane's output in one entry within the current output-only segment. This retains
+/// per-pane byte order and control-frame boundaries while avoiding one queue lock and parser call
+/// per tiny interleaved frame. Independent graphics instead replace their queued predecessor.
+fn enqueue_inbound_frame(
+    queue: &ByteQueue<InboundEvent>,
+    frame: Frame<ServerMessage>,
+) -> std::result::Result<(), PushError<InboundEvent>> {
+    let bytes = inbound_frame_bytes(&frame);
+    let replacement = match &frame {
+        Frame::PaneOutput {
+            pane_id,
+            local,
+            generation,
+            metadata,
+            ..
+        } => metadata.replacement_key(*pane_id, *local, *generation),
+        _ => None,
+    };
+    invalidate_inbound_replacements(queue, &frame);
+    let event = InboundEvent::Frame(Box::new(frame));
+    if let Some(key) = replacement {
+        queue.push_blocking_latest(event, bytes, key)
+    } else {
+        queue.push_blocking_within_segment(event, bytes, coalesce_inbound_segment)
+    }
+}
+
+fn invalidate_inbound_replacements(queue: &ByteQueue<InboundEvent>, frame: &Frame<ServerMessage>) {
+    match frame {
+        // A send's wait takes its baseline at the mark: nothing after it may overtake it.
+        Frame::Control(ServerMessage::Attached { .. } | ServerMessage::InputMarked { .. }) => {
+            queue.clear_replacements()
+        }
+        Frame::Control(ServerMessage::PaneReset { pane_id, .. }) => {
+            queue.invalidate_replacements(*pane_id, false)
+        }
+        Frame::Control(
+            ServerMessage::Resized { pane_id, local, .. }
+            | ServerMessage::Exited { pane_id, local, .. }
+            | ServerMessage::SpawnResult { pane_id, local, .. },
+        ) => queue.invalidate_replacements(*pane_id, *local),
+        Frame::PaneOutput {
+            pane_id,
+            local,
+            metadata,
+            ..
+        } if !matches!(
+            metadata.class,
+            protocol::OutputClass::IndependentGraphics { .. }
+        ) =>
+        {
+            queue.invalidate_replacements(*pane_id, *local)
+        }
+        _ => {}
+    }
+}
+
 fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
     match frame {
         Frame::PaneBytes { bytes, .. } => bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD),
+        Frame::PaneOutput { bytes, .. } => bytes
+            .len()
+            .saturating_add(protocol::PANE_OUTPUT_FRAME_OVERHEAD),
+        Frame::PresentationAcks(acks) => 5 + acks.len() * 21,
+        Frame::PresentationInterest(interest) => 5 + interest.len() * 15,
         Frame::Control(message) => serde_json::to_vec(message)
             .map(|bytes| bytes.len().saturating_add(5))
             .unwrap_or(5),
@@ -1065,13 +1159,15 @@ fn coalesce_inbound_segment(
         return SegmentCoalesce::Barrier;
     };
     let (
-        Frame::PaneBytes {
+        Frame::PaneOutput {
+            metadata,
             pane_id,
             local,
             generation,
             bytes,
         },
-        Frame::PaneBytes {
+        Frame::PaneOutput {
+            metadata: next_metadata,
             pane_id: next_pane,
             local: next_local,
             generation: next_generation,
@@ -1081,6 +1177,11 @@ fn coalesce_inbound_segment(
     else {
         return SegmentCoalesce::Barrier;
     };
+    if !matches!(metadata.class, protocol::OutputClass::Ordered)
+        || !matches!(next_metadata.class, protocol::OutputClass::Ordered)
+    {
+        return SegmentCoalesce::Barrier;
+    }
     if pane_id != next_pane || local != next_local || generation != next_generation {
         return SegmentCoalesce::Continue;
     }
@@ -1090,6 +1191,7 @@ fn coalesce_inbound_segment(
         return SegmentCoalesce::Barrier;
     }
     bytes.extend_from_slice(next_bytes);
+    *metadata = *next_metadata;
     SegmentCoalesce::Merged
 }
 
@@ -1099,6 +1201,8 @@ impl ClientOutbound {
             Self::Control(message) => serde_json::to_vec(message)
                 .map(|bytes| bytes.len().saturating_add(5))
                 .unwrap_or(5),
+            Self::PresentationAcks(acks) => 5 + acks.len() * 21,
+            Self::PresentationInterest(interest) => 5 + interest.len() * 15,
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
             }
@@ -1180,8 +1284,9 @@ fn handle_transport_frame(
     if let Frame::Control(ServerMessage::RuntimeMetrics { metrics }) = frame
         && let Some(cache) = latest_server_metrics
     {
-        *cache.lock().expect("server metrics cache poisoned") =
-            Some(TimedServerRuntimeMetrics::received(metrics.clone()));
+        *cache.lock().expect("server metrics cache poisoned") = Some(
+            TimedServerRuntimeMetrics::received(metrics.as_ref().clone()),
+        );
         if let Some(pending) = metrics_request_pending {
             pending.store(false, Ordering::Release);
         }
@@ -1367,8 +1472,15 @@ mod tests {
         let server = std::thread::spawn(move || {
             protocol::write_frame(&mut server_stream, &ServerMessage::Ping { seq: 11 })
                 .expect("write control frame");
-            protocol::write_pane_output_frame(&mut server_stream, 3, 5, false, b"ready\n")
-                .expect("write pane frame");
+            protocol::write_pane_output_frame(
+                &mut server_stream,
+                3,
+                5,
+                false,
+                protocol::OutputMetadata::default(),
+                b"ready\n",
+            )
+            .expect("write pane frame");
         });
 
         let (inbound_tx, inbound_rx) = mpsc::channel();
@@ -1392,7 +1504,8 @@ mod tests {
             inbound_rx
                 .recv_timeout(Duration::from_secs(1))
                 .expect("pane frame"),
-            Frame::PaneBytes {
+            Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: 3,
                 local: false,
                 generation: 5,
@@ -1640,13 +1753,15 @@ mod tests {
 
     #[test]
     fn inbound_coalescing_matches_exact_pane_identity() {
-        let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+        let mut output = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
             bytes: b"alpha".to_vec(),
         }));
-        let continuation = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+        let continuation = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
@@ -1658,7 +1773,8 @@ mod tests {
         );
         assert_eq!(
             output,
-            InboundEvent::Frame(Box::new(Frame::PaneBytes {
+            InboundEvent::Frame(Box::new(Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: false,
                 generation: 2,
@@ -1666,19 +1782,22 @@ mod tests {
             }))
         );
         for mismatch in [
-            Frame::PaneBytes {
+            Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: 2,
                 local: false,
                 generation: 2,
                 bytes: b"pane".to_vec(),
             },
-            Frame::PaneBytes {
+            Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: true,
                 generation: 2,
                 bytes: b"local".to_vec(),
             },
-            Frame::PaneBytes {
+            Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: false,
                 generation: 3,
@@ -1718,19 +1837,22 @@ mod tests {
                 .unwrap();
         };
 
-        push(Frame::PaneBytes {
+        push(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
             bytes: b"a1".to_vec(),
         });
-        push(Frame::PaneBytes {
+        push(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 2,
             local: false,
             generation: 2,
             bytes: b"b1".to_vec(),
         });
-        push(Frame::PaneBytes {
+        push(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
@@ -1744,7 +1866,8 @@ mod tests {
             rows: 24,
         };
         push(Frame::Control(control.clone()));
-        push(Frame::PaneBytes {
+        push(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
@@ -1755,12 +1878,12 @@ mod tests {
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a1a2")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. } if bytes == b"a1a2")
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes == b"b1")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 2, bytes, .. } if bytes == b"b1")
         ));
         assert_eq!(
             queue.try_pop(),
@@ -1769,7 +1892,55 @@ mod tests {
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a3")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. } if bytes == b"a3")
+        ));
+    }
+
+    /// A send's wait takes its baseline at `InputMarked`, so graphics behind the mark must never
+    /// replace an older frame ahead of it, even when the server reuses the replacement key.
+    #[test]
+    fn inbound_independent_graphics_never_overtake_an_input_mark() {
+        let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
+        let graphics = |sequence: u64, bytes: &[u8]| Frame::PaneOutput {
+            metadata: protocol::OutputMetadata {
+                sequence,
+                coalesce_epoch: 0,
+                class: protocol::OutputClass::IndependentGraphics {
+                    image: 7,
+                    incarnation: 1,
+                    revision: sequence,
+                },
+            },
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            bytes: bytes.to_vec(),
+        };
+        enqueue_inbound_frame(&queue, graphics(1, b"A")).unwrap();
+        enqueue_inbound_frame(
+            &queue,
+            Frame::Control(ServerMessage::InputMarked { token: 9 }),
+        )
+        .unwrap();
+        enqueue_inbound_frame(&queue, graphics(2, b"B")).unwrap();
+        // Frames on the same side of the mark still replace one another.
+        enqueue_inbound_frame(&queue, graphics(3, b"C")).unwrap();
+
+        assert_eq!(queue.stats().len, 3);
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneOutput { bytes, .. } if bytes == b"A")
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::Control(ServerMessage::InputMarked { token: 9 }))
+        ));
+        assert!(matches!(
+            queue.try_pop(),
+            Some(InboundEvent::Frame(frame))
+                if matches!(&*frame, Frame::PaneOutput { bytes, .. } if bytes == b"C")
         ));
     }
 
@@ -1777,7 +1948,8 @@ mod tests {
     fn inbound_coalescing_caps_non_adjacent_aggregation_at_64kib() {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
-            let frame = Frame::PaneBytes {
+            let frame = Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
                 generation: 2,
@@ -1806,7 +1978,8 @@ mod tests {
     fn inbound_coalescing_does_not_merge_past_a_full_same_pane_bucket() {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
-            let frame = Frame::PaneBytes {
+            let frame = Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
                 generation: 2,
@@ -1832,28 +2005,28 @@ mod tests {
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"a")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. } if bytes == b"a")
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes == b"x")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 2, bytes, .. } if bytes == b"x")
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. }
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. }
                     if bytes.len() == MAX_INTERLEAVED_PANE_BYTES && bytes[0] == b'b')
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 3, bytes, .. } if bytes == b"y")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 3, bytes, .. } if bytes == b"y")
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. } if bytes == b"c")
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. } if bytes == b"c")
         ));
     }
 
@@ -1861,7 +2034,8 @@ mod tests {
     fn inbound_coalescing_delivers_quiet_output_after_one_hot_bucket() {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
-            let frame = Frame::PaneBytes {
+            let frame = Frame::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
                 generation: 2,
@@ -1886,13 +2060,13 @@ mod tests {
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 1, bytes, .. }
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 1, bytes, .. }
                     if bytes.len() == MAX_INTERLEAVED_PANE_BYTES)
         ));
         assert!(matches!(
             queue.try_pop(),
             Some(InboundEvent::Frame(frame))
-                if matches!(&*frame, Frame::PaneBytes { pane_id: 2, bytes, .. } if bytes.as_slice() == [b'q'; 64])
+                if matches!(&*frame, Frame::PaneOutput { pane_id: 2, bytes, .. } if bytes.as_slice() == [b'q'; 64])
         ));
     }
 
@@ -1900,13 +2074,15 @@ mod tests {
     fn inbound_coalescing_keeps_large_browser_redraws_in_one_ui_delivery() {
         let first = vec![b'a'; 64 * 1024];
         let second = vec![b'b'; 512 * 1024];
-        let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+        let mut output = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
             bytes: first,
         }));
-        let continuation = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+        let continuation = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
             generation: 2,
@@ -1926,7 +2102,7 @@ mod tests {
         let InboundEvent::Frame(frame) = output else {
             panic!("coalesced pane output");
         };
-        let Frame::PaneBytes { bytes, .. } = *frame else {
+        let Frame::PaneOutput { bytes, .. } = *frame else {
             panic!("coalesced pane bytes");
         };
         assert_eq!(bytes.len(), 576 * 1024);

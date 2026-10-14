@@ -3,15 +3,92 @@ use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::session::protocol::constants::{
-    FRAME_KIND_CONTROL_JSON, FRAME_KIND_PANE_INPUT, FRAME_KIND_PANE_OUTPUT, MAX_FRAME_SIZE,
-    PANE_FRAME_HEADER_LEN,
+    FRAME_KIND_CONTROL_JSON, FRAME_KIND_PANE_INPUT, FRAME_KIND_PANE_OUTPUT,
+    FRAME_KIND_PRESENTATION_ACK, FRAME_KIND_PRESENTATION_INTEREST, MAX_FRAME_SIZE,
+    PANE_FRAME_HEADER_LEN, PANE_OUTPUT_METADATA_LEN,
 };
 use crate::state::PaneId;
+
+/// Producer bytes may only be superseded when the authoritative parser proves independence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutputClass {
+    #[default]
+    Ordered,
+    DependentGraphics {
+        image: u32,
+        incarnation: u64,
+        revision: u64,
+    },
+    IndependentGraphics {
+        image: u32,
+        incarnation: u64,
+        revision: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OutputMetadata {
+    pub sequence: u64,
+    pub coalesce_epoch: u64,
+    pub class: OutputClass,
+}
+
+impl OutputMetadata {
+    pub(crate) fn replacement_key(
+        self,
+        pane: PaneId,
+        local: bool,
+        generation: u64,
+    ) -> Option<crate::session::queue::ReplacementKey> {
+        let OutputClass::IndependentGraphics {
+            image, incarnation, ..
+        } = self.class
+        else {
+            return None;
+        };
+        Some(crate::session::queue::ReplacementKey {
+            pane,
+            local,
+            generation,
+            epoch: self.coalesce_epoch,
+            image,
+            incarnation,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PresentationAck {
+    pub local: bool,
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanePresentationInterest {
+    pub local: bool,
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub visible: bool,
+    pub focused: bool,
+    pub frames_per_second: u16,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame<C> {
     Control(C),
+    PaneOutput {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        metadata: OutputMetadata,
+        bytes: Vec<u8>,
+    },
+    PresentationAcks(Vec<PresentationAck>),
+    PresentationInterest(Vec<PanePresentationInterest>),
     PaneBytes {
+        latency_sensitive: bool,
         pane_id: PaneId,
         local: bool,
         generation: u64,
@@ -36,15 +113,37 @@ pub fn write_pane_output_frame<W: Write>(
     pane_id: PaneId,
     generation: u64,
     local: bool,
+    metadata: OutputMetadata,
     bytes: &[u8],
 ) -> std::io::Result<()> {
+    let mut payload = Vec::with_capacity(PANE_OUTPUT_METADATA_LEN + bytes.len());
+    payload.extend_from_slice(&metadata.sequence.to_be_bytes());
+    payload.extend_from_slice(&metadata.coalesce_epoch.to_be_bytes());
+    let (class, image, incarnation, revision) = match metadata.class {
+        OutputClass::Ordered => (0, 0, 0, 0),
+        OutputClass::DependentGraphics {
+            image,
+            incarnation,
+            revision,
+        } => (1, image, incarnation, revision),
+        OutputClass::IndependentGraphics {
+            image,
+            incarnation,
+            revision,
+        } => (2, image, incarnation, revision),
+    };
+    payload.push(class);
+    payload.extend_from_slice(&image.to_be_bytes());
+    payload.extend_from_slice(&incarnation.to_be_bytes());
+    payload.extend_from_slice(&revision.to_be_bytes());
+    payload.extend_from_slice(bytes);
     write_pane_frame(
         writer,
         FRAME_KIND_PANE_OUTPUT,
         pane_id,
         generation,
         local,
-        bytes,
+        &payload,
     )
 }
 
@@ -55,14 +154,23 @@ pub fn write_pane_input_frame<W: Write>(
     local: bool,
     bytes: &[u8],
 ) -> std::io::Result<()> {
-    write_pane_frame(
-        writer,
-        FRAME_KIND_PANE_INPUT,
-        pane_id,
-        generation,
-        local,
-        bytes,
-    )
+    write_pane_input_with_priority(writer, pane_id, generation, local, true, bytes)
+}
+
+pub fn write_pane_input_with_priority<W: Write>(
+    writer: &mut W,
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
+    latency_sensitive: bool,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let mut body = Vec::with_capacity(PANE_FRAME_HEADER_LEN + bytes.len());
+    body.extend_from_slice(&pane_id.to_be_bytes());
+    body.extend_from_slice(&generation.to_be_bytes());
+    body.push(u8::from(local) | (u8::from(!latency_sensitive) << 1));
+    body.extend_from_slice(bytes);
+    write_frame_body(writer, FRAME_KIND_PANE_INPUT, &body)
 }
 
 fn write_pane_frame<W: Write>(
@@ -220,7 +328,10 @@ fn decode_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Fr
         FRAME_KIND_CONTROL_JSON => serde_json::from_slice(payload)
             .map(Frame::Control)
             .map_err(std::io::Error::other),
-        FRAME_KIND_PANE_OUTPUT | FRAME_KIND_PANE_INPUT => decode_pane_frame(payload),
+        FRAME_KIND_PANE_INPUT => decode_pane_frame(payload),
+        FRAME_KIND_PANE_OUTPUT => decode_output_frame(payload),
+        FRAME_KIND_PRESENTATION_ACK => decode_ack_frame(payload),
+        FRAME_KIND_PRESENTATION_INTEREST => decode_interest_frame(payload),
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("unknown frame kind {kind}"),
@@ -237,20 +348,145 @@ fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
     }
     let pane_id = u32::from_be_bytes(payload[..4].try_into().expect("slice length"));
     let generation = u64::from_be_bytes(payload[4..12].try_into().expect("slice length"));
-    let local = match payload[12] {
-        0 => false,
-        1 => true,
-        other => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("pane byte frame has invalid locality {other}"),
-            ));
-        }
-    };
+    if payload[12] & !3 != 0 {
+        return Err(invalid_frame("invalid input flags"));
+    }
+    let local = payload[12] & 1 != 0;
+    let latency_sensitive = payload[12] & 2 == 0;
     Ok(Frame::PaneBytes {
+        latency_sensitive,
         pane_id,
         local,
         generation,
         bytes: payload[PANE_FRAME_HEADER_LEN..].to_vec(),
     })
+}
+
+fn invalid_frame(message: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message)
+}
+
+fn decode_output_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
+    if payload.get(12).is_some_and(|flags| *flags > 1) {
+        return Err(invalid_frame("invalid output flags"));
+    }
+    let Frame::PaneBytes {
+        latency_sensitive: _,
+        pane_id,
+        local,
+        generation,
+        bytes,
+    } = decode_pane_frame::<T>(payload)?
+    else {
+        unreachable!()
+    };
+    if bytes.len() < PANE_OUTPUT_METADATA_LEN {
+        return Err(invalid_frame("pane output missing semantic metadata"));
+    }
+    let read_u64 =
+        |start| u64::from_be_bytes(bytes[start..start + 8].try_into().expect("checked header"));
+    let image = u32::from_be_bytes(bytes[17..21].try_into().expect("checked header"));
+    let incarnation = read_u64(21);
+    let revision = read_u64(29);
+    let class = match bytes[16] {
+        0 if image == 0 && incarnation == 0 && revision == 0 => OutputClass::Ordered,
+        1 if image != 0 && incarnation != 0 => OutputClass::DependentGraphics {
+            image,
+            incarnation,
+            revision,
+        },
+        2 if image != 0 && incarnation != 0 => OutputClass::IndependentGraphics {
+            image,
+            incarnation,
+            revision,
+        },
+        _ => return Err(invalid_frame("invalid graphics output classification")),
+    };
+    Ok(Frame::PaneOutput {
+        pane_id,
+        local,
+        generation,
+        metadata: OutputMetadata {
+            sequence: read_u64(0),
+            coalesce_epoch: read_u64(8),
+            class,
+        },
+        bytes: bytes[PANE_OUTPUT_METADATA_LEN..].to_vec(),
+    })
+}
+
+pub fn write_presentation_acks<W: Write>(
+    writer: &mut W,
+    acks: &[PresentationAck],
+) -> std::io::Result<()> {
+    let mut payload = Vec::with_capacity(acks.len().saturating_mul(21));
+    for ack in acks {
+        payload.extend_from_slice(&ack.pane_id.to_be_bytes());
+        payload.extend_from_slice(&ack.generation.to_be_bytes());
+        payload.extend_from_slice(&ack.sequence.to_be_bytes());
+        payload.push(u8::from(ack.local));
+    }
+    write_frame_body(writer, FRAME_KIND_PRESENTATION_ACK, &payload)
+}
+
+fn decode_ack_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
+    if !payload.len().is_multiple_of(21) {
+        return Err(invalid_frame("invalid presentation ACK length"));
+    }
+    if payload.chunks_exact(21).any(|chunk| chunk[20] > 1) {
+        return Err(invalid_frame("invalid presentation ACK flags"));
+    }
+    Ok(Frame::PresentationAcks(
+        payload
+            .chunks_exact(21)
+            .map(|chunk| PresentationAck {
+                local: chunk[20] != 0,
+                pane_id: u32::from_be_bytes(chunk[..4].try_into().expect("checked chunk")),
+                generation: u64::from_be_bytes(chunk[4..12].try_into().expect("checked chunk")),
+                sequence: u64::from_be_bytes(chunk[12..20].try_into().expect("checked chunk")),
+            })
+            .collect(),
+    ))
+}
+
+pub fn write_presentation_interest<W: Write>(
+    writer: &mut W,
+    interest: &[PanePresentationInterest],
+) -> std::io::Result<()> {
+    let mut payload = Vec::with_capacity(interest.len().saturating_mul(15));
+    for pane in interest {
+        payload.extend_from_slice(&pane.pane_id.to_be_bytes());
+        payload.extend_from_slice(&pane.generation.to_be_bytes());
+        payload.push(
+            u8::from(pane.visible) | (u8::from(pane.focused) << 1) | (u8::from(pane.local) << 2),
+        );
+        payload.extend_from_slice(&pane.frames_per_second.to_be_bytes());
+    }
+    write_frame_body(writer, FRAME_KIND_PRESENTATION_INTEREST, &payload)
+}
+
+fn decode_interest_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
+    if !payload.len().is_multiple_of(15) {
+        return Err(invalid_frame("invalid presentation interest length"));
+    }
+    let mut interest = Vec::with_capacity(payload.len() / 15);
+    for chunk in payload.chunks_exact(15) {
+        if chunk[12] & !7 != 0 {
+            return Err(invalid_frame("invalid presentation interest flags"));
+        }
+        let frames_per_second =
+            u16::from_be_bytes(chunk[13..15].try_into().expect("checked chunk"));
+        if frames_per_second == 0 || frames_per_second > 1000 {
+            return Err(invalid_frame("invalid presentation rate"));
+        }
+        interest.push(PanePresentationInterest {
+            local: chunk[12] & 4 != 0,
+            pane_id: u32::from_be_bytes(chunk[..4].try_into().expect("checked chunk")),
+            generation: u64::from_be_bytes(chunk[4..12].try_into().expect("checked chunk")),
+            visible: chunk[12] & 1 != 0,
+            focused: chunk[12] & 2 != 0,
+            frames_per_second,
+        });
+    }
+    Ok(Frame::PresentationInterest(interest))
 }

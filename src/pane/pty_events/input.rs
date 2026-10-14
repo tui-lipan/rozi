@@ -198,7 +198,7 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
             // Motion is sampled at the active client frame cadence; state changes always go. See
             // `pty_events::pointer_flow`.
             if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes, interval) {
-                client.send_input(id, pane.pty_generation, local, bytes);
+                client.send_continuous_input(id, pane.pty_generation, local, bytes);
             } else {
                 hold = pane.terminal.pointer_flow.arm(interval);
             }
@@ -234,7 +234,7 @@ pub(crate) fn pointer_flow_tick(ctx: &mut Context<AppRoot>, id: PaneId) -> Updat
         match pane.terminal.pointer_flow.paced(interval) {
             Paced::Send(bytes) => {
                 if let Some(client) = client {
-                    client.send_input(id, pane.pty_generation, local, bytes);
+                    client.send_continuous_input(id, pane.pty_generation, local, bytes);
                 }
             }
             Paced::Retry(after) => retry = Some(after),

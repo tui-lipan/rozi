@@ -59,7 +59,10 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
         PostUpdateKind::SessionOutputOnly
     } else if matches!(
         msg,
-        Msg::UiRecordingFrame(_) | Msg::UiRecordingFlush { .. } | Msg::UiRecordingPoll { .. }
+        Msg::TerminalPresented(_)
+            | Msg::UiRecordingFrame(_)
+            | Msg::UiRecordingFlush { .. }
+            | Msg::UiRecordingPoll { .. }
     ) {
         PostUpdateKind::Passive
     } else {
@@ -69,6 +72,7 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
 
 fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     match msg {
+        Msg::TerminalPresented(reports) => session::presentation::presented(ctx, reports),
         Msg::HostMetadata {
             target,
             generation,
@@ -727,7 +731,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::capture_wait::input_marked(ctx, token)
         }
         Msg::CaptureWaitTick => crate::ops::capture_wait::tick(ctx),
-        Msg::SessionRuntimeMetrics { epoch, metrics: _ } => {
+        Msg::SessionRuntimeMetrics { epoch } => {
             runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
         }
         Msg::FlushPaneResizes { epoch, generation } => {
@@ -735,12 +739,13 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::FlushLayoutCommit { epoch } => session::flush_layout_commit(ctx, epoch),
         Msg::SessionOutput {
+            metadata,
             epoch,
             pane_id,
             local,
             generation,
             bytes,
-        } => session::output(ctx, epoch, pane_id, local, generation, bytes),
+        } => session::output(ctx, epoch, pane_id, local, generation, metadata, bytes),
         Msg::SessionResized {
             epoch,
             pane_id,
@@ -1000,6 +1005,8 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
     match (level, command) {
         (UpdateLevel::None, None) => Update::none(),
         (UpdateLevel::None, Some(command)) => Update::command_only(command),
+        (UpdateLevel::TerminalGraphics, None) => Update::terminal_graphics(),
+        (UpdateLevel::TerminalGraphics, Some(command)) => Update::with_command(command),
         (UpdateLevel::TerminalPaint, None) => Update::terminal_paint(),
         // Same reasoning as the paint case below, and the claim is narrower still: a
         // terminal-only repaint asserts nothing else on screen moved, which a command's effects
@@ -1015,7 +1022,7 @@ fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
 }
 
 fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel {
-    use UpdateLevel::{Full, Layout, None, Paint, TerminalPaint};
+    use UpdateLevel::{Full, Layout, None, Paint, TerminalGraphics, TerminalPaint};
 
     match (left, right) {
         (Full, _) | (_, Full) => Full,
@@ -1024,6 +1031,7 @@ fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel 
         // Below `Paint`, so anything else in the same frame widens it back: the terminal-only
         // claim holds only if every source in the frame agrees nothing else moved.
         (TerminalPaint, _) | (_, TerminalPaint) => TerminalPaint,
+        (TerminalGraphics, _) | (_, TerminalGraphics) => TerminalGraphics,
         (None, None) => None,
     }
 }
@@ -1082,6 +1090,7 @@ fn post_update_sync(
         return update;
     }
 
+    session::presentation::sync_interest(ctx);
     ctx.state.current_mut().retired_panes.expire();
     for attachment in ctx.state.background.values_mut() {
         attachment.retired_panes.expire();
@@ -1200,7 +1209,8 @@ mod tests {
             // Distinct generations keep these as separate queue entries. These tests exercise the
             // drain budget and command yielding, not mailbox coalescing.
             mailbox
-                .push(Frame::PaneBytes {
+                .push(Frame::PaneOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     pane_id: (index % 2) as crate::state::PaneId + 1,
                     local: false,
                     generation: index as u64 + 1,

@@ -104,6 +104,7 @@ impl SessionServer {
         local: bool,
         generation: u64,
         bytes: &[u8],
+        latency_sensitive: bool,
     ) {
         let owner = local.then_some(id);
         let may_operate = if local {
@@ -112,18 +113,140 @@ impl SessionServer {
             self.client_may_input(id)
         };
         if may_operate {
-            self.handle_pane_input(owner, pane_id, generation, bytes);
+            if latency_sensitive {
+                self.handle_pane_input(owner, pane_id, generation, bytes);
+            } else {
+                self.write_pane_input(owner, pane_id, generation, bytes);
+            }
         }
+    }
+
+    fn accept_presentation_acks(&mut self, id: ClientId, acks: Vec<protocol::PresentationAck>) {
+        if !self.client_attached(id) {
+            self.set_close_after_flush(id);
+            return;
+        }
+        for ack in acks {
+            let key = PresentationKey {
+                local: ack.local,
+                pane_id: ack.pane_id,
+                generation: ack.generation,
+            };
+            if !self
+                .pane(ack.local.then_some(id), ack.pane_id)
+                .is_some_and(|pane| {
+                    pane.generation == ack.generation && ack.sequence <= pane.output_sequence
+                })
+            {
+                continue;
+            }
+            let latency = self
+                .pane(ack.local.then_some(id), ack.pane_id)
+                .and_then(|pane| {
+                    pane.output_times
+                        .iter()
+                        .rev()
+                        .find(|(sequence, _)| *sequence == ack.sequence)
+                        .map(|(_, time)| crate::runtime_metrics::duration_micros(time.elapsed()))
+                });
+            let advanced = self.client_mut(id).is_some_and(|client| {
+                let presented = client.presented_sequences.entry(key).or_default();
+                if ack.sequence <= *presented {
+                    return false;
+                }
+                *presented = ack.sequence;
+                client.presented_at.insert(key, Instant::now());
+                true
+            });
+            if advanced {
+                self.graphics_metrics.presentation_acks += 1;
+                if let Some(latency) = latency {
+                    self.graphics_metrics.presentation_ack_latency_samples += 1;
+                    self.graphics_metrics.presentation_ack_latency_us += latency;
+                    self.graphics_metrics.presentation_ack_latency_max_us = self
+                        .graphics_metrics
+                        .presentation_ack_latency_max_us
+                        .max(latency);
+                }
+            }
+        }
+        self.prune_presentation_state(id);
+    }
+
+    /// Forget a client's presentation state for pane generations that no longer exist, so its
+    /// maps stay bounded by the panes it can still see.
+    fn prune_presentation_state(&mut self, id: ClientId) {
+        let live: HashSet<PresentationKey> = self
+            .clients
+            .iter()
+            .filter(|client| client.id == id)
+            .flat_map(|client| {
+                client
+                    .presentation_interest
+                    .keys()
+                    .chain(client.presented_sequences.keys())
+                    .copied()
+            })
+            .filter(|key| {
+                self.pane(key.local.then_some(id), key.pane_id)
+                    .is_some_and(|pane| pane.generation == key.generation)
+            })
+            .collect();
+        if let Some(client) = self.client_mut(id) {
+            client
+                .presentation_interest
+                .retain(|key, _| live.contains(key));
+            client
+                .presented_sequences
+                .retain(|key, _| live.contains(key));
+            client.presented_at.retain(|key, _| live.contains(key));
+        }
+    }
+
+    fn accept_presentation_interest(
+        &mut self,
+        id: ClientId,
+        interest: Vec<protocol::PanePresentationInterest>,
+    ) {
+        if !self.client_attached(id) {
+            self.set_close_after_flush(id);
+            return;
+        }
+        for pane in interest {
+            if self
+                .pane(pane.local.then_some(id), pane.pane_id)
+                .is_none_or(|current| current.generation != pane.generation)
+            {
+                continue;
+            }
+            if let Some(client) = self.client_mut(id) {
+                client.presentation_interest.insert(
+                    PresentationKey {
+                        local: pane.local,
+                        pane_id: pane.pane_id,
+                        generation: pane.generation,
+                    },
+                    pane,
+                );
+            }
+        }
+        self.prune_presentation_state(id);
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
         match frame {
+            Frame::PaneOutput { .. } => self.set_close_after_flush(id),
+            Frame::PresentationAcks(acks) => self.accept_presentation_acks(id, acks),
+            Frame::PresentationInterest(interest) => {
+                self.accept_presentation_interest(id, interest)
+            }
             Frame::PaneBytes {
+                latency_sensitive,
                 pane_id,
                 local,
                 generation,
                 bytes,
-            } => self.accept_pane_input(id, pane_id, local, generation, &bytes),
+            } => self.accept_pane_input(id, pane_id, local, generation, &bytes, latency_sensitive),
             Frame::Control(message) => {
                 let is_attach = matches!(message, ClientMessage::Attach { .. });
                 // Both answer one question and hang up: neither ever becomes a client, so both
@@ -207,6 +330,33 @@ impl SessionServer {
         }
         let scrollback = self.settings.scrollback;
         let image_media_policy = self.image_media_policy();
+        let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
+            pane.generation == generation
+                && (pane.cols != cols.max(1)
+                    || pane.rows != rows.max(1)
+                    || cell_size(cell_width, cell_height).is_some_and(|cell| cell != pane.cell))
+        });
+        if boundary {
+            if let Some(pane) = self.pane_mut(owner, pane_id) {
+                pane.graphics_pacer.reset();
+                if let Some(pty) = &pane.pty {
+                    pty.read_gate().resume();
+                }
+                pane.screen_without_change()
+                    .flush_output_transaction_boundary();
+                pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+            }
+            self.send_outbound(
+                owner,
+                &ServerOutbound::PaneOutput {
+                    metadata: protocol::OutputMetadata::default(),
+                    pane_id,
+                    local,
+                    generation,
+                    bytes: Vec::new(),
+                },
+            );
+        }
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             let (cols, rows) = (cols.max(1), rows.max(1));
             let reported_cell = cell_size(cell_width, cell_height);
@@ -767,7 +917,15 @@ impl SessionServer {
                 bytes,
                 token,
             } => {
-                self.accept_pane_input(client_id, pane_id, local, generation, &bytes);
+                // The mark divides the pane's output for the sender's wait, so output after it must
+                // not replace independent graphics queued ahead of it, in any outbox or mailbox.
+                if let Some(pane) = self
+                    .pane_mut(local.then_some(client_id), pane_id)
+                    .filter(|pane| pane.generation == generation)
+                {
+                    pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+                }
+                self.accept_pane_input(client_id, pane_id, local, generation, &bytes, true);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
             ClientMessage::Pong { seq: _ } => {
@@ -812,7 +970,7 @@ impl SessionServer {
                     vec![(
                         Target::Client(client_id),
                         ServerMessage::RuntimeMetrics {
-                            metrics: self.runtime_metrics(),
+                            metrics: Box::new(self.runtime_metrics()),
                         },
                     )]
                 } else {

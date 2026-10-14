@@ -173,7 +173,8 @@ mod tests {
     fn scratch_frames_are_retagged_for_whichever_session_is_current() {
         let message = message_for_frame(
             41,
-            Frame::PaneBytes {
+            Frame::PaneOutput {
+                metadata: crate::session::protocol::OutputMetadata::default(),
                 pane_id: 7,
                 local: true,
                 generation: 3,
@@ -184,6 +185,7 @@ mod tests {
         assert!(matches!(
             message,
             crate::Msg::SessionOutput {
+                metadata: _,
                 epoch: 41,
                 pane_id: 7,
                 local: true,

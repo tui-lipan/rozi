@@ -210,6 +210,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.dispatch(rozi::Msg::SessionOutput {
+                    metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -229,6 +230,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.update_level(rozi::Msg::SessionOutput {
+                    metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -285,7 +287,8 @@ fn inbound_drain(c: &mut Criterion) {
                     let frames: Vec<_> = (0..total_bytes / chunk_size)
                         .map(|index| {
                             let (pane_id, generation) = pane_keys[index % pane_keys.len()];
-                            Frame::PaneBytes {
+                            Frame::PaneOutput {
+                                metadata: Default::default(),
                                 pane_id,
                                 local: false,
                                 generation,
@@ -357,19 +360,22 @@ fn inbound_fairness(c: &mut Criterion) {
         let quiet_chunk = vec![b'q'; CHUNK];
         let extra_hot = HOT_CAP / CHUNK - 1;
         let mut frames = Vec::with_capacity(extra_hot + 2);
-        frames.push(Frame::PaneBytes {
+        frames.push(Frame::PaneOutput {
+            metadata: Default::default(),
             pane_id: hot_id,
             local: false,
             generation: hot_generation,
             bytes: hot_chunk.clone(),
         });
-        frames.push(Frame::PaneBytes {
+        frames.push(Frame::PaneOutput {
+            metadata: Default::default(),
             pane_id: quiet_id,
             local: false,
             generation: quiet_generation,
             bytes: quiet_chunk,
         });
-        frames.extend((0..extra_hot).map(|_| Frame::PaneBytes {
+        frames.extend((0..extra_hot).map(|_| Frame::PaneOutput {
+            metadata: Default::default(),
             pane_id: hot_id,
             local: false,
             generation: hot_generation,

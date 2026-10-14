@@ -1971,7 +1971,7 @@ mod tests {
             rx.try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::Control(message) => Some(message),
-                    ClientOutbound::PaneInput { .. } => None,
+                    _ => None,
                 })
                 .collect()
         }

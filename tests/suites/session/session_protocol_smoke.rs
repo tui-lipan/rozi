@@ -120,7 +120,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 assert!(*ok, "spawn failed: {error:?}");
                 saw_spawn = true;
             }
-            Frame::PaneBytes {
+            Frame::PaneOutput {
                 pane_id,
                 generation,
                 bytes,
@@ -230,7 +230,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
 
     let mut replay = Vec::new();
     read_until(&mut second, |frame| {
-        if let Frame::PaneBytes {
+        if let Frame::PaneOutput {
             pane_id,
             generation,
             bytes,

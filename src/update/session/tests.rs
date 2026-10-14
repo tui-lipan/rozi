@@ -95,6 +95,7 @@ fn animated_titles_update_live_labels_and_preserve_full_refresh_fallbacks() {
                     .unwrap()
             };
             let message = |title: &str| Msg::SessionOutput {
+                metadata: crate::session::protocol::OutputMetadata::default(),
                 epoch,
                 pane_id: target,
                 local: false,
@@ -185,6 +186,7 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
 
             backend
                 .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: target,
                     local: false,
@@ -277,6 +279,7 @@ fn an_image_relayed_in_one_message_with_the_clear_before_it_stays_on_screen() {
             for bytes in relayed {
                 backend
                     .dispatch(Msg::SessionOutput {
+                        metadata: crate::session::protocol::OutputMetadata::default(),
                         epoch,
                         pane_id: target,
                         local: false,
@@ -341,6 +344,7 @@ fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
 
             backend
                 .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -397,6 +401,7 @@ fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
 
             let level = backend
                 .update_level(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: target,
                     local: false,
@@ -507,6 +512,7 @@ fn pane_output_restarts_a_completed_search() {
 
             backend
                 .update_level(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: target,
                     local: false,
@@ -567,6 +573,7 @@ fn bell_events_include_focused_for_current_panes() {
                 .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
             backend
                 .update_level(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -578,6 +585,7 @@ fn bell_events_include_focused_for_current_panes() {
             backend.state_mut().current_mut().focused_pane = None;
             backend
                 .update_level(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -621,6 +629,7 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
                 .expect("lose host-window focus");
             backend
                 .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
                     local: false,
@@ -2546,6 +2555,7 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
 
             backend
                 .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: 7,
                     local: false,
@@ -2555,6 +2565,7 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                 .expect("shared output");
             backend
                 .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: 7,
                     local: true,
@@ -3159,6 +3170,126 @@ fn a_live_layout_revision_is_applied_without_easing() {
                     .unwrap();
                 assert_eq!(backend.state().animation, expected, "live: {live}");
             }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn pane_output_uses_completed_parser_mutations_for_frame_scope() {
+    use crate::pane::OutputFrame;
+    let mut pane = crate::pane::TerminalPane::new(100);
+    assert_eq!(
+        pane.process_server_output(b"ready").frame,
+        OutputFrame::Rebuild
+    );
+    assert_eq!(
+        pane.process_server_output(b"\x1b[c").frame,
+        OutputFrame::None
+    );
+    assert_eq!(
+        pane.process_server_output(b"\x1b_Ga=T,i=7,f=24,s=1,v=1,q=2,C=1;YW")
+            .frame,
+        OutputFrame::None
+    );
+    let completed = pane.process_server_output(b"Jj\x1b\\");
+    assert_eq!(completed.frame, OutputFrame::Graphics);
+    assert_eq!(completed.mutation.cells, tui_lipan::TerminalDamage::None);
+    assert_eq!(
+        pane.process_server_output(b"\x1b_Ga=t,i=7,f=24,s=1,v=1,q=2;ZGVm\x1b\\")
+            .frame,
+        OutputFrame::Graphics
+    );
+    assert_eq!(
+        pane.process_server_output(b"\x1b_Ga=d,d=I,i=7,q=2;\x1b\\")
+            .frame,
+        OutputFrame::Graphics
+    );
+    assert_eq!(
+        pane.process_server_output(b"text").frame,
+        OutputFrame::Repaint
+    );
+    assert_eq!(
+        pane.process_server_output(b"\x1b]2;new title\x07").frame,
+        OutputFrame::Rebuild
+    );
+    assert_eq!(
+        pane.process_server_output(b"\x1b_Ga=q,i=8,f=24,s=1,v=1;YWJj\x1b\\")
+            .frame,
+        OutputFrame::None
+    );
+}
+
+#[test]
+fn mixed_graphics_and_cells_keep_the_broader_terminal_frame() {
+    let mut pane = crate::pane::TerminalPane::new(100);
+    pane.process_server_output(b"ready");
+    let output = pane.process_server_output(b"\x1b_Ga=T,i=7,f=24,s=1,v=1,q=2,C=1;YWJj\x1b\\text");
+    assert_eq!(output.frame, crate::pane::OutputFrame::Repaint);
+    assert_ne!(output.mutation.graphics, tui_lipan::GraphicsDamage::None);
+    assert_ne!(output.mutation.cells, tui_lipan::TerminalDamage::None);
+}
+
+#[test]
+fn parsed_output_is_acknowledged_only_by_successful_presentation_reports() {
+    std::thread::Builder::new().stack_size(8 * 1024 * 1024).spawn(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        let pane_id = backend.state().current().focused_pane.unwrap();
+        let generation = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap().pty_generation;
+        let epoch = backend.state().runtime_epoch;
+        backend.dispatch(Msg::SessionOutput {
+            epoch, pane_id, local: false, generation,
+            metadata: crate::session::protocol::OutputMetadata { sequence: 7, ..Default::default() },
+            bytes: b"visible output".to_vec(),
+        }).unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
+        let terminal_id = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap().terminal.stable_terminal_id();
+        let report = tui_lipan::PresentedTerminal { stable_terminal_id: terminal_id, token: 7 };
+        backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
+        let sent: Vec<_> = outbound.try_iter().collect();
+        assert!(sent.iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(acks)
+            if acks == &[crate::session::protocol::PresentationAck { local: false, pane_id, generation, sequence: 7 }])));
+        backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
+        backend.dispatch(Msg::TerminalPresented(vec![tui_lipan::PresentedTerminal { stable_terminal_id: u64::MAX, token: 8 }])).unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
+    }).unwrap().join().unwrap();
+}
+
+/// The renderer keeps its startup cadence across config reloads, so the cadence it reports to the
+/// session server must too: a reloaded `frame_rate` would otherwise throttle graphics to a rate the
+/// UI is not presenting at.
+#[test]
+fn presentation_interest_reports_the_runtime_frame_rate_not_a_reloaded_one() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            let runtime = backend.state().runtime_frame_rate();
+            let reloaded = if runtime == 30 { 60 } else { 30 };
+            backend.state_mut().config.frame_rate = reloaded;
+            let pane_id = backend.state().current().focused_pane.unwrap();
+            backend.dispatch(Msg::FocusPane(pane_id)).unwrap();
+
+            let interest = &backend.state().current().presentation_interest;
+            assert!(!interest.is_empty());
+            assert!(
+                interest
+                    .values()
+                    .all(|pane| pane.frames_per_second == runtime),
+                "interest must follow the runtime cadence {runtime}, not {reloaded}: {interest:?}"
+            );
+            assert!(outbound.try_iter().any(|message| matches!(message,
+                crate::session::client::ClientOutbound::PresentationInterest(panes)
+                    if !panes.is_empty()
+                        && panes.iter().all(|pane| pane.frames_per_second == runtime))));
         })
         .unwrap()
         .join()

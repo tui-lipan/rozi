@@ -54,6 +54,7 @@ pub(super) struct ActiveRecording {
     seen: u64,
     palette: TerminalColorPalette,
     last_capture: Instant,
+    presented_output: u64,
     meta: MetaSeen,
     /// The pane's `content_generation` and runtime `sequence` when `meta` was taken. A title
     /// arrives as output and the rest as runtime changes, so neither moving means nothing to note.
@@ -111,6 +112,7 @@ impl ActiveRecording {
             self.recorder.push_frame(t, frame, palette)
         };
         if queued {
+            self.presented_output = pane.output_sequence;
             self.seen = pane.content_generation;
             self.palette = palette;
         }
@@ -407,6 +409,7 @@ impl SessionServer {
                 seen: pane.content_generation,
                 palette,
                 last_capture: started,
+                presented_output: pane.output_sequence,
                 meta,
                 meta_seen: (pane.content_generation, pane.runtime.sequence),
                 follower: None,
@@ -1764,5 +1767,23 @@ mod tests {
             Some(ControlErrorCode::Conflict)
         );
         server.finish_recordings_for_shutdown(EndReason::ServerShutdown);
+    }
+}
+
+impl SessionServer {
+    pub(super) fn recording_presenter(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+    ) -> Option<super::graphics_pacer::Presenter> {
+        self.recordings
+            .values()
+            .filter(|recording| recording.pane_id == pane_id && recording.generation == generation)
+            .max_by_key(|recording| recording.max_fps)
+            .map(|recording| super::graphics_pacer::Presenter {
+                client: u64::MAX,
+                frames_per_second: recording.max_fps.clamp(1, 1000) as u16,
+                presented: recording.presented_output,
+            })
     }
 }

@@ -41,6 +41,11 @@ pub enum ConnectionState {
     Incompatible,
 }
 
+pub(crate) struct PresentationProgress {
+    pub(crate) output: crate::session::protocol::PresentationAck,
+    pub(crate) acknowledged: u64,
+}
+
 /// The client's connection to one session together with that session's window-manager state: the
 /// session client handle and identity (name, remote host), the shared-layout lease, the
 /// spawn/replay buffers, and the workspaces/focus/pane-id space scoped to that session.
@@ -58,6 +63,10 @@ pub struct Attachment {
     pub focused_pane: Option<PaneId>,
     pub next_pane_id: PaneId,
     pub next_pty_generation: u64,
+    pub(crate) presentation_bindings: HashMap<u64, PresentationProgress>,
+    pub(crate) presentation_connection: Option<crate::session::client::ConnectionToken>,
+    pub(crate) presentation_interest:
+        HashMap<(PaneId, bool), crate::session::protocol::PanePresentationInterest>,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     pub session_instance: Option<crate::session::protocol::SessionInstanceId>,
@@ -146,6 +155,9 @@ impl Attachment {
             focused_pane: None,
             next_pane_id: 1,
             next_pty_generation: 1,
+            presentation_bindings: HashMap::new(),
+            presentation_connection: None,
+            presentation_interest: HashMap::new(),
             session_client: None,
             session_name: None,
             session_instance: None,

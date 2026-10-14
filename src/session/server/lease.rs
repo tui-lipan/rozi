@@ -396,6 +396,8 @@ impl SessionServer {
             return;
         };
         let mut removed = self.clients.remove(index);
+        self.departed_coalesced_frames += removed.coalesced_frames;
+        self.departed_coalesced_bytes += removed.coalesced_bytes;
         self.resync_totals.departed_shed_bytes += removed.shed_bytes;
         self.resync_totals.departed_requeued_panes += removed.requeued_panes;
         if let Some(seed) = removed.seed.take() {
@@ -596,7 +598,7 @@ impl SessionServer {
                         OutboxClass::SeedCatchUp => client.seed_catch_up_queued_bytes -= n,
                     }
                     if client.front_offset >= front.bytes.len() {
-                        client.outbox.pop_front();
+                        client.pop_outbox_front();
                         client.front_offset = 0;
                     }
                 }
@@ -643,7 +645,7 @@ impl SessionServer {
             Target::Sender => {
                 let result = self
                     .client_mut(sender_id)
-                    .map(|client| client.push_delta(bytes, delta, max_backlog));
+                    .map(|client| client.push_delta(bytes, delta, max_backlog, None));
                 if matches!(result, Some(ClientFrameResult::Overflow)) {
                     self.remove_client(sender_id);
                 }
@@ -652,7 +654,7 @@ impl SessionServer {
                 let result = self
                     .client_mut(id)
                     .filter(|client| client.attached)
-                    .map(|client| client.push_delta(bytes, delta, max_backlog));
+                    .map(|client| client.push_delta(bytes, delta, max_backlog, None));
                 if matches!(result, Some(ClientFrameResult::Overflow)) {
                     self.remove_client(id);
                 }
@@ -678,7 +680,7 @@ impl SessionServer {
             if !client.attached {
                 continue;
             }
-            if client.push_delta(Arc::clone(&bytes), delta, self.max_backlog)
+            if client.push_delta(Arc::clone(&bytes), delta, self.max_backlog, None)
                 == ClientFrameResult::Overflow
             {
                 slow.push(client.id);
@@ -702,12 +704,15 @@ impl SessionServer {
         match outbound {
             ServerOutbound::Control(message) => self.broadcast_control(message),
             ServerOutbound::PaneOutput {
+                metadata,
                 pane_id,
                 local,
                 generation,
                 bytes,
             } => {
-                let Some(frame) = encode_pane_output(*pane_id, *generation, *local, bytes) else {
+                let Some(frame) =
+                    encode_pane_output(*pane_id, *generation, *local, *metadata, bytes)
+                else {
                     return;
                 };
                 let delta = if *local {
@@ -721,8 +726,12 @@ impl SessionServer {
                 let mut slow = Vec::new();
                 for client in &mut self.clients {
                     if client.attached
-                        && client.push_delta(Arc::clone(&frame), delta, self.max_backlog)
-                            == ClientFrameResult::Overflow
+                        && client.push_delta(
+                            Arc::clone(&frame),
+                            delta,
+                            self.max_backlog,
+                            metadata.replacement_key(*pane_id, *local, *generation),
+                        ) == ClientFrameResult::Overflow
                     {
                         slow.push(client.id);
                     }
@@ -737,18 +746,29 @@ impl SessionServer {
     }
 
     pub(super) fn enqueue_outbound(&mut self, id: ClientId, outbound: &ServerOutbound) {
+        let replacement = match outbound {
+            ServerOutbound::PaneOutput {
+                metadata,
+                pane_id,
+                local,
+                generation,
+                ..
+            } => metadata.replacement_key(*pane_id, *local, *generation),
+            ServerOutbound::Control(_) => None,
+        };
         let (bytes, delta) = match outbound {
             ServerOutbound::Control(message) => {
                 (encode_control(message), seed_delta_for_control(message))
             }
             ServerOutbound::PaneOutput {
+                metadata,
                 pane_id,
                 local,
                 generation,
                 bytes,
                 ..
             } => (
-                encode_pane_output(*pane_id, *generation, *local, bytes),
+                encode_pane_output(*pane_id, *generation, *local, *metadata, bytes),
                 if *local {
                     SeedDelta::Control
                 } else {
@@ -764,7 +784,7 @@ impl SessionServer {
         let result = self
             .client_mut(id)
             .filter(|client| client.attached)
-            .map(|client| client.push_delta(bytes, delta, max_backlog));
+            .map(|client| client.push_delta(bytes, delta, max_backlog, replacement));
         if matches!(result, Some(ClientFrameResult::Overflow) | None) {
             self.remove_client(id);
         }
@@ -830,7 +850,7 @@ impl SessionServer {
         let mut export_available = true;
         let mut activity = false;
         for offset in 0..ids.len() {
-            if remaining <= protocol::PANE_FRAME_OVERHEAD {
+            if remaining <= protocol::PANE_OUTPUT_FRAME_OVERHEAD {
                 break;
             }
             let id = ids[(start + offset) % ids.len()];
@@ -1025,7 +1045,7 @@ impl SessionServer {
             let available = SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes);
             let payload_budget = available
                 .min(*remaining)
-                .saturating_sub(protocol::PANE_FRAME_OVERHEAD);
+                .saturating_sub(protocol::PANE_OUTPUT_FRAME_OVERHEAD);
             let payload_len = SEED_CHUNK
                 .min(payload_budget)
                 .min(usize::try_from(replay.remaining).unwrap_or(usize::MAX));
@@ -1033,7 +1053,7 @@ impl SessionServer {
         }) else {
             return true;
         };
-        if available <= protocol::PANE_FRAME_OVERHEAD || payload_len == 0 {
+        if available <= protocol::PANE_OUTPUT_FRAME_OVERHEAD || payload_len == 0 {
             return false;
         }
         let mut payload = vec![0; payload_len];
@@ -1051,9 +1071,13 @@ impl SessionServer {
             self.remove_client(id);
             return true;
         }
-        let Some(frame) =
-            encode_pane_output(key.pane_id, key.generation, false, payload.as_slice())
-        else {
+        let Some(frame) = encode_pane_output(
+            key.pane_id,
+            key.generation,
+            false,
+            protocol::OutputMetadata::default(),
+            payload.as_slice(),
+        ) else {
             if let Some(seed) = self.client_mut(id).and_then(|client| client.seed.as_mut()) {
                 seed.disconnect_reason = Some("attach-seed-frame-encode-failed");
             }
@@ -1140,14 +1164,17 @@ impl SessionServer {
     }
 
     fn pump_seed_catch_up(&mut self, id: ClientId, remaining: &mut usize) -> bool {
-        let Some((frame, delta, available)) = self.seeding_client(id).and_then(|client| {
-            let front = client.seed.as_ref()?.catch_up.front()?;
-            Some((
-                Arc::clone(&front.bytes),
-                front.delta,
-                SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
-            ))
-        }) else {
+        let Some((frame, delta, replacement, available)) =
+            self.seeding_client(id).and_then(|client| {
+                let front = client.seed.as_ref()?.catch_up.front()?;
+                Some((
+                    Arc::clone(&front.bytes),
+                    front.delta,
+                    front.replacement,
+                    SEED_SEND_WINDOW.saturating_sub(client.outbox_bytes),
+                ))
+            })
+        else {
             return true;
         };
         if frame.len() > available || frame.len() > *remaining {
@@ -1163,11 +1190,21 @@ impl SessionServer {
         ) {
             return true;
         }
+        if let Some(client) = self.client_mut(id) {
+            client.index_outbox_back(replacement);
+        }
         let seed = self
             .client_mut(id)
             .and_then(|client| client.seed.as_mut())
             .expect("active seed");
-        seed.catch_up.pop_front();
+        if let Some(frame) = seed.catch_up.pop_front() {
+            if let Some(key) = frame.replacement
+                && seed.catch_up_replacements.get(&key) == Some(&seed.catch_up_base)
+            {
+                seed.catch_up_replacements.remove(&key);
+            }
+            seed.catch_up_base += 1;
+        }
         seed.catch_up_bytes -= frame_len;
         *remaining -= frame_len;
         true

@@ -317,3 +317,151 @@ source.
 
 - [Performance archive](performance/README.md)
 - [Performance audit playbook](performance/audit-playbook.md)
+
+## Graphics transaction metrics
+
+Runtime metrics distinguish parser graphics transactions, independent replacements, ordered barriers
+and intentional supersession in server staging, per-client outboxes and the client inbox. These
+counters are separate from overload shedding and replay resynchronization. Presentation ACK latency
+measures the interval between server parsing of a completed independent replacement and receipt of
+the client's successful-host-write acknowledgement. It does not measure producer CPU work before
+its bytes reached the server. The timestamp window retains the newest 32 replacements; latency
+samples and acknowledgements have separate counters.
+
+DevTools exposes aggregate graphics, ACK and pacing rows. Pacing metrics include actual reader
+holds, total hold duration, forced safety releases and the largest per-stream presentation gap. No per-frame logging is enabled. Report successful
+host presentation counts when comparing frame rates; producer updates and received packets can
+include frames intentionally superseded before presentation.
+
+### Independent full-frame producer
+
+Run `python3 tools/graphics-stream.py --fps 240 --mode moving --duration 20
+--report /tmp/graphics-producer.json` in an owned test pane. Supported rates are 30, 60, 120 and
+240 Hz; modes are `unchanged`, `moving` and `whole`. Each complete replacement uses the same image
+and placement IDs. Only initial setup and optional mixed-workload barriers move the cursor.
+`--mixed` adds title/text/query/delete barriers and input echo; SIGWINCH adds a resize barrier.
+Use `tools/graphics-patches.py` for overlapping producer patches that must remain ordered.
+
+The immutable RGBA pool is bounded by `--max-file-mib` (128 MiB by default) and remains on disk
+at the reported `files` path after exit, so delayed clients can still open every queued filename.
+Remove that directory after all clients finish. Report fixture/page-cache memory alongside process
+RSS. Pool creation happens before timing; no full-frame files are rewritten during the stream.
+The producer skips missed cadence slots after blocked writes rather than emitting a catch-up burst.
+Its report counts completed producer writes; obtain presented FPS from successful host frames.
+
+### Owned Ghostty measurements
+
+`tools/graphics-benchmark.py` creates a private session and Ghostty window through the
+`ghostty-window-lab` helper. Build the selected binary first, then run measurements without Cargo
+or other CPU-intensive work. Use separate output directories for baseline and updated binaries:
+
+```bash
+cc -shared -fPIC -O2 -Wall -Wextra -Werror -o /tmp/graphics-wiretap.so \
+  tools/graphics-wiretap.c -ldl -pthread
+python3 tools/graphics-benchmark.py \
+  --binary /absolute/path/to/rozi \
+  --window-lab /absolute/path/to/window_lab.py \
+  --output /tmp/graphics-after-120 \
+  --wiretap /tmp/graphics-wiretap.so --fps 120 --producer-fps 240 --seconds 20
+```
+
+The runner waits for immutable fixture generation before timing, records binary identity,
+verified window geometry, process CPU/RSS, producer write counts and runtime metric snapshots,
+and stops its session before closing its owned window. It leaves results and fixtures for review.
+Repeat at 60, 120, 144 and 240 Hz with the same image and window geometry, and with a 240 Hz
+producer against 60 and 120 Hz clients. The window is always local, so the runner removes inherited
+`SSH_*` variables; launched from an SSH shell, the client would otherwise select remote image
+transport and measure the composed path. `intervals_over_two_frames` counts host frame intervals
+longer than two configured frame periods. A frame that changes nothing still ends a synchronized
+update, so for graphics streams also check `presented_upload_interval_us` and
+`presented_upload_intervals_over_two_frames`, which time presented uploads. Percentiles can hide
+a stall that recurs in only part of the sample. The optional Linux
+interposer records only successful TTY writes from the selected executable; it also sees the
+framework's separately opened TTY descriptor. Every other process that loads it passes calls
+straight through, and the selected executable removes `LD_PRELOAD` from its environment, so the
+session server, panes and producers never load it. Chromium's sandboxed helpers are killed by
+the terminal ioctl behind `isatty()`, so an inherited interposer would break a browser producer. Its binary records contain a native-endian u64
+monotonic timestamp, u32 length and that many output bytes. This captures host traffic rather
+than inferring it from uploads requested by the producer. The interposer adds measurement
+overhead; use it consistently on both sides of a comparison and run an uninstrumented control.
+GPU scanout is not measured; host write counters do not establish that boundary.
+
+Producer latency is measured without changing what the pipeline transports. Pixel 0 of each
+immutable fixture carries its pool index, and the producer logs each write's completion time and
+index. Before a host write is forwarded, the interposer reads pixel 0 of each file that a complete
+`t=t` upload names. Each write gets one timestamp, shared by its wire and media records. `latency`
+in `result.json` matches each presented upload to the next producer write of that fixture. Frames
+are skipped but never reordered, so the match is exact unless a whole pool cycle is skipped, which
+the report flags as `ambiguous`. The boundary is producer write return to the host write that ends
+the frame carrying the upload. Composed or remote presentation sends pixels directly, carries no
+mark and reports no samples. A `t=t` APC split across `writev` buffers is not recognised; compare
+`marked_uploads` with the upload count.
+
+`--input-probes N` sends N keys during the sample. The producer then runs with `--echo-input`: its
+terminal is in cbreak mode, and it echoes each key as `echo:<key>;` at its own blank cell run
+below the image, restoring the cursor so the image never moves. `--input-via host` (the default)
+delivers single letters to the owned window with Hyprland's `send_shortcut`, without moving
+desktop focus, so a key takes Ghostty and the client's real input path. `--input-via control`
+uses the session control socket, which bypasses the client's input answer window. `input_echo`
+splits each key into send to producer read, which includes starting the injecting process,
+producer echo to host write, and their total. Echoes are ordered output and reset pacing as
+real echoes do.
+
+`--mixed` adds the producer's periodic titles, text, query and image delete/recreate barriers, and
+`--resize-at` shrinks the owned window by 160x120 pixels through the window lab. A resize removes
+the producer's placements and Rozi redraws the pane. The baseline before this work took about
+200 ms to present the next upload as well, so compare that gap against the same baseline binary.
+
+`--command` runs any producer command line in the pane instead of the synthetic stream, with
+`--warmup` seconds before sampling. Fixture marks, latency and input probes need the synthetic
+stream. `graphics_frame_interval_us` times synchronized updates that carry any Kitty command, and
+`producer_tree` sums CPU and PSS over the producer and its descendants, including a detached
+daemon. Processes that outlive the session are ended by run marker or by the identities recorded
+for that tree. `tools/graphics-browser.sh BROWSER FPS PRESENTER URL` opens terminal-browser as a
+producer: it sets `render.fps`, `render.presenter` (`auto` or `full`) and disables telemetry,
+update checks and GPU rendering in the run's isolated configuration. `URL` may be `generated`,
+which serves `tools/graphics-page.html` over loopback. With
+`GRAPHICS_BROWSER_PROFILE=SOURCE:DESTINATION`, it first copies the user's profile (install
+suffixes of `terminal-browser-*`) into the run's isolated directories, so a page such as Raffles
+starts with its cookie notice already dismissed; it refuses unless the XDG directories are
+isolated. Delete the copy after the run, because it holds that profile's cookies. For example:
+
+```bash
+python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+  --window-lab /absolute/path/to/window_lab.py --output /tmp/graphics-browser-60 \
+  --wiretap /tmp/graphics-wiretap.so --fps 60 --seconds 20 \
+  --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
+```
+
+`--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its
+PTY. It measures receipt at the host terminal rather than the client's write, and it also sees
+multiplexers that write without libc, so use it for comparisons with other multiplexers.
+`--multiplexer tuios --binary /path/to/tuios` runs the same workload under TuiOS: the runner creates
+a session, opens the producer as its only window and stops the daemon afterwards. TuiOS has no
+client frame rate, so `--fps` only sets the interval thresholds, and it needs `--tap host-read`.
+`--pty-tap` additionally records what the multiplexer reads from its PTYs, the producer's own output,
+as `pty_wire`. For the synthetic stream, `producer_to_received` times each frame from producer write
+to that read.
+
+`--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
+`visibility` reports frames presented while hidden and producer writes in that time. On reveal it
+reports the delay to the first presented frame and that frame's age since its producer write. The
+first frame shown is retained state; compare the following frames' latency to see convergence.
+
+`--follower read-only|writable` attaches a second owned window to the same session at
+`--follower-fps`, with its own wire capture. `--stall-follower-at`/`--resume-follower-at` stop and
+continue the follower client, and `--stall-leader-at`/`--resume-leader-at` do the same to the
+first client. A stopped client reads and acknowledges nothing. The report adds the follower's
+presentation, its latency and the delay to a current frame after resume, plus the leader's latency
+while the follower is stopped and the follower's while the leader is. Matching re-anchors after a
+presentation gap longer than one fixture cycle, assuming the consumer resumed with current state,
+and counts those re-anchors. A writable follower answers the attach prompt with its default,
+Follow, so the first client keeps control. A follower that composes the pane, such as one still
+showing a prompt over it, uploads direct pixels and reports no latency samples.
+
+Framework counters are available under `terminal_graphics` in client and server runtime metrics.
+The client counts actual successful host frames, direct graphics presentations, native uploads and
+placement changes. The server's snapshot counts its authoritative parser mutations. DevTools
+includes native-scene operations, graphics command bytes, region merging and host-frame interval
+percentiles. Percentiles retain the newest 1024 successful intervals; measure during sustained
+output, since an idle gap is a real interval too. Composed and native host frames both participate.

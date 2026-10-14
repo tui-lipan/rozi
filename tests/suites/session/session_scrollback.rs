@@ -85,7 +85,7 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
     });
     let mut output = Vec::new();
     read_until(&mut client, |frame| {
-        if let Frame::PaneBytes { bytes, .. } = frame {
+        if let Frame::PaneOutput { bytes, .. } = frame {
             output.extend_from_slice(bytes);
         }
         String::from_utf8_lossy(&output).contains(FINAL_MARKER)
@@ -111,10 +111,11 @@ fn attach_replay(
     terminal.apply_server_resize(meta.cols, meta.rows);
     terminal.bind_server_backend(PANE_ID, meta.generation);
     read_until(&mut client, |frame| {
-        if let Frame::PaneBytes {
+        if let Frame::PaneOutput {
             pane_id: PANE_ID,
             local: false,
             generation: GENERATION,
+            metadata: _,
             bytes,
         } = frame
         {

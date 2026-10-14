@@ -19,13 +19,15 @@ use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
 };
-use crate::session::queue::{ByteQueue, PushError};
+use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
 use crate::state::PaneId;
 
 mod agent_summary;
 mod browse;
 mod capture_waits;
 mod connection;
+mod graphics;
+mod graphics_pacer;
 mod headless;
 pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
@@ -167,6 +169,9 @@ pub struct SessionServer {
     events: Arc<ByteQueue<ServerEvent>>,
     /// Aggregate high-water across every client outbox for this server process's lifetime.
     outbox_high_water_bytes: usize,
+    departed_coalesced_frames: u64,
+    departed_coalesced_bytes: u64,
+    graphics_metrics: crate::runtime_metrics::GraphicsSessionMetrics,
     attach_seed_totals: AttachSeedTotals,
     /// Rotating starting point for bounded seed work, so concurrent attachers share the pump.
     attach_seed_cursor: usize,
@@ -301,6 +306,10 @@ impl Default for ServerSettings {
 }
 
 pub struct ServerPane {
+    graphics_pacer: graphics_pacer::GraphicsPacer,
+    output_sequence: u64,
+    output_coalesce_epoch: u64,
+    output_times: VecDeque<(u64, Instant)>,
     pub generation: u64,
     pub title: Option<String>,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
@@ -550,6 +559,13 @@ pub struct AgentHold {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct PresentationKey {
+    pane_id: PaneId,
+    generation: u64,
+    local: bool,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct PaneSeedKey {
     pane_id: PaneId,
     generation: u64,
@@ -623,6 +639,7 @@ enum AttachSeedWork {
 }
 
 struct OutboxFrame {
+    replacement: Option<ReplacementKey>,
     bytes: Arc<[u8]>,
     class: OutboxClass,
     /// The shared pane whose transcript this frame carries, if any. Only these frames may be shed
@@ -633,6 +650,7 @@ struct OutboxFrame {
 /// A change retained behind replay, tagged with the pane it belongs to so shedding that pane can
 /// drop it. A resize is tagged too: delivered after a newer replay, it would restore stale geometry.
 struct CatchUpFrame {
+    replacement: Option<ReplacementKey>,
     bytes: Arc<[u8]>,
     delta: SeedDelta,
 }
@@ -733,6 +751,8 @@ struct AttachSeedState {
     program_status_frame: Option<Arc<[u8]>>,
     replay: Option<PaneSeedReplay>,
     catch_up: VecDeque<CatchUpFrame>,
+    catch_up_base: u64,
+    catch_up_replacements: HashMap<ReplacementKey, u64>,
     catch_up_bytes: usize,
     baseline_queued: bool,
     /// Panes whose screen this barrier has exported, so exporting one again is visible.
@@ -757,6 +777,8 @@ impl AttachSeedState {
             program_status_frame: None,
             replay: None,
             catch_up: VecDeque::new(),
+            catch_up_base: 0,
+            catch_up_replacements: HashMap::new(),
             catch_up_bytes: 0,
             baseline_queued: false,
             exported: HashSet::new(),
@@ -822,6 +844,10 @@ struct ClientConn {
     stream: IpcConnection,
     decoder: protocol::FrameDecoder,
     outbox: VecDeque<OutboxFrame>,
+    outbox_base: u64,
+    outbox_replacements: HashMap<ReplacementKey, u64>,
+    coalesced_frames: u64,
+    coalesced_bytes: u64,
     outbox_bytes: usize,
     seed_queued_bytes: usize,
     seed_catch_up_queued_bytes: usize,
@@ -859,6 +885,10 @@ struct ClientConn {
     shed_bytes: u64,
     /// Panes this client fell behind again while their replay was still queued or in flight.
     requeued_panes: u64,
+    presentation_interest: HashMap<PresentationKey, protocol::PanePresentationInterest>,
+    presented_sequences: HashMap<PresentationKey, u64>,
+    /// When each presented sequence last advanced.
+    presented_at: HashMap<PresentationKey, Instant>,
 }
 
 impl ClientConn {
@@ -869,6 +899,10 @@ impl ClientConn {
             stream,
             decoder: protocol::FrameDecoder::default(),
             outbox: VecDeque::new(),
+            outbox_base: 0,
+            outbox_replacements: HashMap::new(),
+            coalesced_frames: 0,
+            coalesced_bytes: 0,
             outbox_bytes: 0,
             seed_queued_bytes: 0,
             seed_catch_up_queued_bytes: 0,
@@ -890,6 +924,83 @@ impl ClientConn {
             resync_pending: BTreeSet::new(),
             shed_bytes: 0,
             requeued_panes: 0,
+            presentation_interest: HashMap::new(),
+            presented_sequences: HashMap::new(),
+            presented_at: HashMap::new(),
+        }
+    }
+
+    fn replace_outbox(
+        &mut self,
+        bytes: &Arc<[u8]>,
+        replacement: Option<ReplacementKey>,
+        cap: usize,
+    ) -> bool {
+        let Some(index) = replacement
+            .and_then(|key| self.outbox_replacements.get(&key).copied())
+            .and_then(|position| position.checked_sub(self.outbox_base))
+            .map(|position| position as usize)
+        else {
+            return false;
+        };
+        if index == 0 && self.front_offset != 0 {
+            return false;
+        }
+        let previous = self.outbox[index].bytes.len();
+        if self
+            .outbox_bytes
+            .saturating_sub(previous)
+            .saturating_add(bytes.len())
+            > cap
+        {
+            return false;
+        }
+        let frame = &mut self.outbox[index];
+        match frame.class {
+            OutboxClass::Normal => {}
+            OutboxClass::SeedReplay => {
+                self.seed_queued_bytes = self.seed_queued_bytes - previous + bytes.len()
+            }
+            OutboxClass::SeedCatchUp => {
+                self.seed_catch_up_queued_bytes =
+                    self.seed_catch_up_queued_bytes - previous + bytes.len()
+            }
+        }
+        frame.bytes = Arc::clone(bytes);
+        self.outbox_bytes = self.outbox_bytes - previous + bytes.len();
+        self.coalesced_frames += 1;
+        self.coalesced_bytes += previous as u64;
+        true
+    }
+
+    fn index_outbox_back(&mut self, replacement: Option<ReplacementKey>) {
+        if let Some(key) = replacement {
+            self.outbox_replacements
+                .insert(key, self.outbox_base + self.outbox.len() as u64 - 1);
+            if let Some(frame) = self.outbox.back_mut() {
+                frame.replacement = Some(key);
+            }
+        }
+    }
+
+    fn pop_outbox_front(&mut self) {
+        if let Some(frame) = self.outbox.pop_front() {
+            if let Some(key) = frame.replacement
+                && self.outbox_replacements.get(&key) == Some(&self.outbox_base)
+            {
+                self.outbox_replacements.remove(&key);
+            }
+            self.outbox_base += 1;
+        }
+    }
+
+    fn rebuild_outbox_replacements(&mut self) {
+        self.outbox_replacements.clear();
+        for (index, frame) in self.outbox.iter().enumerate() {
+            if let Some(key) = frame.replacement {
+                self.outbox_replacements
+                    .insert(key, self.outbox_base + index as u64);
+            }
         }
     }
 
@@ -909,7 +1020,12 @@ impl ClientConn {
             OutboxClass::SeedReplay => self.seed_queued_bytes += bytes.len(),
             OutboxClass::SeedCatchUp => self.seed_catch_up_queued_bytes += bytes.len(),
         }
-        self.outbox.push_back(OutboxFrame { bytes, class, pane });
+        self.outbox.push_back(OutboxFrame {
+            bytes,
+            class,
+            pane,
+            replacement: None,
+        });
         true
     }
 
@@ -923,32 +1039,42 @@ impl ClientConn {
         bytes: Arc<[u8]>,
         delta: SeedDelta,
         default_cap: usize,
+        replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
-            return self.push_live(bytes, delta, default_cap);
+            return self.push_live(bytes, delta, default_cap, replacement);
         };
         match delta {
             SeedDelta::PaneOutput(key) if seed.output_precedes_snapshot(key) => {
                 ClientFrameResult::Ignored
             }
             SeedDelta::PaneResize(key) if seed.output_precedes_snapshot(key) => {
-                self.push_live(bytes, delta, default_cap)
+                self.push_live(bytes, delta, default_cap, replacement)
             }
             SeedDelta::Control | SeedDelta::PaneOutput(_) | SeedDelta::PaneResize(_) => {
-                self.push_catch_up(bytes, delta)
+                self.push_catch_up(bytes, delta, replacement)
             }
         }
     }
 
     /// Queue a frame straight onto the socket outbox, shedding the pane with the most queued output
     /// until it fits.
-    fn push_live(&mut self, bytes: Arc<[u8]>, delta: SeedDelta, cap: usize) -> ClientFrameResult {
+    fn push_live(
+        &mut self,
+        bytes: Arc<[u8]>,
+        delta: SeedDelta,
+        cap: usize,
+        replacement: Option<ReplacementKey>,
+    ) -> ClientFrameResult {
         let pane = delta.output_pane();
         if let Some(key) = pane
             && self.resync_pending.contains(&key)
         {
             self.shed_bytes += bytes.len() as u64;
             return ClientFrameResult::Ignored;
+        }
+        if self.replace_outbox(&bytes, replacement, cap) {
+            return ClientFrameResult::Queued;
         }
         while self.outbox_bytes.saturating_add(bytes.len()) > cap {
             let Some(victim) = self.largest_outbox_pane() else {
@@ -969,19 +1095,57 @@ impl ClientConn {
             }
         }
         self.try_push_class(bytes, cap, OutboxClass::Normal, pane);
+        self.index_outbox_back(replacement);
         ClientFrameResult::Queued
     }
 
     /// Retain a change behind replay, shedding the pane holding the most catch-up until it fits.
-    fn push_catch_up(&mut self, bytes: Arc<[u8]>, delta: SeedDelta) -> ClientFrameResult {
+    fn push_catch_up(
+        &mut self,
+        bytes: Arc<[u8]>,
+        delta: SeedDelta,
+        replacement: Option<ReplacementKey>,
+    ) -> ClientFrameResult {
         loop {
             let seed = self.seed.as_mut().expect("catch-up needs an active seed");
+            let index = replacement
+                .and_then(|key| seed.catch_up_replacements.get(&key).copied())
+                .and_then(|position| position.checked_sub(seed.catch_up_base))
+                .map(|position| position as usize);
+            if let Some(index) = index {
+                let previous = seed.catch_up[index].bytes.len();
+                if seed
+                    .catch_up_bytes
+                    .saturating_sub(previous)
+                    .saturating_add(self.seed_catch_up_queued_bytes)
+                    .saturating_add(bytes.len())
+                    <= SEED_CATCH_UP_LIMIT
+                {
+                    seed.catch_up[index] = CatchUpFrame {
+                        bytes: Arc::clone(&bytes),
+                        delta,
+                        replacement,
+                    };
+                    seed.catch_up_bytes = seed.catch_up_bytes - previous + bytes.len();
+                    self.coalesced_frames += 1;
+                    self.coalesced_bytes += previous as u64;
+                    return ClientFrameResult::Buffered;
+                }
+            }
             let retained = seed
                 .catch_up_bytes
                 .saturating_add(self.seed_catch_up_queued_bytes);
             if retained.saturating_add(bytes.len()) <= SEED_CATCH_UP_LIMIT {
                 seed.catch_up_bytes += bytes.len();
-                seed.catch_up.push_back(CatchUpFrame { bytes, delta });
+                if let Some(key) = replacement {
+                    seed.catch_up_replacements
+                        .insert(key, seed.catch_up_base + seed.catch_up.len() as u64);
+                }
+                seed.catch_up.push_back(CatchUpFrame {
+                    bytes,
+                    delta,
+                    replacement,
+                });
                 return ClientFrameResult::Buffered;
             }
             let victim = self
@@ -1074,6 +1238,13 @@ impl ClientConn {
             }
             !shed
         });
+        seed.catch_up_replacements.clear();
+        for (index, frame) in seed.catch_up.iter().enumerate() {
+            if let Some(key) = frame.replacement {
+                seed.catch_up_replacements
+                    .insert(key, seed.catch_up_base + index as u64);
+            }
+        }
         seed.catch_up_bytes -= freed_catch_up;
         if seed.manifest.insert(key, PaneSeedState::Pending) != Some(PaneSeedState::Pending) {
             seed.pending.push_back(key);
@@ -1103,6 +1274,7 @@ impl ClientConn {
             }
             false
         });
+        self.rebuild_outbox_replacements();
         self.outbox_bytes -= freed;
         self.seed_queued_bytes -= seed_freed;
         self.seed_catch_up_queued_bytes -= catch_up_freed;
@@ -1407,6 +1579,7 @@ enum ServerOutbound {
     /// message would make every byte-carrying move pay the largest control message's footprint.
     Control(Box<ServerMessage>),
     PaneOutput {
+        metadata: protocol::OutputMetadata,
         pane_id: PaneId,
         local: bool,
         generation: u64,
@@ -1466,6 +1639,9 @@ impl SessionServer {
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
             outbox_high_water_bytes: 0,
+            departed_coalesced_frames: 0,
+            departed_coalesced_bytes: 0,
+            graphics_metrics: Default::default(),
             attach_seed_totals: AttachSeedTotals::default(),
             attach_seed_cursor: 0,
             resync_totals: ResyncTotals::default(),
@@ -1517,6 +1693,7 @@ impl SessionServer {
             }
             let activity = self.pump_iteration(&mut listener, &mut no_client_since)?;
             let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
+            let timeout = self.graphics_pacing_timeout(timeout);
             self.events.wait_for_item(timeout);
         }
         self.shutdown_listener()
@@ -1539,7 +1716,7 @@ impl SessionServer {
             };
             activity = true;
             if let Some(outbound) = self.handle_event(event) {
-                self.broadcast_outbound(&outbound);
+                self.send_outbound(None, &outbound);
             }
         }
         activity
@@ -1586,6 +1763,7 @@ impl SessionServer {
         self.heartbeat();
         activity |= self.pump_attach_seeds();
         activity |= self.flush_clients();
+        self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);
         Ok(activity)
     }
@@ -1679,7 +1857,9 @@ impl SessionServer {
                     .sum::<u64>(),
         };
         ServerRuntimeMetrics {
+            terminal_graphics: tui_lipan::terminal_graphics_metrics(),
             sampled_at_unix_ms: unix_time_millis(),
+            graphics: self.graphics_pacing_metrics(),
             pty_ingress: QueueMetrics {
                 bytes: ByteBufferMetrics::new(
                     ingress.bytes,
@@ -1687,6 +1867,8 @@ impl SessionServer {
                     ingress.capacity,
                 ),
                 queued_items: ingress.len as u64,
+                coalesced_frames: ingress.coalesced_frames,
+                coalesced_bytes: ingress.coalesced_bytes,
             },
             client_outboxes: ServerOutboxMetrics {
                 bytes: ByteBufferMetrics::new(
@@ -1695,6 +1877,18 @@ impl SessionServer {
                     outbox_capacity,
                 ),
                 clients: attached().count() as u64,
+                coalesced_frames: self.departed_coalesced_frames
+                    + self
+                        .clients
+                        .iter()
+                        .map(|client| client.coalesced_frames)
+                        .sum::<u64>(),
+                coalesced_bytes: self.departed_coalesced_bytes
+                    + self
+                        .clients
+                        .iter()
+                        .map(|client| client.coalesced_bytes)
+                        .sum::<u64>(),
             },
             attach_seed: crate::runtime_metrics::AttachSeedMetrics {
                 active_clients: active_seed_clients,
@@ -1755,10 +1949,11 @@ fn encode_pane_output(
     pane_id: PaneId,
     generation: u64,
     local: bool,
+    metadata: protocol::OutputMetadata,
     bytes: &[u8],
 ) -> Option<Arc<[u8]>> {
     let mut buf = Vec::new();
-    protocol::write_pane_output_frame(&mut buf, pane_id, generation, local, bytes)
+    protocol::write_pane_output_frame(&mut buf, pane_id, generation, local, metadata, bytes)
         .ok()
         .map(|()| Arc::from(buf))
 }
@@ -1825,6 +2020,7 @@ impl ServerPane {
         debug_assert!(!self.output_seen);
         self.content_generation = self.content_generation.saturating_add(1);
         screen.set_program_status_enabled(true);
+        screen.set_output_transaction_recording(true);
         self.terminal = screen;
     }
 

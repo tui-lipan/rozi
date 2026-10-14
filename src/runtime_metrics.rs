@@ -32,6 +32,8 @@ pub struct QueueMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
     pub queued_items: u64,
+    pub coalesced_frames: u64,
+    pub coalesced_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,8 @@ pub struct ServerOutboxMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
     pub clients: u64,
+    pub coalesced_frames: u64,
+    pub coalesced_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,15 +126,40 @@ pub struct ResurrectionMetrics {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ServerRuntimeMetrics {
+    #[cfg_attr(
+        feature = "schema-gen",
+        schemars(with = "TerminalGraphicsMetricsSchema")
+    )]
+    pub terminal_graphics: tui_lipan::TerminalGraphicsMetrics,
     pub sampled_at_unix_ms: u64,
     pub pty_ingress: QueueMetrics,
     pub client_outboxes: ServerOutboxMetrics,
     pub attach_seed: AttachSeedMetrics,
     pub client_resync: ClientResyncMetrics,
     pub resurrection: ResurrectionMetrics,
+    pub graphics: GraphicsSessionMetrics,
     /// Pane recordings (`rozi record`). Absent from a server that predates them.
     #[serde(default)]
     pub recordings: RecordingMetrics,
+}
+
+/// Semantic graphics supersession is counted separately from overload/resync loss.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct GraphicsSessionMetrics {
+    pub pacer_holds: u64,
+    pub pacer_hold_us: u64,
+    pub pacer_forced_releases: u64,
+    pub frames_ahead_of_presenter: u64,
+    pub graphics_transactions: u64,
+    pub replaceable_transactions: u64,
+    pub staged_coalesced_frames: u64,
+    pub staged_coalesced_bytes: u64,
+    pub ordered_barriers: u64,
+    pub presentation_acks: u64,
+    pub presentation_ack_latency_samples: u64,
+    pub presentation_ack_latency_us: u64,
+    pub presentation_ack_latency_max_us: u64,
 }
 
 /// Pane recordings on a session server.
@@ -161,6 +190,11 @@ pub struct CachedServerRuntimeMetrics {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct RuntimeMetrics {
+    #[cfg_attr(
+        feature = "schema-gen",
+        schemars(with = "TerminalGraphicsMetricsSchema")
+    )]
+    pub terminal_graphics: tui_lipan::TerminalGraphicsMetrics,
     pub sampled_at_unix_ms: u64,
     pub client_inbound: Option<QueueMetrics>,
     pub client_outbound: Option<QueueMetrics>,
@@ -191,6 +225,7 @@ impl RuntimeMetrics {
             .unwrap_or_default();
 
         Self {
+            terminal_graphics: tui_lipan::terminal_graphics_metrics(),
             sampled_at_unix_ms: unix_time_millis(),
             client_inbound,
             client_outbound,
@@ -233,7 +268,90 @@ impl RuntimeMetrics {
             },
         );
 
+        let graphics = self
+            .server
+            .as_ref()
+            .map(|server| server.sample.graphics)
+            .unwrap_or_default();
+        let ack_average = graphics
+            .presentation_ack_latency_us
+            .checked_div(graphics.presentation_ack_latency_samples)
+            .unwrap_or(0);
+        let native = self.terminal_graphics;
         vec![
+            DevToolsMetric::new(
+                "Native scene",
+                format!(
+                    "sources {} uploads/{} updates · placements {} new/{} updates/{} deletes",
+                    native.sources_uploaded,
+                    native.sources_updated,
+                    native.placements_created,
+                    native.placements_updated,
+                    native.placements_deleted
+                ),
+            ),
+            DevToolsMetric::new(
+                "Host graphics",
+                format!(
+                    "{} upload/{} placement/{} delete bytes · regions {} → {}",
+                    native.upload_bytes,
+                    native.placement_bytes,
+                    native.delete_bytes,
+                    native.regions_before_merge,
+                    native.regions_after_merge
+                ),
+            ),
+            DevToolsMetric::new(
+                "Host frames",
+                format!(
+                    "{} written/{} cells · interval p50/p95/p99/max {}/{}/{}/{}ms",
+                    native.frames_written,
+                    native.frames_composed,
+                    format_millis(native.frame_interval_p50_us),
+                    format_millis(native.frame_interval_p95_us),
+                    format_millis(native.frame_interval_p99_us),
+                    format_millis(native.frame_interval_max_us)
+                ),
+            ),
+            DevToolsMetric::new(
+                "Graphics paint",
+                format!(
+                    "{} direct · {} terminal/{} normal widening",
+                    native.graphics_direct,
+                    native.graphics_widened_terminal,
+                    native.graphics_widened_normal
+                ),
+            ),
+            DevToolsMetric::new(
+                "Gfx frames",
+                format!(
+                    "{} independent/{} graphics · staged {} · outbox {} · inbox {} coalesced",
+                    graphics.replaceable_transactions,
+                    graphics.graphics_transactions,
+                    graphics.staged_coalesced_frames,
+                    server_out.coalesced_frames,
+                    inbound.coalesced_frames
+                ),
+            ),
+            DevToolsMetric::new(
+                "Gfx pacing",
+                format!(
+                    "{} holds · {}ms held · {} safety releases · {} ahead",
+                    graphics.pacer_holds,
+                    format_millis(graphics.pacer_hold_us),
+                    graphics.pacer_forced_releases,
+                    graphics.frames_ahead_of_presenter
+                ),
+            ),
+            DevToolsMetric::new(
+                "Gfx ACK",
+                format!(
+                    "{} · avg {}ms · max {}ms",
+                    graphics.presentation_acks,
+                    format_millis(ack_average),
+                    format_millis(graphics.presentation_ack_latency_max_us)
+                ),
+            ),
             DevToolsMetric::new(
                 "Pointer",
                 format_pointer(tui_lipan::prelude::pixel_pointer_status()),
@@ -420,6 +538,7 @@ mod tests {
     #[test]
     fn runtime_metrics_json_has_stable_resource_shape() {
         let metrics = RuntimeMetrics {
+            terminal_graphics: Default::default(),
             sampled_at_unix_ms: 100,
             client_inbound: Some(QueueMetrics {
                 bytes: ByteBufferMetrics {
@@ -428,6 +547,8 @@ mod tests {
                     capacity_bytes: 3,
                 },
                 queued_items: 4,
+                coalesced_frames: 0,
+                coalesced_bytes: 0,
             }),
             client_outbound: None,
             piped_remote: None,
@@ -442,15 +563,17 @@ mod tests {
             }),
         };
 
+        let terminal_graphics = serde_json::json!({ "mutations_none": 0, "mutations_metadata": 0, "mutations_graphics": 0, "mutations_rows": 0, "mutations_full": 0, "sources_created": 0, "sources_uploaded": 0, "sources_unchanged": 0, "sources_updated": 0, "sources_retired": 0, "placements_desired": 0, "placements_created": 0, "placements_unchanged": 0, "placements_updated": 0, "placements_deleted": 0, "regions_before_merge": 0, "regions_after_merge": 0, "graphics_direct": 0, "graphics_widened_terminal": 0, "graphics_widened_normal": 0, "upload_bytes": 0, "placement_bytes": 0, "delete_bytes": 0, "frames_requested": 0, "frames_composed": 0, "frames_written": 0, "frames_failed": 0, "compose_us": 0, "host_write_us": 0, "frame_interval_p50_us": 0, "frame_interval_p95_us": 0, "frame_interval_p99_us": 0, "frame_interval_max_us": 0 });
         assert_eq!(
             serde_json::to_value(metrics).unwrap(),
             serde_json::json!({
+                "terminal_graphics": terminal_graphics.clone(),
                 "sampled_at_unix_ms": 100,
                 "client_inbound": {
                     "current_bytes": 1,
                     "high_water_bytes": 2,
                     "capacity_bytes": 3,
-                    "queued_items": 4
+                    "queued_items": 4, "coalesced_frames": 0, "coalesced_bytes": 0
                 },
                 "client_outbound": null,
                 "piped_remote": null,
@@ -462,18 +585,23 @@ mod tests {
                     "capacity_keys": 0
                 },
                 "server": {
+                    "terminal_graphics": terminal_graphics,
                     "sampled_at_unix_ms": 90,
+                    "graphics": { "pacer_holds": 0, "pacer_hold_us": 0, "pacer_forced_releases": 0, "frames_ahead_of_presenter": 0, "graphics_transactions": 0, "replaceable_transactions": 0,
+                        "staged_coalesced_frames": 0, "staged_coalesced_bytes": 0,
+                        "ordered_barriers": 0, "presentation_acks": 0,
+                        "presentation_ack_latency_samples": 0, "presentation_ack_latency_us": 0, "presentation_ack_latency_max_us": 0 },
                     "pty_ingress": {
                         "current_bytes": 0,
                         "high_water_bytes": 0,
                         "capacity_bytes": 0,
-                        "queued_items": 0
+                        "queued_items": 0, "coalesced_frames": 0, "coalesced_bytes": 0
                     },
                     "client_outboxes": {
                         "current_bytes": 0,
                         "high_water_bytes": 0,
                         "capacity_bytes": 0,
-                        "clients": 0
+                        "clients": 0, "coalesced_frames": 0, "coalesced_bytes": 0
                     },
                     "attach_seed": {
                         "active_clients": 0,
@@ -576,4 +704,65 @@ mod tests {
         assert!(stale.stale);
         assert!(stale.age_ms >= SERVER_METRICS_STALE_AFTER.as_millis() as u64);
     }
+}
+
+// The framework has no schema dependency; this schema-only shape describes its serialized counters.
+#[cfg(feature = "schema-gen")]
+#[derive(schemars::JsonSchema)]
+#[schemars(rename = "TerminalGraphicsMetrics")]
+#[allow(dead_code)]
+struct TerminalGraphicsMetricsSchema {
+    mutations_none: u64,
+    mutations_metadata: u64,
+    mutations_graphics: u64,
+    mutations_rows: u64,
+    mutations_full: u64,
+    sources_created: u64,
+    sources_uploaded: u64,
+    sources_unchanged: u64,
+    sources_updated: u64,
+    sources_retired: u64,
+    placements_desired: u64,
+    placements_created: u64,
+    placements_unchanged: u64,
+    placements_updated: u64,
+    placements_deleted: u64,
+    regions_before_merge: u64,
+    regions_after_merge: u64,
+    graphics_direct: u64,
+    graphics_widened_terminal: u64,
+    graphics_widened_normal: u64,
+    upload_bytes: u64,
+    placement_bytes: u64,
+    delete_bytes: u64,
+    frames_requested: u64,
+    frames_composed: u64,
+    frames_written: u64,
+    frames_failed: u64,
+    compose_us: u64,
+    host_write_us: u64,
+    frame_interval_p50_us: u64,
+    frame_interval_p95_us: u64,
+    frame_interval_p99_us: u64,
+    frame_interval_max_us: u64,
+}
+
+#[cfg(all(test, feature = "schema-gen"))]
+#[test]
+fn terminal_graphics_schema_matches_the_framework_counter_names() {
+    let schema = schemars::schema_for!(TerminalGraphicsMetricsSchema);
+    let expected = schema.as_value()["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let counters = serde_json::to_value(tui_lipan::TerminalGraphicsMetrics::default()).unwrap();
+    let actual = counters
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
 }

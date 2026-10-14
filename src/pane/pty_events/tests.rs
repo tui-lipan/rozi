@@ -71,6 +71,7 @@ fn server_key_forwarding_enqueues_session_input_bytes() {
     assert_eq!(
         rx.recv().expect("first message"),
         crate::session::client::ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id: 7,
             local: false,
             generation: 9,
@@ -80,6 +81,7 @@ fn server_key_forwarding_enqueues_session_input_bytes() {
     assert_eq!(
         rx.recv().expect("second message"),
         crate::session::client::ClientOutbound::PaneInput {
+            latency_sensitive: true,
             pane_id: 7,
             local: false,
             generation: 9,
@@ -127,7 +129,7 @@ fn an_unbound_key_after_the_prefix_reaches_no_pane() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert!(
@@ -143,7 +145,7 @@ fn an_unbound_key_after_the_prefix_reaches_no_pane() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(inputs, vec![b"y".to_vec()]);
@@ -188,12 +190,13 @@ fn double_prefix_forwards_one_prefix_key() {
                 .try_iter()
                 .filter_map(|message| match message {
                     ClientOutbound::PaneInput { .. } => Some(message),
-                    ClientOutbound::Control(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(
                 inputs,
                 vec![ClientOutbound::PaneInput {
+                    latency_sensitive: true,
                     pane_id: 1,
                     local: false,
                     generation: 0,

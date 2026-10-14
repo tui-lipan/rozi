@@ -694,12 +694,20 @@ fn is_handshake_rejected(err: &std::io::Error) -> bool {
 
 pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
     match frame {
-        Frame::PaneBytes {
+        Frame::PaneBytes { .. } | Frame::PresentationAcks(_) | Frame::PresentationInterest(_) => {
+            Msg::SessionError {
+                epoch,
+                message: "unexpected client-direction session frame".to_string(),
+            }
+        }
+        Frame::PaneOutput {
+            metadata,
             pane_id,
             local,
             generation,
             bytes,
         } => Msg::SessionOutput {
+            metadata,
             epoch,
             pane_id,
             local,
@@ -813,9 +821,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             ServerMessage::InputMarked { token } => Msg::SessionInputMarked { epoch, token },
-            ServerMessage::RuntimeMetrics { metrics } => {
-                Msg::SessionRuntimeMetrics { epoch, metrics }
-            }
+            ServerMessage::RuntimeMetrics { .. } => Msg::SessionRuntimeMetrics { epoch },
             ServerMessage::RecordingEnded { stopped } => {
                 Msg::SessionRecordingEnded { epoch, stopped }
             }

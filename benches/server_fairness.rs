@@ -631,7 +631,7 @@ fn spawn_drain(
                             break;
                         }
                     }
-                    Frame::PaneBytes {
+                    Frame::PaneOutput {
                         pane_id,
                         generation: GENERATION,
                         bytes,
@@ -698,7 +698,7 @@ fn spawn_snapshot_drain(
                             break;
                         }
                     }
-                    Frame::PaneBytes { pane_id, bytes, .. }
+                    Frame::PaneOutput { pane_id, bytes, .. }
                         if !ready.get(&pane_id).copied().unwrap_or(false) =>
                     {
                         let tail = tails.entry(pane_id).or_default();

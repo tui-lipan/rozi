@@ -195,10 +195,23 @@ Limits:
   or shared memory, which can be read only once.
 
 On Kitty hosts such as Ghostty, natural-size patches can go directly to the host as clipped image
-placements. Unchanged images stay uploaded while the host blends new patches. rozi still retains
+placements. Sources and placements persist across frames. An unrelated pane update sends no image
+commands when their geometry and visibility are unchanged, and graphics-only changes can reach the
+host without repainting terminal cells. rozi still retains
 the source scene for reconnects and captures. Scaled images, unmeasured host cell sizes,
 same-depth overlaps, modal dimming, and overlapping later widgets use composition.
 Other host protocols keep their existing rendering path.
+
+Resizing the host window adds no fixed pause to image rendering. Static pictures remain visible
+after resizing even when their program sends no new output. `TUI_LIPAN_IMAGE_RESIZE_PAUSE_MS`
+defaults to `0`; set it to `180` to restore the previous delay on a host where repeated image
+uploads during a window drag are expensive.
+
+Completed independent image replacements can supersede older queued frames for the same source.
+Text and control boundaries preserve ordering. Queries, image deletion, cursor changes, partial
+patches, chunked uploads and consuming media keep their original dependency order. Captures and
+recordings continue to use the retained scene. Session acknowledgements report successful host
+writes rather than receipt or parsing of producer bytes.
 
 Local sessions can retain immutable frame files and let a Kitty host load them directly. This
 avoids decoded frame buffers for both full frames and eligible patches. Captures and effects read
@@ -303,3 +316,24 @@ OSC blocked and error attention also colors pane borders and content tints.
 Blocked uses the warning role and error uses the error role by default.
 The `blocked` and `error` keys in `[pane.alert]` independently override or disable
 these colors. Both retain the existing urgent animation and input acknowledgement.
+
+### Presentation pacing
+
+After a sustained run of complete, independent Kitty replacements, the session server gives that
+pane PTY read credits. Visible streams use the leading client's configured frame rate and allow at
+most two unpresented replacements per image stream. Each acknowledged presentation schedules the
+next release 3 ms before the leader's next frame, so the newest replacement arrives just in time
+rather than at an arbitrary point in the frame. While a credit is withheld, the producer's
+output waits in the kernel; each release drains that backlog (up to 64 KiB) so only its newest
+replacement is forwarded, rather than the oldest. Focused visible controllers take priority over
+writable clients and read-only followers. A slow follower cannot pace a faster controller. A
+client whose oldest unacknowledged output is more than 250 ms old, such as a stopped or wedged
+one, leads only when no responsive visible client remains. With no visible consumer, graphics streams run at 15 Hz; active recordings use their
+configured capture rate and successfully queued capture progress instead.
+
+Ordinary output and dependent patches remove pacing immediately. Keys, paste, clicks, releases,
+wheel events and explicit control input open a 50 ms answer window. Pointer motion stays paced.
+Each PTY has its own gate, with one bounded drain in flight and a 200 ms safety release. Resize,
+pane replacement and exit release the gate; final child output drains before the exit event.
+Presentation ACKs are sent after a successful host frame, including composed frames. Parsing and
+receiving bytes do not acknowledge presentation.

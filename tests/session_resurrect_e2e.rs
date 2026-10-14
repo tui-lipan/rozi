@@ -119,7 +119,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_pane_input(PANE_ID, PANE_GENERATION, b"i=0; while [ $i -lt 40 ]; do printf 'resurrect-line-%03d\\n' $i; i=$((i+1)); done; printf 'rozi-resurrect-%s\\n' 'replay-marker'\r");
     let mut live_output = Vec::new();
     read_until(&mut client, |frame| {
-        if let Frame::PaneBytes { bytes, .. } = frame {
+        if let Frame::PaneOutput { bytes, .. } = frame {
             live_output.extend_from_slice(bytes);
         }
         contains(&live_output, REPLAY_MARKER)
@@ -206,7 +206,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     replay.apply_server_resize(80, 24);
     replay.bind_server_backend(PANE_ID, generation);
     read_until(&mut restored, |frame| {
-        if let Frame::PaneBytes {
+        if let Frame::PaneOutput {
             pane_id: PANE_ID,
             bytes,
             ..
@@ -433,7 +433,7 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
     .expect("append restored marker");
     let mut output = Vec::new();
     read_until(&mut restored, |frame| {
-        if let Frame::PaneBytes {
+        if let Frame::PaneOutput {
             pane_id: PROBE_PANE,
             bytes,
             ..

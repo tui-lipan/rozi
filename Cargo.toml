@@ -62,7 +62,7 @@ exclude = [
 # 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "49ae792", features = [
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "746eaa2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

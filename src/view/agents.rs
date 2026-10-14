@@ -395,6 +395,7 @@ mod tests {
         let mut state = state_with_hosts(&[("workbox", vec![summary("dev", 9, "working")])]);
         state.current_mut().session_name = Some("dev".into());
         state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            projects: Vec::new(),
             sessions: Vec::new(),
             agents: vec![summary("dev", 1, "idle"), summary("api", 2, "blocked")],
         });

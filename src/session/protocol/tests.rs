@@ -714,6 +714,7 @@ fn golden_controller_changed_and_clients_changed_json_shape() {
 fn golden_session_info_json_shape() {
     assert_eq!(
         serde_json::to_value(ServerMessage::SessionInfo {
+            projects: Vec::new(),
             agents: Vec::new(),
             capabilities: None,
             session: "dev".into(),

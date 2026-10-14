@@ -433,6 +433,14 @@ The [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists these a
 agents, most urgent first. `Enter` on a remote row attaches to that session and focuses the agent's
 pane in one step.
 
+### Projects on a machine you are not in
+
+When both ends support the `project-summaries` feature, monitoring also reports which checkouts
+each session works in: each checkout's root, the repository it belongs to, its branch, and which
+panes and published agents work there. The sidebar's [Projects tab](sidebar.md#projects) arranges
+every host's sessions by these. Working directories below a checkout's root still need an attached
+session.
+
 ## Disconnect from a host
 
 `Ctrl+W` disconnects one session attachment. `Ctrl+X` disconnects this client from the whole host:

@@ -573,7 +573,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
+| `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
 | `startup` | bool | `false` | Open the remembered dock combination at client launch. When false, start hidden and restore with `b` or `B`. Memory is saved on exit or detach; toggles stay client-local. |
@@ -585,7 +585,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
 
-Unplaced tabs join the first left panel; Files, Git, and Worktrees join the second. Extension
+Unplaced tabs join the first left panel; Files, Git, Worktrees, and Projects join the second. Extension
 suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
 and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
 for restoration rules, the tab manager, and migration from the former geometry keys.

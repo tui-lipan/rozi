@@ -2442,3 +2442,103 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
         assert_eq!(backend.state().current().focused_pane, Some(pane));
     });
 }
+
+fn project(
+    session: &str,
+    root: &str,
+    repository: Option<&str>,
+    branch: &str,
+    panes: &[crate::state::PaneId],
+) -> crate::session::protocol::ProjectSummary {
+    crate::session::protocol::ProjectSummary {
+        session: session.into(),
+        root: root.into(),
+        repository: repository.map(str::to_string),
+        branch: Some(branch.into()),
+        panes: panes.to_vec(),
+        rows: Vec::new(),
+    }
+}
+
+/// The Projects tab draws repository, checkout, and session as a tree, and the keyboard opens and
+/// closes it: Left on a session steps out to its checkout, Left again collapses it, Right reopens.
+#[test]
+fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTab::Projects.id());
+            state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![monitored_agent("fix", 3, "blocked")],
+                projects: vec![
+                    project("api", "/x/rozi", None, "master", &[1]),
+                    project("fix", "/x/rozi/.wt/fix", Some("/x/rozi"), "fix/ssh", &[3]),
+                ],
+            });
+        }
+        backend.render();
+        let frame = backend.capture_frame().to_fixed_grid_lines();
+        let sidebar: Vec<String> = frame
+            .iter()
+            .map(|line| line.chars().take(31).collect::<String>())
+            .collect();
+        eprintln!("{}", sidebar.join("\n"));
+        let at = |needle: &str| {
+            sidebar
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", sidebar.join("\n")))
+        };
+        assert!(at("rozi") < at("master"));
+        assert!(at("master") < at("api"));
+        assert!(at("fix/ssh") < at("Codex"));
+        assert!(
+            sidebar[at("fix/ssh")].contains('└'),
+            "the last checkout ends its branch"
+        );
+
+        let items = backend
+            .state()
+            .tree_items(&SidebarTab::Projects)
+            .expect("projects is hierarchical");
+        let fix = items
+            .iter()
+            .position(|item| {
+                item.line()
+                    .is_some_and(|line| line.row.content.label == "fix")
+            })
+            .expect("the fix session row");
+        backend.state_mut().sidebar.panels[0].cursor = fix;
+        send_sidebar_key(&mut backend, KeyCode::Left, KeyMods::NONE);
+        let cursor = backend.state().sidebar.panels[0].cursor;
+        assert_eq!(
+            items[cursor]
+                .line()
+                .map(|line| line.row.content.label.as_str()),
+            Some("fix/ssh"),
+            "Left steps out to the checkout"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Left, KeyMods::NONE);
+        let collapsed = backend.state().tree_items(&SidebarTab::Projects).unwrap();
+        assert!(
+            !collapsed.iter().any(|item| item
+                .line()
+                .is_some_and(|line| line.row.content.label == "fix")),
+            "Left collapses the checkout"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Right, KeyMods::NONE);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            items.len(),
+            "Right expands it again"
+        );
+    });
+}

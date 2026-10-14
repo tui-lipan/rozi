@@ -1,7 +1,7 @@
 # Sidebar
 
 The sidebar provides optional left and right docks beside your panes with tabs for activity, agents,
-panes, sessions, files, Git changes, and worktrees. This page covers opening and navigating it, what each tab shows, and how to
+panes, sessions, files, Git changes, worktrees, and projects. This page covers opening and navigating it, what each tab shows, and how to
 configure tabs or add your own.
 
 The sidebar belongs to your client. It is never part of a shared session layout.
@@ -70,7 +70,7 @@ After the `B` command key focuses the sidebar:
 | `Enter` | Activate the selected row |
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
-| `h/l`, arrows, `Space` | Collapse, expand, or toggle directories |
+| `h/l`, arrows, `Space` | Collapse, expand, or toggle directories and [tree rows](#expand-and-collapse) |
 | `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
 | `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
 | `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
@@ -242,6 +242,47 @@ The list follows the focused pane and refreshes along with the Git tab, so a che
 a shell appears without further action. See [Worktrees](worktrees.md) for the picker, the CLI, and
 settings.
 
+## Projects
+
+Projects lists every Git checkout any of your sessions works in — on this machine and on every
+[connected host](remote.md#projects-on-a-machine-you-are-not-in) — arranged by repository:
+
+```text
+▾ ▲ rozi
+├ ▾   master
+│ └     api             1 pane
+└ ▾ ▲ fix/ssh
+  └   ▲ fix              Codex
+```
+
+Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
+the sessions working in it. A session is listed under every checkout one of its panes or agents
+works in, so a session with panes in two repositories appears under both. A row's marker shows the
+most urgent agent below it: blocked, then working, then done. A session row names its agent, counts
+several, or counts its panes when none runs an agent. When more than one machine has work, each
+machine gets a heading, `LOCAL` for this one.
+
+Activating a session row goes to the most urgent agent working in that checkout, or to a pane there
+when none is: it focuses the pane in the session on screen, and switches to or attaches the session
+first anywhere else. Activating a repository or checkout row shows or hides what is under it.
+
+Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
+lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
+are not listed.
+
+### Expand and collapse
+
+Projects is a tree. Click the `▾` or `▸` beside a row to show or hide what is under it. In a focused
+sidebar:
+
+| Key | Action |
+| --- | --- |
+| `Right`, `l` | Expand the row, or move to its first child when it is already expanded |
+| `Left`, `h` | Collapse the row, or move to its parent |
+| `Space` | Expand or collapse the row |
+
+rozi remembers which rows you expanded or collapsed until the client exits.
+
 ## Configure tabs and panels
 
 <CaptureGallery title="Sidebar tabs">
@@ -270,10 +311,10 @@ lists the global and individual sidebar toggles and **Focus sidebar**.
 ```toml
 [sidebar]
 startup = false
-tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees"]
+tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
 layout = { left = { width = 32, panel_count = 2, panels = [
   { weight = 0.4, tabs = ["activity", "agents", "panes", "sessions"] },
-  { weight = 0.6, tabs = ["files", "git", "worktrees"] },
+  { weight = 0.6, tabs = ["files", "git", "worktrees", "projects"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false
 gap = true

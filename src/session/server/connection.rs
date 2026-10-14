@@ -1365,11 +1365,17 @@ impl SessionServer {
         } else {
             Vec::new()
         };
+        let projects = if capabilities.supports(protocol::PROJECT_SUMMARIES) {
+            self.project_summaries()
+        } else {
+            Vec::new()
+        };
         vec![(
             Target::Sender,
             ServerMessage::SessionInfo {
                 capabilities: Some(capabilities),
                 agents,
+                projects,
                 session,
                 panes,
                 clients: self.attached_count(),

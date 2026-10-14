@@ -35,6 +35,7 @@ mod pane_log;
 mod panes;
 mod power;
 mod program_status;
+mod project_summary;
 mod recordings;
 mod resurrect;
 pub use pane_log::PaneLog;

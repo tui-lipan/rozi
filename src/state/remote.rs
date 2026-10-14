@@ -21,6 +21,12 @@ pub struct RemoteRuntimeState {
     /// runtime map on a host is. Absent for a host that is disconnected, unreachable, or forgotten.
     pub(crate) agents:
         HashMap<crate::session::remote::RemoteTarget, Vec<crate::session::protocol::AgentSummary>>,
+    /// The checkouts each connected host's sessions work in, from the same monitor snapshot as
+    /// [`Self::agents`] and dropped with it.
+    pub(crate) projects: HashMap<
+        crate::session::remote::RemoteTarget,
+        Vec<crate::session::protocol::ProjectSummary>,
+    >,
     pub(crate) live_sessions: Vec<crate::session::discovery::DiscoveredSession>,
     /// Hosts added or edited in **Remote hosts** during this run, merged into the saved roster
     /// whenever the registry is reseeded.

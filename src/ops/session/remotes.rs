@@ -265,6 +265,7 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
     // A host may be forgotten while it is still monitored, so its agent snapshot outlives its
     // registry entry. Left behind, it would be the baseline a re-added host is diffed against.
     ctx.state.remote.agents.remove(&target);
+    ctx.state.remote.projects.remove(&target);
     crate::ops::session::seed_host_registry(ctx);
     let selected = ctx
         .state

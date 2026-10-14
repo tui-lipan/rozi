@@ -55,6 +55,17 @@ pub struct DiscoveredSession {
 pub struct LocalAgentSnapshot {
     pub sessions: Vec<DiscoveredSession>,
     pub agents: Vec<crate::session::protocol::AgentSummary>,
+    /// The checkouts those sessions work in, for the Projects tab.
+    pub projects: Vec<crate::session::protocol::ProjectSummary>,
+}
+
+/// Every live session on this host, with what its agent and project summaries say, from one
+/// probe each.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HostMetadata {
+    pub sessions: Vec<DiscoveredSession>,
+    pub agents: Vec<crate::session::protocol::AgentSummary>,
+    pub projects: Vec<crate::session::protocol::ProjectSummary>,
 }
 
 /// A busy endpoint gave no semantic answer this poll. Keep its last agent summaries until it
@@ -78,6 +89,33 @@ pub(crate) fn retain_busy_agent_summaries(
         .cloned()
         .collect();
     agents.extend(retained);
+}
+
+/// [`retain_busy_agent_summaries`] for project summaries: a busy session keeps the checkouts it
+/// last reported until it answers again.
+pub(crate) fn retain_busy_project_summaries(
+    rows: &[DiscoveredSession],
+    projects: &mut Vec<crate::session::protocol::ProjectSummary>,
+    previous: &[crate::session::protocol::ProjectSummary],
+) {
+    let busy_sessions: BTreeSet<_> = rows
+        .iter()
+        .filter(|row| matches!(row.status, DiscoveredSessionStatus::Busy))
+        .map(|row| row.name.as_str())
+        .collect();
+    let answered: BTreeSet<_> = projects
+        .iter()
+        .map(|project| project.session.clone())
+        .collect();
+    projects.extend(
+        previous
+            .iter()
+            .filter(|project| {
+                busy_sessions.contains(project.session.as_str())
+                    && !answered.contains(&project.session)
+            })
+            .cloned(),
+    );
 }
 
 /// Where to discover sessions from.
@@ -150,6 +188,7 @@ pub fn discover_sessions_excluding(
 pub(crate) struct ProbedSession {
     pub row: DiscoveredSession,
     pub agents: Vec<crate::session::protocol::AgentSummary>,
+    pub projects: Vec<crate::session::protocol::ProjectSummary>,
 }
 
 /// Every live local session plus the agents inside them, in one probe each.
@@ -161,22 +200,19 @@ pub(crate) struct ProbedSession {
 ///
 /// Ephemeral sessions are not asked. The monitor drops their rows on arrival, so a summary from
 /// one would describe a session the client will never show.
-pub(crate) fn discover_sessions_with_agents() -> std::io::Result<(
-    Vec<DiscoveredSession>,
-    Vec<crate::session::protocol::AgentSummary>,
-)> {
-    let mut rows = Vec::new();
-    let mut agents = Vec::new();
+pub(crate) fn discover_host_metadata() -> std::io::Result<HostMetadata> {
+    let mut metadata = HostMetadata::default();
     for mut probed in sweep_sessions(None, true)? {
-        rows.push(probed.row);
-        agents.append(&mut probed.agents);
+        metadata.sessions.push(probed.row);
+        metadata.agents.append(&mut probed.agents);
+        metadata.projects.append(&mut probed.projects);
     }
     push_restorable_sessions(
-        &mut rows,
+        &mut metadata.sessions,
         None,
         crate::session::server::list_snapshot_summaries_by_recency(),
     );
-    Ok((rows, agents))
+    Ok(metadata)
 }
 
 fn sweep_sessions(
@@ -265,6 +301,7 @@ struct QueryAnswer {
     status: DiscoveredSessionStatus,
     origin: crate::session::origin::SessionOrigin,
     agents: Vec<crate::session::protocol::AgentSummary>,
+    projects: Vec<crate::session::protocol::ProjectSummary>,
     /// `None` from a server that predates reporting it, as well as from one we cannot speak to.
     instance: Option<crate::session::protocol::SessionInstanceId>,
 }
@@ -279,6 +316,7 @@ impl QueryAnswer {
             status,
             origin: Default::default(),
             agents: Vec::new(),
+            projects: Vec::new(),
             instance: None,
         }
     }
@@ -321,6 +359,7 @@ fn query_status_within(
             has_layout,
             origin,
             agents,
+            projects,
             instance,
             ..
         } => Ok(QueryAnswer {
@@ -331,6 +370,7 @@ fn query_status_within(
             },
             origin,
             agents,
+            projects,
             instance,
         }),
         _ => Ok(QueryAnswer::unknown()),
@@ -516,6 +556,7 @@ fn probe_session_endpoint(
         status,
         origin,
         agents,
+        projects,
         ..
     } = match endpoint.connect() {
         Ok(mut stream) => match query_status(name, &mut stream, capabilities) {
@@ -560,6 +601,7 @@ fn probe_session_endpoint(
             remote_target: None,
         },
         agents,
+        projects,
     })
 }
 

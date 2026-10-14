@@ -382,6 +382,7 @@ mod tests {
             remote_target,
         };
         state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            projects: Vec::new(),
             sessions: vec![row(None)],
             agents: Vec::new(),
         });
@@ -449,6 +450,7 @@ mod tests {
                 crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![crate::session::protocol::AgentSummary {
                         session: "backend".into(),
@@ -494,6 +496,7 @@ mod tests {
         };
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
+                projects: Vec::new(),
                 sessions: Vec::new(),
                 agents: vec![summary(1, "Local Codex", "idle")],
             });
@@ -750,6 +753,7 @@ mod tests {
             };
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![summary(1), summary(2), summary(3)],
                 });
@@ -812,6 +816,7 @@ mod tests {
             crate::layout::anim::PickerAnimationStyle::Off;
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
+                projects: Vec::new(),
                 sessions: Vec::new(),
                 agents,
             });

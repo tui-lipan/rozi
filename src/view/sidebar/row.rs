@@ -72,6 +72,20 @@ pub(super) struct CloseAffordance {
     pub armed: bool,
 }
 
+/// Where a row sits in a hierarchical tab: the guides in front of each of its lines, and its
+/// disclosure toggle. Guides come from [`tui_lipan::prelude::TreeGuides`], so a sidebar tree reads
+/// exactly like the framework's own `Tree`.
+pub(crate) struct RowTree {
+    /// In front of the title line.
+    pub first: Vec<Span>,
+    /// In front of the detail line, keeping the guides below this row connected.
+    pub rest: Vec<Span>,
+    /// `Some(expanded)` for a row with children to show or hide.
+    pub disclosure: Option<bool>,
+    /// Hold the disclosure column on a row without one, so labels line up with their siblings'.
+    pub reserve_disclosure: bool,
+}
+
 /// Which half of a title line keeps its text when the label and its description cannot both fit.
 /// Each tab picks the one that carries its meaning; there is no single right answer for the sidebar.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -109,6 +123,7 @@ pub(crate) struct Row {
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
     armed_prompt: Option<String>,
+    tree: Option<RowTree>,
 }
 
 impl Row {
@@ -126,7 +141,14 @@ impl Row {
             meta: None,
             detail: Vec::new(),
             armed_prompt: None,
+            tree: None,
         }
+    }
+
+    /// Indent the row under its parent in a hierarchical tab.
+    pub(super) fn tree(mut self, tree: RowTree) -> Self {
+        self.tree = Some(tree);
+        self
     }
 
     /// What the detail line asks for while the row's ✕ is armed, when "Again to confirm" does not
@@ -208,12 +230,15 @@ impl Row {
         self
     }
 
+    /// `position` is the panel and row index the row is drawn at, which its disclosure toggle
+    /// reports when clicked; a row drawn outside a list passes `None` and its toggle is inert.
     pub(super) fn build(
         mut self,
         ctx: &Context<AppRoot>,
         selected: bool,
         hovered: bool,
         close: Option<CloseAffordance>,
+        position: Option<(usize, usize)>,
     ) -> Element {
         let theme = &ctx.state.theme;
 
@@ -297,13 +322,22 @@ impl Row {
             text = text.child(item_text(detail, 1));
         }
 
-        HStack::new()
+        let mut row = HStack::new()
             .gap(if self.group_level {
                 0
             } else {
                 u16::from(!leading)
             })
-            .height(Length::Px(lines))
+            .height(Length::Px(lines));
+        let tree = self
+            .tree
+            .take()
+            .map(|tree| tree_column(ctx, tree, lines, position));
+        row = row.child(gutter);
+        if let Some(tree) = tree {
+            row = row.child(tree);
+        }
+        row.child(cells.child(text))
             .style(if selected {
                 super::cursor_highlight(theme, super::fill(ctx))
             } else if self.active {
@@ -311,10 +345,74 @@ impl Row {
             } else {
                 Style::default()
             })
-            .child(gutter)
-            .child(cells.child(text))
             .into()
     }
+}
+
+/// The guides and disclosure toggle in front of a hierarchical row, one line per row line.
+fn tree_column(
+    ctx: &Context<AppRoot>,
+    tree: RowTree,
+    lines: u16,
+    position: Option<(usize, usize)>,
+) -> Element {
+    let RowTree {
+        first,
+        rest,
+        disclosure,
+        reserve_disclosure,
+    } = tree;
+    let toggle_style = super::super::fg_only(&ctx.state.theme.muted);
+    let mut first_line = HStack::new()
+        .gap(0)
+        .width(Length::Auto)
+        .height(Length::Px(1))
+        .child(Text::from_spans(first).height(Length::Px(1)));
+    match disclosure {
+        Some(expanded) => {
+            // The trailing cell holds the arrow off the glyph column and widens the click target.
+            let glyph = Text::new(if expanded { "▾ " } else { "▸ " })
+                .style(toggle_style)
+                .height(Length::Px(1));
+            let toggle: Element = match position {
+                Some((panel, index)) => {
+                    let region: Element = MouseRegion::new()
+                        .on_click(crate::view::sidebar::callback(ctx, move |_| {
+                            Msg::SidebarRowToggle { panel, index }
+                        }))
+                        .on_mouse_move(crate::view::sidebar::callback(ctx, move |_| {
+                            Msg::SidebarPointerMoved(panel)
+                        }))
+                        .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
+                            ctx.state.theme.border_active,
+                            1.0,
+                        )))
+                        .child(glyph)
+                        .into();
+                    region.key(format!("sidebar-{panel}-row-toggle-{index}"))
+                }
+                None => glyph.into(),
+            };
+            first_line = first_line.child(toggle);
+        }
+        None if reserve_disclosure => {
+            first_line = first_line.child(Text::new("  ").height(Length::Px(1)));
+        }
+        None => {}
+    }
+    let mut column = VStack::new()
+        .gap(0)
+        .width(Length::Auto)
+        .height(Length::Px(lines))
+        .child(first_line);
+    if lines > 1 {
+        let mut spans = rest;
+        if disclosure.is_some() || reserve_disclosure {
+            spans.push(Span::new("  "));
+        }
+        column = column.child(Text::from_spans(spans).height(Length::Px(1)));
+    }
+    column.into()
 }
 
 /// A title line: label left, description right-aligned and held off the label by

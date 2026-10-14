@@ -73,15 +73,16 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
             generation,
             ctx.state.config.remote.clone(),
             move |snapshot| {
-                let (rows, agents) = match snapshot {
-                    Ok(snapshot) => (Ok(snapshot.rows), snapshot.agents),
-                    Err(error) => (Err(error), Vec::new()),
+                let (rows, agents, projects) = match snapshot {
+                    Ok(snapshot) => (Ok(snapshot.rows), snapshot.agents, snapshot.projects),
+                    Err(error) => (Err(error), Vec::new(), Vec::new()),
                 };
                 link.send(Msg::HostMetadata {
                     target: destination.clone(),
                     generation,
                     rows,
                     agents,
+                    projects,
                 });
             },
         );
@@ -95,6 +96,7 @@ pub(crate) fn apply(
     generation: u64,
     rows: std::result::Result<Vec<DiscoveredSession>, String>,
     mut agents: Vec<crate::session::protocol::AgentSummary>,
+    mut projects: Vec<crate::session::protocol::ProjectSummary>,
 ) -> Update {
     if !ctx
         .state
@@ -114,6 +116,14 @@ pub(crate) fn apply(
             if let Some(previous) = ctx.state.remote.agents.get(&target) {
                 retain_busy_agent_summaries(&rows, &mut agents, previous);
             }
+            if let Some(previous) = ctx.state.remote.projects.get(&target) {
+                crate::session::discovery::retain_busy_project_summaries(
+                    &rows,
+                    &mut projects,
+                    previous,
+                );
+            }
+            ctx.state.remote.projects.insert(target.clone(), projects);
             apply_agents(ctx, &target, agents);
             let cached = crate::ops::session::discovery::cached_sessions_for_target(&rows, &target);
             if crate::session::host_sessions_for(&ctx.state.remote.session_cache, &target)
@@ -136,6 +146,7 @@ pub(crate) fn apply(
             // state is worse than none: the sidebar's cached rows already say "last seen", and a
             // `blocked` token beside one would claim a live prompt on a machine nothing can reach.
             ctx.state.remote.agents.remove(&target);
+            ctx.state.remote.projects.remove(&target);
             if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
                 host.probe = crate::state::HostProbe::Failed(error);
             }
@@ -291,6 +302,7 @@ mod tests {
                 };
                 backend
                     .dispatch(Msg::HostMetadata {
+                        projects: Vec::new(),
                         agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
@@ -301,6 +313,7 @@ mod tests {
                 assert!(!backend.state().sidebar_shown());
                 backend
                     .dispatch(Msg::HostMetadata {
+                        projects: Vec::new(),
                         agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
@@ -322,6 +335,7 @@ mod tests {
                     .probe = crate::state::HostProbe::Idle;
                 backend
                     .dispatch(Msg::HostMetadata {
+                        projects: Vec::new(),
                         agents: Vec::new(),
                         target: target.clone(),
                         generation: 7,
@@ -397,6 +411,7 @@ mod tests {
                 }
                 backend
                     .update_level(Msg::HostMetadata {
+                        projects: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Ok(vec![row("aaa"), selected]),
@@ -413,6 +428,7 @@ mod tests {
                 assert!(picker.entries.contains(&other));
                 backend
                     .update_level(Msg::HostMetadata {
+                        projects: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Err("offline".into()),
@@ -431,6 +447,7 @@ mod tests {
                 assert!(picker.entries.contains(&other));
                 backend
                     .update_level(Msg::HostMetadata {
+                        projects: Vec::new(),
                         target: target.clone(),
                         generation: 7,
                         rows: Ok(Vec::new()),
@@ -492,6 +509,7 @@ mod tests {
                 let metadata = |agents: Vec<crate::session::protocol::AgentSummary>,
                                 rows: std::result::Result<Vec<DiscoveredSession>, String>| {
                     Msg::HostMetadata {
+                        projects: Vec::new(),
                         agents,
                         target: target.clone(),
                         generation: 3,

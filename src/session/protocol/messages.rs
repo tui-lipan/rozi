@@ -519,6 +519,9 @@ pub enum ServerMessage {
         capabilities: Option<super::Capabilities>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         agents: Vec<super::AgentSummary>,
+        /// Present only when [`super::PROJECT_SUMMARIES`] was negotiated.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        projects: Vec<super::ProjectSummary>,
         session: String,
         panes: usize,
         clients: u32,

@@ -4,6 +4,7 @@ mod panes;
 mod row;
 mod sessions;
 mod tree;
+mod tree_rows;
 mod user_tabs;
 mod worktrees;
 
@@ -449,6 +450,9 @@ pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Si
 }
 
 fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
+    if let Some(items) = ctx.state.tree_items(tab) {
+        return tree_rows::tree_rows(ctx, items);
+    }
     match tab {
         SidebarTab::Panes => panes::panes_rows(ctx),
         SidebarTab::Activity => agents::agents_rows(ctx),
@@ -459,8 +463,9 @@ fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::Sideba
         SidebarTab::Command { name, on_click, .. } => {
             user_tabs::command_rows(ctx, name, on_click.is_some())
         }
-        // The tree owns its own rows inside the widget; nothing to enumerate here.
-        SidebarTab::Tree { .. } => Vec::new(),
+        // The tree owns its own rows inside the widget; nothing to enumerate here. Projects is
+        // hierarchical and drawn above.
+        SidebarTab::Tree { .. } | SidebarTab::Projects => Vec::new(),
     }
 }
 
@@ -471,6 +476,7 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
         SidebarTab::Panes => "No panes",
         SidebarTab::Activity => "No activity",
         SidebarTab::Agents => "No agents",
+        SidebarTab::Projects => "No projects",
         SidebarTab::Sessions => "No sessions discovered",
         // No repository to list: same one-cell inset `placeholder` uses on every other empty tab.
         SidebarTab::Worktrees => ctx
@@ -535,7 +541,9 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
         let element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => item.build(ctx, selected, hovered, close),
+            row::RowKind::Item(item) => {
+                item.build(ctx, selected, hovered, close, Some((panel, index)))
+            }
         };
         // The row used to lose its own hover effect whenever the keyed ✕ region owned hover, so
         // this re-applied the same background transform through a scope. tui-lipan 0.7.0 makes a

@@ -2316,6 +2316,73 @@ fn agent_summaries_skip_exited_panes() {
     assert!(server.agent_summaries().is_empty());
 }
 
+/// A session reports the checkouts its panes work in, with a published row that works in a
+/// worktree of its own listed there rather than under its pane — and only to a client that asked.
+#[test]
+fn query_carries_project_summaries_by_checkout() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.project_root = Some("/x/rozi".into());
+    pane.runtime.git_branch = Some("master".into());
+    pane.runtime.rows = vec![protocol::PublishedRow {
+        publisher: "sessions".into(),
+        kind: crate::session::protocol::PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: "fix".into(),
+        title: "fix".into(),
+        status: "working".into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: Some("/x/rozi/.worktrees/fix".into()),
+        project: Some(protocol::RowProject {
+            root: "/x/rozi/.worktrees/fix".into(),
+            repository: Some("/x/rozi".into()),
+            branch: Some("fix".into()),
+        }),
+        native_session: None,
+    }];
+    server.panes.insert(1, pane);
+    let mut shell = test_pane(2);
+    shell.runtime.project_root = Some("/x/rozi".into());
+    shell.runtime.git_branch = Some("master".into());
+    server.panes.insert(2, shell);
+    // A pane outside any repository is no project's.
+    server.panes.insert(3, test_pane(2));
+
+    let projects = server.project_summaries();
+    assert_eq!(projects.len(), 2);
+    assert_eq!(projects[0].root, "/x/rozi");
+    assert_eq!(projects[0].panes, vec![1, 2]);
+    assert!(projects[0].rows.is_empty());
+    assert_eq!(projects[1].root, "/x/rozi/.worktrees/fix");
+    assert_eq!(projects[1].repository.as_deref(), Some("/x/rozi"));
+    assert_eq!(projects[1].rows.len(), 1);
+    assert_eq!(projects[1].rows[0].pane, 1);
+
+    let mut reported = |capabilities| match server
+        .handle_query(
+            "dev".into(),
+            PROTOCOL_VERSION,
+            PROTOCOL_VERSION,
+            capabilities,
+        )
+        .as_slice()
+    {
+        [(Target::Sender, ServerMessage::SessionInfo { projects, .. })] => projects.clone(),
+        other => panic!("expected one SessionInfo, got {other:?}"),
+    };
+    assert_eq!(reported(Some(protocol::Capabilities::current())).len(), 2);
+    let agents_only = protocol::Capabilities(
+        [protocol::AGENT_SUMMARIES.to_string()]
+            .into_iter()
+            .collect(),
+    );
+    assert!(reported(Some(agents_only)).is_empty());
+    assert!(reported(None).is_empty());
+}
+
 #[test]
 fn query_registers_nothing_and_seeds_nothing() {
     let mut server = SessionServer::new_named("dev");

@@ -186,6 +186,18 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     }
     // `j`/`k` alongside the arrows, matching resize and copy mode — and matching the file tree,
     // whose widget keymap has included the vim keys all along.
+    // Hierarchical row tabs take Left/Right and Space for their rows, the way the file tree does.
+    let tree = match key.code {
+        KeyCode::Right | KeyCode::Char('l') => Some(sidebar::TreeKey::Expand),
+        KeyCode::Left | KeyCode::Char('h') => Some(sidebar::TreeKey::Collapse),
+        KeyCode::Char(' ') => Some(sidebar::TreeKey::Toggle),
+        _ => None,
+    };
+    if let Some(tree) = tree
+        && let Some(update) = sidebar::tree_key(ctx, tree)
+    {
+        return Some(update);
+    }
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),
         KeyCode::Down | KeyCode::Char('j') => Some(sidebar::move_cursor(ctx, 1)),

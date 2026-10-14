@@ -78,7 +78,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             generation,
             rows,
             agents,
-        } => hosts::apply(ctx, target, generation, rows, agents),
+            projects,
+        } => hosts::apply(ctx, target, generation, rows, agents, projects),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
@@ -270,6 +271,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             hovered,
         } => sidebar::row_hover(ctx, panel, index, hovered),
         Msg::SidebarRowClose { panel, index } => sidebar::row_close(ctx, panel, index),
+        Msg::SidebarRowToggle { panel, index } => sidebar::row_toggle(ctx, panel, index),
         Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
         Msg::SidebarTreeFocused => sidebar::tree_focused(ctx),

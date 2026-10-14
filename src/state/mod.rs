@@ -20,6 +20,7 @@ mod layout;
 mod mode;
 mod pane;
 mod pickers;
+mod projects;
 mod remote;
 mod search;
 mod services;
@@ -27,6 +28,7 @@ mod session;
 mod sessions_view;
 mod settings;
 mod sidebar;
+mod sidebar_tree;
 mod workbar;
 mod workspace;
 
@@ -49,6 +51,7 @@ pub use session::*;
 pub use sessions_view::*;
 pub use settings::*;
 pub use sidebar::*;
+pub use sidebar_tree::*;
 pub use workbar::*;
 pub use workspace::*;
 

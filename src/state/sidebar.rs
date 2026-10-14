@@ -43,6 +43,9 @@ pub enum RowTarget {
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// An offline host row in the Sessions tab: connect (probe) that host.
     HostConnect(crate::session::remote::RemoteTarget),
+    /// A row in a hierarchical tab whose only job is to hold children: activating it shows or hides
+    /// them.
+    TreeToggle(crate::state::TreeExpansionKey),
     /// One agent in the Agents tab, wherever it is running: a focus change for the session on
     /// screen, a switch or attach first for any other.
     Agent(crate::state::AgentLocation),
@@ -142,7 +145,34 @@ impl State {
         self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
     }
 
+    /// The sections a hierarchical tab lists. `None` for a flat tab.
+    pub fn tree_sections(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeSection>> {
+        match tab {
+            SidebarTab::Projects => Some(self.project_sections()),
+            _ => None,
+        }
+    }
+
+    /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.
+    pub fn tree_items(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeItem>> {
+        let sections = self.tree_sections(tab)?;
+        Some(crate::state::flatten(
+            &tab.id(),
+            &sections,
+            &self.sidebar.tree_rows_expanded,
+        ))
+    }
+
     pub fn sidebar_item_projections(&self, tab: &SidebarTab) -> Vec<SidebarItemProjection> {
+        if let Some(items) = self.tree_items(tab) {
+            return items
+                .iter()
+                .map(|item| SidebarItemProjection {
+                    target: item.target(),
+                    close: item.close(),
+                })
+                .collect();
+        }
         match tab {
             SidebarTab::Panes => {
                 let mut items = Vec::new();
@@ -191,6 +221,8 @@ impl State {
                 }
                 items
             }
+            // Hierarchical, and projected above.
+            SidebarTab::Projects => Vec::new(),
             SidebarTab::Activity => self.activity_item_projections(),
             // The same projection the view draws from, so a row index means one agent to both.
             SidebarTab::Agents => crate::view::agents::global_agent_rows(self)
@@ -789,6 +821,9 @@ pub struct SidebarState {
     /// only ever grows by an explicit user expansion, and dies with the client — this is view
     /// state, not a preference worth persisting.
     pub tree_expanded: HashMap<SidebarTabId, std::collections::HashSet<String>>,
+    /// Rows the user expanded or collapsed in the hierarchical row tabs: Projects, JSON command
+    /// tabs, and stream tabs. Like [`Self::tree_expanded`], view state that dies with the client.
+    pub tree_rows_expanded: crate::state::TreeExpansion,
     /// Successful local Git snapshots shared by keyed Files/Git tree mounts. The framework keeps
     /// this bounded and revalidates every mount; retaining the handle here prevents indicators from
     /// disappearing while a remounted tree's background scan runs.
@@ -939,6 +974,8 @@ impl SidebarState {
         self.apply_panel_layout(config, &ids);
         self.command_output.retain(|id, _| ids.contains(id));
         self.tree_expanded.retain(|id, _| ids.contains(id));
+        self.tree_rows_expanded
+            .retain(|key, _| ids.contains(&key.tab));
         self.invalidate_commands();
         self.config_epoch = self.config_epoch.wrapping_add(1);
         self.invalidate_sessions();
@@ -1236,7 +1273,8 @@ mod docking_tests {
                 "sessions",
                 "files",
                 "git",
-                "worktrees"
+                "worktrees",
+                "projects"
             ]
         );
         assert!(state.panels[1].tabs.is_empty());

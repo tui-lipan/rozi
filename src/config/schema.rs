@@ -1794,6 +1794,8 @@ pub enum SidebarTab {
     Activity,
     /// Every agent this client knows about, in every session and on every connected host.
     Agents,
+    /// Every checkout any session works in, on every host, by repository.
+    Projects,
     Panes,
     Sessions,
     /// The focused pane's repository's Git worktrees.
@@ -1838,6 +1840,7 @@ impl SidebarTab {
         match self {
             Self::Activity => SidebarTabId::new("activity"),
             Self::Agents => SidebarTabId::new("agents"),
+            Self::Projects => SidebarTabId::new("projects"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
             Self::Worktrees => SidebarTabId::new("worktrees"),
@@ -1850,6 +1853,7 @@ impl SidebarTab {
         match self {
             Self::Activity => "Activity",
             Self::Agents => "Agents",
+            Self::Projects => "Projects",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
             Self::Worktrees => "Worktrees",
@@ -1964,7 +1968,12 @@ impl Default for SidebarDockLayout {
                     },
                     SidebarDockPanel {
                         weight: 0.6,
-                        tabs: vec!["files".into(), "git".into(), "worktrees".into()],
+                        tabs: vec![
+                            "files".into(),
+                            "git".into(),
+                            "worktrees".into(),
+                            "projects".into(),
+                        ],
                     },
                 ],
                 ..SidebarDock::default()
@@ -2143,6 +2152,7 @@ impl Default for SidebarConfig {
             SidebarTab::tree(SidebarTreeView::Files),
             SidebarTab::tree(SidebarTreeView::Changes),
             SidebarTab::Worktrees,
+            SidebarTab::Projects,
         ];
         Self {
             startup: false,

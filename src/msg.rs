@@ -204,6 +204,11 @@ pub enum Msg {
         panel: usize,
         index: usize,
     },
+    /// The disclosure toggle on a hierarchical sidebar row was clicked: show or hide its children.
+    SidebarRowToggle {
+        panel: usize,
+        index: usize,
+    },
     /// The shared arm-then-confirm window lapsed for the arming identified by this token; whatever
     /// is still armed under it is dropped. See [`crate::ops::confirm`].
     ConfirmationExpired(u64),
@@ -341,6 +346,7 @@ pub enum Msg {
     },
     HostMetadata {
         agents: Vec<crate::session::protocol::AgentSummary>,
+        projects: Vec<crate::session::protocol::ProjectSummary>,
         target: crate::session::remote::RemoteTarget,
         generation: u64,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,

@@ -16,6 +16,7 @@ const BUILTIN_TABS: &[&str] = &[
     "files",
     "git",
     "worktrees",
+    "projects",
 ];
 
 /// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
@@ -199,7 +200,7 @@ pub(super) fn apply_sidebar_config(
     for tab in &sidebar.tabs {
         let id = tab.id();
         if sidebar.layout.location(id.as_str()).is_none() {
-            let panel = if ["files", "git", "worktrees"].contains(&id.as_str()) {
+            let panel = if ["files", "git", "worktrees", "projects"].contains(&id.as_str()) {
                 1
             } else {
                 0
@@ -364,6 +365,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
                 "worktrees" => SidebarTab::Worktrees,
+                "projects" => SidebarTab::Projects,
                 other => match tree_view(other) {
                     Some(view) => SidebarTab::Tree {
                         view,

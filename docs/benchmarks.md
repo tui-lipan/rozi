@@ -372,8 +372,10 @@ Repeat at 60, 120, 144 and 240 Hz with the same image and window geometry, and w
 producer against 60 and 120 Hz clients. The window is always local, so the runner removes inherited
 `SSH_*` variables; launched from an SSH shell, the client would otherwise select remote image
 transport and measure the composed path. `intervals_over_two_frames` counts host frame intervals
-longer than two configured frame periods. Percentiles can hide a stall that recurs in only part of
-the sample. The optional Linux
+longer than two configured frame periods. A frame that changes nothing still ends a synchronized
+update, so for graphics streams also check `presented_upload_interval_us` and
+`presented_upload_intervals_over_two_frames`, which time presented uploads. Percentiles can hide
+a stall that recurs in only part of the sample. The optional Linux
 interposer records only successful TTY writes from the selected executable; it also sees the
 framework's separately opened TTY descriptor. Its binary records contain a native-endian u64
 monotonic timestamp, u32 length and that many output bytes. This captures host traffic rather
@@ -401,6 +403,11 @@ uses the session control socket, which bypasses the client's input answer window
 splits each key into send to producer read, which includes starting the injecting process,
 producer echo to host write, and their total. Echoes are ordered output and reset pacing as
 real echoes do.
+
+`--mixed` adds the producer's periodic titles, text, query and image delete/recreate barriers, and
+`--resize-at` shrinks the owned window by 160x120 pixels through the window lab. A resize removes
+the producer's placements and Rozi redraws the pane. The baseline before this work took about
+200 ms to present the next upload as well, so compare that gap against the same baseline binary.
 
 `--hide-at` and `--reveal-at` switch the Rozi UI to workspace 2 and back, inside the owned window.
 `visibility` reports frames presented while hidden and producer writes in that time. On reveal it

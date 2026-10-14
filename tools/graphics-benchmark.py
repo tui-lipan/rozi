@@ -287,6 +287,7 @@ def benchmark(args):
                      "--ready-file", str(root / "producer-ready.json"),
                      "--write-log", str(root / "producer-writes.bin"),
                      *(["--echo-input"] if args.input_probes else []),
+                     *(["--mixed"] if args.mixed else []),
                      "--files", str(root / "frames"), "--report", str(root / "producer.json")]
     wrapper.write_text("import os,pathlib,time\n"
                        f"root=pathlib.Path({str(root)!r})\n"
@@ -377,7 +378,8 @@ def benchmark(args):
         schedule += [(at, action, None) for at, action in [
             (args.hide_at, "hide"), (args.reveal_at, "reveal"),
             (args.stall_follower_at, "stall"), (args.resume_follower_at, "resume"),
-            (args.stall_leader_at, "stall-leader"), (args.resume_leader_at, "resume-leader")] if at]
+            (args.stall_leader_at, "stall-leader"), (args.resume_leader_at, "resume-leader"),
+            (args.resize_at, "resize")] if at]
         if schedule:
             pane = str(json.loads(run([binary, "--socket", str(socket), "list-panes",
                                        "--format", "json"], env))["data"][0]["id"])
@@ -389,6 +391,11 @@ def benchmark(args):
                 visibility.append({"action": action, "ns": time.monotonic_ns()})
                 os.kill(client_pid if action.endswith("leader") else follower_pid,
                         signal.SIGSTOP if action.startswith("stall") else signal.SIGCONT)
+                continue
+            if action == "resize":
+                visibility.append({"action": action, "ns": time.monotonic_ns()})
+                run([*lab, "resize", "--width", str(args.width - 160),
+                     "--height", str(args.height - 120)])
                 continue
             if action != "probe":
                 # Another Rozi workspace hides the pane inside the owned window only.
@@ -433,6 +440,13 @@ def benchmark(args):
                 frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
                 report["producer"]["fixture_files"])
             report["latency"]["marked_uploads"] = len(marks)
+            # Frames that change nothing still end a synchronized update, so frame intervals can
+            # hide a visual stall; intervals between presented uploads cannot.
+            uploads = [mark for mark, _ in marks if started_ns <= mark <= ended_ns]
+            gaps = [(right - left) / 1000 for left, right in zip(uploads, uploads[1:])]
+            report["presented_upload_interval_us"] = percentiles(gaps)
+            report["presented_upload_intervals_over_two_frames"] = sum(
+                gap > 2e6 / args.fps for gap in gaps)
             if any(event["action"] in ("hide", "reveal") for event in visibility):
                 report["visibility"] = visibility_summary(
                     visibility, producer_writes(root / "producer-writes.bin"), marks)
@@ -486,6 +500,10 @@ def main():
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--input-probes", type=int, default=0,
                         help="send this many keys during the sample and time their echoes")
+    parser.add_argument("--mixed", action="store_true",
+                        help="add the producer's titles, text, queries and image delete/recreate")
+    parser.add_argument("--resize-at", type=float,
+                        help="seconds into the sample to shrink the owned window by 160x120 px")
     parser.add_argument("--hide-at", type=float,
                         help="seconds into the sample to switch the Rozi UI to workspace 2")
     parser.add_argument("--reveal-at", type=float,

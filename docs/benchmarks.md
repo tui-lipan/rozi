@@ -349,6 +349,39 @@ RSS. Pool creation happens before timing; no full-frame files are rewritten duri
 The producer skips missed cadence slots after blocked writes rather than emitting a catch-up burst.
 Its report counts completed producer writes; obtain presented FPS from successful host frames.
 
+### Owned Ghostty measurements
+
+`tools/graphics-benchmark.py` creates a private session and Ghostty window through the
+`ghostty-window-lab` helper. Build the selected binary first, then run measurements without Cargo
+or other CPU-intensive work. Use separate output directories for baseline and updated binaries:
+
+```bash
+cc -shared -fPIC -O2 -Wall -Wextra -Werror -o /tmp/graphics-wiretap.so \
+  tools/graphics-wiretap.c -ldl -pthread
+python3 tools/graphics-benchmark.py \
+  --binary /absolute/path/to/rozi \
+  --window-lab /absolute/path/to/window_lab.py \
+  --output /tmp/graphics-after-120 \
+  --wiretap /tmp/graphics-wiretap.so --fps 120 --producer-fps 240 --seconds 20
+```
+
+The runner waits for immutable fixture generation before timing, records binary identity,
+verified window geometry, process CPU/RSS, producer write counts and runtime metric snapshots,
+and stops its session before closing its owned window. It leaves results and fixtures for review.
+Repeat at 60, 120, 144 and 240 Hz with the same image and window geometry, and with a 240 Hz
+producer against 60 and 120 Hz clients. The window is always local, so the runner removes inherited
+`SSH_*` variables; launched from an SSH shell, the client would otherwise select remote image
+transport and measure the composed path. `intervals_over_two_frames` counts host frame intervals
+longer than two configured frame periods. Percentiles can hide a stall that recurs in only part of
+the sample. The optional Linux
+interposer records only successful TTY writes from the selected executable; it also sees the
+framework's separately opened TTY descriptor. Its binary records contain a native-endian u64
+monotonic timestamp, u32 length and that many output bytes. This captures host traffic rather
+than inferring it from uploads requested by the producer. The interposer adds measurement
+overhead; use it consistently on both sides of a comparison and run an uninstrumented control.
+GPU scanout and producer-to-presentation latency need separate measurements; host write counters
+do not establish those boundaries.
+
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and
 placement changes. The server's snapshot counts its authoritative parser mutations. DevTools

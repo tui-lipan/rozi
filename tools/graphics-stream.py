@@ -77,6 +77,9 @@ def run(options):
     width, height = options.width or size[2], options.height or size[3]
     packets, fixture_bytes = fixture_pool(root, width, height, options.mode,
                                           options.max_file_mib * 1024 * 1024)
+    if options.ready_file:
+        options.ready_file.write_text(json.dumps({"pid": os.getpid(), "files": str(root),
+                                                  "fixture_bytes": fixture_bytes}) + "\n")
     resize = [False]
     signal.signal(signal.SIGWINCH, lambda *_: resize.__setitem__(0, True))
     started = time.monotonic()
@@ -132,7 +135,7 @@ def run(options):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fps", type=int, choices=[30, 60, 120, 240], default=120)
+    parser.add_argument("--fps", type=int, choices=[30, 60, 120, 144, 240], default=120)
     parser.add_argument("--duration", type=float, default=10)
     parser.add_argument("--mode", choices=["unchanged", "moving", "whole"], default="moving")
     parser.add_argument("--mixed", action="store_true")
@@ -141,6 +144,7 @@ def main():
     parser.add_argument("--max-file-mib", type=int, default=128)
     parser.add_argument("--files", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--ready-file", type=Path)
     options = parser.parse_args()
     if options.duration <= 0 or options.max_file_mib <= 0 or any(
             value is not None and value <= 0 for value in [options.width, options.height]):

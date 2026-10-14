@@ -10,6 +10,10 @@ const DETECTION_WINDOW: Duration = Duration::from_millis(33);
 const DETECTION_FRAMES: u32 = 8;
 const PRESENTATION_WINDOW: usize = 2;
 const HISTORY_LIMIT: usize = 256;
+/// Bytes one credit may drain: the framework's maximum. A hold leaves the producer's output
+/// queued in the kernel oldest first, so a release takes the whole backlog and staging keeps only
+/// the newest replacement. A one-frame credit would present the oldest queued frame instead.
+const DRAIN_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Presenter {
@@ -23,7 +27,6 @@ pub(super) struct GraphicsPacer {
     candidate: Option<(Instant, u32)>,
     last_observation: Option<Instant>,
     streaming: bool,
-    sources: HashMap<(u32, u64), usize>,
     pending: VecDeque<(u64, (u32, u64))>,
     presenter: Option<Presenter>,
     deadline: Option<Instant>,
@@ -49,7 +52,7 @@ impl GraphicsPacer {
         self.read_in_flight = false;
     }
 
-    pub fn observe(&mut self, now: Instant, sequence: u64, class: OutputClass, bytes: usize) {
+    pub fn observe(&mut self, now: Instant, sequence: u64, class: OutputClass) {
         let OutputClass::IndependentGraphics {
             image, incarnation, ..
         } = class
@@ -72,7 +75,6 @@ impl GraphicsPacer {
         *count = count.saturating_add(1);
         self.streaming |=
             *count >= DETECTION_FRAMES && now.saturating_duration_since(*since) >= DETECTION_WINDOW;
-        self.sources.insert((image, incarnation), bytes.max(1));
         self.pending.push_back((sequence, (image, incarnation)));
         if self.pending.len() > HISTORY_LIMIT {
             self.pending.pop_front();
@@ -129,12 +131,7 @@ impl GraphicsPacer {
             }
         }
         ReadPolicy::Credit {
-            bytes: self
-                .sources
-                .values()
-                .copied()
-                .fold(0usize, usize::saturating_add)
-                .clamp(1, 8192),
+            bytes: DRAIN_BYTES,
             available,
         }
     }
@@ -200,13 +197,12 @@ mod tests {
         let now = Instant::now();
         let mut pacer = streaming(now - Duration::from_secs(1));
         pacer.input(now);
-        pacer.observe(now, 9, OutputClass::Ordered, 1);
+        pacer.observe(now, 9, OutputClass::Ordered);
         for sequence in 10..18 {
             pacer.observe(
                 now + Duration::from_millis((sequence - 10) * 5),
                 sequence,
                 independent(),
-                180,
             );
         }
         assert_eq!(
@@ -226,12 +222,7 @@ mod tests {
     fn streaming(now: Instant) -> GraphicsPacer {
         let mut pacer = GraphicsPacer::default();
         for n in 0..8 {
-            pacer.observe(
-                now + Duration::from_millis(n * 5),
-                n + 1,
-                independent(),
-                180,
-            );
+            pacer.observe(now + Duration::from_millis(n * 5), n + 1, independent());
         }
         pacer
     }
@@ -248,7 +239,7 @@ mod tests {
         ] {
             let now = Instant::now();
             let mut pacer = streaming(now);
-            pacer.observe(now + Duration::from_secs(1), 9, class, 200);
+            pacer.observe(now + Duration::from_secs(1), 9, class);
             assert_eq!(
                 pacer.policy(now + Duration::from_secs(1), None),
                 ReadPolicy::Open
@@ -270,7 +261,7 @@ mod tests {
         assert_eq!(
             pacer.policy(now + Duration::from_secs(1), presenter),
             ReadPolicy::Credit {
-                bytes: 180,
+                bytes: DRAIN_BYTES,
                 available: false
             }
         );

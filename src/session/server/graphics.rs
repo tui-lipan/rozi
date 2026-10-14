@@ -134,12 +134,8 @@ impl SessionServer {
         pane.graphics_pacer.read_completed(continuation);
         for transaction in transactions {
             let metadata = pane.next_output_metadata(output_class(transaction.class));
-            pane.graphics_pacer.observe(
-                now,
-                metadata.sequence,
-                metadata.class,
-                transaction.bytes.len(),
-            );
+            pane.graphics_pacer
+                .observe(now, metadata.sequence, metadata.class);
             staging.push(
                 pane_id,
                 wire_local(owner),

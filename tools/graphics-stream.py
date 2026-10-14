@@ -21,6 +21,7 @@ import struct
 import tempfile
 import termios
 import time
+import tty
 
 
 def write_all(fd, data):
@@ -100,9 +101,15 @@ def run(options):
     frames = wire_bytes = 0
     blocked_seconds = 0.0
     writes = []
+    echoes = []
     mixed_deadline = started + 1
     input_echoes = resize_events = 0
     write_all(1, b"\x1b[?25l\x1b[2J\x1b[H")
+    # Without canonical mode and kernel echo, a key reaches the producer at once and only its own
+    # tagged echo appears in the output.
+    saved_mode = termios.tcgetattr(0) if options.echo_input else None
+    if saved_mode:
+        tty.setcbreak(0)
     try:
         while time.monotonic() - started < options.duration:
             if resize[0]:
@@ -131,8 +138,27 @@ def run(options):
             wire_bytes += len(packet)
             frames += 1
             deadline = advance_deadline(deadline, after, interval)
-            time.sleep(max(0, deadline - time.monotonic()))
+            if options.echo_input:
+                # Wait on input instead of sleeping, so a key is answered without a frame's delay.
+                while (remaining := deadline - time.monotonic()) > 0:
+                    if select.select([0], [], [], remaining)[0]:
+                        read_ns = time.monotonic_ns()
+                        incoming = os.read(0, 4096)
+                        # Each echo gets a blank cell run below the image and restores the cursor,
+                        # which places the image: the image never moves, and a cell-diffing
+                        # renderer forwards the whole token.
+                        slot = len(echoes)
+                        row = 1 + math.ceil(height / max(1, size[3] / size[0])) + slot % 13
+                        column = 1 + 16 * (slot // 13 % 4)
+                        write_all(1, f"\x1b7\x1b[{row};{column}H".encode() + b"echo:"
+                                  + incoming.strip() + b";\x1b8")
+                        echoes.append({"input": incoming.strip().decode(errors="replace"),
+                                       "read_ns": read_ns, "echoed_ns": time.monotonic_ns()})
+            else:
+                time.sleep(max(0, deadline - time.monotonic()))
     finally:
+        if saved_mode:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved_mode)
         elapsed = time.monotonic() - started
         write_all(1, b"\x1b[?25h\r\nstream complete\r\n")
         report = dict(pid=os.getpid(), mode=options.mode, requested_fps=options.fps,
@@ -140,7 +166,8 @@ def run(options):
                       elapsed_seconds=elapsed, write_seconds=blocked_seconds,
                       kitty_bytes=wire_bytes, fixture_bytes=fixture_bytes,
                       fixture_files=len(packets), files=str(root), width=width, height=height,
-                      input_echoes=input_echoes, resize_events=resize_events)
+                      input_echoes=input_echoes or len(echoes), resize_events=resize_events,
+                      echoes=echoes)
         if options.write_log:
             options.write_log.write_bytes(b"".join(struct.pack("=QH", *entry) for entry in writes))
         if options.report:
@@ -155,6 +182,8 @@ def main():
     parser.add_argument("--duration", type=float, default=10)
     parser.add_argument("--mode", choices=["unchanged", "moving", "whole"], default="moving")
     parser.add_argument("--mixed", action="store_true")
+    parser.add_argument("--echo-input", action="store_true",
+                        help="echo stdin lines as plain text, with no other barriers")
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
     parser.add_argument("--max-file-mib", type=int, default=128)

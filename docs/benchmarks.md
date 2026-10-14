@@ -392,6 +392,16 @@ the frame carrying the upload. Composed or remote presentation sends pixels dire
 mark and reports no samples. A `t=t` APC split across `writev` buffers is not recognised; compare
 `marked_uploads` with the upload count.
 
+`--input-probes N` sends N keys during the sample. The producer then runs with `--echo-input`: its
+terminal is in cbreak mode, and it echoes each key as `echo:<key>;` at its own blank cell run
+below the image, restoring the cursor so the image never moves. `--input-via host` (the default)
+delivers single letters to the owned window with Hyprland's `send_shortcut`, without moving
+desktop focus, so a key takes Ghostty and the client's real input path. `--input-via control`
+uses the session control socket, which bypasses the client's input answer window. `input_echo`
+splits each key into send to producer read, which includes starting the injecting process,
+producer echo to host write, and their total. Echoes are ordered output and reset pacing as
+real echoes do.
+
 Framework counters are available under `terminal_graphics` in client and server runtime metrics.
 The client counts actual successful host frames, direct graphics presentations, native uploads and
 placement changes. The server's snapshot counts its authoritative parser mutations. DevTools

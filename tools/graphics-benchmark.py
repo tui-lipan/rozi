@@ -167,6 +167,34 @@ def latency_summary(writes, marks, ends, started, ended, pool):
             "latency_us": percentiles(latencies)}
 
 
+def echo_summary(probes, echoes, path):
+    """Time each probe's tagged echo through the producer to the host write that completes it.
+
+    `send_ns` precedes starting the CLI that injects the key, so the input leg includes its
+    process start-up; the output leg starts when the producer has written the echo.
+    """
+    wire, ends, times = bytearray(), [], []
+    for timestamp, data in wire_records(path):
+        wire.extend(data)
+        ends.append(len(wire))
+        times.append(timestamp)
+    echoed = {echo["input"]: echo for echo in echoes}
+    legs = {"send_to_producer_read_us": [], "producer_echo_to_host_us": [], "send_to_host_us": []}
+    missing = 0
+    for probe in probes:
+        echo = echoed.get(probe["token"])
+        found = wire.find(f"echo:{probe['token']};".encode())
+        if echo is None or found < 0:
+            missing += 1
+            continue
+        host = times[bisect.bisect_left(ends, found + len(probe["token"]) + 6)]
+        legs["send_to_producer_read_us"].append((echo["read_ns"] - probe["send_ns"]) / 1000)
+        legs["producer_echo_to_host_us"].append((host - echo["echoed_ns"]) / 1000)
+        legs["send_to_host_us"].append((host - probe["send_ns"]) / 1000)
+    return {"probes": len(probes), "missing": missing} | {
+        name: percentiles(values) for name, values in legs.items()}
+
+
 def isolated_environment(root):
     # The owned window is always local; an inherited SSH session would select remote transport.
     env = {key: value for key, value in os.environ.items()
@@ -203,6 +231,7 @@ def benchmark(args):
                      "--width", str(args.image_width), "--height", str(args.image_height),
                      "--ready-file", str(root / "producer-ready.json"),
                      "--write-log", str(root / "producer-writes.bin"),
+                     *(["--echo-input"] if args.input_probes else []),
                      "--files", str(root / "frames"), "--report", str(root / "producer.json")]
     wrapper.write_text("import os,pathlib,time\n"
                        f"root=pathlib.Path({str(root)!r})\n"
@@ -250,7 +279,26 @@ def benchmark(args):
         initial = {name: process_sample(pid) for name, pid in pids.items()}
         started = time.monotonic()
         started_ns = time.monotonic_ns()
-        time.sleep(args.seconds)
+        probes = []
+        if args.input_probes:
+            pane = str(json.loads(run([binary, "--socket", str(socket), "list-panes",
+                                       "--format", "json"], env))["data"][0]["id"])
+            window_class = json.loads((root / "window.json").read_text())["class"]
+            spacing = args.seconds / (args.input_probes + 1)
+            for number in range(args.input_probes):
+                time.sleep(max(0, started + spacing * (number + 1) - time.monotonic()))
+                # A host key arrives as one keystroke, so its token is one letter.
+                token = chr(ord("a") + number % 26) if args.input_via == "host" else f"k{number}"
+                probes.append({"token": token, "send_ns": time.monotonic_ns()})
+                if args.input_via == "host":
+                    # Delivered to the owned window by class, without moving desktop focus.
+                    shortcut = '{mods="",key=%s,window=%s}' % (
+                        json.dumps(token), json.dumps(f"class:{window_class}"))
+                    run(["hyprctl", "eval", f"hl.dispatch(hl.dsp.send_shortcut({shortcut}))"])
+                else:
+                    run([binary, "--socket", str(socket), "send-text", "--target", pane, token],
+                        env)
+        time.sleep(max(0, started + args.seconds - time.monotonic()))
         ended_ns = time.monotonic_ns()
         elapsed = time.monotonic() - started
         final = {name: process_sample(pid) for name, pid in pids.items()}
@@ -276,6 +324,9 @@ def benchmark(args):
                 frame_ends(root / "host-wire.bin"), started_ns, ended_ns,
                 report["producer"]["fixture_files"])
             report["latency"]["marked_uploads"] = len(marks)
+            if probes:
+                report["input_echo"] = echo_summary(
+                    probes, report["producer"]["echoes"], root / "host-wire.bin")
         (root / "result.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"result": str(root / "result.json"), "seconds": elapsed}))
     finally:
@@ -294,6 +345,11 @@ def main():
     parser.add_argument("--fps", type=int, choices=[60, 120, 144, 240], default=120)
     parser.add_argument("--producer-fps", type=int, choices=[30, 60, 120, 144, 240], default=240)
     parser.add_argument("--seconds", type=float, default=20)
+    parser.add_argument("--input-probes", type=int, default=0,
+                        help="send this many keys during the sample and time their echoes")
+    parser.add_argument("--input-via", choices=["control", "host"], default="host",
+                        help="host keys go through Ghostty and the client's input path; control "
+                             "keys enter through the session control socket")
     parser.add_argument("--mode", choices=["unchanged", "moving", "whole"], default="moving")
     parser.add_argument("--workspace", type=int, default=2)
     parser.add_argument("--width", type=int, default=980)
@@ -303,6 +359,8 @@ def main():
     args = parser.parse_args()
     if args.seconds <= 0:
         parser.error("--seconds must be positive")
+    if args.input_via == "host" and args.input_probes > 26:
+        parser.error("host input probes use distinct letters; at most 26")
     benchmark(args)
 
 

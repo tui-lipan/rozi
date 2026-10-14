@@ -4,7 +4,7 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest report is [Native Kitty patch forwarding, 2026-10-11](audits/2026-10-11-native-kitty-patches.md).
+The latest report is [Graphics pipeline acceptance, 2026-10-14](audits/2026-10-14-graphics-pipeline.md).
 
 Use the [benchmark guide](../benchmarks.md) for permanent harness commands and definitions. Use the
 [audit playbook](audit-playbook.md) to run and record a new audit.
@@ -13,6 +13,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-10-14 | `c31f5499` with framework `49ae792`; composed fix `746eaa2` | every client frame presented at 60–240 Hz (baseline dropped 3–9%, browser patches up to 64%); host traffic 11–133× lower; five pipeline defects fixed during the audit; TuiOS capped near 60 frames/s in comparison | [Graphics pipeline acceptance](audits/2026-10-14-graphics-pipeline.md) |
 | 2026-10-11 | `60742a5a` with framework `f1e6085b` and `81392dec` | direct placement reduces generated-workload composition; Raffles lookup fix reduces client CPU by 55%; shipped in framework 0.22.2; generated file-reuse limitation recorded in audit | [Native Kitty patch forwarding](audits/2026-10-11-native-kitty-patches.md) |
 | 2026-10-08 | `b5996d8d`; selected comparison with `v0.0.29` | 139 timing cases, 109 memory scenarios, allocation/effect probes, replay-memory checks, and saturation recovery passed; no material regression in eight compared cases | [Full benchmark baseline on Ryzen 7 9700X](audits/2026-10-08.md) |
 | 2026-10-08 | `8d7c82a8` plus local framework and rozi changes | 475×116 body + title client CPU drops 2.3% to 0.2% of one core; sparse snapshot time drops 87–96%; framework release pending | [Active TUI improvements](audits/2026-10-08-active-tui-improvements.md) |

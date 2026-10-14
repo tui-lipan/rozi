@@ -731,7 +731,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::capture_wait::input_marked(ctx, token)
         }
         Msg::CaptureWaitTick => crate::ops::capture_wait::tick(ctx),
-        Msg::SessionRuntimeMetrics { epoch, metrics: _ } => {
+        Msg::SessionRuntimeMetrics { epoch } => {
             runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
         }
         Msg::FlushPaneResizes { epoch, generation } => {

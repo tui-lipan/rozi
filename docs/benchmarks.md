@@ -348,3 +348,10 @@ Remove that directory after all clients finish. Report fixture/page-cache memory
 RSS. Pool creation happens before timing; no full-frame files are rewritten during the stream.
 The producer skips missed cadence slots after blocked writes rather than emitting a catch-up burst.
 Its report counts completed producer writes; obtain presented FPS from successful host frames.
+
+Framework counters are available under `terminal_graphics` in client and server runtime metrics.
+The client counts actual successful host frames, direct graphics presentations, native uploads and
+placement changes. The server's snapshot counts its authoritative parser mutations. DevTools
+includes native-scene operations, graphics command bytes, region merging and host-frame interval
+percentiles. Percentiles retain the newest 1024 successful intervals; measure during sustained
+output, since an idle gap is a real interval too. Composed and native host frames both participate.

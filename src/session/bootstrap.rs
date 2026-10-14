@@ -821,9 +821,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             ServerMessage::InputMarked { token } => Msg::SessionInputMarked { epoch, token },
-            ServerMessage::RuntimeMetrics { metrics } => {
-                Msg::SessionRuntimeMetrics { epoch, metrics }
-            }
+            ServerMessage::RuntimeMetrics { .. } => Msg::SessionRuntimeMetrics { epoch },
             ServerMessage::RecordingEnded { stopped } => {
                 Msg::SessionRecordingEnded { epoch, stopped }
             }

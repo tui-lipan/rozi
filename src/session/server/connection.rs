@@ -932,7 +932,7 @@ impl SessionServer {
                     vec![(
                         Target::Client(client_id),
                         ServerMessage::RuntimeMetrics {
-                            metrics: self.runtime_metrics(),
+                            metrics: Box::new(self.runtime_metrics()),
                         },
                     )]
                 } else {

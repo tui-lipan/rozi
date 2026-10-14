@@ -698,7 +698,7 @@ pub enum ServerMessage {
     },
     /// Server-owned resource sample, requested by a protocol-18 client.
     RuntimeMetrics {
-        metrics: ServerRuntimeMetrics,
+        metrics: Box<ServerRuntimeMetrics>,
     },
     /// A pane recording ended without being stopped: it reached a limit, writing failed, or its
     /// pane exited or closed. Broadcast so a UI can say so; a stopped recording already answered

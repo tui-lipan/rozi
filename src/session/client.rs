@@ -1276,8 +1276,9 @@ fn handle_transport_frame(
     if let Frame::Control(ServerMessage::RuntimeMetrics { metrics }) = frame
         && let Some(cache) = latest_server_metrics
     {
-        *cache.lock().expect("server metrics cache poisoned") =
-            Some(TimedServerRuntimeMetrics::received(metrics.clone()));
+        *cache.lock().expect("server metrics cache poisoned") = Some(
+            TimedServerRuntimeMetrics::received(metrics.as_ref().clone()),
+        );
         if let Some(pending) = metrics_request_pending {
             pending.store(false, Ordering::Release);
         }

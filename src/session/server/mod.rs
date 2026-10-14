@@ -1854,6 +1854,7 @@ impl SessionServer {
                     .sum::<u64>(),
         };
         ServerRuntimeMetrics {
+            terminal_graphics: tui_lipan::terminal_graphics_metrics(),
             sampled_at_unix_ms: unix_time_millis(),
             graphics: self.graphics_pacing_metrics(),
             pty_ingress: QueueMetrics {

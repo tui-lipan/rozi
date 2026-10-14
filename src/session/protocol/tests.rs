@@ -366,10 +366,10 @@ fn only_the_exact_version_negotiates() {
     );
 
     let sample = ServerMessage::RuntimeMetrics {
-        metrics: ServerRuntimeMetrics {
+        metrics: Box::new(ServerRuntimeMetrics {
             sampled_at_unix_ms: 42,
             ..ServerRuntimeMetrics::default()
-        },
+        }),
     };
     let mut bytes = Vec::new();
     write_frame(&mut bytes, &sample).unwrap();

@@ -446,9 +446,13 @@
         },
         "stale": {
           "type": "boolean"
+        },
+        "terminal_graphics": {
+          "$ref": "#/$defs/TerminalGraphicsMetrics"
         }
       },
       "required": [
+        "terminal_graphics",
         "sampled_at_unix_ms",
         "pty_ingress",
         "client_outboxes",
@@ -5863,9 +5867,13 @@
               "type": "null"
             }
           ]
+        },
+        "terminal_graphics": {
+          "$ref": "#/$defs/TerminalGraphicsMetrics"
         }
       },
       "required": [
+        "terminal_graphics",
         "sampled_at_unix_ms",
         "orphan_output"
       ],
@@ -6313,6 +6321,211 @@
         "dashed"
       ],
       "type": "string"
+    },
+    "TerminalGraphicsMetrics": {
+      "properties": {
+        "compose_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delete_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frame_interval_max_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frame_interval_p50_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frame_interval_p95_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frame_interval_p99_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_composed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_failed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_requested": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_written": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "graphics_direct": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "graphics_widened_normal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "graphics_widened_terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host_write_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutations_full": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutations_graphics": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutations_metadata": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutations_none": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mutations_rows": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placement_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placements_created": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placements_deleted": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placements_desired": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placements_unchanged": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placements_updated": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "regions_after_merge": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "regions_before_merge": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources_created": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources_retired": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources_unchanged": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources_updated": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources_uploaded": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "upload_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutations_none",
+        "mutations_metadata",
+        "mutations_graphics",
+        "mutations_rows",
+        "mutations_full",
+        "sources_created",
+        "sources_uploaded",
+        "sources_unchanged",
+        "sources_updated",
+        "sources_retired",
+        "placements_desired",
+        "placements_created",
+        "placements_unchanged",
+        "placements_updated",
+        "placements_deleted",
+        "regions_before_merge",
+        "regions_after_merge",
+        "graphics_direct",
+        "graphics_widened_terminal",
+        "graphics_widened_normal",
+        "upload_bytes",
+        "placement_bytes",
+        "delete_bytes",
+        "frames_requested",
+        "frames_composed",
+        "frames_written",
+        "frames_failed",
+        "compose_us",
+        "host_write_us",
+        "frame_interval_p50_us",
+        "frame_interval_p95_us",
+        "frame_interval_p99_us",
+        "frame_interval_max_us"
+      ],
+      "type": "object"
     },
     "UiCapture": {
       "description": "The whole client's frame, as `capture-ui` reports it.",

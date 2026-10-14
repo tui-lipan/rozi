@@ -304,6 +304,9 @@ open and `particles` to close. Both default to `scale`. The deprecated `pane_sty
 each explicit new key overrides it independently. Changing either style in Settings saves both
 resolved choices and removes the legacy key, preserving the other action's style.
 
+With Kitty graphics, Portal and Scan reveal and hide pictures along with the text, leaving their
+moving edge visible. Scale and Slide clip pictures to the pane's moving window.
+
 An `off` style shows or hides a pane at once, with no fade. Opening with `off` also skips the spawn
 delay. `spawn`, `close`, and `enabled` still decide whether neighboring panes animate, and they
 still reflow over `geometry_ms`.
@@ -312,7 +315,8 @@ still reflow over `geometry_ms`.
 land. Opening takes `geometry_ms` (220 ms by default). Closing bursts fragments outward before
 gravity pulls them down. Sparks cool and disappear individually, with a few lasting longer.
 Closing takes four times `geometry_ms` (880 ms by default). Fragments can travel over neighboring
-panes; the terminal screen stays at its final size throughout. This style also applies to floating
+panes; the terminal screen stays at its final size throughout. With Kitty graphics, pictures
+reveal and dissolve in the same patches as the pane contents. This style also applies to floating
 panes, popups, and scratch panes. Particles run at up to 30 FPS; a lower `frame_rate` also lowers
 that cadence. Pane movement still follows `frame_rate`.
 

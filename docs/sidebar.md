@@ -184,7 +184,8 @@ Files and Git follow the global `nerd_icons` setting. When enabled, they show co
 and Nerd Font Git marks, hide expansion arrows, and indent two cells per level. When disabled,
 they hide file icons, show Unicode expansion arrows and text Git marks, and indent one cell per
 level. Both modes use Branch guides with no gap after guides or arrows; file icons have a one-cell
-gap before the label. Remove the old per-tab `icons` option from your configuration.
+gap before the label. File-icon colors come from the active theme's `file_icons` palette, and
+Unicode arrows use its muted color. Remove the old per-tab `icons` option from your configuration.
 
 Activating a file runs the tab's `on_click` action. By default, that types the path into the focused
 pane without pressing `Enter`.

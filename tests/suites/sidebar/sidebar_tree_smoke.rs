@@ -203,7 +203,23 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 "no Nerd icons in Unicode mode: {unicode:?}"
             );
 
+            let frame = backend.capture_frame();
+            let (y, row) = frame
+                .to_fixed_grid_lines()
+                .into_iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("└▶src"))
+                .unwrap();
+            let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
+            assert_eq!(
+                frame.cell(arrow_x as u16, y as u16).fg,
+                backend.state().theme.muted.fg.unwrap().color(),
+                "arrows use the muted theme color"
+            );
+
             // The global switch changes the mounted tree immediately, without a per-tab option.
+            let icon_color = tui_lipan::prelude::Color::hex_u24(0x35b5a9);
+            backend.state_mut().theme.file_icons.blue = icon_color;
             backend.state_mut().config.nerd_icons = true;
             backend.render();
             let nerd = sidebar_rows(&backend, 32);
@@ -221,6 +237,11 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 .find(|(_, row)| row.contains("└─ src"))
                 .unwrap();
             let icon_x = row.chars().position(|ch| ch == '').unwrap();
+            assert_eq!(
+                frame.cell(icon_x as u16, y as u16).fg,
+                icon_color,
+                "directory icon uses the active theme's file-icon palette"
+            );
             assert_ne!(
                 frame.cell(icon_x as u16, y as u16).fg,
                 frame.cell((icon_x + 2) as u16, y as u16).fg,

@@ -21,6 +21,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
             vec![
                 ("Theme", current_theme_label(ctx), Theme),
                 (
+                    "Cursor blink",
+                    ctx.state.config.cursor.blink.label().to_string(),
+                    CycleCursorBlink,
+                ),
+                (
                     "Nerd icons",
                     enabled_status(ctx.state.config.nerd_icons),
                     ToggleNerdIcons,

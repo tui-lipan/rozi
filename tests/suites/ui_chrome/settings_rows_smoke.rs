@@ -252,6 +252,7 @@ fn settings_all_keeps_every_control_available() {
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
         for label in [
             "Theme",
+            "Cursor blink",
             "Play animations",
             "Workspace switching",
             "Session switching",
@@ -1152,7 +1153,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 19, "Pane close"),
+            (SettingsTab::General, 20, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
@@ -1386,5 +1387,27 @@ fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() 
             checked >= 10,
             "cover animations, alerts, input, clipboard, and sessions"
         );
+    });
+}
+
+#[test]
+fn settings_caret_obeys_global_blink_policy_through_timer_ticks() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 35);
+        for (policy, blinking) in [
+            (rozi::config::CursorBlink::Static, false),
+            (rozi::config::CursorBlink::Blinking, true),
+        ] {
+            backend.state_mut().config.cursor.blink = policy;
+            backend.render();
+            for _ in 0..4 {
+                backend.advance(std::time::Duration::from_millis(500));
+                let caret = backend
+                    .capture_frame()
+                    .cursor
+                    .expect("Settings search caret");
+                assert_eq!(caret.blinking, blinking);
+            }
+        }
     });
 }

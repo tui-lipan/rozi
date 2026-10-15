@@ -1289,6 +1289,9 @@ pub(crate) fn pane_element(
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
         );
     }
+    if let Some(blinking) = ctx.state.config.cursor.blink.override_blinking() {
+        terminal_widget = terminal_widget.cursor_blinking(blinking);
+    }
     if let Some(caret_color) = theme.caret.color {
         terminal_widget = terminal_widget.caret_color(caret_color);
     }

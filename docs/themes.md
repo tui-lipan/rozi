@@ -143,7 +143,7 @@ The other top-level fields are:
 | `extends` | preset id |
 | `focus_decoration` | boolean |
 | `border_active` | color |
-| `caret` | `shape`, `color` |
+| `caret` | `shape`, `color`, `blinking` |
 | `surface` | `panel`, `element`, `menu`, `backdrop` |
 | `status` | `success`, `warning`, `error`, `info` |
 | `file_icons` | `azure`, `blue`, `cyan`, `green`, `grey`, `orange`, `purple`, `red`, `yellow` |
@@ -159,7 +159,11 @@ The other top-level fields are:
 | `scrollbar` | `track`, `thumb`, `thumb_focus` colors |
 | `splitter` | `hover`, `active` colors |
 
-`heading_styles` is an array of six style tables. Caret `shape` is `block`, `bar`, or `underline`.
+`heading_styles` is an array of six style tables. Caret `shape` is `block`, `bar`, `underline`, or `terminal_default`.
+
+The global [`cursor.blink`](configuration.md#cursor-blinking) preference takes precedence over
+the theme blink value. With `inherit`, the theme blink value is the fallback when the host terminal
+does not report its cursor preference.
 
 ### Style fields
 

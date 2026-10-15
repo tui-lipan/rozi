@@ -1,5 +1,6 @@
 mod appearance;
 mod commands;
+mod cursor;
 mod extensions;
 mod file;
 mod input;
@@ -15,6 +16,7 @@ mod unknown_keys;
 mod workbar;
 
 pub use appearance::*;
+pub use cursor::*;
 pub use extensions::placement::{
     ExtensionPlacements, LaunchTemplate, PlacedCommand, PlacedService, PlacedTab, Placement,
     SharedPlacements,

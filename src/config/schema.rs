@@ -1254,6 +1254,7 @@ pub struct Config {
     /// File-kind icons in the sidebar still need the per-tab `icons` flag as well. On by default
     /// so existing installs keep their current look.
     pub nerd_icons: bool,
+    pub cursor: super::CursorConfig,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
     pub theme: ThemeConfig,
@@ -2283,6 +2284,7 @@ impl Default for Config {
             scrollback: 5000,
             frame_rate: DEFAULT_FRAME_RATE,
             nerd_icons: true,
+            cursor: super::CursorConfig::default(),
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
             theme: ThemeConfig::default(),

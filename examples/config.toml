@@ -44,6 +44,11 @@
 # the icon. File-kind icons in the sidebar still need a tab's icons = true.
 #nerd_icons = true
 
+[cursor]
+# "inherit" follows the host in pickers and honors programs in panes.
+# "static" and "blinking" override blinking everywhere, including program requests.
+#blink = "inherit"
+
 [shell_integration]
 # "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;
 # "off" leaves shell startup completely untouched.

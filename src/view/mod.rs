@@ -583,9 +583,13 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // pushed off the far edge of the screen.
     let shell = sidebar::docking_shell(ctx, viewport, content, dialog_dim, ui_flash);
 
-    ThemeProvider::new(ctx.state.theme.clone())
-        .child(shell)
-        .into()
+    ThemeProvider::new(crate::ops::theme::cursor_theme(
+        ctx.state.theme.clone(),
+        ctx.state.config.cursor.blink,
+        ctx.host_cursor_style(),
+    ))
+    .child(shell)
+    .into()
 }
 
 /// The canvas bounds to render the active workspace into. A follower returns the controller's

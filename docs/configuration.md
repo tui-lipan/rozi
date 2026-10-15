@@ -61,6 +61,21 @@ arguments, honoring quotes around a path that contains spaces (`"/opt/my editor/
 and passes the config path as a separate argument. Shell syntax in `EDITOR` — pipes, redirection,
 variable expansion — is not interpreted.
 
+## Cursor blinking
+
+Choose **Cursor blink** in Settings under General, or set `[cursor]` in `config.toml`.
+Changes apply immediately to pickers, prompts, text editors, and terminal panes.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cursor.blink` | string | `"inherit"` | `inherit`, `static`, or `blinking`. |
+
+`inherit` uses the host terminal's startup blink preference for editable controls. Terminal panes
+inherit the host default until a program requests its own cursor style. If the host does not report
+its preference, editable controls use the theme default and panes use the framework default.
+`static` and `blinking` override blink requests throughout rozi. Programs still control cursor
+shape and visibility. This preference is independent of the animation switch.
+
 ## Reloading
 
 rozi watches the config file and applies changes without replacing panes or workspaces. If the new

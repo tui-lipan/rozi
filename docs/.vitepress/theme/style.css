@@ -960,6 +960,13 @@ body {
     line-height: var(--rozi-prose-leading);
     margin-bottom: 24px;
 }
+/* Body text is the muted tone, and a monospace face barely thickens at 700,
+   so weight alone does not lift a term off the line. Bold takes the heading
+   colour instead. */
+.vp-doc strong {
+    color: var(--vp-c-text-1);
+    font-weight: 700;
+}
 .vp-doc ul,
 .vp-doc ol {
     padding-left: 22px;

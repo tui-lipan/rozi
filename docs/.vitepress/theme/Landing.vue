@@ -34,22 +34,9 @@ import posterImages from "../../assets/captures/image-effects-poster.webp";
 /* The pre-paint script in config.ts has already decided this and hidden the
    page accordingly; reading its class back is what keeps the two in step. */
 const introPlaying = ref(false);
-/* The capture clip is left paused, with controls, for anybody who asked for
-   less motion; everybody else sees it loop. Started here rather than with
-   `autoplay` so the server-rendered page never plays it before that is known. */
-const captureVideo = ref<HTMLVideoElement | null>(null);
-const captureStill = ref(false);
 onMounted(() => {
   introPlaying.value =
     document.documentElement.classList.contains("rozi-intro-pending");
-  captureStill.value = window.matchMedia(
-    "(prefers-reduced-motion: reduce)",
-  ).matches;
-  if (!captureStill.value) {
-    captureVideo.value?.play().catch(() => {
-      captureStill.value = true;
-    });
-  }
 });
 
 // From Cargo.toml via config.ts - see NavTitleMeta.vue.
@@ -419,6 +406,15 @@ workspace_ms = 220`,
 ];
 const motionClip = ref(0);
 const motionCode = computed(() => highlightToml(MOTION_CLIPS[motionClip.value].code));
+
+const CAPTURE_CLIP = [
+  {
+    src: captureClip,
+    poster: capturePoster,
+    label: "Recording",
+    alt: "A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops.",
+  },
+];
 
 const IMAGE_CLIP = [
   {
@@ -869,22 +865,7 @@ rozi record export ~/demo.rozirec --to png-frames frames</code></pre>
               >Recording →</a
             >
           </div>
-          <figure class="lp-shot">
-            <video
-              ref="captureVideo"
-              :src="captureClip"
-              :poster="capturePoster"
-              :controls="captureStill"
-              width="1920"
-              height="1088"
-              muted
-              loop
-              playsinline
-              preload="metadata"
-              aria-label="A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops."
-            ></video>
-            <figcaption>Recorded by rozi itself.</figcaption>
-          </figure>
+          <ClipGallery :clips="CAPTURE_CLIP" title="~/src/rozi — api" />
         </div>
       </section>
 

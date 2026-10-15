@@ -773,26 +773,6 @@ html.rozi-intro-pending .lp {
 .lp-more-next {
     margin-left: 20px;
 }
-.lp-shot {
-    margin: 0;
-}
-.lp-shot video {
-    display: block;
-    width: 100%;
-    height: auto;
-    border: 1px solid var(--vp-c-border);
-    border-radius: 4px;
-    background: #06070f;
-}
-.lp-shot figcaption {
-    margin-top: 10px;
-    font-size: 12px;
-    color: var(--vp-c-text-3);
-}
-.lp-shot figcaption code {
-    font-size: 11.5px;
-}
-
 /* ── Two-column band: keys + config ──────────────────────────────────── */
 
 .lp-two {

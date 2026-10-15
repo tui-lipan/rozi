@@ -8,6 +8,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
  * A clip plays, muted and looping, only while the frame is on screen. A reader who prefers reduced
  * motion gets the poster and the player's controls instead, so nothing moves unless they start it.
  *
+ * Every clip is a recording rozi made of itself, and the title bar says so, out of the picture's
+ * way.
+ *
  * `v-model:active` shares the selected clip's index, so a page can show its config beside the frame.
  */
 type Clip = { src: string; poster: string; label: string; alt: string };
@@ -95,6 +98,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <div class="rz-gallery-bar">
         <span class="rz-gallery-dots" aria-hidden="true"><i /><i /><i /></span>
         <span class="rz-gallery-title">{{ title }}</span>
+        <span class="rz-clips-badge"><i aria-hidden="true" />recorded by rozi</span>
       </div>
       <div class="rz-gallery-stage rz-clips-stage">
         <video

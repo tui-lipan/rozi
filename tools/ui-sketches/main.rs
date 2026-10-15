@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 11] = [
+const SCENARIOS: [(&str, &str, fn()); 13] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -70,6 +70,16 @@ const SCENARIOS: [(&str, &str, fn()); 11] = [
         "workbar-alerts",
         "workspace-tab alert markers at both ends of the breathe, and hovered",
         workbar_alerts,
+    ),
+    (
+        "sidebar-files",
+        "Files tree with global Nerd icons enabled and disabled",
+        sidebar_files,
+    ),
+    (
+        "sidebar-projects",
+        "compact project trees, long branches, status icons, and collapsed rows",
+        sidebar_projects,
     ),
     (
         "sidebar-worktrees",
@@ -749,6 +759,7 @@ fn agent_picker() {
     }
     backend.state_mut().local_agent_snapshot = Some(rozi::session::discovery::LocalAgentSnapshot {
         sessions: Vec::new(),
+        projects: Vec::new(),
         agents: vec![rozi::session::protocol::AgentSummary {
             session: "backend".into(),
             pane: 9,
@@ -1100,4 +1111,175 @@ fn session_picker_no_results() {
             );
         }
     }
+}
+
+fn sidebar_projects() {
+    use rozi::session::discovery::LocalAgentSnapshot;
+    use rozi::session::protocol::{AgentSummary, ProjectSummary};
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.sidebar.panels.truncate(1);
+        state.sidebar.panels[0].tabs = vec![SidebarTabId::new("projects")];
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("projects"));
+        state.config.sidebar.tabs = vec![SidebarTab::Projects];
+        state.current_mut().session_name = Some("eph-sketch".into());
+        let mut pane = live_pane(1);
+        pane.terminal.project_root = Some("/src/rozi".into());
+        pane.terminal.git_branch = Some("feat/cursor-blink".into());
+        let mut second = live_pane(3);
+        second.terminal.project_root = pane.terminal.project_root.clone();
+        second.terminal.git_branch = pane.terminal.git_branch.clone();
+        state.current_mut().workspaces[0].panes = vec![pane, second];
+        state.current_mut().focused_pane = Some(1);
+        state.local_agent_snapshot = Some(LocalAgentSnapshot {
+            sessions: Vec::new(),
+            agents: Vec::new(),
+            projects: vec![ProjectSummary {
+                session: "eph-other".into(),
+                root: "/src/tui-lipan".into(),
+                repository: None,
+                branch: Some("fix/cursor-blink".into()),
+                panes: vec![2],
+                rows: Vec::new(),
+            }],
+        });
+    }
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 24));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-projects-{width}"));
+    }
+    {
+        let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
+        snapshot.projects[0].branch = Some("fix/long-branch-name-with-unicode-修正".into());
+        snapshot.agents.push(AgentSummary {
+            session: "eph-other".into(),
+            pane: 2,
+            generation: 0,
+            row: None,
+            agent: "codex".into(),
+            label: "Codex".into(),
+            state: "blocked".into(),
+            changed_at: 0,
+            launch: 0,
+        });
+    }
+    backend.state_mut().config.sidebar.layout.left.width = 32;
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-status");
+    backend.state_mut().config.nerd_icons = false;
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-fallback");
+    let row = backend
+        .capture_frame()
+        .to_fixed_grid_lines()
+        .iter()
+        .position(|line| line.contains("tui-lipan"))
+        .expect("project row") as u16;
+    for kind in [
+        MouseKind::Down(tui_lipan::core::event::MouseButton::Left),
+        MouseKind::Up(tui_lipan::core::event::MouseButton::Left),
+    ] {
+        backend
+            .send_mouse(MouseEvent {
+                x: 1,
+                y: row,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+    }
+    for _ in 0..4 {
+        backend.render();
+        let _ = backend.pump();
+    }
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-collapsed");
+    backend.state_mut().current_mut().workspaces[0]
+        .panes
+        .clear();
+    backend.state_mut().local_agent_snapshot = None;
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-empty");
+}
+
+fn sidebar_files() {
+    use rozi::config::{SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeView};
+
+    let root = std::env::temp_dir().join(format!("rozi-filetree-sketch-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    for file in [
+        "Cargo.toml",
+        "README.md",
+        "docs/components.md",
+        "src/main.rs",
+    ] {
+        std::fs::write(root.join(file), "// sketch fixture\n").unwrap();
+    }
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.show_session_picker = false;
+        state.session_picker = None;
+        state.sidebar.shown = [true, false];
+        let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
+        config.show_hidden = false;
+        state.config.sidebar.tabs = vec![SidebarTab::Tree {
+            view: SidebarTreeView::Files,
+            config,
+        }];
+        state.sidebar.panels[0].tabs = vec![SidebarTabId::new("files")];
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("files"));
+        state.sidebar.tree_expanded.insert(
+            SidebarTabId::new("files"),
+            [root.join("docs").to_string_lossy().into_owned()]
+                .into_iter()
+                .collect(),
+        );
+        let mut pane = live_pane(1);
+        pane.terminal.cwd = Some(root.to_string_lossy().into_owned());
+        state.current_mut().workspaces[0].panes = vec![pane];
+        state.current_mut().focused_pane = Some(1);
+        state.current_mut().workspaces[0].focused_pane = Some(1);
+    }
+    backend.set_viewport(viewport(100, 30));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        backend.render();
+        let _ = backend.pump();
+        if backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .join("\n")
+            .contains("components.md")
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "file tree fixture did not load"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for nerd in [true, false] {
+        backend.state_mut().config.nerd_icons = nerd;
+        for (width, height) in [(64, 20), (120, 34)] {
+            backend.set_viewport(viewport(width, height));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!(
+                    "sidebar-files-{}-{width}x{height}",
+                    if nerd { "nerd" } else { "unicode" }
+                ),
+            );
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }

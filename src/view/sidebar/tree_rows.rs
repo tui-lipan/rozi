@@ -11,13 +11,13 @@ use super::row::{Row, RowTree, SidebarRow};
 use crate::AppRoot;
 use crate::state::{SidebarTone, TreeItem, TreeLine};
 
-/// Cells per tree level. Two keeps a deep tree inside a 32-column sidebar.
-const INDENT: u16 = 2;
+/// One cell per level leaves room for branch and session names.
+const INDENT: u16 = 1;
 
 fn guides(ctx: &Context<AppRoot>) -> TreeGuides {
-    TreeGuides::new(IndentStyle::Short)
+    TreeGuides::new(IndentStyle::Branch)
         .indent(INDENT)
-        .guide_style(Style::new().fg(super::fill(ctx).elevate_by(0.3)))
+        .guide_style(Style::new().fg(super::fill(ctx).elevate_by(0.15)))
 }
 
 pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<SidebarRow> {
@@ -44,7 +44,6 @@ pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<Sid
                 TreeItem::Loading(branch) => {
                     let row = Row::new("Loading…")
                         .title_style(super::super::fg_only(&ctx.state.theme.muted))
-                        .glyph(blank())
                         .tree(RowTree {
                             first: guides.spans(&branch, max_depth),
                             rest: Vec::new(),
@@ -64,10 +63,6 @@ pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<Sid
             }
         })
         .collect()
-}
-
-fn blank() -> Element {
-    Text::new(" ").height(Length::Px(1)).into()
 }
 
 fn tree_row(
@@ -96,7 +91,6 @@ fn tree_row(
     );
     let mut row = Row::new(content.label)
         .active(content.active)
-        .glyph(glyph)
         .title_style(title_style)
         .tree(RowTree {
             first: guides.spans(&line.branch, max_depth),
@@ -104,6 +98,9 @@ fn tree_row(
             disclosure: line.expandable.then_some(line.expanded),
             reserve_disclosure: reserve,
         });
+    if let Some(glyph) = glyph {
+        row = row.glyph(glyph);
+    }
     if let Some(description) = content.description {
         row = row.badge_text(description, muted.dim());
     }
@@ -139,16 +136,21 @@ fn tree_row(
 }
 
 /// The glyph and color a tone shows. `None` color for tones that draw nothing.
-pub(super) fn tone_glyph(ctx: &Context<AppRoot>, tone: SidebarTone) -> (Element, Option<Color>) {
+pub(super) fn tone_glyph(
+    ctx: &Context<AppRoot>,
+    tone: SidebarTone,
+) -> (Option<Element>, Option<Color>) {
     let status = &ctx.state.theme.status;
     let (glyph, color) = match tone {
-        SidebarTone::Normal | SidebarTone::Muted => return (blank(), None),
+        SidebarTone::Normal | SidebarTone::Muted => return (None, None),
         SidebarTone::Working => {
             return (
-                Spinner::new()
-                    .style(Style::new().fg(status.info))
-                    .height(Length::Px(1))
-                    .into(),
+                Some(
+                    Spinner::new()
+                        .style(Style::new().fg(status.info))
+                        .height(Length::Px(1))
+                        .into(),
+                ),
                 Some(status.info),
             );
         }
@@ -159,10 +161,12 @@ pub(super) fn tone_glyph(ctx: &Context<AppRoot>, tone: SidebarTone) -> (Element,
         SidebarTone::Error => ("×", status.error),
     };
     (
-        Text::new(glyph)
-            .style(Style::new().fg(color))
-            .height(Length::Px(1))
-            .into(),
+        Some(
+            Text::new(glyph)
+                .style(Style::new().fg(color))
+                .height(Length::Px(1))
+                .into(),
+        ),
         Some(color),
     )
 }

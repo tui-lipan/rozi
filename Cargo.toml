@@ -62,10 +62,9 @@ exclude = [
 # 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
-# Pinned to tui-lipan's cursor fix, including TreeGuides for the sidebar's tree tabs.
-# Static editable carets and live-screen blink overrides require this unreleased fix.
-# Restore a registry dependency once these changes ship in a release.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "8f3d07b806de0812eff6b1ada67e1d1fb735d09b", features = [
+# 0.24.0: static editable carets and live terminal cursor blink overrides.
+# 0.25.0: independent FileTree icons/arrows, exact-width Branch guides, and content/icon gaps.
+tui-lipan = { version = "0.25.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

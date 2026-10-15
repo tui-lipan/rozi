@@ -16,6 +16,7 @@ pub(super) fn tree_tab(
     config: &SidebarTreeConfig,
 ) -> Element {
     let theme = &ctx.state.theme;
+    let nerd_icons = ctx.state.config.nerd_icons;
     let fill = super::fill(ctx);
     let Some(root) = root_for(ctx, config.root) else {
         // The keyed, focusable empty body rather than a bare placeholder: `body_focus_key_for` aims
@@ -37,24 +38,16 @@ pub(super) fn tree_tab(
         .show_hidden(config.show_hidden)
         .tree_focus_key(tree_focus_key)
         .explorer_focus_key(explorer_focus_key)
-        // Keep the tree's file rows icon-free, but reserve its icon gutter for directory state.
-        .show_icons(true)
-        .directory_icon(if ctx.state.config.nerd_icons {
-            ""
-        } else {
-            "▶"
-        })
-        .opened_directory_icon(if ctx.state.config.nerd_icons {
-            ""
-        } else {
-            "▼"
-        })
-        .file_icon("")
-        .symlink_icon("")
-        .other_icon("")
+        .show_icons(nerd_icons)
+        .icon_style(FileIconStyle::NerdFontColored)
+        .show_arrows(!nerd_icons)
+        .expanded_arrow("▼")
+        .collapsed_arrow("▶")
         .max_entries_per_dir(config.max_entries)
-        .indent_style(IndentStyle::Short)
-        .indent_width(1)
+        .indent_style(IndentStyle::Branch)
+        .indent_width(if nerd_icons { 2 } else { 1 })
+        .content_gap(0)
+        .icon_gap(1)
         .indent_guide_style(Style::new().fg(fill.elevate_by(0.15)))
         .change_view(if changed_only {
             FileTreeChangeView::ChangedOnly
@@ -62,9 +55,11 @@ pub(super) fn tree_tab(
             FileTreeChangeView::AllFiles
         })
         .show_diff_stats(config.diff_stats)
-        // Text markers (`M`, `A`, `?`) rather than the widget's default Nerd Font glyphs: rozi
-        // cannot assume the user's terminal font has them, and the rest of the sidebar is text.
-        .git_icon_style(GitIconStyle::Text)
+        .git_icon_style(if nerd_icons {
+            GitIconStyle::NerdFont
+        } else {
+            GitIconStyle::Text
+        })
         .git_status_cache(ctx.state.sidebar.tree_git_status_cache.clone())
         .entry_refresh_token(ctx.state.sidebar.tree_entry_refresh_token)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
@@ -148,10 +143,6 @@ pub(super) fn tree_tab(
             },
         ))
         .initial_expanded_paths(remembered_expanded(ctx, view));
-
-    if config.icons && ctx.state.config.nerd_icons {
-        tree = tree.icon_style(FileIconStyle::NerdFont);
-    }
 
     // Under `--remote` the files are on the server's host, so the widget cannot enumerate them
     // itself. Serve listings from state instead and let it ask for what it is missing; local

@@ -1759,9 +1759,6 @@ pub const SIDEBAR_TREE_MAX_ENTRIES_LIMIT: usize = 10_000;
 pub struct SidebarTreeConfig {
     pub root: SidebarTreeRoot,
     pub show_hidden: bool,
-    /// Show file-kind icons. Off by default: the glyphs assume a Nerd Font. Also requires the
-    /// global `nerd_icons` switch; with that off, this flag has no effect.
-    pub icons: bool,
     /// Show the fuzzy-find input above the tree.
     pub explorer: bool,
     /// Show `+N -M` diff stats beside change markers.
@@ -1781,7 +1778,6 @@ impl SidebarTreeConfig {
                 SidebarTreeView::Changes => SidebarTreeRoot::Repo,
             },
             show_hidden: true,
-            icons: false,
             explorer: false,
             diff_stats: view == SidebarTreeView::Changes,
             max_entries: 2_000,

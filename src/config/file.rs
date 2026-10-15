@@ -341,7 +341,6 @@ pub(super) struct SidebarTabTableSpec {
     // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
     pub(super) root: Option<String>,
     pub(super) show_hidden: Option<bool>,
-    pub(super) icons: Option<bool>,
     pub(super) explorer: Option<bool>,
     pub(super) diff_stats: Option<bool>,
     pub(super) max_entries: Option<usize>,

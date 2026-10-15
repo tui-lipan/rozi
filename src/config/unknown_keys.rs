@@ -202,7 +202,6 @@ const SIDEBAR_TAB_KEYS: &[&str] = &[
     "group_prefix",
     "root",
     "show_hidden",
-    "icons",
     "explorer",
     "diff_stats",
     "max_entries",
@@ -522,6 +521,14 @@ mod tests {
             "[sidebar]\ntabs = [{ name = \"x\", label = \"X\", entries = [], typo = true }]\n",
         );
         assert_eq!(unknown, ["sidebar.tabs[0].typo"]);
+    }
+
+    #[test]
+    fn removed_tree_icons_option_is_reported() {
+        assert_eq!(
+            parse("nerd_icons = true\n[sidebar]\ntabs = [{ name = \"files\", icons = false }]\n"),
+            ["sidebar.tabs[0].icons"]
+        );
     }
 
     #[test]

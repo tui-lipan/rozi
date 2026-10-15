@@ -283,7 +283,12 @@ impl Row {
         // The glyph column carries its own leading cell, so a glyph row butts up against the
         // gutter; a plain row needs the separating space from the outer stack instead.
         let leading = self.glyph.is_some();
+        let hierarchical = self.tree.is_some();
         let mut cells = HStack::new().gap(1).height(Length::Px(lines));
+        if hierarchical {
+            // One separator after the guides and disclosure; no empty status column.
+            cells = cells.padding((0, 0, 0, 1));
+        }
         if let Some(glyph) = self.glyph {
             cells = cells.child(glyph);
         }
@@ -334,7 +339,7 @@ impl Row {
         }
 
         let mut row = HStack::new()
-            .gap(if self.group_level {
+            .gap(if self.group_level || hierarchical {
                 0
             } else {
                 u16::from(!leading)
@@ -381,10 +386,14 @@ fn tree_column(
         .child(Text::from_spans(first).height(Length::Px(1)));
     match disclosure {
         Some(expanded) => {
-            // The trailing cell holds the arrow off the glyph column and widens the click target.
-            let glyph = Text::new(if expanded { "▾ " } else { "▸ " })
-                .style(toggle_style)
-                .height(Length::Px(1));
+            // Use one-cell directory chevrons with the global font fallback.
+            let arrow = match (ctx.state.config.nerd_icons, expanded) {
+                (true, true) => "",
+                (true, false) => "",
+                (false, true) => "▼",
+                (false, false) => "▶",
+            };
+            let glyph = Text::new(arrow).style(toggle_style).height(Length::Px(1));
             let toggle: Element = match position {
                 Some((panel, index)) => {
                     let region: Element = MouseRegion::new()
@@ -407,7 +416,7 @@ fn tree_column(
             first_line = first_line.child(toggle);
         }
         None if reserve_disclosure => {
-            first_line = first_line.child(Text::new("  ").height(Length::Px(1)));
+            first_line = first_line.child(Text::new(" ").height(Length::Px(1)));
         }
         None => {}
     }
@@ -419,7 +428,7 @@ fn tree_column(
     if lines > 1 {
         let mut spans = rest;
         if disclosure.is_some() || reserve_disclosure {
-            spans.push(Span::new("  "));
+            spans.push(Span::new(" "));
         }
         column = column.child(Text::from_spans(spans).height(Length::Px(1)));
     }

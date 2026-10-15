@@ -180,6 +180,12 @@ and authentication.
 Files browses the focused pane's working directory. It follows focus and `cd`, and directories load
 when you expand them. rozi remembers which directories are expanded until the client exits.
 
+Files and Git follow the global `nerd_icons` setting. When enabled, they show colored file icons
+and Nerd Font Git marks, hide expansion arrows, and indent two cells per level. When disabled,
+they hide file icons, show Unicode expansion arrows and text Git marks, and indent one cell per
+level. Both modes use Branch guides with no gap after guides or arrows; file icons have a one-cell
+gap before the label. Remove the old per-tab `icons` option from your configuration.
+
 Activating a file runs the tab's `on_click` action. By default, that types the path into the focused
 pane without pressing `Enter`.
 
@@ -273,7 +279,11 @@ are not listed.
 ### Expand and collapse
 
 Projects, [JSON command tabs](#json-command-tabs), and [stream tabs](#stream-tabs) are trees. Click
-the `▾` or `▸` beside a row to show or hide what is under it. In a focused sidebar:
+the disclosure chevron beside a row to show or hide what is under it. These trees use the Files
+tab's compact guide style. Files and Git hide arrows when Nerd icons are enabled and use `▼`
+and `▶` otherwise. The other trees use Nerd Font chevrons when enabled, with the same Unicode
+arrows as a fallback.
+Status icons appear only on rows with a status to report. In a focused sidebar:
 
 | Key | Action |
 | --- | --- |

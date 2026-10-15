@@ -140,12 +140,23 @@ reference doc's job rather than the landing's.
 
 | Setting | Value |
 |---------|-------|
-| Production branch | `master` |
+| Production branch | `website` |
 | Root directory | `docs` |
 | Build command | `npm run docs:build` |
 | Deploy command | `npx wrangler deploy` |
 | Node version | 22 |
 | Custom domain | `rozi.tui-lipan.dev` |
+
+The site follows releases, not `master`. After each successful release,
+`.github/workflows/website.yml` moves the `website` branch to the release tag,
+and Cloudflare deploys from it. A page on `master` may therefore describe a
+feature that has not shipped yet; it goes live with the release that ships it.
+The install scripts the site serves come from the same commit, so they always
+match the published binaries.
+
+To publish a documentation fix before the next release, branch from the latest
+tag, cherry-pick the fix, push the branch, and run the **Website** workflow with
+that branch as `ref`. Never point `website` at `master`.
 
 **Leave the root directory as `docs`.** It is where both commands run and where
 `wrangler.jsonc` lives, which is what Cloudflare recommends for this layout.

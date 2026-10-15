@@ -236,6 +236,11 @@ Check that all five archives, all five checksums, `rozi-release.json`,
 `rozi-release.signatures.json`, and `rozi-compatibility.json` are present. crates.io should list the
 version only after the final workflow job succeeds.
 
+When the Release workflow succeeds, the **Website** workflow moves the `website` branch to the new
+tag, and rozi.tui-lipan.dev redeploys from it. The documentation site and the install scripts it
+serves therefore always match the latest release. To publish a documentation fix between releases,
+see [the site's deploy notes](../docs/.vitepress/README.md#deploy-cloudflare-workers-builds).
+
 ## Smoke verification after publication
 
 1. Download the public assets into an ignored directory and verify them with the pinned release

@@ -73,11 +73,13 @@ left-button drag at zero-based terminal cells, including several moves before re
 | `sleep:MS` | Waits |
 | `run:COMMAND` | Runs a shell command in the sandbox, where `rozi` is this build |
 
-A `rozi` typed into a pane is this build too. Clips are recorded at up to 60 frames a second,
-without the recording indicator. The recording starts after `SETTLE_MS` and stops after the last
-step, so the clip holds exactly the steps. Set `POSTER` to the second shown before
-the clip plays; the default is its last frame. A blinking dot may be in its off phase at a given
-second, so check the poster in `/tmp/rzc-preview` after each run.
+A `rozi` typed into a pane is this build too. Clips are recorded at up to 60 frames a second
+and written as a constant 60 fps MP4, without the recording indicator. A variable-rate file
+lets one short gap advertise thousands of frames a second, and browsers then stutter through
+the motion. The recording starts after `SETTLE_MS` and stops after the last step, so the clip
+holds exactly the steps. Set `POSTER` to the second shown before the clip plays; the default
+is its last frame. A blinking dot may be in its off phase at a given second, so check the
+poster in `/tmp/rzc-preview` after each run.
 
 rozi runs under tmux, which answers terminal queries as a terminal emulator does. Through a bare
 pseudo-terminal, typed keys reach the focused pane but never rozi's own bindings.

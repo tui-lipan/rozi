@@ -118,9 +118,11 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   stop_sessions
 
   sandbox_env "$bin" record export "$rec" --to png-frames "$frames" --scale 2 >/dev/null 2>&1
+  # Constant 60 fps at level 5.1, which browsers hardware-decode. Variable rate lets
+  # one short gap advertise thousands of frames a second, and the motion then stutters.
   ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
-    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -preset veryslow -tune animation -crf 24 \
-    -pix_fmt yuv420p -fps_mode vfr -movflags +faststart "$out/$name.mp4"
+    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2,fps=60" -c:v libx264 -preset veryslow -tune animation -crf 24 \
+    -pix_fmt yuv420p -level:v 5.1 -movflags +faststart "$out/$name.mp4"
   if [[ -n ${POSTER:-} ]]; then
     ffmpeg -loglevel error -y -ss "$POSTER" -i "$out/$name.mp4" -frames:v 1 "$sandbox/poster.png"
   else

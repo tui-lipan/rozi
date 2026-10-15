@@ -1501,6 +1501,11 @@ html.rozi-intro-pending .lp {
 .lp-theme-code {
     margin-top: 28px;
 }
+/* The motion clips have no caption band, so their config stays in the copy
+   column at every width. */
+.lp-motion-code {
+    margin-top: 28px;
+}
 .lp-themes .rz-gallery-caption {
     display: none;
 }

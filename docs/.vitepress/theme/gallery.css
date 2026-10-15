@@ -153,6 +153,18 @@
     opacity: 1;
 }
 
+/* Clips (`ClipGallery.vue`) use the same frame with one video in the stage. */
+.rz-clips .rz-clips-stage {
+    cursor: default;
+}
+.rz-clips .rz-clips-stage video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1920 / 1088;
+    background: #06070f;
+}
+
 /* Steps: a numbered track under the frame. The active step carries a
    progress bar while autoplay runs, so the reader can see it will move. */
 .rz-gallery .rz-gallery-steps {

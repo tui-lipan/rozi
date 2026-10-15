@@ -275,7 +275,6 @@ Colors for pane alert borders and content tints. Each value is a theme role or `
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
 | `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `pane_style` | string | unset | Deprecated shared-style fallback for opening and closing; explicit action-specific keys override it. Settings migrates it automatically. |
 | `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
@@ -300,9 +299,7 @@ value keeps the portal and warns.
 
 Choose opening and closing independently with `pane_open_style` and `pane_close_style`, or use
 **General › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
-open and `particles` to close. Both default to `scale`. The deprecated `pane_style` key remains a fallback for both actions;
-each explicit new key overrides it independently. Changing either style in Settings saves both
-resolved choices and removes the legacy key, preserving the other action's style.
+open and `particles` to close. Both default to `scale`.
 
 With Kitty graphics, Portal and Scan reveal and hide pictures along with the text, leaving their
 moving edge visible. Scale and Slide clip pictures to the pane's moving window.
@@ -592,7 +589,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 Unplaced tabs join the first left panel; Files, Git, and Worktrees join the second. Extension
 suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
 and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
-for restoration rules, the tab manager, and migration from the former geometry keys.
+for arranging tabs and panels.
 
 ### Tab tables
 
@@ -622,7 +619,7 @@ one of `run`, `send`, `popup`, or `exec`, and an optional `keep_open`. In `on_cl
 changes how the command is presented.
 
 An extension can add the same kinds of tab from its manifest; see
-[Extensions](extensions.md#sidebar-tabs).
+[Extensions](writing-extensions.md#sidebar-tabs).
 
 ### Grouping rows into sections
 
@@ -969,7 +966,7 @@ stopping its services — for example, it is killed or crashes — stdin reaches
 service that reads stdin can exit on its own. In that case, Linux also kills the service process,
 but not processes it started, and Windows kills the service with everything it started.
 
-For packaged automation, use extension services instead. See [Extensions](extensions.md).
+For packaged automation, use extension services instead. See [Services](writing-extensions.md#services).
 
 ## `[keys]`
 

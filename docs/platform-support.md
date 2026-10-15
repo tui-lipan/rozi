@@ -98,7 +98,5 @@ Community support means:
   NetBSD 10.1 VM. Neither check blocks a merge or a release.
 - Nobody developing rozi runs NetBSD day to day, so a NetBSD user is likely to find a regression
   before CI does.
-- NetBSD has no special-cased code. It uses the same Unix code paths as the other platforms.
 
-Bug reports are welcome, and patches more so. Other BSDs are not packaged or tested, though the same
-Unix code paths cover them.
+Bug reports are welcome, and patches more so. Other BSDs are not packaged or tested.

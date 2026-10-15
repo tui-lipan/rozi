@@ -293,17 +293,16 @@ export default defineConfig({
     ],
     sidebar: [
       { text: "Home", link: "/" },
-      { text: "Documentation overview", link: "/overview" },
       {
         text: "Start",
         collapsed: false,
         items: [
+          { text: "Overview", link: "/overview" },
           { text: "Getting started", link: "/getting-started" },
           { text: "Installation", link: "/installation" },
           { text: "Core concepts", link: "/core-concepts" },
           { text: "Platform support", link: "/platform-support" },
           { text: "Troubleshooting", link: "/troubleshooting" },
-          { text: "Feature map", link: "/features" },
         ],
       },
       {
@@ -352,6 +351,7 @@ export default defineConfig({
           { text: "Hooks", link: "/hooks" },
           { text: "Agent skill", link: "/agent-skill" },
           { text: "Extensions", link: "/extensions" },
+          { text: "Write an extension", link: "/writing-extensions" },
           { text: "Extension testing", link: "/extension-testing" },
           { text: "Automation recipes", link: "/recipes" },
         ],

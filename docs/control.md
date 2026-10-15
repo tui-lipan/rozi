@@ -92,8 +92,7 @@ Discovery fails if the runtime directory contains no live endpoints or more than
 remote pane, or one in a session with no window attached — and without `--target`, they go to the
 session server the pane runs in, which `ROZI_SESSION_INSTANCE` identifies. The session keeps the
 latest report, so every window attached to it shows the state, including one on another machine and
-one that attaches later. A session server started by an older rozi cannot be identified; the
-command then fails and names it, and restarting that session fixes it.
+one that attaches later.
 
 | Platform | Endpoint named by `ROZI_SOCKET` |
 | --- | --- |
@@ -199,7 +198,7 @@ attached.
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
-| `extensions status [--json]` | Report where the UI runs [placed extension processes](extensions.md#run-on-the-session-host). | no |
+| `extensions status [--json]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host). | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 
 `layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
@@ -262,14 +261,14 @@ protocol version, and capabilities of the installed binary. It does not connect 
 only concerns how two rozi binaries talk to each other.
 
 `extension-link-handlers` means installed extensions can contribute
-[link handlers](extensions.md#link-handlers) through their manifest.
+[link handlers](writing-extensions.md#link-handlers) through their manifest.
 
 `publish-kind` means [`publish`](#published-activity) accepts `--kind` and `--name`: published
 rows are activities unless declared agents, and several publishers can share a pane. An older
 binary treats every published row as an agent and keeps one publisher per pane.
 
 `remote-extension-runtime` means the binary can run
-[placed extension processes](extensions.md#run-on-the-session-host), as a client and as a host. Both
+[placed extension processes](writing-extensions.md#run-on-the-session-host), as a client and as a host. Both
 need it.
 
 ## Output and exit status
@@ -371,11 +370,6 @@ rozi capture-pane --target "$pane" --settle 500ms --timeout 10s
 
 The size holds until a UI draws the pane. Opening it in the workspace on screen, or switching to
 its workspace later, resizes it to its tile like any other pane.
-
-A session server started by an older rozi refuses `rozi --session <NAME> split` with
-`protocol-mismatch`, so a sized pane never silently opens at the wrong size. A UI that is still
-running an older rozi does not know the field, and opens the pane at its default size; restart it
-after upgrading.
 
 ### Open a pane in a detached session
 
@@ -824,7 +818,7 @@ rozi notify "tests failed" --title Build --level error
 
 `show-command` and `hide-command` work only from an extension's own command or service, for a
 command its manifest declares. See
-[Show a command only when it applies](extensions.md#show-a-command-only-when-it-applies).
+[Show a command only when it applies](writing-extensions.md#show-a-command-only-when-it-applies).
 
 ## Subscriptions
 
@@ -957,7 +951,7 @@ An extension that wants to drive a session should go through a running UI. A per
 pane that an extension opened inherits `ROZI_EXTENSION` and hits the same refusal; run
 `env -u ROZI_EXTENSION rozi --session …` to make the request as yourself.
 
-A [placed](extensions.md#run-on-the-session-host) extension process reaches the UI that placed it
+A [placed](writing-extensions.md#run-on-the-session-host) extension process reaches the UI that placed it
 through its runtime, wherever it runs. Its requests carry a credential that ties them to the host
 and generation it was started for, and are limited to what a placed process may do: commands that would run
 something on the client fail with `not-permitted`, and commands about a session outside the

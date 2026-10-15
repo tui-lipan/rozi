@@ -291,18 +291,12 @@ them as recorded. Press `Ctrl+C` to stop.
 rozi record export agent.rozirec --to video-frames frames --scale 2
 ```
 
-Use `--to video-frames` when encoding video: it pads every frame to the maximum recorded width
-and height. Each frame is rendered at its native size first, then its pixels are copied without
-changes onto the larger bitmap. Glyphs and images stay clipped to the original terminal bounds.
-Padding uses that frame's default background color. This keeps video dimensions stable across terminal resizes. The export reads
-the recording twice to determine the canvas, so stop recording before exporting. A combined
-canvas larger than 1,048,576 cells is refused.
+Use `--to video-frames` when encoding video: every frame is padded to the largest size the pane
+had, so the video keeps one size even if the pane was resized. Stop the recording before you export
+it. `--to png-frames` keeps each frame at its own size, for inspecting individual screens.
 
-`--to png-frames` keeps each frame's original dimensions for inspecting individual screens.
-Both exports use a millisecond time base and preserve actual frame durations. Use the listing
-instead of a guessed frame rate.
-For short animation reviews, start recording with `--max-fps 60`; this raises the capture cap but
-does not increase the application's rendering frequency.
+Both exports keep each frame's real duration, so use the listing rather than a fixed frame rate.
+To capture a fast animation smoothly, start the recording with `--max-fps 60`.
 
 `--scale` enlarges the frames, from 1 to 3. Hand the listing to [ffmpeg](https://ffmpeg.org) to make
 a GIF or a video; rozi does not encode video itself:
@@ -328,19 +322,14 @@ terminal changes size with it. Neither export replaces existing files unless you
 
 Export and play read the file on the machine you run them on and need no session.
 
-A recording can come from someone else, such as a bug report, so both refuse a file with a line
-longer than 64 MiB, a screen of more than 1,048,576 cells, or an image larger than 64 MiB decoded.
-Of the images a recording has shown, they keep up to 256 MiB for the frames still to come, each
-image counted with its bookkeeping, and refuse an image id longer than 64 bytes; past that budget
-the oldest are dropped, and a later frame shows a dropped image as its half-block
-approximation. The images one frame shows decode to at most 256 MiB together; any past that also
-show as half-blocks. rozi never writes a recording beyond these limits.
+A recording can come from someone else, such as a bug report, so playback and export refuse
+files with oversized screens or images, and show images past their memory budget as half-block
+approximations.
 
 ## Cost
 
-Recording runs beside the session without slowing it. The session server only notices a change
-and takes the screen; a separate thread in the server turns it into the file. Measured with a
-release build on Linux, a 120×32 pane, and the defaults:
+Recording runs beside the session without slowing it down. Measured on Linux with a 120×32 pane and
+the default limits:
 
 | Pane running | Server CPU without | Server CPU recording | File growth | Frames a second |
 | --- | --- | --- | --- | --- |
@@ -357,13 +346,3 @@ A recording is line-delimited JSON in the `rozi-recording` format: a header line
 line, with frames in the [`rozi-spans`](control-protocol.md#spans-frames) format. It is documented
 in [Recording format](control-protocol.md#recording-format) and described by the
 [JSON schema](control.md#json-schema), so other tools can read it.
-
-Image frames preserve stacking order and the original cells beneath image approximations. PNG
-exports therefore keep images behind text and blend translucent images over the original glyphs.
-Text fully covered by opaque image cells anywhere in the non-negative image stack is omitted,
-including beneath later translucent patches. New recordings declare `rozi-spans` version
-2, so older players refuse them instead of silently changing image layering. This rozi still reads
-version 1 recordings.
-Glyphs remain when they contribute through an uncovered continuation or icon room, or are redrawn
-by a visible block cursor. Other cursor shapes preserve hidden-cell styles without recording its
-text.

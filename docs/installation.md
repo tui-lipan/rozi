@@ -188,24 +188,17 @@ unavailable.
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available`, with the version
 step and the update command for your install channel. If the release raises the extension API or
-the session protocol, the toast uses warning colors and adds a row naming the change. rozi records
-the announced version in its state directory, so other clients, later launches, and later checks
-do not toast the same release again. Every client that finds the release still lists
-**Update rozi to vX.Y.Z** in Commands, which runs the update in a popup (see
+the session protocol, the toast uses warning colors and adds a row naming the change. Each release
+is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
+Commands, which runs the update in a popup (see
 [Update notices](configuration.md#update-notices)).
 
 Use [`[updates]`](configuration.md#updates) to turn these checks off or change the interval.
 
 ### Progress output
 
-While the archive downloads, `rozi update` draws one progress row on stderr: a spinner, the bytes
-transferred, the transfer rate, and the estimated time left. A narrow terminal drops the estimate,
-then the rate, then the bar, rather than wrapping. Pressing `Ctrl+C` restores the cursor before
-exiting.
-
-Because the row goes to stderr, redirecting stdout still gives you a clean stream. The row is
-suppressed entirely when stderr is not a terminal or `NO_COLOR` is set, so scripted updates stay
-quiet.
+While the archive downloads, `rozi update` shows its progress on stderr. The progress row is left
+out when stderr is not a terminal or `NO_COLOR` is set, so scripted updates stay quiet.
 
 ### Managed install locations
 
@@ -214,8 +207,8 @@ quiet.
 | Linux and macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/rozi` | `$HOME/.local/bin/rozi` |
 | Windows | `%LOCALAPPDATA%\rozi` | `%LOCALAPPDATA%\rozi\bin\rozi.exe` |
 
-On Windows the managed root also contains `state\`, `cache\`, `run\`, and `extensions\`. It is
-private to your user account, and rozi creates it that way whichever of those it creates first.
+On Windows the managed root also holds rozi's state, cache, runtime, and extension directories, and
+only your user account can read it.
 
 ## Installs rozi does not manage
 
@@ -324,8 +317,7 @@ warnings. The signature only decides whether the managed updater replaces your i
 download.
 
 **Build provenance attestations** answer whether a file came from this repository's workflow. Every
-nightly, and every release since attestations were introduced, publishes a GitHub artifact
-attestation: a Sigstore signature over the archive's digest, tied to the workflow that built it and
+release and nightly publishes a GitHub artifact attestation: a Sigstore signature over the archive's digest, tied to the workflow that built it and
 recorded in a public transparency log. GitHub signs it, not rozi's release key, and you can check it
 before running anything:
 

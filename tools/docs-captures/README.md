@@ -49,6 +49,9 @@ Call `scene NAME VIEWPORT SETTLE_MS SCRIPT [EXTRA_CONFIG]` in `scenes.sh`. `SCRI
 appended to the generated `config.toml`; start it with a table header. Set `PROFILE`, `LAYOUT`,
 `STARTUP`, or `SETUP` in front of the call to change the workspace; `capture.sh` documents each.
 
+Scenes switch off the session switching animation: a still frame is taken on a frozen clock, so
+the animation would never get past its first, empty frame. Clips keep it.
+
 Use `160x45` for whole-workspace shots and `120x34` for overlays, where the text needs to stay
 readable at page width. Review the PNG in `/tmp/rzc-preview` before embedding the WebP.
 

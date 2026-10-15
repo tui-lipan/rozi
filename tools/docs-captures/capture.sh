@@ -79,7 +79,7 @@ prepare_sandbox() {
 scene() {
   local name=$1 viewport=$2 settle=$3 script=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
-  prepare_scene "$extra"
+  prepare_scene "$(without_session_portal "$extra")"
 
   sandbox_env \
     TUI_LIPAN_SNAPSHOT="$sandbox/shot.png" \
@@ -129,6 +129,19 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   mkdir -p "$preview"
   cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"
   echo "recorded $name"
+}
+
+# A still frame is taken on a frozen clock, so the session portal never gets past its first, empty
+# frame and the capture comes out blank. Scenes therefore switch it off, adding the key to the
+# scene's own `[animations]` table when it has one. Clips play in real time and keep the portal.
+without_session_portal() {
+  local extra=$1
+  if [[ $extra == *"[animations]"* ]]; then
+    printf '%s\n' "${extra/\[animations\]/[animations]
+session = \"off\"}"
+  else
+    printf '%s\n\n[animations]\nsession = "off"\n' "$extra"
+  fi
 }
 
 # Fresh sandbox, the profile, config.toml with EXTRA_CONFIG, and SETUP, for `scene` and `clip`.

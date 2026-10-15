@@ -153,6 +153,9 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
         eprintln!("skipping: git is unavailable");
         return;
     };
+    for name in ["theme.md", "theme.rs", "theme.toml", "README.md"] {
+        std::fs::write(repo.0.join(name), "// palette fixture\n").unwrap();
+    }
     let cwd = repo.0.to_string_lossy().into_owned();
     let lines = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -192,7 +195,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
             let unicode = sidebar_rows(&backend, 32);
             let src = unicode.iter().find(|row| row.contains("src")).unwrap();
             assert!(
-                src.contains("└▶src"),
+                src.contains("├▶src"),
                 "one-cell guides and no content gap: {src}"
             );
             assert!(
@@ -208,7 +211,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 .to_fixed_grid_lines()
                 .into_iter()
                 .enumerate()
-                .find(|(_, row)| row.contains("└▶src"))
+                .find(|(_, row)| row.contains("├▶src"))
                 .unwrap();
             let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
             assert_eq!(
@@ -225,7 +228,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
             let nerd = sidebar_rows(&backend, 32);
             let src = nerd.iter().find(|row| row.contains("src")).unwrap();
             assert!(
-                src.contains("└─ src"),
+                src.contains("├─ src"),
                 "two-cell guides, no arrows, one icon gap: {src}"
             );
             assert!(!nerd.join("\n").contains(['▶', '▼']), "no arrows: {nerd:?}");
@@ -234,7 +237,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 .to_fixed_grid_lines()
                 .into_iter()
                 .enumerate()
-                .find(|(_, row)| row.contains("└─ src"))
+                .find(|(_, row)| row.contains("├─ src"))
                 .unwrap();
             let icon_x = row.chars().position(|ch| ch == '').unwrap();
             assert_eq!(
@@ -248,6 +251,27 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 "directory icon has its own semantic color"
             );
 
+            let original_theme = backend.state().theme.clone();
+            for preset in [rozi::state::ThemePreset::Dracula, rozi::state::ThemePreset::Nord] {
+                backend.state_mut().theme = preset.theme();
+                backend.render();
+                let palette = &backend.state().theme.file_icons;
+                let frame = backend.capture_frame();
+                let rows = frame.to_fixed_grid_lines();
+                for (name, color) in [
+                    ("src", palette.blue),
+                    ("theme.md", palette.azure),
+                    ("theme.rs", palette.red),
+                    ("theme.toml", palette.grey),
+                    ("README.md", palette.yellow),
+                ] {
+                    let (y, row) = rows.iter().enumerate().find(|(_, row)| row.contains(name)).unwrap();
+                    let x = row.chars().position(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)).unwrap();
+                    assert_eq!(frame.cell(x as u16, y as u16).fg, color,
+                        "{name} icon must follow {preset:?} file-icon palette after a live theme change");
+                }
+            }
+            backend.state_mut().theme = original_theme;
             backend.state_mut().config.nerd_icons = false;
             backend.render();
             assert_eq!(

@@ -1218,6 +1218,10 @@ fn sidebar_files() {
         "README.md",
         "docs/components.md",
         "src/main.rs",
+        "main.rs",
+        "app.ts",
+        "style.css",
+        "script.sh",
     ] {
         std::fs::write(root.join(file), "// sketch fixture\n").unwrap();
     }
@@ -1280,6 +1284,16 @@ fn sidebar_files() {
                 ),
             );
         }
+    }
+    backend.state_mut().config.nerd_icons = true;
+    backend.set_viewport(viewport(100, 30));
+    for preset in [
+        rozi::state::ThemePreset::Dracula,
+        rozi::state::ThemePreset::Nord,
+    ] {
+        backend.state_mut().theme = preset.theme();
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-files-{}", preset.id()));
     }
     std::fs::remove_dir_all(root).unwrap();
 }

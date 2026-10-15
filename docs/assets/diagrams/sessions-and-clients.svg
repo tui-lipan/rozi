@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320" role="img" aria-labelledby="title desc">
+  <title id="title">Sessions and clients</title>
+  <desc id="desc">Two rozi windows attach to one named session called dev. The session holds nine workspaces; the first shows three panes running nvim, cargo watch, and claude. The panes keep running after every window detaches.</desc>
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fd4a80"/>
+      <stop offset="1" stop-color="#982bf2"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 8 4 0 8z" fill="#5c6185"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .label { font-size: 11px; fill: #5c6185; letter-spacing: 0.12em; }
+    .name { font-size: 15px; fill: #ccd0e6; font-weight: 700; }
+    .note { font-size: 12px; fill: #8e93b4; }
+    .pane { font-size: 12.5px; fill: #ccd0e6; }
+    .ws { font-size: 11px; fill: #5c6185; text-anchor: middle; }
+    .card { fill: #14162a; stroke: #343858; }
+    .tile { fill: #06070f; stroke: #343858; }
+  </style>
+
+  <rect width="640" height="320" rx="14" fill="#0b0d1c"/>
+
+  <!-- Clients -->
+  <text class="label" x="28" y="44">CLIENTS</text>
+  <rect class="card" x="28" y="60" width="188" height="64" rx="8"/>
+  <text class="name" x="44" y="88">rozi window</text>
+  <text class="note" x="44" y="108">controls the layout</text>
+  <rect class="card" x="28" y="148" width="188" height="64" rx="8"/>
+  <text class="name" x="44" y="176">second window</text>
+  <text class="note" x="44" y="196">follows along</text>
+  <text class="note" x="28" y="252">Each window keeps its</text>
+  <text class="note" x="28" y="270">own focus, scroll,</text>
+  <text class="note" x="28" y="288">sidebar, and theme.</text>
+
+  <!-- Attach -->
+  <path d="M216 92 C258 92 258 128 296 128" fill="none" stroke="#5c6185" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path d="M216 180 C258 180 258 168 296 168" fill="none" stroke="#5c6185" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="label" x="232" y="144">ATTACH</text>
+
+  <!-- Session -->
+  <text class="label" x="300" y="44">SESSION</text>
+  <rect x="300" y="60" width="312" height="190" rx="10" fill="#0b0d1c" stroke="url(#brand)" stroke-width="1.5"/>
+  <text class="name" x="318" y="88">dev</text>
+  <text class="note" x="594" y="88" text-anchor="end">named session</text>
+
+  <!-- Workspaces 1-9 -->
+  <rect x="318" y="100" width="24" height="20" rx="4" fill="#fd4a80" fill-opacity="0.16" stroke="#fd4a80"/>
+  <text class="ws" x="330" y="114" style="fill:#fd4a80">1</text>
+  <text class="ws" x="352" y="114">2</text>
+  <text class="ws" x="374" y="114">3</text>
+  <text class="ws" x="396" y="114">4</text>
+  <text class="ws" x="418" y="114">5</text>
+  <text class="ws" x="440" y="114">6</text>
+  <text class="ws" x="462" y="114">7</text>
+  <text class="ws" x="484" y="114">8</text>
+  <text class="ws" x="506" y="114">9</text>
+  <text class="note" x="594" y="114" text-anchor="end" style="font-size:11px">workspaces</text>
+
+  <!-- Panes of workspace 1 -->
+  <rect class="tile" x="318" y="132" width="134" height="100" rx="6" style="stroke:url(#brand)"/>
+  <text class="pane" x="332" y="154">nvim</text>
+  <rect class="tile" x="460" y="132" width="134" height="46" rx="6"/>
+  <text class="pane" x="474" y="154">cargo watch</text>
+  <rect class="tile" x="460" y="186" width="134" height="46" rx="6"/>
+  <text class="pane" x="474" y="208">claude</text>
+
+  <text class="note" x="300" y="276">Panes keep running after every</text>
+  <text class="note" x="300" y="294">window detaches.</text>
+</svg>

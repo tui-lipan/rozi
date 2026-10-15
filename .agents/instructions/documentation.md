@@ -94,6 +94,13 @@ Embed captures with the `CaptureGallery` component (`docs/.vitepress/theme/Captu
   `data-caption` is one sentence under the frame, and `data-code` is TOML with `\n` line breaks.
 - A gallery with one image is a framed screenshot with a full-size view.
 
+## Diagrams
+
+Diagrams are hand-written SVGs in `docs/assets/diagrams/`, embedded as Markdown images with a
+descriptive alt text. Use the site palette from `docs/.vitepress/theme/style.css`, a dark rounded
+background, and monospace text, and keep each one to a single idea. Add one only where a picture
+explains a relationship faster than prose.
+
 ## Layout
 
 Existing pages are grouped by subject rather than nested directories:

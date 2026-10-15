@@ -113,7 +113,7 @@ Tests must not write to the developer's config, state, cache, or runtime directo
   in-process test. Passing environment variables to an isolated child process is safe.
 
 Benchmarks are local evidence, not timing assertions. See
-[Benchmarks and profiling](docs/benchmarks.md) for the targets and comparison method.
+[Benchmarks and profiling](dev/benchmarks.md) for the targets and comparison method.
 
 ## Documentation
 

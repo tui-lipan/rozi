@@ -3,6 +3,10 @@
 `docs/` is both user documentation and the VitePress source for `rozi.tui-lipan.dev`.
 `README.md` is the public overview and documentation index.
 
+Contributor and maintainer material — benchmarks, performance audits, the release process — lives
+in `dev/`, outside the site. Do not add it to `docs/`: every page there is published and indexed by
+the site search.
+
 - Add new documentation pages to the sidebar in `docs/.vitepress/config.ts`.
 - Write links that leave `docs/` in the form GitHub expects. The VitePress build rewrites them for
   the site; see `docs/.vitepress/README.md`.
@@ -68,10 +72,9 @@ Existing pages are grouped by subject rather than nested directories:
 - Runtime behavior: `layouts-and-panes.md`, `terminal.md`, `sessions.md`, `worktrees.md`,
   `shared-sessions.md`, `remote.md`
 - Profiles and sidebar: `profiles.md`, `sidebar.md`
-- Automation: `scripting.md`, `control.md`, `control-protocol.md`, `hooks.md`, `extensions.md`,
-  `extension-testing.md`, `recipes.md`
+- Automation: `scripting.md`, `control.md`, `control-protocol.md`, `recording.md`, `hooks.md`,
+  `extensions.md`, `extension-testing.md`, `recipes.md`
 - Agent integration: `agents.md`, `agent-skill.md`
-- Development: `release-process.md`, `benchmarks.md`, `performance/`
 
 Keep that flat layout until a section has enough pages to justify a directory. If it does, move the
 whole subject together and update VitePress navigation and inbound links in the same change.

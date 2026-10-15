@@ -278,13 +278,8 @@ const exampleExtensions = [
 type DocPage = { text: string; link: string };
 type DocGroup = { text: string; items?: DocPage[] };
 
-/* One dated audit report per audit, forever. They belong in the sidebar, where
-   somebody is reading the performance docs, and not in a directory of the
-   documentation - `Performance Records` is the page that indexes them. */
-const isArchive = (page: DocPage) => page.link.startsWith("/performance/audits/");
-
 const docGroups = (theme.value.sidebar as DocGroup[])
-  .map((group) => ({ ...group, items: (group.items ?? []).filter((p) => !isArchive(p)) }))
+  .map((group) => ({ ...group, items: group.items ?? [] }))
   .filter((group) => group.items.length > 0);
 
 const docPages = docGroups.reduce((total, group) => total + group.items.length, 0);

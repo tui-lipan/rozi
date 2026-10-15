@@ -72,6 +72,7 @@ Tiling behavior, animations, and keyboard flow take their cues from the
 | [Record a pane or the UI](recording.md) | Record a pane or the whole UI over time, then replay it or export frames, a GIF, or a cast |
 | [Hooks](hooks.md) | Running commands when rozi events happen |
 | [Extensions](extensions.md) | Installing, writing, and managing extensions |
+| [Extension testing](extension-testing.md) | Testing extension commands and lifecycle behavior |
 | [Automation recipes](recipes.md) | Complete scripting and extension examples |
 
 ## Development
@@ -79,10 +80,6 @@ Tiling behavior, animations, and keyboard flow take their cues from the
 | Guide | Covers |
 | --- | --- |
 | [Contributing](../CONTRIBUTING.md) | Setup, checks, pull requests, and DCO sign-off |
-| [Extension testing](extension-testing.md) | Testing extension commands and lifecycle behavior |
-| [Release process](release-process.md) | Publishing and checking a release |
-| [Benchmarks and profiling](benchmarks.md) | Running the benchmark and profiling tools |
-| [Performance audit archive](performance/README.md) | Recorded measurements and audit history |
-| [Performance audit playbook](performance/audit-playbook.md) | Reproducing a full performance audit |
+| [Developer guides](../dev/README.md) | Benchmarks, performance audits, and the release process |
 
 To report a vulnerability, read the [security policy](../SECURITY.md) first.

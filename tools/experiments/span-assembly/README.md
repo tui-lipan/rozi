@@ -1,6 +1,6 @@
 # Dense span-assembly profiling
 
-This prototype is not enabled in Rozi. See the [measurement report](../../../docs/performance/audits/2026-09-14-span.md).
+This prototype is not enabled in Rozi. See the [measurement report](../../../dev/performance/audits/2026-09-14-span.md).
 It instruments released `tui-lipan 0.9.0` against released `alacritty_terminal 0.26.0`. There is no
 engine fork and no compact-history path.
 

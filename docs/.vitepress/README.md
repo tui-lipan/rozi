@@ -32,7 +32,7 @@ page renamed out from under a cross-reference.
 
 | Path | What it is |
 |------|------------|
-| `config.ts` | Site metadata, sidebar, search, `performance/README.md` → `/performance/` rewrite, the intro's pre-paint gate |
+| `config.ts` | Site metadata, sidebar, search, the intro's pre-paint gate |
 | `repoLinks.ts` | Rewrites links that leave `docs/` into GitHub URLs (see below) |
 | `theme/style.css` | Doc-page theme; palette derived from the app icon |
 | `theme/landing.css` | Landing page chrome |
@@ -115,7 +115,7 @@ Pages link to repository files that are not part of the site — `../AGENTS.md`,
 editor but would be dead links once only `docs/` is published, so
 `repoLinks.ts` rewrites them to `github.com/tui-lipan/rozi` URLs before
 VitePress parses the markdown. Links to a directory with no index page, such as
-`performance/audits/`, get the same treatment — that is a request for a file
+`assets/captures/`, get the same treatment — that is a request for a file
 listing, which only GitHub can answer.
 
 Write links the way GitHub wants them. The site adapts.
@@ -128,9 +128,7 @@ browsing the folder, and only that. **The landing page does not render it.**
 The landing's closing section is a four-column index of grouped links built
 from `themeConfig.sidebar` — the same list a new page has to be added to
 anyway, per AGENTS.md, so the section cannot fall behind the docs and there is
-no second list to maintain. Pages under `performance/audits/` are filtered out:
-there is one per audit, forever, and `Performance Records` is the page that
-indexes them.
+no second list to maintain.
 
 It used to render `index.md` through `<Content />` and reflow its table into
 cards, which kept the two in step at the cost of twenty-four cards of

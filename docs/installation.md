@@ -338,7 +338,7 @@ any signed manifest is checked. Verifying the archive yourself first closes that
 are already covered by the signed manifest.
 
 To check a signed release the way the updater does, use the `relswap` release tool at the version
-pinned by `Cargo.lock` (see [Release process](release-process.md#prerequisites) for the install
+pinned by `Cargo.lock` (see [Release process](../dev/release-process.md#prerequisites) for the install
 command):
 
 ```bash
@@ -353,8 +353,4 @@ relswap verify \
 
 A signed manifest also has an expiry date, and clients refuse one that has lapsed. A scheduled
 workflow watches the published release's remaining validity and fails well before that happens; see
-[Release process](release-process.md#release-health).
-
-## Maintainers
-
-Release signing and publication are covered in the [release process](release-process.md).
+[Release process](../dev/release-process.md#release-health).

@@ -3,7 +3,7 @@
 This page is for maintainers publishing a signed rozi release. It covers preparation, tagging, what
 the Release workflow checks, verification after publication, signing-key rotation, and what to do
 when a release fails. Installation and update behavior for users is in
-[Installation](installation.md). When this page and `.github/workflows/release.yml` disagree, the
+[Installation](../docs/installation.md). When this page and `.github/workflows/release.yml` disagree, the
 workflow is the source of truth.
 
 ## Prerequisites
@@ -346,7 +346,7 @@ the workflow passes.
 `.github/workflows/nightly.yml` publishes a disposable build of `master` every night. It is not a
 release channel and shares nothing with release signing: no protected environment, no private key,
 no crates.io token. What users get is described in
-[Installation](installation.md#nightly-builds).
+[Installation](../docs/installation.md#nightly-builds).
 
 The workflow runs at 03:17 UTC and can be started by hand with `workflow_dispatch`. It runs three
 stages:

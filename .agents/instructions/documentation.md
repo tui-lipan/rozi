@@ -94,6 +94,10 @@ Embed captures with the `CaptureGallery` component (`docs/.vitepress/theme/Captu
   `data-caption` is one sentence under the frame, and `data-code` is TOML with `\n` line breaks.
 - A gallery with one image is a framed screenshot with a full-size view.
 
+Clips are MP4s recorded by the `clip` scenes in the same tool, from a release build. The landing
+page plays them in the same frame with `ClipGallery` (`docs/.vitepress/theme/ClipGallery.vue`),
+which pauses off screen and shows the poster with controls to readers who prefer reduced motion.
+
 ## Diagrams
 
 Diagrams are hand-written SVGs in `docs/assets/diagrams/`, embedded as Markdown images with a

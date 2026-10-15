@@ -12,7 +12,8 @@ here=$repo/tools/docs-captures
 out=${OUT:-$repo/docs/assets/captures}
 # Full-quality PNGs, kept outside the repository for reviewing a run.
 preview=${PREVIEW:-/tmp/rzc-preview}
-bin=$repo/target/debug/rozi
+# A release build: a debug build paints too slowly for clips, and images drag it down further.
+bin=$repo/target/release/rozi
 # Unix socket paths are short-limited, so the sandbox lives directly under /tmp.
 sandbox=/tmp/rzc
 base=/tmp/rzc-base
@@ -23,7 +24,7 @@ for tool in nvim lazygit btop eza bat bash git magick ffmpeg python3 tmux; do
 done
 
 if [[ -z ${SKIP_BUILD:-} ]]; then
-  cargo build --quiet --features ui-snapshot --manifest-path "$repo/Cargo.toml"
+  cargo build --quiet --release --features ui-snapshot --manifest-path "$repo/Cargo.toml"
 fi
 mkdir -p "$out"
 
@@ -110,7 +111,7 @@ clip() {
   local rec=$sandbox/clip.rozirec frames=$sandbox/frames
   sandbox_env timeout 300 python3 "$here/clip.py" "$sandbox/tmux.sock" \
     "${viewport%x*}" "${viewport#*x}" "$settle" \
-    "run:rozi record start ui --output $rec >/dev/null
+    "run:rozi record start ui --max-fps 60 --hide-indicator --output $rec >/dev/null
 $steps
 run:rozi record stop --ui >/dev/null" -- "$bin" \
     >"$sandbox/run.log" 2>&1 || { cat "$sandbox/run.log" >&2; exit 1; }

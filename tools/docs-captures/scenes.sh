@@ -164,3 +164,42 @@ rozi --session infra split >/dev/null 2>&1 || true
 sleep 0.5
 '
 STARTUP=picker SETUP=$sessions_setup scene session-picker "$focus" 3000 "wait:400"
+
+# Pane open and close styles, one clip each. The pane that opens shows a full source file, so the
+# closing effect has something to carry.
+for style in scale slide portal scan particles; do
+  PROFILE=api clip "pane-$style" "$focus" 5000 "sleep:500
+run:rozi split --focus --argv nvim \"\$HOME/src/rozi/src/layout/geometry.rs\" >/dev/null
+sleep:1600
+key:C-a
+key:w
+sleep:1800" "[animations]
+pane_open_style = \"$style\"
+pane_close_style = \"$style\""
+done
+
+# Workspaces sliding past one another: 1, 2, 3, and back to 1.
+PROFILE=workspaces clip workspace-switch "$wide" 6000 "sleep:700
+key:C-a
+key:2
+sleep:1100
+key:C-a
+key:3
+sleep:1100
+key:C-a
+key:1
+sleep:1300"
+
+# Real images through effects: the logo beside the live site in terminal-browser, both dimmed
+# behind the palette, then the browser pane closed with particles. The settle lets the site load.
+PROFILE=media POSTER=0.5 clip image-effects "$wide" 17000 "sleep:800
+key:C-a
+type:p
+sleep:1400
+key:Escape
+sleep:900
+key:C-a
+key:w
+sleep:2400
+run:terminal-browser shutdown >/dev/null 2>&1 || true" '[animations]
+pane_close_style = "particles"'

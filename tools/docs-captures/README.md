@@ -20,8 +20,12 @@ go to `/tmp/rzc-preview` for review; only the WebP and MP4 files belong in the r
 - `python3`, `tmux`, and `ffmpeg` with libx264, for clips
 - `nvim`, `lazygit`, `btop`, `eza`, and `bat`, which fill the panes
 
-The script builds rozi with `--features ui-snapshot`. A later plain `cargo build` or `cargo test`
-replaces that binary with one that cannot write PNGs, so drop `SKIP_BUILD` after one.
+The script builds a release rozi with `--features ui-snapshot`: clips need release speed to play
+smoothly. A later plain `cargo build --release` replaces that binary with one that cannot write
+PNGs, so drop `SKIP_BUILD` after one.
+
+The `image-effects` clip also needs `terminal-browser` on `PATH` and a network connection: it
+shows the live rozi.tui-lipan.dev in a pane.
 
 ## Isolation
 
@@ -36,7 +40,7 @@ checkout are never read or written.
 | --- | --- |
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
 | `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
-| `sandbox/profiles/` | Workspaces the scenes launch: `dev` (hero), `api` (overlays), `web` (layouts) |
+| `sandbox/profiles/` | Workspaces the scenes launch: `dev` (hero), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
 | `sandbox/home/.bashrc` | A short prompt and no history file |
 | `sandbox/bin/icat` | Shows a PNG in a pane with the Kitty graphics protocol: `icat FILE [COLS ROWS]` |
@@ -69,8 +73,9 @@ left-button drag at zero-based terminal cells, including several moves before re
 | `sleep:MS` | Waits |
 | `run:COMMAND` | Runs a shell command in the sandbox, where `rozi` is this build |
 
-A `rozi` typed into a pane is this build too. The recording starts after `SETTLE_MS` and stops
-after the last step, so the clip holds exactly the steps. Set `POSTER` to the second shown before
+A `rozi` typed into a pane is this build too. Clips are recorded at up to 60 frames a second,
+without the recording indicator. The recording starts after `SETTLE_MS` and stops after the last
+step, so the clip holds exactly the steps. Set `POSTER` to the second shown before
 the clip plays; the default is its last frame. A blinking dot may be in its off phase at a given
 second, so check the poster in `/tmp/rzc-preview` after each run.
 

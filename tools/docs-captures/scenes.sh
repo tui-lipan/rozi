@@ -23,12 +23,13 @@ border_mode = "dividers"
 titlebar = "inset"
 padding = [0, 1]
 workbar_background = false'
-scene style-powerline "$wide" 5000 "wait:10" '[pane]
-border_style = "thick"
-title_style = "arrow"
-workbar_style = "arrow"
-workbar_tab_style = "arrow"
-workbar_badge_style = "arrow"'
+scene style-tmux "$wide" 5000 "wait:10" '[pane]
+focus_on_hover = false
+border_mode = "dividers"
+show_titles = false
+workbar_gap = false
+show_workbar = true
+workbar_at_bottom = true'
 
 # The complete example from customize.md, minus its cwd and keys.
 PROFILE=web LAYOUT=master scene personalized "$wide" 5000 "wait:10" '[theme]
@@ -52,10 +53,7 @@ clock_format = "%H:%M"
 [sidebar]
 startup = true
 layout = { right = { width = 34, panel_count = 2, panels = [{ weight = 0.4, tabs = ["activity", "panes", "sessions"] }, { weight = 0.6, tabs = ["files", "git", "worktrees"] }] } }
-tab_style = "round"
-
-[animations]
-session = "off"'
+tab_style = "round"'
 
 # Layouts, from the same five panes.
 for layout in dwindle master grid columns scrollable monocle; do
@@ -78,12 +76,9 @@ PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:600"
 
 # Independent docks and visibility controls, using the same saved placement.
-# Static captures skip the session portal; its paint-only progress needs a live terminal.
 sidebar_docks='[sidebar]
 startup = true
-layout = { left = { width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }, { weight = 1.0, tabs = ["activity"] }] }, right = { width = 36, panel_count = 3, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }, { weight = 1.0, tabs = ["worktrees"] }] } }
-[animations]
-session = "off"'
+layout = { left = { width = 32, panel_count = 3, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }, { weight = 1.0, tabs = ["activity"] }] }, right = { width = 36, panel_count = 3, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }, { weight = 1.0, tabs = ["worktrees"] }] } }'
 PROFILE=web scene sidebar-docks "$wide" 4500 "wait:600" "$sidebar_docks"
 sidebar_visibility=${sidebar_docks/left =/hidden = [\"sessions\", \"git\", \"worktrees\"], left =}
 # A panel body accepts a tab even when its bar is empty.

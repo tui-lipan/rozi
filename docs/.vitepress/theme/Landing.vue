@@ -13,7 +13,7 @@ import shotWorkspace from "../../assets/captures/workspace.webp";
 import shotTokyoNight from "../../assets/captures/theme-tokyo-night.webp";
 import shotRosePineDawn from "../../assets/captures/theme-rose-pine-dawn.webp";
 import shotMerged from "../../assets/captures/style-merged.webp";
-import shotPowerline from "../../assets/captures/style-powerline.webp";
+import shotTmux from "../../assets/captures/style-tmux.webp";
 import shotPersonalized from "../../assets/captures/personalized.webp";
 
 /* The pre-paint script in config.ts has already decided this and hidden the
@@ -320,14 +320,16 @@ titlebar = "integrated"
 title_style = "round"`,
   },
   {
-    src: shotPowerline,
-    alt: "Thick pane frames with arrow-shaped titles, tabs, and badges",
-    label: "Powerline",
+    src: shotTmux,
+    alt: "Panes separated by thin dividers with no titles, and the workbar along the bottom edge",
+    label: "tmux",
     code: `[pane]
-border_style = "thick"
-title_style = "arrow"
-workbar_style = "arrow"
-workbar_tab_style = "arrow"`,
+focus_on_hover = false
+border_mode = "dividers"
+show_titles = false
+workbar_gap = false
+show_workbar = true
+workbar_at_bottom = true`,
   },
   {
     src: shotPersonalized,

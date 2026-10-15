@@ -195,7 +195,7 @@ or a click. Search stays in place and filters the selected session. A session ta
 session and hostname from its rows. If its last agent disappears, the tab stays open with an
 empty list. With no sessions to list, the tab strip is hidden.
 
-Agent names and activity appear on the left; status, age, session, and project are grouped on the
+Agent names and activity appear on the left; status, time, session, and project are grouped on the
 right. Status text uses the same color as its marker. The picker grows to fit its widest row,
 within 72–160 columns and the available terminal width. Filtering keeps its width steady.
 

@@ -66,8 +66,8 @@ fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
         .glyph(glyph)
         .title_style(super::super::fg_only(&theme.primary))
         .badge_text(place_badge(&row), super::super::fg_only(&theme.muted).dim());
-    if let Some(age) = row.age {
-        content = content.meta(super::agents::format_age(age), Style::new().fg(color));
+    if let Some(elapsed) = row.elapsed {
+        content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
     }
     // The status word leads the detail line. Rows from other sessions carry no activity, so for
     // most of them it is all the second line has to say.
@@ -126,7 +126,7 @@ mod tests {
             session: session.into(),
             status: "blocked".into(),
             finished_unseen: false,
-            age: None,
+            elapsed: None,
             activity: None,
             place: None,
         }

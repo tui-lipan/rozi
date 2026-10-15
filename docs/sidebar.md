@@ -128,8 +128,10 @@ at the top wherever it runs.
 
 Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
 The second line gives its status and, for the session on screen, what it is working on or the
-project and branch it works in. Agents in the session on screen also show how long their current
-status has held. A marker in the left margin shows the agent in the focused pane.
+project and branch it works in. Agents in the session on screen also show a time: how long a
+working or blocked state has held, or how long a finished run took, which then stops. An idle agent
+shows no time. The [picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left
+margin shows the agent in the focused pane.
 
 Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other

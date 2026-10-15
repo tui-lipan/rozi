@@ -65,7 +65,7 @@ exclude = [
 # Pinned to tui-lipan's cursor fix, including TreeGuides for the sidebar's tree tabs.
 # Static editable carets and live-screen blink overrides require this unreleased fix.
 # Restore a registry dependency once these changes ship in a release.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "6b0a99d1b3298b70e5d98a68ff1e80eb917a15ad", features = [
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "8f3d07b806de0812eff6b1ada67e1d1fb735d09b", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

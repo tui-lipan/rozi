@@ -18,7 +18,9 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
 - Reusable framework behavior and framework defects belong in the sibling `../tui-lipan`
   repository. Do not add a Rozi-local workaround; use a local path override only for iteration,
   then consume the released framework version.
-- Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes.
+- Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes. Docs
+  describe current behavior for users: no change history, migration notes, or implementation
+  detail. The rules are in `.agents/instructions/documentation.md`.
 - GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`. The `/changelog` command
   defines release-note structure; Rosie writes the prose from each PR Summary.
 - Prefer a clean breaking change over aliases or compatibility shims unless the user asks for

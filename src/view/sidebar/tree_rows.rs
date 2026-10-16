@@ -15,7 +15,7 @@ use crate::state::{SidebarTone, TreeItem, TreeLine};
 const INDENT: u16 = 2;
 
 fn guides(ctx: &Context<AppRoot>) -> TreeGuides {
-    TreeGuides::new(IndentStyle::Short)
+    TreeGuides::new(IndentStyle::Branch)
         .indent(INDENT)
         .guide_style(Style::new().fg(super::fill(ctx).elevate_by(0.3)))
 }

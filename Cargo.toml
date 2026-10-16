@@ -62,9 +62,8 @@ exclude = [
 # 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
-# Pinned to tui-lipan's feat/tree-guides (TreeGuides for the sidebar's tree tabs), on top of
-# v0.23.0. Restore a registry dependency once that ships in a release.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "6175c2a0a3d88f7f4d5e31ddb55cc6f358f08b5f", features = [
+# 0.26: TreeGuides, composed Tree rows, static caret handling, and splitter focus fixes.
+tui-lipan = { version = "0.26.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

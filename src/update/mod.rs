@@ -1096,6 +1096,8 @@ pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
         .as_ref()
         .is_some_and(|state| !matches!(state.stage, crate::state::KeybindingEditorStage::List));
     ctx.set_modifier_key_reporting(capturing || (picker && !editing_binding));
+    // Pickers let Shift pause reporting so a Shift+drag host selection survives its release.
+    ctx.set_modifier_key_reporting_keeps_shift(capturing);
 }
 
 fn post_update_sync(

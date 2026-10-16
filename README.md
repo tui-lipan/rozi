@@ -88,11 +88,11 @@ start:
 
 - [Getting started](docs/getting-started.md) — a guided first session
 - [Core concepts](docs/core-concepts.md) — sessions, panes, workspaces, and profiles
-- [Feature map](docs/features.md) — what rozi can do, grouped by task
+- [Overview](docs/overview.md) — what rozi can do, grouped by task
 - [Keybindings](docs/keybindings.md) — the default keys
 - [Configuration](docs/configuration.md) — the `config.toml` reference
 
-The [documentation overview](docs/overview.md) lists every guide.
+The [documentation index](docs/index.md) lists every guide.
 
 ## Platforms
 

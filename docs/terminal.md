@@ -40,7 +40,7 @@ integration.
 A directory reported for another host, such as inside an SSH session, can appear in titles, but
 rozi never starts a new local pane in it.
 
-See [Configuration](configuration.md#shell-integration-settings) for modes and per-shell behavior.
+See [Configuration](configuration.md#shell-integration) for modes and per-shell behavior.
 
 ## Use the mouse
 
@@ -186,44 +186,16 @@ Limits:
 
 - Kitty protocol animation frames are not supported. Programs that redraw an image can still
   animate it.
-- The session server and each attached client keep up to 200 MiB of image data per pane, allocated as needed,
-  evicting old images when needed. This allows programs that update parts of a frame to retain
-  their base image, toolbar tiles, and patches. A client that attaches receives the retained images.
-- Remote panes send image data inline, because the local client cannot read a file path on the
-  server.
+- Each pane keeps up to 200 MiB of image data, and evicts the oldest images beyond that. A client
+  that attaches to a running session receives the images still on screen.
+- A single image upload is limited to 64 MiB; larger images must be sent in chunks.
 - In a session that may have several clients, rozi refuses image transfers through temporary files
-  or shared memory, which can be read only once.
+  or shared memory, because only one client could read them.
 
-On Kitty hosts such as Ghostty, natural-size patches can go directly to the host as clipped image
-placements. Sources and placements persist across frames. An unrelated pane update sends no image
-commands when their geometry and visibility are unchanged, and graphics-only changes can reach the
-host without repainting terminal cells. rozi still retains
-the source scene for reconnects and captures. Scaled images, unmeasured host cell sizes,
-same-depth overlaps, modal dimming, and overlapping later widgets use composition.
-Other host protocols keep their existing rendering path.
-
-Resizing the host window adds no fixed pause to image rendering. Static pictures remain visible
-after resizing even when their program sends no new output. `TUI_LIPAN_IMAGE_RESIZE_PAUSE_MS`
-defaults to `0`; set it to `180` to restore the previous delay on a host where repeated image
-uploads during a window drag are expensive.
-
-Completed independent image replacements can supersede older queued frames for the same source.
-Text and control boundaries preserve ordering. Queries, image deletion, cursor changes, partial
-patches, chunked uploads and consuming media keep their original dependency order. Captures and
-recordings continue to use the retained scene. Session acknowledgements report successful host
-writes rather than receipt or parsing of producer bytes.
-
-Local sessions can retain immutable frame files and let a Kitty host load them directly. This
-avoids decoded frame buffers for both full frames and eligible patches. Captures and effects read
-the pixels when needed. Frame files use filesystem cache even when they add little to rozi's
-resident memory.
-
-For a controlled comparison, start rozi with `TUI_LIPAN_TERMINAL_IMAGES=composed` to disable native
-patch placements. To compare terminal-browser's full-frame mode, run
-`TERMINAL_BROWSER_PRESENT=full terminal-browser open https://raffles.com --no-merge` inside a pane.
-Compare responsiveness as well as memory usage. Full frames move more pixels than small patches,
-and each upload is limited to 64 MiB. Larger inline uploads must use chunks; a single escape
-sequence remains limited to 32 MiB.
+If images draw incorrectly in a Kitty-protocol terminal such as Ghostty, start rozi with
+`TUI_LIPAN_TERMINAL_IMAGES=composed`. rozi then draws every image itself instead of handing
+placements to the terminal. If image-heavy panes are slow while you resize the window, set
+`TUI_LIPAN_IMAGE_RESIZE_PAUSE_MS=180` so rozi waits for the resize to settle before it redraws them.
 
 ## Take a screenshot
 
@@ -280,60 +252,35 @@ See [Profiles](profiles.md) and [Shared sessions](shared-sessions.md) for those 
 
 ## Program status
 
-Applications can report activities through [OSC 7501 revision 0.4](https://www.superlogical.com/rex/docs/build/program-status).
-For example, `printf '\033]7501;state=working:app=cargo:progress=40\033\\'`
-reports a build at 40 percent. `state=blocked` requests user action; `state=done`
-marks completion; `state=error` marks failure. Messages and titles use base64 UTF-8.
+A program can report its progress through
+[OSC 7501](https://www.superlogical.com/rex/docs/build/program-status), and rozi shows it in the
+[Activity](sidebar.md#activity) sidebar tab. For example, this reports a build at 40 percent:
 
-The Activity sidebar shows one summary per pane, alongside `rozi status` and
-published rows. Blocked outranks error, working, done and idle. Among records in
-the same state, the latest report wins. The selected record supplies its title,
-message and percentage. Selection focuses the pane. Hierarchical records are
-supported by the protocol, but the sidebar does not expand a task tree.
+```sh
+printf '\033]7501;state=working:app=cargo:progress=40\033\\'
+```
 
-Reports remain available while every window is detached. Newly attached windows
-receive current state without historical notifications. Prompts and process exit
-clear working and blocked records; done, error and idle remain in the same logical
-terminal. Full terminal reset clears everything. A newly created or resurrected
-terminal starts empty. No heartbeat or timeout is required.
+| State | Meaning |
+| --- | --- |
+| `working` | The program is busy, optionally with a percentage. |
+| `blocked` | The program needs your input. |
+| `done` | The work finished. |
+| `error` | The work failed. |
 
-New blocked and error transitions use the existing notification settings,
-Do Not Disturb, attendance and sound policies. Error uses the completed-result
-notification switch and the error sound. Working, progress and done reports do not
-notify. Attention belongs to each window and clears through interaction with the
-pane; merely regaining window focus does not acknowledge it. Rapid message and
-progress changes are coalesced, and repeated reports do not repeat notifications.
-Suppressed alerts do not consume the notification cooldown, so attending a blocked
-pane does not silence a later failure after you switch away.
+Messages and titles are base64-encoded UTF-8. The Activity tab shows one row per pane: if a pane
+reports several things, the most urgent wins, in the order blocked, error, working, done, idle.
+Selecting the row focuses the pane.
 
-OSC reports are generic activities. Even `app=codex` or `app=claude-code` does not
-create an agent or change native hooks, agent automation, keep-awake or conversation
-restoration. An agent and an OSC activity can appear beside one another, including
-when their labels look alike. Application identifiers do not establish a shared
-identity.
+A report lasts until the program replaces it. A new prompt or the program exiting clears `working`
+and `blocked`; `done` and `error` stay until the program reports again or the terminal is reset.
+Reports keep arriving while no client is attached, and a client that attaches sees the current
+state.
 
-OSC blocked and error attention also colors pane borders and content tints.
-Blocked uses the warning role and error uses the error role by default.
-The `blocked` and `error` keys in `[pane.alert]` independently override or disable
-these colors. Both retain the existing urgent animation and input acknowledgement.
+`blocked` and `error` notify you like a finished agent does, following your
+[notification settings](configuration.md#notifications), and tint the pane border in the warning and
+error colors. Override or turn off those colors with the `blocked` and `error` keys in
+[`[pane.alert]`](configuration.md#pane-alert). Interacting with the pane clears its attention mark.
+`working`, `done`, and progress updates never notify.
 
-### Presentation pacing
-
-After a sustained run of complete, independent Kitty replacements, the session server gives that
-pane PTY read credits. Visible streams use the leading client's configured frame rate and allow at
-most two unpresented replacements per image stream. Each acknowledged presentation schedules the
-next release 3 ms before the leader's next frame, so the newest replacement arrives just in time
-rather than at an arbitrary point in the frame. While a credit is withheld, the producer's
-output waits in the kernel; each release drains that backlog (up to 64 KiB) so only its newest
-replacement is forwarded, rather than the oldest. Focused visible controllers take priority over
-writable clients and read-only followers. A slow follower cannot pace a faster controller. A
-client whose oldest unacknowledged output is more than 250 ms old, such as a stopped or wedged
-one, leads only when no responsive visible client remains. With no visible consumer, graphics streams run at 15 Hz; active recordings use their
-configured capture rate and successfully queued capture progress instead.
-
-Ordinary output and dependent patches remove pacing immediately. Keys, paste, clicks, releases,
-wheel events and explicit control input open a 50 ms answer window. Pointer motion stays paced.
-Each PTY has its own gate, with one bounded drain in flight and a 200 ms safety release. Resize,
-pane replacement and exit release the gate; final child output drains before the exit event.
-Presentation ACKs are sent after a successful host frame, including composed frames. Parsing and
-receiving bytes do not acknowledge presentation.
+A program status report is not an agent, even when it says `app=codex` or `app=claude-code`: it
+does not change agent detection, keep-awake, or conversation restore.

@@ -72,12 +72,12 @@ Every request has `cmd`. Any request may also carry these fields:
 Do not synthesize extension provenance. A request with a retired generation is rejected.
 
 A request that arrives through an extension runtime's bridge — from a
-[placed](extensions.md#run-on-the-session-host) extension process — must carry a `credential`. The
+[placed](writing-extensions.md#run-on-the-session-host) extension process — must carry a `credential`. The
 UI identifies the caller from it alone: it replaces `extension` with the extension and generation
 the credential was issued for, and refuses a credential that was revoked or issued for another
 host's runtime. The credential distinguishes hosts and generations, not processes on one host: any
 process of the same user there can read it. It then admits each request by the rules in
-[What a placed process may do](extensions.md#what-a-placed-process-may-do).
+[What a placed process may do](writing-extensions.md#what-a-placed-process-may-do).
 
 ## Responses
 
@@ -560,9 +560,8 @@ The response waits up to five seconds for the pane's terminal to be ready, then 
 `accepted`, and `pty_ready`.
 
 A binary advertises `size` with the `split-size` capability in
-[`rozi api describe`](control.md#check-the-installed-api). A UI running an older binary ignores the
-field. A session server from before session protocol 21 would ignore it too, so a newer client is
-refused at the handshake instead.
+[`rozi api describe`](control.md#check-the-installed-api); a UI that does not advertise it ignores
+the field.
 
 ### Actions, workspaces, status, and notifications
 
@@ -954,7 +953,7 @@ popup pane. Either way its rows keep reaching that session after you switch to a
 never land on the other session's pane with the same number. Activating a row reaches the stream
 of the session on screen.
 
-A [placed extension process](extensions.md#what-a-placed-process-may-do) is the exception: like
+A [placed extension process](writing-extensions.md#what-a-placed-process-may-do) is the exception: like
 its other pane commands, its stream opens only into the session on screen, and only when that
 session lies within its placement, whatever `source_session` it names; otherwise it is refused
 with `out-of-scope`. Its rows are delivered only while that same session is on screen, and are
@@ -1115,7 +1114,7 @@ its rows.
 ### Several producers in one tab
 
 A tab may have several producers at once. A producer is identified by where it runs — for a
-[placed extension process](extensions.md#run-on-the-session-host), the host and, for a
+[placed extension process](writing-extensions.md#run-on-the-session-host), the host and, for a
 session-bound placement, the session it was placed for; for anything else, this client — plus its
 `name`. A producer that opens a new stream with the same identity replaces its own earlier stream:
 the rows it published stay until its first snapshot, and the earlier stream closing afterwards

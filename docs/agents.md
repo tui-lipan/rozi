@@ -16,8 +16,7 @@ rozi ships definitions for common agent CLIs in
 to `config.toml` when rozi does not recognize a tool, or override a built-in when its screen rules do
 not match the version you run.
 
-Detection runs in the session server, so every client attached to a session sees the same agent
-label and state.
+Every client attached to a session sees the same agent label and state.
 
 ## Integrate Claude Code hooks
 
@@ -32,17 +31,13 @@ Install it in Claude Code:
 /plugin install rozi@rozi
 ```
 
-Restart Claude Code inside a Rozi pane. The plugin needs Python 3.10 or newer available as
-`python` and a current Claude Code with exec-form hooks and `CLAUDE_PLUGIN_DATA`. It requires
-`rozi agents report` and `rozi agents release`; no Rozi extension is needed. It also reports from
-remote panes and from sessions with no window attached, as long as the pane's host runs a matching
-rozi.
+Restart Claude Code inside a rozi pane. The plugin needs Python 3.10 or newer available as
+`python` and a recent Claude Code; no rozi extension is needed. It also reports from remote panes
+and from sessions with no window attached, as long as the pane's host runs the same rozi version.
 
-The plugin reports one activity for the main conversation. Child-agent completion cannot mark the
-parent done, and background tasks or scheduled wakeups keep a completed response working.
-Parallel tool completions keep the conversation blocked while another input wait remains.
-Permission waits without a tool ID clear when the whole tool batch resolves or the turn ends.
-See the plugin README for the event mapping, checkout installation, and verification steps.
+The plugin reports one activity for the main conversation; sub-agents and background tasks do not
+mark it done early. See the plugin README for the event mapping, checkout installation, and
+verification steps.
 
 ## Integrate Codex hooks
 
@@ -57,17 +52,13 @@ codex plugin marketplace add tui-lipan/rozi
 codex plugin add rozi@rozi
 ```
 
-Restart Codex inside a Rozi pane and trust the plugin's hooks when Codex asks you to review
-them. The plugin needs Python 3.10 or newer available as `python3`. It requires
-`rozi agents report` and `rozi agents release`; no Rozi extension is needed. It also reports from
-remote panes and from sessions with no window attached, as long as the pane's host runs a matching
-rozi.
+Restart Codex inside a rozi pane and trust the plugin's hooks when Codex asks you to review
+them. The plugin needs Python 3.10 or newer available as `python3`; no rozi extension is needed. It
+also reports from remote panes and from sessions with no window attached, as long as the pane's
+host runs the same rozi version.
 
-Codex starts a thread's hooks at its first prompt, so after `/resume` the pane reports the new
-thread once you send it something. The plugin reports one activity for the thread on screen.
-Sub-agent completion cannot mark the parent done. An approval keeps the thread blocked until the
-tool calls running when Codex asked for it finish, so a parallel completion never hides an open
-approval. See the plugin README for the event mapping, checkout installation, and verification
+The plugin reports one activity for the thread on screen. After `/resume`, the pane picks up the
+resumed thread once you send it a prompt. See the plugin README for the event mapping, checkout installation, and verification
 steps.
 
 ## Add an agent
@@ -132,8 +123,7 @@ invalid `scope` or `resume` values. An invalid rule is dropped and the rest of t
 loads. An invalid definition is dropped as a whole.
 
 In a [shared session](shared-sessions.md), only the controlling client's reload updates the running
-server. After rebuilding rozi with changed built-in definitions, restart long-lived session servers
-to pick them up.
+session. After updating rozi, restart running sessions to pick up its new built-in definitions.
 
 ## Match the process
 
@@ -253,7 +243,7 @@ A `config.toml` entry with a built-in's id replaces that built-in. An entry with
 before the built-ins, so it can claim a process that a built-in would also match.
 
 Extensions declare agents in `extension.toml` with the same fields. Their ids become
-`<extension>.<id>`, so an extension cannot replace a built-in. See [Extensions](extensions.md).
+`<extension>.<id>`, so an extension cannot replace a built-in. See [Write an extension](writing-extensions.md#agent-definitions).
 
 ## Declare native resume support
 
@@ -277,10 +267,8 @@ with a warning, and the agent's detection rules still work.
 An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.
 
-A snapshot stores only which agent and which conversation — never the command. rozi reads `argv`
-from the definition loaded when the session is restored, so changing `argv` also changes how
-existing snapshots reopen. See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore
-does.
+rozi reads `argv` when the session is restored, so a change also applies to sessions saved
+earlier. See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore does.
 
 ## Inspect and wait for agents
 
@@ -378,26 +366,17 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
 - A live report overrides screen detection. Releasing it returns the pane to screen detection.
-- When the pane also has an agent publisher's rows, the rows stay listed. The report drives only
-  the agent row whose `live_session`, or `native_session` when it has none, matches
-  `--native-session`. A report about a conversation no agent row lists is kept but not shown, so a
-  client that switched conversations without its hooks noticing still lists every conversation
-  correctly. Rows from an activity publisher are never driven by the report.
-- One token owns the pane. Another process's token, such as the hooks of a conversation the client
-  runs in the background, cannot own it, but it can report for the row naming its conversation. It
-  has its own sequence, and that row follows it until it releases or no row names its conversation.
-  Either way the token is retired like a released owner's, so it can never report again or claim the
-  pane. Only one token reports for each conversation at a time.
+- When the pane also publishes agent rows, a report drives only the row whose conversation matches
+  `--native-session`; the other rows stay listed as published.
+- One token owns the pane. Hooks for a conversation running in the background can still report for
+  that conversation's row with their own token.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report
 goes to the session the pane runs in, which keeps it for every window that attaches, now or later.
-With `--session`,
-always pass `--target`, because an inherited pane number may belong to a different session.
-
-Pane hooks carry `ROZI_SESSION_INSTANCE`, so reports and releases follow the calling pane's
-session even after the UI switches to another attached session. If that session is no longer
-attached, the UI refuses the report instead of applying it to the session on screen.
+With `--session`, always pass `--target`, because an inherited pane number may belong to a different
+session. Reports always reach the session the pane belongs to, even after you switch the window to
+another session.
 
 ## Publish state instead of reading the screen
 
@@ -435,9 +414,7 @@ Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi 
 sharing a server each publish their own tab list. With OpenCode tabs disabled, only the viewed
 root session appears. See the plugin README for installation, lifecycle, and host requirements.
 
-The older V1 event plugin publishes a single agent row with the aggregate state of every session in
-the pane, as an agent publisher, so it does not depend on screen detection. The custom
-`opencode-tui` client has its own built-in publisher and does not need the V2 CLI plugin.
+The custom `opencode-tui` client publishes its own rows and does not need the plugin.
 
 ### Claude Code background sessions
 
@@ -452,11 +429,8 @@ unsent text, a dialog, or a streaming response. Install it from the **Discover**
 
 It works with or without the [Claude Code hook plugin](#integrate-claude-code-hooks). With it, the
 hooks' state drives the row for the conversation they report on, matched by `native_session`, and
-the other rows stay listed. The extension publishes its rows as agents; a release from before
-rozi separated activities from agents shows them in Activity only, so update the extension
-together with rozi.
-The extension needs a readable foreground process group, so it covers local panes on Linux and
-macOS, not Windows or remote panes.
+the other rows stay listed. The extension works in local panes on Linux and macOS, not on Windows
+or in remote panes.
 
 ### Codex threads
 
@@ -471,8 +445,6 @@ running. Install it from the **Discover** tab of **Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/codex-rozi-sessions.git`.
 
 It works with or without the [Codex hook plugin](#integrate-codex-hooks). With it, the hooks' state
-drives the row for the thread they report on, matched by `native_session`. The extension publishes
-its rows as agents; a release from before rozi separated activities from agents shows them in
-Activity only, so update the extension together with rozi. The extension covers
+drives the row for the thread they report on, matched by `native_session`. The extension covers
 local panes on Linux and macOS whose Codex client uses the background server, which is Codex's
 default.

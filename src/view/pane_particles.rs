@@ -75,6 +75,14 @@ struct ParticleSource {
 }
 
 impl ParticleEffect {
+    fn source_intact(&self, source: &ParticleSource, progress: f32) -> bool {
+        if self.closing {
+            (1.0 - progress) * (4.0 / 3.0) <= source.fragment.delay
+        } else {
+            progress >= source.arrival
+        }
+    }
+
     fn new(inner: Rect, motion: PanePaintMotion, closing: bool, seed: u64, color: Color) -> Self {
         let fragments = (0..i32::from(inner.h))
             .flat_map(|y| {
@@ -206,6 +214,31 @@ struct ParticleFrame {
 }
 impl CellEffect for ParticleEffect {
     fn apply(&self, _: &mut EffectCell, _: &EffectContext) {}
+    fn image_mask(&self, ctx: &EffectPrepareContext) -> Option<tui_lipan::CellMask> {
+        let (progress, _) = self.motion.sample(ctx.elapsed);
+        if progress >= 1.0 {
+            return None;
+        }
+        let width = usize::from(ctx.bounds.w);
+        let mut bits = vec![0u64; (width * usize::from(ctx.bounds.h)).div_ceil(64)];
+        for (index, source) in self.fragments.iter().enumerate() {
+            if !self.source_intact(source, progress) {
+                continue;
+            }
+            let x = index % usize::from(self.inner.w) + self.inner.x.max(0) as usize;
+            let y = index / usize::from(self.inner.w) + self.inner.y.max(0) as usize;
+            if x < width && y < usize::from(ctx.bounds.h) {
+                let bit = y * width + x;
+                bits[bit / 64] |= 1 << (bit % 64);
+            }
+        }
+        Some(tui_lipan::CellMask {
+            origin: (0, 0),
+            w: ctx.bounds.w,
+            h: ctx.bounds.h,
+            bits: bits.into(),
+        })
+    }
     fn uses_backdrop(&self) -> bool {
         self.closing || !self.finished.load(Ordering::Relaxed)
     }
@@ -241,11 +274,7 @@ impl CellEffect for ParticleEffect {
         let flight = (1.0 - progress) * (4.0 / 3.0);
         for (index, source) in self.fragments.iter().enumerate() {
             let fragment = source.fragment;
-            let intact = if self.closing {
-                flight <= fragment.delay
-            } else {
-                progress >= source.arrival
-            };
+            let intact = self.source_intact(source, progress);
             frame.intact[index] = intact;
             if intact || !source.emits {
                 continue;
@@ -360,6 +389,54 @@ impl PreparedCellEffect for ParticleFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn picture_fragments_follow_the_same_mask_as_the_particle_cells() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 35,
+        };
+        let inner = Rect {
+            x: 14,
+            y: 7,
+            w: 20,
+            h: 10,
+        };
+        for closing in [false, true] {
+            for progress in [1.0, 0.95, 0.85, 0.5, 0.0] {
+                let effect = ParticleEffect::new(
+                    inner,
+                    PanePaintMotion::Fixed(progress),
+                    closing,
+                    4,
+                    Color::Cyan,
+                );
+                let ctx = EffectPrepareContext::new(bounds);
+                let mask = effect.image_mask(&ctx);
+                let prepared = effect.prepare(&ctx);
+                for y in 0..inner.h {
+                    for x in 0..inner.w {
+                        let (x, y) = (inner.x + x as i16, inner.y + y as i16);
+                        let mut cell = EffectCell::new("A");
+                        let backdrop = EffectCell::new("x");
+                        if let Some(prepared) = &prepared {
+                            prepared.apply_with_backdrop(
+                                &mut cell,
+                                &backdrop,
+                                &EffectContext::new(x, y, bounds),
+                            );
+                        }
+                        assert_eq!(
+                            mask.as_ref().is_none_or(|mask| mask.test_scope_local(x, y)),
+                            cell.symbol() == "A",
+                            "image and text must leave together: closing={closing}, progress={progress}, cell={x},{y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn gravity_turns_an_upward_burst_downward() {
         let fragment = Fragment::new(20, 10, 40, 20, 7);

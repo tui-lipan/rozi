@@ -28,31 +28,17 @@ While the sidebar is visible, these command keys work without focusing it:
 | `PageDown` | Next tab |
 | `PageUp` | Previous tab |
 
-Open **Settings… → Bars → Left panels…** or **Right panels…** to choose one to three panels.
-Highlighting a choice leaves the layout unchanged; `Enter` applies and saves it. `Esc` cancels.
-Panel-count changes preserve hidden docks and dormant tab assignments.
+Open **Settings… → Bars → Left panels…** or **Right panels…** to split a dock into one to three
+panels. `Enter` applies the choice and `Esc` cancels.
 
-**Open sidebars at startup** controls whether the next client opens your remembered combination
-immediately. When disabled, the client starts with both docks hidden; `b` or `B` brings back the
-same combination. Changing this setting or reloading the configuration leaves the current
-client's sidebars alone. Both docks always exist, including empty docks that accept dragged tabs.
+**Show/Hide left sidebar** and **Show/Hide right sidebar** in the command palette toggle one dock
+at a time. They have no default keys; bind them as `toggle-left-sidebar` and
+`toggle-right-sidebar`. The `b` command key hides whichever docks are shown and later brings back
+the same ones.
 
-On exit or detach, rozi remembers the shown docks, or the restore combination when everything is
-hidden. It saves this memory as `sidebar-docks.json` in the local state directory, separately
-from `config.toml`.
-The last client to exit wins; running clients keep their own visibility and restore memory.
-
-The `b` command hides the shown docks and brings the same combination back. **Show/Hide left
-sidebar** and **Show/Hide right sidebar** in the command palette toggle one dock independently;
-these actions have no default keys and can be bound. Hiding the last dock remembers that dock:
-show both, hide Right, then hide Left, and `b` brings back only Left. Showing one dock while both
-are hidden shows only the requested dock.
-
-On first use, when no combination has been remembered, `b` shows docks with enabled, available
-tabs, or Left if every dock is empty. `B` restores the same way only when everything is hidden,
-then focuses the remembered panel if its dock is shown, or the last-used panel on a shown dock.
-It never reopens a hidden dock while another is shown. Showing an empty dock explicitly exposes
-its drag target.
+rozi remembers which docks were open when you leave and opens them again next time. Turn off
+**Open sidebars at startup** in Settings to start with both docks hidden; `b` still brings back the
+remembered docks.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
 <img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, Open sidebars at startup, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
@@ -89,9 +75,8 @@ After the `B` command key focuses the sidebar:
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
 `width` allows. Drag the divider between panels to change the split.
 
-rozi saves tab order, tab visibility, the startup switch, placement, dock widths, panel counts,
-and panel weights to `config.toml`. The last nonempty dock combination is saved on client exit;
-keyboard focus and tab selection remain client-local and are not saved.
+Tab order, tab visibility, dock widths, and panel sizes are saved to `config.toml`, so they apply
+to every client.
 
 ## Activity
 
@@ -106,8 +91,10 @@ repository's name, and the branch beside it tells the checkouts apart.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
-Each row shows `blocked`, `working`, `done`, or `idle` in its configured status colour. A finished
-run stays marked `done` until you visit its pane. Agent state comes from the session server, so every
+Each row shows `blocked`, `working`, `done`, `error`, or `idle` in its configured status colour.
+Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
+for you stands apart from work that failed. A finished run stays marked `done` until you visit its
+pane. Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
 attached client sees the same thing.
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
@@ -134,8 +121,10 @@ at the top wherever it runs.
 
 Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
 The second line gives its status and, for the session on screen, what it is working on or the
-project and branch it works in. Agents in the session on screen also show how long their current
-status has held. A marker in the left margin shows the agent in the focused pane.
+project and branch it works in. Agents in the session on screen also show a time: how long a
+working or blocked state has held, or how long a finished run took, which then stops. An idle agent
+shows no time. The [picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left
+margin shows the agent in the focused pane.
 
 Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
@@ -331,24 +320,21 @@ rozi remembers which rows you expanded or collapsed until the client exits.
 <img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar tabs picker with symbols and dimmed disabled tabs" data-caption="Enter enables or disables a tab while preserving its placement.">
 </CaptureGallery>
 
-Open **Settings… → Bars → Sidebar tabs…**. Search by name and press Enter to
-change visibility. Enabled tabs use a filled dot; disabled tabs use a hollow dot and dimmed text.
-Unavailable extension tabs stay listed with a dash and retain their preferences. The picker stays
-open so several tabs can be toggled. It remains available when every tab is disabled.
+Open **Settings… → Bars → Sidebar tabs…** to choose which tabs appear. Search by name and press
+`Enter` to turn a tab on or off; the picker stays open so you can change several. A tab from an
+extension that is not loaded stays listed with a dash and keeps its place for when it returns.
 
-Arrange tabs by dragging them, or use the focused-sidebar keys above. Drag onto another panel’s
-body to append the tab, or onto its tab bar to choose its position. You can keep dragging between
-panels and docks without releasing the mouse. Empty panels remain drag targets. Enabling a tab
-restores its saved location, including a dormant panel whose count was reduced. Unavailable extensions recover their placement when re-enabled.
+Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a tab on another
+panel's body to add it at the end, or on its tab bar to choose its position. A tab you turn off and
+on again returns to where it was.
 
 When extensions provide presets, **Settings… → Bars → Sidebar layout preset…** offers them alongside
 the default layout.
 Highlighting a preset leaves the workspace unchanged; Enter applies it and Escape cancels. Presets
 are starting configurations, so later edits remain yours.
 
-Individual dock toggles and dock navigation remain bindable through `toggle-left-sidebar`,
-`toggle-right-sidebar`, `sidebar-other-dock`, and `sidebar-move-to-other-dock`. The command palette
-lists the global and individual sidebar toggles and **Focus sidebar**.
+`sidebar-other-dock` and `sidebar-move-to-other-dock` move focus or the active tab to the other
+dock; bind them under `[keys]` if you use them often.
 
 ```toml
 [sidebar]
@@ -364,33 +350,11 @@ background = true
 tab_style = "padded"
 ```
 
-The `layout` value may also be written using nested TOML tables. Every tab has one saved location.
-Reducing a dock's panel count folds surplus groups into its last displayed panel. Increasing it
-restores those groups and their proportions. Reordering a compacted group changes the order within
-each tab's saved home panel; transferring to another displayed panel or dock changes its home.
-Hiding a tab or dock preserves assignments. Narrow terminals temporarily reduce both dock widths
-while leaving the saved widths intact. The central workspace keeps at least 20 columns when the
-terminal has room; terminals of 20 columns or fewer retain at least half for the workspace.
+The `layout` value can also be written as nested TOML tables. Reducing a dock's panel count moves
+the extra tabs into its last panel, and raising it again restores them. On a narrow terminal the
+docks shrink to leave room for your panes, without changing their saved widths.
 
-`background_follows_canvas`, `gap`, `background`, and `tab_style` apply to both docks. These keep the
-same appearance controls as the former sidebar.
-
-### Migrate an existing configuration
-
-The former `visible`, `width`, `position`, `panels`, `split`, and `split_ratio` keys produce an explicit
-migration diagnostic. rozi resolves them into `layout` and `startup` in memory, preserving unknown
-tab IDs and custom definitions. The next layout save writes the new schema and removes those
-geometry keys. You can also replace them manually using the example above. An explicit `layout`
-takes precedence.
-
-The former `layout.<dock>.visible` flags enable `sidebar.startup` when either dock was visible
-and seed the remembered combination if no local memory exists. An explicit boolean `startup`
-takes precedence over the migrated startup switch. The seed is saved with local memory when the
-client leaves. Saves preserve tab definitions and unrelated settings. Malformed TOML is reported
-and left untouched.
-
-When `background` is on, the tab strip uses a raised sidebar fill, or the `element` colour when
-`background_follows_canvas` is on.
+`background_follows_canvas`, `gap`, `background`, and `tab_style` set the look of both docks.
 
 See [Configuration](configuration.md#sidebar) for defaults, size limits, file tree options, and
 custom tab syntax. A complete example is in [`examples/sidebar.toml`](../examples/sidebar.toml).
@@ -531,7 +495,7 @@ evaluate it. `{line}` is rejected in `run` and
 Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher, command, and
 stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
 disablement, failed loads, updates, removal, and reinstallation. See
-[Extensions](extensions.md#sidebar-tabs).
+[Extensions](writing-extensions.md#sidebar-tabs).
 
 ### Security
 
@@ -544,21 +508,3 @@ The sidebar's visibility, tabs, panels, selection, and cached data belong to eac
 [shared session](shared-sessions.md), the controller's sidebar still narrows the shared terminal
 width, because the controller sets the size of the pane area everyone sees. A follower's sidebar
 does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).
-
-OSC 7501 program reports appear in Activity as one summary per pane. The summary
-shows the most urgent record, its message and any reported percentage. These
-activities can coexist with agent and published activity rows. See
-[program status](./terminal.md#program-status) for states, lifecycle and notifications.
-
-Generic activities reporting `error`, through `rozi status` or an activity
-publisher, show a failure glyph and stop their run duration. Failures do not raise
-successful-completion notifications, sounds, or finish pulses. Arbitrary custom
-statuses remain active. Agent APIs retain their four-state classification, where
-an unrecognized status, including `error`, is interpreted as working.
-
-Blocked agents and activities use `▲` in the theme's warning color. Errors use
-`×` in the error color, so waiting for input and failed work remain distinct.
-
-Pane alert borders and content tints use the same distinction by default.
-`[pane.alert]` lets you override or disable blocked and error colors independently.
-Both states use the existing urgent pulse when alert animation is enabled.

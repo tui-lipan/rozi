@@ -273,9 +273,9 @@ The whole file was rejected because it is unreadable, is not valid TOML, or has 
 type. At startup rozi uses the defaults; on a reload it keeps the last good configuration. The text
 after the path names the line and problem.
 
-The flat `[hooks]` table is no longer supported and causes this error; convert each entry to a
-`[[hooks]]` block. See [Invalid configuration](configuration.md#invalid-configuration) and
-[Migrate from `[hooks]`](hooks.md#migrate-from-hooks).
+A flat `[hooks]` table, such as `[hooks] pane-exited = "…"`, also causes this error. Write each hook
+as a `[[hooks]]` entry with `event` and `run` keys instead; see [Hooks](hooks.md). See also
+[Invalid configuration](configuration.md#invalid-configuration).
 
 ### `Unknown config key …; ignored`
 
@@ -332,7 +332,7 @@ rozi extensions list --verbose
 
 The verbose list shows validation errors, disabled extensions, and the resolved argv of each
 command. Extension command output is not shown anywhere, so write diagnostics to a file while
-testing. See [Test and debug](extensions.md#test-and-debug).
+testing. See [Test and debug](writing-extensions.md#test-and-debug).
 
 ### My hook runs but I see nothing
 

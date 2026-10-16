@@ -100,9 +100,25 @@ impl TimedRevealEffect {
             finished: AtomicBool::new(false),
         }
     }
+
+    fn frame(&self, ctx: &EffectPrepareContext) -> Option<PreparedReveal> {
+        let (progress, _) = self.motion.sample(ctx.elapsed);
+        if progress >= 1.0 {
+            return None;
+        }
+        let mut recipe = self.recipe;
+        match &mut recipe {
+            RevealRecipe::Pane(effect) => effect.progress = progress,
+            RevealRecipe::Session(effect) => effect.progress = progress,
+        }
+        Some(PreparedReveal::new(recipe, ctx.bounds))
+    }
 }
 impl CellEffect for TimedRevealEffect {
     fn apply(&self, _: &mut EffectCell, _: &EffectContext) {}
+    fn image_mask(&self, ctx: &EffectPrepareContext) -> Option<tui_lipan::CellMask> {
+        self.frame(ctx).map(|frame| frame.image_mask())
+    }
     fn uses_backdrop(&self) -> bool {
         matches!(self.motion, PanePaintMotion::Fixed(p) if p < 1.0)
             || matches!(self.motion, PanePaintMotion::Timed { closing: true, .. })
@@ -119,17 +135,10 @@ impl CellEffect for TimedRevealEffect {
         }
     }
     fn prepare(&self, ctx: &EffectPrepareContext) -> Option<Box<dyn PreparedCellEffect>> {
-        let (progress, finished) = self.motion.sample(ctx.elapsed);
+        let (_, finished) = self.motion.sample(ctx.elapsed);
         self.finished.store(finished, Ordering::Relaxed);
-        if progress >= 1.0 {
-            return None;
-        }
-        let mut recipe = self.recipe;
-        match &mut recipe {
-            RevealRecipe::Pane(effect) => effect.progress = progress,
-            RevealRecipe::Session(effect) => effect.progress = progress,
-        }
-        Some(Box::new(PreparedReveal::new(recipe, ctx.bounds)))
+        self.frame(ctx)
+            .map(|frame| Box::new(frame) as Box<dyn PreparedCellEffect>)
     }
 }
 
@@ -170,6 +179,25 @@ impl PreparedReveal {
             scan_maximum: (i32::from(bounds.w) - 1) as f32 + (i32::from(bounds.h) - 1) as f32 * 2.0,
         }
     }
+    fn image_mask(&self) -> tui_lipan::CellMask {
+        let width = usize::from(self.bounds.w);
+        let mut bits = vec![0u64; (width * usize::from(self.bounds.h)).div_ceil(64)];
+        for y in 0..self.bounds.h {
+            for x in 0..self.bounds.w {
+                if self.decision(i32::from(x), i32::from(y)) == RevealCell::Content {
+                    let bit = usize::from(y) * width + usize::from(x);
+                    bits[bit / 64] |= 1 << (bit % 64);
+                }
+            }
+        }
+        tui_lipan::CellMask {
+            origin: (0, 0),
+            w: self.bounds.w,
+            h: self.bounds.h,
+            bits: bits.into(),
+        }
+    }
+
     fn decision(&self, x: i32, y: i32) -> RevealCell {
         if self.progress >= 1.0 {
             return RevealCell::Content;
@@ -1193,7 +1221,7 @@ mod tests {
         );
     }
     #[test]
-    fn prepared_reveals_match_the_original_compositor_cell_for_cell() {
+    fn prepared_reveals_and_image_masks_match_the_original_compositor_cell_for_cell() {
         for (width, height) in [(1, 1), (41, 13)] {
             let bounds = Rect {
                 x: 7,
@@ -1231,6 +1259,8 @@ mod tests {
 
     fn compare_prepared(recipe: RevealRecipe, bounds: Rect) {
         let prepared = PreparedReveal::new(recipe, bounds);
+        let image_mask = TimedRevealEffect::new(recipe, PanePaintMotion::Fixed(prepared.progress))
+            .image_mask(&EffectPrepareContext::new(bounds));
         let backdrop = EffectCell::new("b");
         for y in bounds.y..bounds.y + bounds.h as i16 {
             for x in bounds.x..bounds.x + bounds.w as i16 {
@@ -1249,6 +1279,14 @@ mod tests {
                 }
                 prepared.apply_with_backdrop(&mut optimized, &backdrop, &ctx);
                 assert_eq!(optimized, reference, "cell ({x}, {y}), {recipe:?}");
+                let image_visible = image_mask
+                    .as_ref()
+                    .is_none_or(|mask| mask.test_scope_local(x - bounds.x, y - bounds.y));
+                assert_eq!(
+                    image_visible,
+                    reference.symbol() == "A",
+                    "pictures must follow content visibility at ({x}, {y}), {recipe:?}"
+                );
             }
         }
     }

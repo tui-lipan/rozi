@@ -138,27 +138,12 @@ Pane open** and **Pane close** in Settings, to choose how panes appear and disap
 | `scan` | The pane's contents appear along a diagonal sweep from the top-left corner. |
 | `particles` | Motes gather into place on open. Closing fragments burst outward, fall under gravity, and fade at different times. |
 
-`portal`, `scan`, and `particles` work for tiled and floating panes, including popups. The pane keeps its final
-size throughout, so the program inside does not see a resize on every frame.
+Every style works for tiled and floating panes, including popups, and the program inside never
+sees a resize while the pane animates. A closing pane stops taking mouse input at once, so clicks
+reach the panes around it. Set `fade = true` to add a fade to `portal` and `scan`.
 
-Closing panes finish their animation above the remaining tiles while those tiles expand underneath.
-The erased areas of `portal` and `scan` reveal the live panes below, including their text and colors.
-Closing panes no longer receive mouse input; clicks reach the live panes underneath.
-Floating panes and dialogs stay above closing tiles.
-
-`portal` and `scan` move at a uniform pace and keep revealed content opaque by default. Their edge
-controls visibility throughout the animation. Scan's first visible cells contain only its frontier;
-pane content appears after that line passes. Set `fade = true` to add a whole-pane fade.
-
-- `portal`, `scan`, and tiled `slide` use `geometry_ms` for their duration. Floating `slide` behaves
-  like `scale` and uses `close_ms` when closing.
-- Inside the scratchpad, these styles apply to individual panes; the scratchpad's dropdown keeps its
-  own animation.
-- The panes a new session starts with, such as the launcher's shell or a profile's layout, do not
-  play these effects. They arrive with the session's switching animation; see
-  [Sessions](sessions.md).
-- Turning animations off, or changing the `enabled`, `spawn`, or `close` switch, finishes any
-  running pane animation at once.
+The panes a new session starts with arrive with the session's switching animation instead; see
+[Sessions](sessions.md).
 
 You can set durations, the motion curve, and one parameter per style: where `scale` grows from,
 where `portal` opens, and which corner `scan` sweeps from. See

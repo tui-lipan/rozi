@@ -96,7 +96,7 @@ If you pause after pressing `Ctrl+A`, rozi shows the keys you can press next.
 ## Next
 
 - [Core concepts](core-concepts.md) explains panes, workspaces, sessions, and profiles.
-- [Feature map](features.md) points to the guides for each part of rozi.
+- [Overview](overview.md) points to the guides for each part of rozi.
 - [Keybindings](keybindings.md) lists the default controls.
 - [Customize rozi](customize.md) walks through themes, layouts, pane styles, and keys.
 - [Configuration](configuration.md) covers `config.toml` and live reload.

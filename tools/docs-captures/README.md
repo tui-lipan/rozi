@@ -20,8 +20,12 @@ go to `/tmp/rzc-preview` for review; only the WebP and MP4 files belong in the r
 - `python3`, `tmux`, and `ffmpeg` with libx264, for clips
 - `nvim`, `lazygit`, `btop`, `eza`, and `bat`, which fill the panes
 
-The script builds rozi with `--features ui-snapshot`. A later plain `cargo build` or `cargo test`
-replaces that binary with one that cannot write PNGs, so drop `SKIP_BUILD` after one.
+The script builds a release rozi with `--features ui-snapshot`: clips need release speed to play
+smoothly. A later plain `cargo build --release` replaces that binary with one that cannot write
+PNGs, so drop `SKIP_BUILD` after one.
+
+The `image-effects` clip also needs `terminal-browser` on `PATH` and a network connection: it
+shows the live rozi.tui-lipan.dev in a pane.
 
 ## Isolation
 
@@ -36,7 +40,7 @@ checkout are never read or written.
 | --- | --- |
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
 | `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
-| `sandbox/profiles/` | Workspaces the scenes launch: `dev` (hero), `api` (overlays), `web` (layouts) |
+| `sandbox/profiles/` | Workspaces the scenes launch: `dev` (hero), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
 | `sandbox/home/.bashrc` | A short prompt and no history file |
 | `sandbox/bin/icat` | Shows a PNG in a pane with the Kitty graphics protocol: `icat FILE [COLS ROWS]` |
@@ -48,6 +52,9 @@ Call `scene NAME VIEWPORT SETTLE_MS SCRIPT [EXTRA_CONFIG]` in `scenes.sh`. `SCRI
 `TUI_LIPAN_SNAPSHOT_SCRIPT` steps, such as `key:ctrl+a; type:?; wait:500`. `EXTRA_CONFIG` is TOML
 appended to the generated `config.toml`; start it with a table header. Set `PROFILE`, `LAYOUT`,
 `STARTUP`, or `SETUP` in front of the call to change the workspace; `capture.sh` documents each.
+
+Scenes switch off the session switching animation: a still frame is taken on a frozen clock, so
+the animation would never get past its first, empty frame. Clips keep it.
 
 Use `160x45` for whole-workspace shots and `120x34` for overlays, where the text needs to stay
 readable at page width. Review the PNG in `/tmp/rzc-preview` before embedding the WebP.
@@ -66,10 +73,13 @@ left-button drag at zero-based terminal cells, including several moves before re
 | `sleep:MS` | Waits |
 | `run:COMMAND` | Runs a shell command in the sandbox, where `rozi` is this build |
 
-A `rozi` typed into a pane is this build too. The recording starts after `SETTLE_MS` and stops
-after the last step, so the clip holds exactly the steps. Set `POSTER` to the second shown before
-the clip plays; the default is its last frame. A blinking dot may be in its off phase at a given
-second, so check the poster in `/tmp/rzc-preview` after each run.
+A `rozi` typed into a pane is this build too. Clips are recorded at up to 60 frames a second
+and written as a constant 60 fps MP4, without the recording indicator. A variable-rate file
+lets one short gap advertise thousands of frames a second, and browsers then stutter through
+the motion. The recording starts after `SETTLE_MS` and stops after the last step, so the clip
+holds exactly the steps. Set `POSTER` to the second shown before the clip plays; the default
+is its last frame. A blinking dot may be in its off phase at a given second, so check the
+poster in `/tmp/rzc-preview` after each run.
 
 rozi runs under tmux, which answers terminal queries as a terminal emulator does. Through a bare
 pseudo-terminal, typed keys reach the focused pane but never rozi's own bindings.

@@ -46,8 +46,8 @@ has that name.
 `--cwd` applies only to `sessions new` and cannot be combined with `--profile`. With `--remote`, it
 names a directory on the remote host and is passed through unchanged, so use an absolute path.
 
-Subcommand names and some retired command spellings cannot be bare session or profile targets. For
-a session or profile literally named `attach`, use `rozi --session attach`.
+Subcommand names cannot be bare session or profile targets. For a session or profile literally
+named `attach`, use `rozi --session attach`.
 
 `rozi sessions list --format json` includes an `origin` object for a session created from a profile
 or a Git worktree. A worktree origin holds the checkout path on the session host. Restorable
@@ -63,61 +63,19 @@ Press `Ctrl+A`, then `s` to open **Sessions**, or click the session badge in the
 <img src="./assets/captures/session-picker.webp" alt="The session picker listing the running sessions api, docs, and infra with their pane counts" data-caption="Sessions lists every running and restorable session. Type to filter, Enter to attach, or type a new name and press Ctrl+N.">
 </CaptureGallery>
 
-Sessions shows **Local**, a tab for each remote host, then **All** below the search field.
-The tab strip is hidden when there are no remote host tabs and All contains nothing beyond Local.
-Remote hosts are sorted by name.
-A host gets a tab while a session there is on screen or in the background, while the launcher is
-scoped to it, while it is connected, or after you explicitly open it in this picker. **All** is the
-union of the tabs. Remembered `last seen` sessions of a host without a tab are not listed in Sessions;
-use **Remote hosts** to discover, reconnect to, and open those hosts. Sessions opens on the host of the session you are in, the host the
-launcher is scoped to, or Local.
-To open on **All** every time, choose **Settings → Sessions → Open Sessions on → All sessions**
-or set `session.picker_open_on = "all"`. **Current host** is the default. Opening a host from
-Remote hosts always selects that host's tab.
+Sessions has a **Local** tab, a tab for each remote host you are using, and **All**, which lists
+every host's sessions together and labels remote ones `name@host`. It opens on the host of the
+session you are in. To open on **All** every time, choose **Settings → Sessions → Open Sessions on
+→ All sessions** or set `session.picker_open_on = "all"`.
 
-**All** lists sessions across hosts and labels remote rows `name@host`. A host tab lists only that
-host's sessions with bare names. Search filters the selected tab: Local searches local sessions,
-a remote host searches its sessions, and All searches every known host. Clearing the query
-restores the previous highlight within that tab. Choosing a tab clears the query and browses that
-host. Search uses known sessions; it does not connect to additional hosts. If distinct remote targets share a host label, tabs and
-global rows append the exact target, such as **workbox (ssh://workbox)**. The exact target is
-searchable in Sessions and Agents.
+Type to filter the selected tab, and press `Enter` to attach. To create a session, type a name and
+press `Ctrl+N`; the footer shows which host it will be created on, such as **new on workbox**.
+`Ctrl+T` starts a temporary shell, and with an empty list `Enter` does the same. In a temporary
+session, `Ctrl+S` names it. `Ctrl+R` opens **Remote hosts**, and `Ctrl+X` disconnects the selected
+host.
 
-Creation uses the selected host tab. On **All**, it uses the foreground session's
-host, or the launcher's host when no session is attached. On All and when a search has no results,
-the footer names the destination with **new on Local** or **new on workbox**. `Ctrl+N` and `Ctrl+T`
-use that destination. `Ctrl+X` disconnects the selected host tab's host.
-Row actions always apply to the selected session, including remote search results.
-
-When a non-empty query matches no sessions, `Enter` does nothing. `Ctrl+N` opens a new-session
-prompt with the query as its proposed name. If the current session is temporary, `Ctrl+S` names
-it using the same proposed name. `Ctrl+T` remains available to open a temporary shell explicitly.
-`Ctrl+R` opens Remote hosts without losing the query; opening a host carries it into that host's
-Sessions tab. With an empty query and no sessions listed, `Enter` opens a temporary shell.
-
-Canceling a create-session prompt or returning from Remote hosts restores the tab, search, and
-highlighted session you were browsing. If that session is gone, Sessions highlights the first row
-on the restored tab. In the launcher, disconnecting the active remote host with `Ctrl+X` moves both
-Sessions and the launcher to **Local**.
-
-| Key | Action |
-| --- | --- |
-| `Enter` | Connect, switch to a background session, or restore a snapshot |
-| Type a name, then `Ctrl+N` | Create and switch to a named session at the footer's destination |
-| `Ctrl+S` | Name the current temporary session, prefilling the search query |
-| `Ctrl+K` twice | Kill a live session, forget a snapshot, or forget a `last seen` entry |
-| `Ctrl+E` twice | Restart a live session with fresh panes |
-| `Ctrl+W` | Disconnect this client from a background session |
-| `Ctrl+X` | Disconnect this tab's remote host |
-| `Ctrl+R` | Open [Remote hosts](remote.md#manage-remote-hosts) |
-| `Ctrl+T` | Open or switch to this client's temporary shell at the footer's destination |
-| `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous tab and clear the query |
-| `Esc` | Return to the [sessionless launcher](#the-sessionless-launcher) |
-
-A row can show that a session is attached in the background, shared with other clients,
-restorable, or created from a profile. The list of local sessions refreshes while the picker is
-open. When a row is too narrow for both, a long session name, such as `name@host` on the All tab,
-is shortened before what its agents are doing, keeping at least 40% of the row.
+A row shows when a session is attached in the background, shared with other clients, restorable,
+or created from a profile, along with what its agents are doing.
 
 Opening Sessions never contacts a remote host. Sessions on remote hosts are listed from the last
 time each host answered. A host's tab shows the host's state in the picker's top-right corner, and
@@ -166,9 +124,7 @@ gives up layout control; returning to it takes control again when no other clien
 An untouched temporary session is discarded when you switch away. A temporary session you have used
 stays in the background.
 
-When you switch to a session this client has not opened yet, the previous session stays on screen
-for a quarter of a second, and the Connecting screen appears only if the connection takes longer.
-A portal then opens onto the incoming session. To use a fade instead or turn the effect off, change
+When you switch sessions, a portal opens onto the incoming one. To use a fade instead or turn the effect off, change
 **Settings** › General › Animations › Session switching, or `session` in
 [`[animations]`](configuration.md#animations).
 
@@ -188,16 +144,8 @@ Agents
  ✓  Claude                                  Done · api · api (main)
 ```
 
-The picker opens on **All**, showing agents across sessions. Session tabs come first and **All**
-comes last below the search field. The tab strip is hidden when agents belong to only one
-session. Tabs select individual sessions; remote tabs include the hostname, such as **workbox/backend**. Switch tabs with `Tab` / `Shift+Tab`, `Left` / `Right`,
-or a click. Search stays in place and filters the selected session. A session tab omits the
-session and hostname from its rows. If its last agent disappears, the tab stays open with an
-empty list. With no sessions to list, the tab strip is hidden.
-
-Agent names and activity appear on the left; status, age, session, and project are grouped on the
-right. Status text uses the same color as its marker. The picker grows to fit its widest row,
-within 72–160 columns and the available terminal width. Filtering keeps its width steady.
+The picker opens on **All**. Each session with agents also gets its own tab; switch tabs with
+`Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter.
 
 On **All**, each row names the agent and where it runs: the session name for local agents, and
 `host/session` for remote agents. Both parts are searchable, so typing a host name narrows the list
@@ -339,12 +287,8 @@ arguments and types it back into the new shell. When the command exits, you are 
 A pane sitting at a prompt records nothing, and prompt hooks such as directory jumpers are not
 recorded as commands.
 
-Some launchers are wrapper scripts that run under an interpreter, as Cursor's `agent` runs under
-`node`. For recognized Node invocations, including Cursor's `--use-system-ca` launcher and Node's
-`-r`/`--require` preload options, rozi keeps the arguments after the script. The script must be an
-absolute path to an existing file beside the executable or the resolved launcher. Other
-interpreters, unsupported options, and unresolved script paths restore by name only. Arguments the
-wrapper itself adds after the script are also kept, because rozi cannot tell them from yours.
+Commands launched through a Node wrapper script, such as Cursor's `agent`, restore with their
+arguments too. Commands under other interpreters restore by name only.
 
 `[session] resurrect_foreground` decides what happens to a recorded command:
 
@@ -355,9 +299,8 @@ wrapper itself adds after the script are also kept, because rozi cannot tell the
 | `never` | Restores the shell and its scrollback. No command is written to the snapshot. |
 
 The default, `hold`, leaves the command ready for you to confirm with `Enter`. Set `auto` to run
-recorded commands automatically. The session server reads this setting when it starts and applies
-it to every restore, so a server started with `never` also replays nothing from an older snapshot.
-To change the setting for a running session, restart its server.
+recorded commands automatically. A running session keeps the value it started with; restart it to
+apply a change.
 
 ### Reopen an agent conversation
 
@@ -365,10 +308,8 @@ An agent that reports a native session reference (`rozi agents report --native-s
 definition declares `[agents.resume]`, restores into its previous conversation instead of starting a
 new one.
 
-The snapshot stores which agent and which reference, not a command. The resume command comes from
-the agent definition loaded at restore time, so changed resume flags take effect, and an agent that
-no longer declares resume support restores as an ordinary pane. The reference is passed as one
-process argument, without shell parsing.
+The resume command comes from the agent's current definition, so a change to its resume flags
+applies to sessions saved earlier.
 
 A pane restores the first of these that applies: a conversation to reopen, a command it was
 running, the command it was created with, or a plain shell. Only one pane reopens a given

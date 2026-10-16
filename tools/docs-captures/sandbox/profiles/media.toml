@@ -1,0 +1,20 @@
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+name = "media"
+layout = "columns"
+focused_pane = 1
+
+[[workspaces.panes]]
+id = 0
+name = "logo"
+cwd = "~/src/rozi"
+command = "clear && printf '\\n\\n\\n\\n\\n\\n%13s' '' && icat assets/logo.png 54 27"
+
+[[workspaces.panes]]
+id = 1
+name = "browser"
+cwd = "~/src/rozi"
+command = "TERMINAL_BROWSER_PRESENT=full terminal-browser open https://rozi.tui-lipan.dev --no-merge"

@@ -13,7 +13,7 @@ import type { Plugin } from "vite";
  * the site's dead-link check meaningful for genuinely broken in-docs links.
  *
  * It does the same for links to a directory that has no index page, such as
- * `audits/`. Those are requests for a file listing, which only GitHub can give.
+ * `assets/captures/`. Those are requests for a file listing, which only GitHub can give.
  */
 
 const REPO = "https://github.com/tui-lipan/rozi";

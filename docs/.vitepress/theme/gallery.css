@@ -153,6 +153,49 @@
     opacity: 1;
 }
 
+/* Clips (`ClipGallery.vue`) use the same frame with one video in the stage. */
+.rz-clips .rz-clips-stage {
+    cursor: default;
+}
+/* The dots and the badge share the space either side of the title equally,
+   so the title stays centred. On a phone the badge keeps only its dot. */
+.rz-clips .rz-gallery-dots,
+.rz-clips .rz-clips-badge {
+    flex: 1 1 0;
+}
+.rz-clips .rz-gallery-title {
+    flex: 0 1 auto;
+}
+.rz-clips-badge {
+    justify-content: flex-end;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 11px;
+    color: var(--vp-c-text-3);
+    white-space: nowrap;
+}
+.rz-clips-badge i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vp-c-brand-1);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--vp-c-brand-1) 70%, transparent);
+}
+@media (max-width: 480px) {
+    .rz-clips-badge {
+        font-size: 0;
+    }
+}
+.rz-clips .rz-clips-stage video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1920 / 1088;
+    background: #06070f;
+}
+
 /* Steps: a numbered track under the frame. The active step carries a
    progress bar while autoplay runs, so the reader can see it will move. */
 .rz-gallery .rz-gallery-steps {

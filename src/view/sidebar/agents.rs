@@ -548,16 +548,28 @@ fn status_is_canonical(status: &str) -> bool {
 /// only figure here that measures the reader rather than the agent.
 fn row_duration(row: &AgentRow) -> Option<(String, bool)> {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
-    let label = row_status_label(status, row.finished_unseen);
+    elapsed(status, row.finished_unseen, row.age, row.run)
+        .map(|(elapsed, advancing)| (format_age(elapsed), advancing))
+}
+
+/// The same rule as [`row_duration`], as a value, for every surface that shows an agent's time:
+/// the Activity and Agents tabs, and the Agents picker. Returns the time and whether it advances.
+pub(crate) fn elapsed(
+    status: &str,
+    finished_unseen: bool,
+    age: Option<std::time::Duration>,
+    run: Option<std::time::Duration>,
+) -> Option<(std::time::Duration, bool)> {
+    let label = row_status_label(status, finished_unseen);
     let label = normalized_status(&label);
     if label.eq_ignore_ascii_case(pane_status::IDLE) {
         return None;
     }
     if label.eq_ignore_ascii_case(pane_status::DONE) || label.eq_ignore_ascii_case("error") {
         // Absent when this client never saw the run start — better nothing than a wrong number.
-        return row.run.map(|run| (format_age(run), false));
+        return run.map(|run| (run, false));
     }
-    row.age.map(|age| (format_age(age), true))
+    age.map(|age| (age, true))
 }
 
 /// Every *advancing* duration the Agents tab is currently showing, joined. This is what the
@@ -2026,6 +2038,22 @@ mod tests {
             row_duration(&row("done", false)),
             Some(("12m00s".into(), false))
         );
+    }
+
+    /// The picker and the Agents tab take their time from [`elapsed`], the same rule the Activity
+    /// tab shows, so an idle agent reads the same on every surface: no time at all.
+    #[test]
+    fn every_surface_shows_the_same_elapsed_time() {
+        use std::time::Duration;
+        let age = Some(Duration::from_secs(90));
+        let run = Duration::from_secs(12 * 60);
+        assert_eq!(elapsed("idle", false, age, Some(run)), None);
+        assert_eq!(elapsed("idle", true, age, Some(run)), Some((run, false)));
+        assert_eq!(
+            elapsed("working", false, age, Some(run)),
+            Some((Duration::from_secs(90), true))
+        );
+        assert_eq!(elapsed("working", false, None, Some(run)), None);
     }
 
     /// A client that attached after a run had already finished never saw it start, so there is no

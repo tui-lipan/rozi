@@ -10,7 +10,7 @@
 //! Attribution - which phase of the pass made an allocation, and what the expanded tree is made
 //! of - is not wired up here, because it needs a hook inside `tui-lipan`. To get it back, add
 //! `alloc-probe = []` to the framework's features behind the probe module described in
-//! `docs/performance/audits/2026-09-04.md`, point `.cargo/config.toml` at the local checkout, and
+//! `dev/performance/audits/2026-09-04.md`, point `.cargo/config.toml` at the local checkout, and
 //! read `tui_lipan::alloc_probe::bucket()` from `note_alloc` below.
 
 mod support;

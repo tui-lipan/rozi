@@ -12,7 +12,8 @@ here=$repo/tools/docs-captures
 out=${OUT:-$repo/docs/assets/captures}
 # Full-quality PNGs, kept outside the repository for reviewing a run.
 preview=${PREVIEW:-/tmp/rzc-preview}
-bin=$repo/target/debug/rozi
+# A release build: a debug build paints too slowly for clips, and images drag it down further.
+bin=$repo/target/release/rozi
 # Unix socket paths are short-limited, so the sandbox lives directly under /tmp.
 sandbox=/tmp/rzc
 base=/tmp/rzc-base
@@ -23,7 +24,7 @@ for tool in nvim lazygit btop eza bat bash git magick ffmpeg python3 tmux; do
 done
 
 if [[ -z ${SKIP_BUILD:-} ]]; then
-  cargo build --quiet --features ui-snapshot --manifest-path "$repo/Cargo.toml"
+  cargo build --quiet --release --features ui-snapshot --manifest-path "$repo/Cargo.toml"
 fi
 mkdir -p "$out"
 
@@ -79,7 +80,7 @@ prepare_sandbox() {
 scene() {
   local name=$1 viewport=$2 settle=$3 script=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
-  prepare_scene "$extra"
+  prepare_scene "$(without_session_portal "$extra")"
 
   sandbox_env \
     TUI_LIPAN_SNAPSHOT="$sandbox/shot.png" \
@@ -110,16 +111,18 @@ clip() {
   local rec=$sandbox/clip.rozirec frames=$sandbox/frames
   sandbox_env timeout 300 python3 "$here/clip.py" "$sandbox/tmux.sock" \
     "${viewport%x*}" "${viewport#*x}" "$settle" \
-    "run:rozi record start ui --output $rec >/dev/null
+    "run:rozi record start ui --max-fps 60 --hide-indicator --output $rec >/dev/null
 $steps
 run:rozi record stop --ui >/dev/null" -- "$bin" \
     >"$sandbox/run.log" 2>&1 || { cat "$sandbox/run.log" >&2; exit 1; }
   stop_sessions
 
   sandbox_env "$bin" record export "$rec" --to png-frames "$frames" --scale 2 >/dev/null 2>&1
+  # Constant 60 fps at level 5.1, which browsers hardware-decode. Variable rate lets
+  # one short gap advertise thousands of frames a second, and the motion then stutters.
   ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
-    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -preset veryslow -tune animation -crf 24 \
-    -pix_fmt yuv420p -fps_mode vfr -movflags +faststart "$out/$name.mp4"
+    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2,fps=60" -c:v libx264 -preset veryslow -tune animation -crf 24 \
+    -pix_fmt yuv420p -level:v 5.1 -movflags +faststart "$out/$name.mp4"
   if [[ -n ${POSTER:-} ]]; then
     ffmpeg -loglevel error -y -ss "$POSTER" -i "$out/$name.mp4" -frames:v 1 "$sandbox/poster.png"
   else
@@ -129,6 +132,19 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   mkdir -p "$preview"
   cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"
   echo "recorded $name"
+}
+
+# A still frame is taken on a frozen clock, so the session portal never gets past its first, empty
+# frame and the capture comes out blank. Scenes therefore switch it off, adding the key to the
+# scene's own `[animations]` table when it has one. Clips play in real time and keep the portal.
+without_session_portal() {
+  local extra=$1
+  if [[ $extra == *"[animations]"* ]]; then
+    printf '%s\n' "${extra/\[animations\]/[animations]
+session = \"off\"}"
+  else
+    printf '%s\n\n[animations]\nsession = "off"\n' "$extra"
+  fi
 }
 
 # Fresh sandbox, the profile, config.toml with EXTRA_CONFIG, and SETUP, for `scene` and `clip`.

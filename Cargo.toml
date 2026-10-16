@@ -62,11 +62,10 @@ exclude = [
 # 0.22.2: native Kitty patch forwarding and host rendering lifecycle fixes.
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
-# 0.24.0: static editable carets and live terminal cursor blink overrides.
-# 0.25.0: independent FileTree icons/arrows, exact-width Branch guides, and content/icon gaps.
-# Temporary review pin for tui-lipan#348 (composed Tree rows, Ctrl activation, and Git suffixes).
-# Replace with the released crates.io version before merging/releasing this draft.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "b4ffdf83fa717f414d9473d0ef5c5fa7f67921c8", features = [
+# 0.23.0: graphics pacing, resize handling, synchronized frames and animation image masks.
+# 0.26.0: Tree forests and guides, composed Tree rows, static editable carets, cursor blink
+# overrides, FileTree icon/arrow/gap controls, and splitter focus fixes.
+tui-lipan = { version = "0.26.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

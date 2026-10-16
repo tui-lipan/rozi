@@ -278,10 +278,6 @@ export default defineConfig({
     }
   },
 
-  // `performance/README.md` keeps its name so GitHub renders it when browsing
-  // that folder; the site serves it as the directory's index page.
-  rewrites: { "performance/README.md": "performance/index.md" },
-
   // The landing composition is ported from a React piece and is far more
   // legible as JSX than as a template full of `:style` bindings.
   vite: { plugins: [vueJsx(), repoLinksPlugin(srcDir)] },
@@ -297,17 +293,16 @@ export default defineConfig({
     ],
     sidebar: [
       { text: "Home", link: "/" },
-      { text: "Documentation overview", link: "/overview" },
       {
         text: "Start",
         collapsed: false,
         items: [
+          { text: "Overview", link: "/overview" },
           { text: "Getting started", link: "/getting-started" },
           { text: "Installation", link: "/installation" },
           { text: "Core concepts", link: "/core-concepts" },
           { text: "Platform support", link: "/platform-support" },
           { text: "Troubleshooting", link: "/troubleshooting" },
-          { text: "Feature map", link: "/features" },
         ],
       },
       {
@@ -356,6 +351,8 @@ export default defineConfig({
           { text: "Hooks", link: "/hooks" },
           { text: "Agent skill", link: "/agent-skill" },
           { text: "Extensions", link: "/extensions" },
+          { text: "Write an extension", link: "/writing-extensions" },
+          { text: "Extension testing", link: "/extension-testing" },
           { text: "Automation recipes", link: "/recipes" },
         ],
       },
@@ -367,16 +364,10 @@ export default defineConfig({
             text: "Contributing",
             link: "https://github.com/tui-lipan/rozi/blob/master/CONTRIBUTING.md",
           },
-          { text: "Extension testing", link: "/extension-testing" },
-          { text: "Release process", link: "/release-process" },
-          { text: "Benchmarks and profiling", link: "/benchmarks" },
-          { text: "Performance audit archive", link: "/performance/" },
-          { text: "Graphics resize latency", link: "/performance/audits/2026-10-14-graphics-resize" },
-          { text: "Ryzen 9700X benchmark baseline", link: "/performance/audits/2026-10-08" },
-          { text: "Active TUI CPU investigation", link: "/performance/audits/2026-10-07-active-tui" },
-          { text: "Active TUI CPU improvements", link: "/performance/audits/2026-10-08-active-tui-improvements" },
-          { text: "Native Kitty patch forwarding", link: "/performance/audits/2026-10-11-native-kitty-patches" },
-          { text: "Performance audit playbook", link: "/performance/audit-playbook" },
+          {
+            text: "Developer guides",
+            link: "https://github.com/tui-lipan/rozi/tree/master/dev",
+          },
         ],
       },
       {

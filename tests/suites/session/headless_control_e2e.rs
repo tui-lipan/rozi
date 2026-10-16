@@ -999,10 +999,7 @@ fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
     let session = server.session().to_string();
     let (pane, instance) = pane_identity(&session);
 
-    assert_eq!(
-        rozi::session::discovery::session_with_instance(&instance).expect("discovery ran"),
-        InstanceLookup::Found(session.clone())
-    );
+    assert_instance_session(&instance, &session);
 
     let report = |source| ControlRequest {
         source_session: Some(source),
@@ -1065,6 +1062,27 @@ fn server_instance(
     }
 }
 
+/// Discovery has a short production deadline. A loaded runner may miss one probe, so wait
+/// for the expected semantic result within the harness deadline, without accepting a wrong server.
+fn assert_instance_session(instance: &rozi::session::protocol::SessionInstanceId, session: &str) {
+    let deadline = Instant::now() + io_timeout();
+    loop {
+        let lookup =
+            rozi::session::discovery::session_with_instance(instance).expect("discovery ran");
+        match lookup {
+            InstanceLookup::Found(found) => {
+                assert_eq!(found, session);
+                return;
+            }
+            missing => assert!(
+                Instant::now() < deadline,
+                "instance not discovered: {missing:?}"
+            ),
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Several sessions run at once. Each instance must lead to its own server, never to whichever
 /// answered first - a pane id alone is the same in every one of them.
 #[test]
@@ -1073,11 +1091,7 @@ fn each_instance_finds_its_own_server_among_several() {
         .map(|_| spawn_listener(headless_settings()))
         .collect();
     for server in &servers {
-        assert_eq!(
-            rozi::session::discovery::session_with_instance(&server_instance(server))
-                .expect("discovery ran"),
-            InstanceLookup::Found(server.session().to_string())
-        );
+        assert_instance_session(&server_instance(server), server.session());
     }
 }
 

@@ -64,7 +64,9 @@ exclude = [
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
 # 0.24.0: static editable carets and live terminal cursor blink overrides.
 # 0.25.0: independent FileTree icons/arrows, exact-width Branch guides, and content/icon gaps.
-tui-lipan = { version = "0.25.0", features = [
+# Temporary review pin for tui-lipan#348 (composed Tree rows, Ctrl activation, and Git suffixes).
+# Replace with the released crates.io version before merging/releasing this draft.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "76e2bfeecf558720489db63e47e7dabc47b2e6f1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

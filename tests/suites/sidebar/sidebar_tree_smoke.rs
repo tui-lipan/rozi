@@ -195,8 +195,8 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
             let unicode = sidebar_rows(&backend, 32);
             let src = unicode.iter().find(|row| row.contains("src")).unwrap();
             assert!(
-                src.contains("├▶src"),
-                "one-cell guides and no content gap: {src}"
+                src.contains("├▶ src"),
+                "one-cell guides and one content gap: {src}"
             );
             assert!(
                 !unicode
@@ -211,7 +211,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 .to_fixed_grid_lines()
                 .into_iter()
                 .enumerate()
-                .find(|(_, row)| row.contains("├▶src"))
+                .find(|(_, row)| row.contains("├▶ src"))
                 .unwrap();
             let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
             assert_eq!(

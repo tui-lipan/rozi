@@ -119,12 +119,12 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     } else {
         super::super::fg_only(&theme.primary)
     };
-    // The right edge is the checkout's status rail and, under the pointer, what Enter does. Both
-    // are short and both are the point of the row, so the branch name truncates before they do.
+    // Keep branch identity visible alongside the status rail. Short status tokens leave the
+    // branch its natural width; longer descriptions cannot consume its last 40%.
     let mut item = Row::new(branch)
         .active(row.current)
         .title_style(title_style)
-        .priority(Priority::Description);
+        .priority(Priority::Balanced);
 
     let strongest = row
         .sessions

@@ -72,18 +72,12 @@ pub(super) struct CloseAffordance {
     pub armed: bool,
 }
 
-/// Where a row sits in a hierarchical tab: the guides in front of each of its lines, and its
-/// disclosure toggle. Guides come from [`tui_lipan::prelude::TreeGuides`], so a sidebar tree reads
-/// exactly like the framework's own `Tree`.
-pub(crate) struct RowTree {
-    /// In front of the title line.
-    pub first: Vec<Span>,
-    /// In front of the detail line, keeping the guides below this row connected.
-    pub rest: Vec<Span>,
-    /// `Some(expanded)` for a row with children to show or hide.
-    pub disclosure: Option<bool>,
-    /// Hold the disclosure column on a row without one, so labels line up with their siblings'.
-    pub reserve_disclosure: bool,
+/// Content columns supplied to the framework Tree, which owns the intervening tree prefix.
+pub(super) struct RowParts {
+    pub leading: Element,
+    pub content: Element,
+    pub height: u16,
+    pub style: Style,
 }
 
 /// Which half of a title line keeps its text when the label and its description cannot both fit.
@@ -97,6 +91,8 @@ pub(super) enum Priority {
     /// The description stays whole and the label truncates — a status rail or a hover affordance
     /// that says what clicking does, beside a branch name that can run arbitrarily long.
     Description,
+    /// Reserve 40% for the label when both sides are long; either side can use spare space.
+    Balanced,
 }
 
 /// The least blank space between a label and its description, so the two read as separate things
@@ -125,7 +121,6 @@ pub(crate) struct Row {
     armed_prompt: Option<String>,
     /// Armed by something other than its ✕: a keyed action waiting for its second press.
     armed: bool,
-    tree: Option<RowTree>,
 }
 
 impl Row {
@@ -144,7 +139,6 @@ impl Row {
             detail: Vec::new(),
             armed_prompt: None,
             armed: false,
-            tree: None,
         }
     }
 
@@ -153,12 +147,6 @@ impl Row {
     pub(super) fn armed(mut self, prompt: impl Into<String>) -> Self {
         self.armed = true;
         self.armed_prompt = Some(prompt.into());
-        self
-    }
-
-    /// Indent the row under its parent in a hierarchical tab.
-    pub(super) fn tree(mut self, tree: RowTree) -> Self {
-        self.tree = Some(tree);
         self
     }
 
@@ -241,31 +229,38 @@ impl Row {
         self
     }
 
-    /// `position` is the panel and row index the row is drawn at, which its disclosure toggle
-    /// reports when clicked; a row drawn outside a list passes `None` and its toggle is inert.
     pub(super) fn build(
+        self,
+        ctx: &Context<AppRoot>,
+        selected: bool,
+        hovered: bool,
+        close: Option<CloseAffordance>,
+    ) -> Element {
+        let gap = if self.group_level {
+            0
+        } else {
+            u16::from(self.glyph.is_none())
+        };
+        let parts = self.parts(ctx, selected, hovered, close);
+        HStack::new()
+            .gap(gap)
+            .height(Length::Px(parts.height))
+            .style(parts.style)
+            .child(parts.leading)
+            .child(parts.content)
+            .into()
+    }
+
+    pub(super) fn parts(
         mut self,
         ctx: &Context<AppRoot>,
         selected: bool,
         hovered: bool,
         close: Option<CloseAffordance>,
-        position: Option<(usize, usize)>,
-    ) -> Element {
+    ) -> RowParts {
         let theme = &ctx.state.theme;
 
-        // An armed row spells the confirmation out the way the session picker's pending kill does:
-        // the title strikes through, because that is the thing about to go, and the detail line
-        // gives up whatever it was saying to ask for the second gesture. The ✕ itself stays a plain ✕
-        // — it is the target, and a target that changes shape under the pointer is one you can miss.
-        if self.armed || close.is_some_and(|close| close.armed) {
-            self.title_style = self.title_style.strikethrough();
-            self.detail = vec![(
-                self.armed_prompt
-                    .take()
-                    .unwrap_or_else(|| "Again to confirm".to_string()),
-                Style::new().fg(theme.status.error),
-            )];
-        }
+        self.apply_confirmation(ctx, close);
 
         let lines = if self.detail.is_empty() { 1 } else { 2 };
         let marker = if self.active { "▍" } else { " " };
@@ -282,17 +277,56 @@ impl Row {
 
         // The glyph column carries its own leading cell, so a glyph row butts up against the
         // gutter; a plain row needs the separating space from the outer stack instead.
-        let leading = self.glyph.is_some();
-        let hierarchical = self.tree.is_some();
         let mut cells = HStack::new().gap(1).height(Length::Px(lines));
-        if hierarchical {
-            // One separator after the guides and disclosure; no empty status column.
-            cells = cells.padding((0, 0, 0, 1));
-        }
-        if let Some(glyph) = self.glyph {
+        if let Some(glyph) = self.glyph.take() {
             cells = cells.child(glyph);
         }
 
+        let title = self.title_line(ctx, hovered, close);
+
+        // The cursor changes the background only; every span keeps the color that carries its
+        // meaning, so agent status, git state, and error red stay readable underneath it.
+        let mut text = VStack::new().gap(0).height(Length::Px(lines)).child(title);
+        if let Some(detail) = detail_item(self.detail) {
+            text = text.child(item_text(detail, 1));
+        }
+
+        RowParts {
+            leading: gutter.into(),
+            content: cells.child(text).into(),
+            height: lines,
+            style: if selected {
+                super::cursor_highlight(theme, super::fill(ctx))
+            } else if self.active {
+                Style::new().bg(super::fill(ctx).elevate_by(0.04))
+            } else {
+                Style::default()
+            },
+        }
+    }
+    fn apply_confirmation(&mut self, ctx: &Context<AppRoot>, close: Option<CloseAffordance>) {
+        let theme = &ctx.state.theme;
+        // An armed row spells the confirmation out the way the session picker's pending kill does:
+        // the title strikes through, because that is the thing about to go, and the detail line
+        // gives up whatever it was saying to ask for the second gesture. The ✕ itself stays a plain ✕
+        // — it is the target, and a target that changes shape under the pointer is one you can miss.
+        if self.armed || close.is_some_and(|close| close.armed) {
+            self.title_style = self.title_style.strikethrough();
+            self.detail = vec![(
+                self.armed_prompt
+                    .take()
+                    .unwrap_or_else(|| "Again to confirm".to_string()),
+                Style::new().fg(theme.status.error),
+            )];
+        }
+    }
+
+    fn title_line(
+        &mut self,
+        ctx: &Context<AppRoot>,
+        hovered: bool,
+        close: Option<CloseAffordance>,
+    ) -> Element {
         // A visible ✕ takes the badge slot rather than fighting it for width. The badge is ambient
         // and comes back the moment the pointer leaves; the ✕ is the thing being aimed at, so in a
         // column this narrow it gets the space.
@@ -301,18 +335,18 @@ impl Row {
         } else if hovered && !self.hover_description.is_empty() {
             None
         } else {
-            self.badge
+            self.badge.take()
         };
         let description = if trailing.is_some() {
             Vec::new()
         } else if hovered && !self.hover_description.is_empty() {
-            self.hover_description
+            std::mem::take(&mut self.hover_description)
         } else {
-            self.description
+            std::mem::take(&mut self.description)
         };
 
-        let mut spans = vec![Span::new(self.title).style(self.title_style)];
-        if let Some((meta, style)) = self.meta {
+        let mut spans = vec![Span::new(std::mem::take(&mut self.title)).style(self.title_style)];
+        if let Some((meta, style)) = self.meta.take() {
             spans.push(Span::new(format!(" {meta}")).style(style));
         }
         // Title-line chrome (✕, host status) pins to this line only. A two-line List beside that
@@ -331,118 +365,18 @@ impl Row {
                 .into();
         }
 
-        // The cursor changes the background only; every span keeps the color that carries its
-        // meaning, so agent status, git state, and error red stay readable underneath it.
-        let mut text = VStack::new().gap(0).height(Length::Px(lines)).child(title);
-        if let Some(detail) = detail_item(self.detail) {
-            text = text.child(item_text(detail, 1));
-        }
-
-        let mut row = HStack::new()
-            .gap(if self.group_level || hierarchical {
-                0
-            } else {
-                u16::from(!leading)
-            })
-            .height(Length::Px(lines));
-        let tree = self
-            .tree
-            .take()
-            .map(|tree| tree_column(ctx, tree, lines, position));
-        row = row.child(gutter);
-        if let Some(tree) = tree {
-            row = row.child(tree);
-        }
-        row.child(cells.child(text))
-            .style(if selected {
-                super::cursor_highlight(theme, super::fill(ctx))
-            } else if self.active {
-                Style::new().bg(super::fill(ctx).elevate_by(0.04))
-            } else {
-                Style::default()
-            })
-            .into()
+        title
     }
 }
 
-/// The guides and disclosure toggle in front of a hierarchical row, one line per row line.
-fn tree_column(
-    ctx: &Context<AppRoot>,
-    tree: RowTree,
-    lines: u16,
-    position: Option<(usize, usize)>,
-) -> Element {
-    let RowTree {
-        first,
-        rest,
-        disclosure,
-        reserve_disclosure,
-    } = tree;
-    let toggle_style = super::super::fg_only(&ctx.state.theme.muted);
-    let mut first_line = HStack::new()
-        .gap(0)
-        .width(Length::Auto)
-        .height(Length::Px(1))
-        .child(Text::from_spans(first).height(Length::Px(1)));
-    match disclosure {
-        Some(expanded) => {
-            // Use one-cell directory chevrons with the global font fallback.
-            let arrow = match (ctx.state.config.nerd_icons, expanded) {
-                (true, true) => "",
-                (true, false) => "",
-                (false, true) => "▼",
-                (false, false) => "▶",
-            };
-            let glyph = Text::new(arrow).style(toggle_style).height(Length::Px(1));
-            let toggle: Element = match position {
-                Some((panel, index)) => {
-                    let region: Element = MouseRegion::new()
-                        .on_click(crate::view::sidebar::callback(ctx, move |_| {
-                            Msg::SidebarRowToggle { panel, index }
-                        }))
-                        .on_mouse_move(crate::view::sidebar::callback(ctx, move |_| {
-                            Msg::SidebarPointerMoved(panel)
-                        }))
-                        .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
-                            ctx.state.theme.border_active,
-                            1.0,
-                        )))
-                        .child(glyph)
-                        .into();
-                    region.key(format!("sidebar-{panel}-row-toggle-{index}"))
-                }
-                None => glyph.into(),
-            };
-            first_line = first_line.child(toggle);
-        }
-        None if reserve_disclosure => {
-            first_line = first_line.child(Text::new(" ").height(Length::Px(1)));
-        }
-        None => {}
-    }
-    let mut column = VStack::new()
-        .gap(0)
-        .width(Length::Auto)
-        .height(Length::Px(lines))
-        .child(first_line);
-    if lines > 1 {
-        let mut spans = rest;
-        if disclosure.is_some() || reserve_disclosure {
-            spans.push(Span::new(" "));
-        }
-        column = column.child(Text::from_spans(spans).height(Length::Px(1)));
-    }
-    column.into()
-}
-
-/// A title line: label left, description right-aligned and held off the label by
-/// [`DESCRIPTION_GAP`], with `priority` deciding which of the two truncates. A description squeezed
-/// down to a bare `…` is dropped rather than shown.
 fn titled_item(label: Vec<Span>, description: Vec<Span>, priority: Priority) -> ListItem {
     let item = labeled_item(label, description).primary_description_gap(DESCRIPTION_GAP);
     match priority {
         Priority::Label => item,
         Priority::Description => item.primary_truncate_description_first(false),
+        Priority::Balanced => item
+            .primary_truncate_description_first(false)
+            .primary_min_label_width(Length::Percent(40)),
     }
 }
 
@@ -608,4 +542,73 @@ pub(super) fn truncate(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     short.push('…');
     short
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tui_lipan::TestBackend;
+
+    struct Title {
+        label: &'static str,
+        description: &'static str,
+    }
+    impl Component for Title {
+        type Message = ();
+        type Properties = ();
+        type State = ();
+        fn create_state(&self, _: &()) {}
+        fn update(&mut self, _: (), _: &mut Context<Self>) -> Update {
+            Update::none()
+        }
+        fn view(&self, _: &Context<Self>) -> Element {
+            item_text(
+                titled_item(
+                    vec![Span::new(self.label)],
+                    vec![Span::new(self.description)],
+                    Priority::Balanced,
+                ),
+                1,
+            )
+        }
+    }
+
+    fn title(label: &'static str, description: &'static str, width: u16) -> String {
+        let mut backend = TestBackend::new(Title { label, description });
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: width,
+            h: 1,
+        });
+        backend.render();
+        backend.capture_frame().to_fixed_grid_lines()[0].clone()
+    }
+
+    #[test]
+    fn balanced_titles_keep_names_and_status_visible_and_reclaim_unused_width() {
+        for width in [24, 40] {
+            let text = title(
+                "session-with-a-very-long-name-for-a-review",
+                "Running · 42 panes · 3 agents",
+                width,
+            );
+            assert!(
+                text.contains("session-") && text.contains("Running"),
+                "{text}"
+            );
+        }
+        // A short description leaves more than 40% for a longer name.
+        let text = title("session-with-long-name", "Running", 40);
+        assert!(
+            text.contains("session-with-long-name") && text.contains("Running"),
+            "{text}"
+        );
+        // A short name leaves more than 60% for the description.
+        let text = title("dev", "Running for approval", 28);
+        assert!(
+            text.contains("dev") && text.contains("Running for approval"),
+            "{text}"
+        );
+    }
 }

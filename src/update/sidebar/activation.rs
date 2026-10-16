@@ -99,7 +99,9 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::PublishedRow { pane_id, row } => activate_published_row(ctx, pane_id, row),
         RowTarget::Agent(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
-        RowTarget::TreeToggle(key) => crate::update::sidebar::tree_rows::toggle_key(ctx, key),
+        RowTarget::TreeToggle(key) => {
+            crate::update::sidebar::tree_rows::toggle_key(ctx, panel, key)
+        }
         RowTarget::StreamRow(row) => crate::ops::sidebar_streams::activate(ctx, row),
         RowTarget::CommandTreeRow {
             config_epoch,

@@ -51,6 +51,27 @@ pub(crate) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
 
 use super::activation::substitute;
 
+/// Insert either kind of entry literally, without executing the tab's custom click command.
+pub(crate) fn tree_insert_path(
+    ctx: &mut Context<AppRoot>,
+    config_epoch: u64,
+    tab_id: SidebarTabId,
+    path: String,
+) -> Update {
+    if config_epoch != ctx.state.sidebar.config_epoch
+        || !ctx
+            .state
+            .config
+            .sidebar
+            .tabs
+            .iter()
+            .any(|tab| matches!(tab, SidebarTab::Tree { .. }) && tab.id() == tab_id)
+    {
+        return Update::none();
+    }
+    crate::ops::user_command::execute(ctx, &crate::config::UserCommandAction::Send(path))
+}
+
 /// Activate a file-tree row: run the tab's `on_click` with `{path}` replaced by the activated path.
 ///
 /// A directory activation only expands the tree (handled in the widget); running the action for it

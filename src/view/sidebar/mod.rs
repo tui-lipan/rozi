@@ -505,6 +505,9 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
 /// `scroll_to_key` follow the cursor. Nesting them inside one stack would make the whole body a
 /// single child and scrolling would only ever resolve to the top of it.
 fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
+    if let Some(items) = ctx.state.tree_items(tab) {
+        return tree_rows::tab(ctx, panel, tab, items);
+    }
     let rows = body_rows(ctx, tab);
     if rows.is_empty() {
         return empty_body(ctx, panel, Some(empty_text(ctx, tab)));
@@ -542,9 +545,7 @@ fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
         let element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => {
-                item.build(ctx, selected, hovered, close, Some((panel, index)))
-            }
+            row::RowKind::Item(item) => item.build(ctx, selected, hovered, close),
         };
         // The row used to lose its own hover effect whenever the keyed ✕ region owned hover, so
         // this re-applied the same background transform through a scope. tui-lipan 0.7.0 makes a
@@ -636,10 +637,12 @@ pub(super) fn scrollbar_config() -> ScrollbarConfig {
     ScrollbarConfig::new().thumb('▐')
 }
 
-/// The lift a row gets under the pointer in the file tree, matching pointer hover in the composed
-/// row lists, which apply the same lift as a transform.
+/// Shared hover styling for FileTree and composed Tree rows. Resolving contrast with the
+/// background keeps tree guides readable in both live rendering and headless captures.
 pub(super) fn row_highlight(fill: Color) -> Style {
-    Style::new().bg(fill.elevate_by(super::HOVER_LIFT))
+    Style::new()
+        .bg(fill.elevate_by(super::HOVER_LIFT))
+        .contrast_policy(ContrastPolicy::Wcag)
 }
 
 /// How far the keyboard cursor's background leans toward the active border color.

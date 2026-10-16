@@ -27,6 +27,7 @@ pub(super) fn tree_tab(
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
     let toggle_tab_id = tab_id.clone();
+    let insert_tab_id = tab_id.clone();
     let config_epoch = ctx.state.sidebar.config_epoch;
     let tree_focus_key = tree_focus_key(ctx, panel, view, &root);
     let explorer_focus_key = format!("{}-explorer", tree_key(ctx, panel, view, &root));
@@ -48,7 +49,7 @@ pub(super) fn tree_tab(
         .max_entries_per_dir(config.max_entries)
         .indent_style(IndentStyle::Branch)
         .indent_width(if nerd_icons { 2 } else { 1 })
-        .content_gap(0)
+        .content_gap(if nerd_icons { 0 } else { 1 })
         .icon_gap(1)
         .indent_guide_style(Style::new().fg(fill.elevate_by(0.15)))
         .change_view(if changed_only {
@@ -62,6 +63,7 @@ pub(super) fn tree_tab(
         } else {
             GitIconStyle::Text
         })
+        .git_status_padding_right(if nerd_icons { 1 } else { 0 })
         .git_status_cache(ctx.state.sidebar.tree_git_status_cache.clone())
         .entry_refresh_token(ctx.state.sidebar.tree_entry_refresh_token)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
@@ -114,12 +116,8 @@ pub(super) fn tree_tab(
         // not a "this row is now current" state, and a highlight parked on the last-clicked file
         // claims otherwise. Hover is what gives the mouse its feedback.
         .unfocused_selection_style(Style::default())
-        // A single click both expands a directory and, in the widget, "activates" it. Activation is
-        // what runs the tab's action, and running it for a directory would type the directory's
-        // path at the prompt just because it was opened. Only files carry the action; the widget
-        // expands directories on its own, so filtering them here costs no expand behavior. The
-        // widget stack has no double-click, so single-click-on-file is the activation gesture — safe
-        // because the default action types the path without a newline and nothing runs on its own.
+        // Normal directory activation expands it, so only files run the tab's click action.
+        // Ctrl-activation separately inserts either kind of path without toggling the directory.
         .on_activate(crate::view::sidebar::callback(
             ctx,
             move |event: FileTreeEvent| Msg::SidebarTreeActivate {
@@ -127,6 +125,14 @@ pub(super) fn tree_tab(
                 tab_id: tab_id.clone(),
                 path: event.path.to_string(),
                 is_dir: event.kind == FileKind::Directory,
+            },
+        ))
+        .on_ctrl_activate(crate::view::sidebar::callback(
+            ctx,
+            move |event: FileTreeEvent| Msg::SidebarTreeInsertPath {
+                config_epoch,
+                tab_id: insert_tab_id.clone(),
+                path: event.path.to_string(),
             },
         ));
 

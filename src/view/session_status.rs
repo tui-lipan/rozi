@@ -249,35 +249,29 @@ pub(crate) fn session_status_gutter(
     }
 }
 
-/// Sidebar title-line badge: chrome + word. Omitted for current (▍ already marks it) and discovered.
-pub(crate) fn session_status_badge(
-    status: SessionConnectionStatus,
-    styles: SessionStatusStyles,
-) -> Option<Element> {
-    let (chrome, label): (Element, &str) = match status {
-        SessionConnectionStatus::Background => (
-            Text::new(MARKER_PARKED)
-                .style(styles.background)
-                .height(Length::Px(1))
-                .into(),
-            "background",
-        ),
-        SessionConnectionStatus::Reconnecting => (
-            picker_circle_spinner(styles.reconnecting)
-                .height(Length::Px(1))
-                .into(),
-            "reconnecting",
-        ),
-        SessionConnectionStatus::Offline => (
-            Text::new("×")
-                .style(styles.offline)
-                .height(Length::Px(1))
-                .into(),
-            "offline",
-        ),
-        SessionConnectionStatus::Current | SessionConnectionStatus::Discovered => return None,
-    };
-    Some(badge_row(chrome, capitalized(label), styles.label))
+/// Plain attachment labels stay separate from agent activity glyphs.
+pub(crate) fn session_status_label(status: SessionConnectionStatus) -> &'static str {
+    match status {
+        SessionConnectionStatus::Current => "Current",
+        SessionConnectionStatus::Background => "Background",
+        SessionConnectionStatus::Reconnecting => "Reconnecting",
+        SessionConnectionStatus::Offline => "Offline",
+        SessionConnectionStatus::Discovered => "Running",
+    }
+}
+
+/// Resolve a session on its exact host, including retained attachments.
+pub(crate) fn session_status_for(
+    state: &crate::state::State,
+    name: &str,
+    target: Option<&crate::session::remote::RemoteTarget>,
+) -> SessionConnectionStatus {
+    let current = state.current().session_name.as_deref() == Some(name)
+        && state.current().remote_target.as_ref() == target;
+    let connection = state
+        .attachment_by_identity(name, target)
+        .map(|attachment| attachment.connection);
+    session_connection_status(current, connection)
 }
 
 /// What a host monitor knows about the agents in one session, as a compact detail token.
@@ -371,6 +365,33 @@ mod tests {
                 "picker rows read lowercase: {label}"
             );
             assert_eq!(capitalized(label)[..1], label.to_uppercase()[..1]);
+        }
+    }
+
+    #[test]
+    fn sidebar_labels_use_attachment_identity_and_keep_other_hosts_running() {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let remote = RemoteTarget::Alias("workbox".into());
+        let label = |state: &crate::state::State, target| {
+            session_status_label(session_status_for(state, "dev", target))
+        };
+        assert_eq!(label(&state, None), "Current");
+        assert_eq!(label(&state, Some(&remote)), "Running");
+        let mut attachment = crate::state::Attachment::new();
+        attachment.session_name = Some("dev".into());
+        attachment.remote_target = Some(remote.clone());
+        attachment.connection = ConnectionState::Connected;
+        state.background.insert(1, attachment);
+        for (connection, expected) in [
+            (ConnectionState::Connected, "Background"),
+            (ConnectionState::Reconnecting, "Reconnecting"),
+            (ConnectionState::Disconnected, "Offline"),
+        ] {
+            state.background.get_mut(&1).unwrap().connection = connection;
+            assert_eq!(label(&state, Some(&remote)), expected);
+            assert_eq!(label(&state, None), "Current");
         }
     }
 

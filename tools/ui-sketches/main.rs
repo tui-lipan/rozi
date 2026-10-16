@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 13] = [
+const SCENARIOS: [(&str, &str, fn()); 15] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -75,6 +75,16 @@ const SCENARIOS: [(&str, &str, fn()); 13] = [
         "sidebar-files",
         "Files tree with global Nerd icons enabled and disabled",
         sidebar_files,
+    ),
+    (
+        "sidebar-sessions",
+        "current, background, running, and restorable session labels",
+        sidebar_sessions,
+    ),
+    (
+        "sidebar-custom-trees",
+        "command and extension-style stream trees with long labels and descriptions",
+        sidebar_custom_trees,
     ),
     (
         "sidebar-projects",
@@ -132,6 +142,11 @@ fn write_png(backend: &mut TestBackend<AppRoot>, name: &str) {
     std::fs::create_dir_all(&dir).expect("create sketch dir");
     let path = dir.join(format!("{name}.png"));
     std::fs::write(&path, png).expect("write png");
+    std::fs::write(
+        path.with_extension("txt"),
+        backend.capture_frame().to_fixed_grid_lines().join("\n"),
+    )
+    .expect("write rendered grid");
     println!("wrote {}", path.display());
 }
 
@@ -1113,6 +1128,145 @@ fn session_picker_no_results() {
     }
 }
 
+fn sidebar_custom_trees() {
+    let snapshot: rozi::state::SidebarSnapshot = serde_json::from_str(r#"{
+        "rows": [
+            {"id":"root","label":"Build pipeline","expanded":true},
+            {"id":"api","parent":"root","label":"api-integration-and-contract-tests","description":"Running · 42 tests","tone":"working"},
+            {"id":"review","parent":"root","label":"review","description":"Waiting for approval","tone":"blocked"},
+            {"id":"ui","parent":"root","label":"frontend-production-build","description":"Passed","tone":"success"}
+        ]
+    }"#).unwrap();
+    for stream in [false, true] {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let id = SidebarTabId::new("pipeline");
+        let (sender, _events) = std::sync::mpsc::sync_channel(64);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.sidebar.shown = [true, false];
+            let tab = if stream {
+                SidebarTab::Stream {
+                    name: id.clone(),
+                    label: "Extension".into(),
+                }
+            } else {
+                SidebarTab::Command {
+                    name: id.clone(),
+                    label: "Command".into(),
+                    command: "true".into(),
+                    interval_secs: 30,
+                    on_click: None,
+                    group_prefix: None,
+                    env: Vec::new(),
+                    format: rozi::config::SidebarCommandFormat::Json,
+                }
+            };
+            state.config.sidebar.tabs = vec![tab];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].tabs = vec![id.clone()];
+            state.sidebar.panels[0].active_tab = Some(id.clone());
+            if stream {
+                let key = rozi::state::SidebarProducerKey {
+                    binding: None,
+                    name: None,
+                };
+                state.sidebar_streams.tabs.entry(id).or_default().insert(
+                    key.id(),
+                    rozi::state::SidebarProducer {
+                        key,
+                        extension: Some("pipeline-demo".into()),
+                        stream_id: 1,
+                        sender,
+                        rows: snapshot.rows.clone(),
+                        actions: Vec::new(),
+                        visible: None,
+                        wedged: std::cell::Cell::new(false),
+                    },
+                );
+            } else {
+                state.sidebar.command_output.insert(
+                    id,
+                    rozi::state::SidebarCommandOutput {
+                        epoch: 1,
+                        rows: Vec::new(),
+                        tree: Some(snapshot.rows.clone()),
+                        cwd: state.sidebar.command_cwd.clone(),
+                    },
+                );
+            }
+        }
+        for width in [24, 32, 44] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            backend.set_viewport(viewport(100, 24));
+            backend.render();
+            write_png(
+                &mut backend,
+                &format!(
+                    "sidebar-{}-tree-{width}",
+                    if stream { "extension" } else { "command" }
+                ),
+            );
+        }
+    }
+}
+
+fn sidebar_sessions() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+        state.current_mut().session_name = Some("dev".into());
+        state.sidebar.sessions = ["dev", "review", "build", "saved"]
+            .into_iter()
+            .map(|name| DiscoveredSession {
+                name: name.into(),
+                origin: Default::default(),
+                status: if name == "saved" {
+                    DiscoveredSessionStatus::Restorable
+                } else {
+                    DiscoveredSessionStatus::Running {
+                        panes: 2,
+                        clients: 0,
+                        has_layout: true,
+                    }
+                },
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            })
+            .collect();
+        let mut background = rozi::state::Attachment::new();
+        background.session_name = Some("review".into());
+        background.connection = rozi::state::ConnectionState::Connected;
+        state.background.insert(1, background);
+    }
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 24));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-sessions-{width}"));
+    }
+    backend.state_mut().sidebar.sessions[1].name = "review-with-a-long-session-name".into();
+    backend
+        .state_mut()
+        .background
+        .get_mut(&1)
+        .unwrap()
+        .session_name = Some("review-with-a-long-session-name".into());
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-sessions-long-{width}"));
+    }
+}
+
 fn sidebar_projects() {
     use rozi::session::discovery::LocalAgentSnapshot;
     use rozi::session::protocol::{AgentSummary, ProjectSummary};
@@ -1153,8 +1307,24 @@ fn sidebar_projects() {
         backend.render();
         write_png(&mut backend, &format!("sidebar-projects-{width}"));
     }
+    backend
+        .state_mut()
+        .local_agent_snapshot
+        .as_mut()
+        .unwrap()
+        .projects[0]
+        .session = "review-with-a-long-session-name".into();
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("sidebar-projects-long-session-{width}"),
+        );
+    }
     {
         let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
+        snapshot.projects[0].session = "eph-other".into();
         snapshot.projects[0].branch = Some("fix/long-branch-name-with-unicode-修正".into());
         snapshot.agents.push(AgentSummary {
             session: "eph-other".into(),
@@ -1205,6 +1375,65 @@ fn sidebar_projects() {
     backend.state_mut().local_agent_snapshot = None;
     backend.render();
     write_png(&mut backend, "sidebar-projects-empty");
+
+    // One attached session in two repositories: only the focused pane's session row is active.
+    // Keep the keyboard cursor on the other row to review the two independent cues together.
+    {
+        let state = backend.state_mut();
+        let mut first = live_pane(1);
+        first.terminal.project_root = Some("/src/rozi".into());
+        first.terminal.git_branch = Some("feat/cursor-blink".into());
+        let mut second = live_pane(3);
+        second.terminal.project_root = Some("/src/tui-lipan".into());
+        second.terminal.git_branch = Some("feat/tree-rich-rows".into());
+        state.current_mut().workspaces[0].panes = vec![first, second];
+        state.current_mut().focused_pane = Some(3);
+        state.config.nerd_icons = true;
+        state.sidebar.tree_rows_expanded.clear();
+    }
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-shared-session");
+    backend
+        .dispatch(Msg::RunAction(rozi::input::Action::FocusSidebar))
+        .unwrap();
+    backend.state_mut().sidebar.panels[0].cursor = 2;
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-selected");
+    backend.state_mut().config.nerd_icons = false;
+    backend.render();
+    write_png(&mut backend, "sidebar-projects-selected-unicode");
+    backend
+        .send_key(tui_lipan::prelude::KeyEvent {
+            code: tui_lipan::prelude::KeyCode::Esc,
+            mods: KeyMods::NONE,
+        })
+        .unwrap();
+    backend.render();
+    let y = backend
+        .capture_frame()
+        .to_fixed_grid_lines()
+        .iter()
+        .position(|line| line.contains("feat/tree-rich-rows"))
+        .expect("checkout label is visible") as u16;
+    for kind in [
+        MouseKind::Moved,
+        MouseKind::Down(tui_lipan::core::event::MouseButton::Left),
+        MouseKind::Up(tui_lipan::core::event::MouseButton::Left),
+    ] {
+        backend
+            .send_mouse(MouseEvent {
+                x: 8,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        if kind == MouseKind::Moved {
+            write_png(&mut backend, "sidebar-projects-hover");
+        }
+    }
+    write_png(&mut backend, "sidebar-projects-clicked");
 }
 
 fn sidebar_files() {

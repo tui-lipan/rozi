@@ -246,6 +246,21 @@ fn host_rows(
             && state.current().session_name.as_deref() == Some(summary.session.as_str())
     };
     let focused = state.focused_pane();
+    // A pane may publish rows in other checkouts. Prefer its own checkout, then one published
+    // checkout, so the current destination has exactly one marker in this host's tree.
+    let focused_checkout = focused.and_then(|pane| {
+        summaries
+            .iter()
+            .filter(|summary| here(summary))
+            .find(|summary| summary.panes.contains(&pane))
+            .or_else(|| {
+                summaries
+                    .iter()
+                    .filter(|summary| here(summary))
+                    .find(|summary| summary.rows.iter().any(|row| row.pane == pane))
+            })
+            .map(|summary| summary.root.as_str())
+    });
     let agents_of = |summary: &ProjectSummary| -> Vec<&GlobalAgentRow> {
         agents
             .iter()
@@ -325,7 +340,6 @@ fn host_rows(
                 expanded: None,
             });
             let mut checkout_tones = Vec::new();
-            let mut checkout_active = false;
             let mut ordered = sessions;
             ordered.sort_by(|a, b| a.session.cmp(&b.session));
             for summary in ordered {
@@ -334,17 +348,17 @@ fn host_rows(
                 let tone = SidebarTone::most_urgent(session_agents.iter().map(|a| agent_tone(a)));
                 checkout_tones.push(tone);
                 let is_here = here(summary);
-                let active = is_here
-                    && focused.is_some_and(|pane| {
-                        summary.panes.contains(&pane)
-                            || summary.rows.iter().any(|row| row.pane == pane)
-                    });
-                checkout_active |= active;
-                // Land where the attention is: the most urgent agent, else the first pane working
-                // in this checkout.
-                let landing = session_agents
-                    .first()
-                    .map(|agent| (agent.location.pane(), agent.location.row().cloned()))
+                let active = is_here && focused_checkout == Some(summary.root.as_str());
+                // Keep the current destination when already in this checkout. Otherwise land on
+                // the most urgent agent, then a pane or published row working here.
+                let landing = focused
+                    .filter(|_| active)
+                    .map(|pane| (pane, None))
+                    .or_else(|| {
+                        session_agents
+                            .first()
+                            .map(|agent| (agent.location.pane(), agent.location.row().cloned()))
+                    })
                     .or_else(|| summary.panes.first().map(|pane| (*pane, None)))
                     .or_else(|| {
                         summary
@@ -374,10 +388,21 @@ fn host_rows(
                     parent: Some(checkout_id.clone()),
                     content: RowContent {
                         label,
-                        description: session_description(&session_agents, summary),
+                        description: Some({
+                            let status = crate::view::session_status::session_status_for(
+                                state,
+                                &summary.session,
+                                host,
+                            );
+                            let label = crate::view::session_status::session_status_label(status);
+                            match session_description(&session_agents, summary) {
+                                Some(detail) => format!("{label} · {detail}"),
+                                None => label.to_string(),
+                            }
+                        }),
                         detail: None,
                         tone,
-                        active: is_here,
+                        active,
                         disabled: None,
                     },
                     target,
@@ -389,7 +414,6 @@ fn host_rows(
             let tone = SidebarTone::most_urgent(checkout_tones);
             repo_tones.push(tone);
             rows[checkout_index].content.tone = tone;
-            rows[checkout_index].content.active = checkout_active;
         }
         rows[repo_index].content.tone = SidebarTone::most_urgent(repo_tones);
     }
@@ -500,12 +524,12 @@ mod tests {
             [
                 "rozi Blocked",
                 "  master Working",
-                "    dev Working [Codex]",
+                "    dev Working [Running · Codex]",
                 "  fix/ssh Blocked",
-                "    fix Blocked [Codex]",
+                "    fix Blocked [Running · Codex]",
                 "tui-lipan Normal",
                 "  main Normal",
-                "    dev Normal [1 pane]",
+                "    dev Normal [Running · 1 pane]",
             ]
         );
     }
@@ -535,5 +559,36 @@ mod tests {
             repository_labels(&["/a/work/api", "/a/oss/api", "/a/rozi"]),
             ["work/api", "oss/api", "rozi"]
         );
+    }
+
+    #[test]
+    fn only_the_focused_checkouts_session_row_has_an_active_marker() {
+        let mut state = state();
+        state.current_mut().session_name = Some("dev".into());
+        let summaries = [
+            summary("dev", "/x/rozi", None, "master", &[1]),
+            summary("dev", "/x/tui-lipan", None, "main", &[2]),
+            summary("other", "/x/rozi", None, "master", &[1]),
+        ];
+        let work = summaries
+            .iter()
+            .map(|summary| Work {
+                summary,
+                host: None,
+            })
+            .collect::<Vec<_>>();
+        for (focused, expected) in [
+            (Some(1), vec!["session:/x/rozi:dev"]),
+            (Some(2), vec!["session:/x/tui-lipan:dev"]),
+            (None, vec![]),
+        ] {
+            state.current_mut().focused_pane = focused;
+            let active = host_rows(&state, None, &work.iter().collect::<Vec<_>>(), &[])
+                .into_iter()
+                .filter(|row| row.content.active)
+                .map(|row| row.id)
+                .collect::<Vec<_>>();
+            assert_eq!(active, expected);
+        }
     }
 }

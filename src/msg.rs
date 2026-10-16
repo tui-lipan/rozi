@@ -230,7 +230,12 @@ pub enum Msg {
         producer: String,
     },
     /// The disclosure toggle on a hierarchical sidebar row was clicked: show or hide its children.
-    SidebarRowToggle {
+    SidebarRowExpanded {
+        panel: usize,
+        index: usize,
+        expanded: bool,
+    },
+    SidebarRowSelected {
         panel: usize,
         index: usize,
     },
@@ -261,6 +266,12 @@ pub enum Msg {
         path: String,
         /// Directories only expand; their activation must not run the tab's action.
         is_dir: bool,
+    },
+    /// Ctrl-activation inserts a file or directory path independently of the tab's click action.
+    SidebarTreeInsertPath {
+        config_epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+        path: String,
     },
     /// A directory was expanded or collapsed, so the tab's remembered expansion can follow it.
     SidebarTreeToggle {

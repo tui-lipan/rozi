@@ -479,17 +479,6 @@ fn push_row(
     }
 }
 
-/// The row a cursor on `index` moves to with Left: its parent, if it has one.
-pub fn parent_index(items: &[TreeItem], index: usize) -> Option<usize> {
-    let depth = items.get(index)?.line()?.branch.depth();
-    if depth == 0 {
-        return None;
-    }
-    items[..index]
-        .iter()
-        .rposition(|item| item.line().is_some_and(|line| line.branch.depth() < depth))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,8 +565,6 @@ mod tests {
         let mut expansion = TreeExpansion::new();
         let items = flatten(&tab(), std::slice::from_ref(&section), &expansion);
         assert_eq!(labels(&items), ["#WORKBOX", "a", "  b", "remote"]);
-        assert_eq!(parent_index(&items, 2), Some(1));
-        assert_eq!(parent_index(&items, 1), None);
 
         expansion.insert(
             TreeExpansionKey {

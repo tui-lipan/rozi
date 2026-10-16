@@ -271,7 +271,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             hovered,
         } => sidebar::row_hover(ctx, panel, index, hovered),
         Msg::SidebarRowClose { panel, index } => sidebar::row_close(ctx, panel, index),
-        Msg::SidebarRowToggle { panel, index } => sidebar::row_toggle(ctx, panel, index),
+        Msg::SidebarRowExpanded {
+            panel,
+            index,
+            expanded,
+        } => sidebar::row_expanded(ctx, panel, index, expanded),
+        Msg::SidebarRowSelected { panel, index } => sidebar::row_selected(ctx, panel, index),
         Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
         Msg::SidebarTreeFocused => sidebar::tree_focused(ctx),
@@ -290,6 +295,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             path,
             is_dir,
         } => sidebar::tree_activate(ctx, config_epoch, tab_id, path, is_dir),
+        Msg::SidebarTreeInsertPath {
+            config_epoch,
+            tab_id,
+            path,
+        } => sidebar::tree_insert_path(ctx, config_epoch, tab_id, path),
         Msg::SidebarTreeToggle {
             tab_id,
             path,

@@ -505,8 +505,8 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
 /// `scroll_to_key` follow the cursor. Nesting them inside one stack would make the whole body a
 /// single child and scrolling would only ever resolve to the top of it.
 fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
-    if let Some(items) = ctx.state.tree_items(tab) {
-        return tree_rows::tab(ctx, panel, tab, items);
+    if ctx.state.sidebar_tab_is_tree(tab) {
+        return tree_rows::tab(ctx, panel, tab);
     }
     let rows = body_rows(ctx, tab);
     if rows.is_empty() {

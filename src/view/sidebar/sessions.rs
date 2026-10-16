@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, RowTarget, SidebarRow};
+use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
 use crate::AppRoot;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::state::{HostEntry, HostStatus};
@@ -226,11 +226,17 @@ fn action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> Sidebar
     )
 }
 
+/// The Sessions tab as a tree: each host is a heading, with its sessions and the way to start
+/// another beneath it.
 pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
 
     // Local group: always present, always available.
-    rows.push(header_row(ctx, "LOCAL", None));
+    rows.push(
+        header_row(ctx, "LOCAL", None)
+            .shape(Shape::Heading)
+            .keyed("host:local"),
+    );
     let mut any_local = false;
     for entry in ctx
         .state
@@ -239,23 +245,32 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         .iter()
         .filter(|e| e.host.is_none())
     {
-        rows.push(session_row(ctx, entry));
+        rows.push(
+            session_row(ctx, entry)
+                .at(1)
+                .keyed(format!("session:local:{}", entry.name)),
+        );
         any_local = true;
     }
     if !any_local {
-        rows.push(empty_row(ctx, "No local sessions"));
+        rows.push(
+            empty_row(ctx, "No local sessions")
+                .at(1)
+                .keyed("empty:local"),
+        );
     }
-    rows.push(session_action_row(
-        ctx,
-        "New session",
-        RowTarget::NewSession(None),
-    ));
+    rows.push(
+        session_action_row(ctx, "New session", RowTarget::NewSession(None))
+            .at(1)
+            .keyed("new:local"),
+    );
 
     // One group per known remote host — configured, recently used, or currently attached — so a
     // host stays listed even while offline. Connecting a host lists its sessions; disconnecting
     // returns it to offline.
     for host in ctx.state.remote.hosts.iter() {
-        rows.push(SidebarRow::spacer());
+        let id = &host.alias;
+        rows.push(SidebarRow::spacer().keyed(format!("spacer:{id}")));
         let sessions: Vec<&DiscoveredSession> = ctx
             .state
             .sidebar
@@ -272,28 +287,40 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
                 .iter()
                 .any(|entry| !crate::ops::session::session_row_is_last_seen(entry)),
         );
-        rows.push(header_row(
-            ctx,
-            &host.alias.to_uppercase(),
-            Some((host, status)),
-        ));
+        rows.push(
+            header_row(ctx, &host.alias.to_uppercase(), Some((host, status)))
+                .shape(Shape::Heading)
+                .keyed(format!("host:{id}")),
+        );
 
         match status {
             HostStatus::Connecting | HostStatus::Installing => {}
             HostStatus::Connected | HostStatus::Reachable => {
                 // Online: live sessions follow the host row, then the way to start another.
                 if sessions.is_empty() {
-                    rows.push(empty_row(ctx, "No sessions here yet"));
+                    rows.push(
+                        empty_row(ctx, "No sessions here yet")
+                            .at(1)
+                            .keyed(format!("empty:{id}")),
+                    );
                 } else {
                     for entry in sessions {
-                        rows.push(session_row(ctx, entry));
+                        rows.push(
+                            session_row(ctx, entry)
+                                .at(1)
+                                .keyed(format!("session:{id}:{}", entry.name)),
+                        );
                     }
                 }
-                rows.push(session_action_row(
-                    ctx,
-                    "New session",
-                    RowTarget::NewSession(Some(host.target.clone())),
-                ));
+                rows.push(
+                    session_action_row(
+                        ctx,
+                        "New session",
+                        RowTarget::NewSession(Some(host.target.clone())),
+                    )
+                    .at(1)
+                    .keyed(format!("new:{id}")),
+                );
             }
             HostStatus::Disconnected | HostStatus::Unreachable => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
@@ -301,7 +328,11 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
                     crate::session::host_sessions_for(&ctx.state.remote.session_cache, &host.target)
                 {
                     for entry in cached.iter().filter(|s| !s.ephemeral) {
-                        rows.push(cached_session_row(ctx, host, entry));
+                        rows.push(
+                            cached_session_row(ctx, host, entry)
+                                .at(1)
+                                .keyed(format!("cached:{id}:{}", entry.name)),
+                        );
                     }
                 }
             }
@@ -310,8 +341,12 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 
     // A discoverable path to the connect-remote-host prompt, so a host that is not yet configured or
     // recent can still be reached without knowing the Ctrl+R binding.
-    rows.push(SidebarRow::spacer());
-    rows.push(action_row(ctx, "Connect a host…", RowTarget::ConnectHost));
+    rows.push(SidebarRow::spacer().keyed("spacer:connect"));
+    rows.push(
+        action_row(ctx, "Connect a host…", RowTarget::ConnectHost)
+            .shape(Shape::Flush)
+            .keyed("connect"),
+    );
 
     rows
 }

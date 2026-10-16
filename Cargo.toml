@@ -65,7 +65,9 @@ exclude = [
 # 0.23.0: graphics pacing, resize handling, synchronized frames and animation image masks.
 # 0.26.0: Tree forests and guides, composed Tree rows, static editable carets, cursor blink
 # overrides, FileTree icon/arrow/gap controls, and splitter focus fixes.
-tui-lipan = { version = "0.26.0", features = [
+# 0.27.0: Tree shares FileTree's row layout and option names, row icons, per-row arrow styles,
+# and always-open rows that line up with their siblings.
+tui-lipan = { version = "0.27.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

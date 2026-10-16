@@ -144,7 +144,8 @@ Pane titles follow the order described in
 
 ## Sessions
 
-Sessions lists local sessions and known remote hosts. Activating a live session attaches or
+Sessions lists local sessions and known remote hosts. `LOCAL` and each host are headings, with
+their sessions and a row to start a new one beneath them. Activating a live session attaches or
 switches to it. Restorable sessions, and cached rows for offline hosts, stay listed when available.
 
 Session rows show `Current`, `Background` for a connection held by this client, or `Running`

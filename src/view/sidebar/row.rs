@@ -15,35 +15,78 @@ pub(crate) enum RowKind {
     Item(Box<Row>),
 }
 
+/// How a row takes part in its tab's tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// A row with nothing beneath it. It keeps the arrow column, so it lines up with its siblings.
+    #[default]
+    Leaf,
+    /// A top-level row outside any group, such as an action or a spacer: no arrow column.
+    Flush,
+    /// A section title: no arrow column, and the rows beneath it always show.
+    Heading,
+    /// A parent the user expands and collapses.
+    Collapsible { expanded: bool },
+}
+
 /// One row: how it renders, what activating it does, and what its ✕ destroys if it has one.
 pub(crate) struct SidebarRow {
     pub kind: RowKind,
     pub target: RowTarget,
     pub close: Option<crate::state::SidebarClose>,
+    /// Levels beneath the tab's top-level rows.
+    pub depth: usize,
+    pub shape: Shape,
+    /// Identity that follows the row across updates, for its rendered content and expansion.
+    pub key: Option<String>,
 }
 
 impl SidebarRow {
-    pub(super) fn header(element: impl Into<Element>) -> Self {
+    fn new(kind: RowKind, target: RowTarget) -> Self {
         Self {
-            kind: RowKind::Header(Box::new(element.into())),
-            target: RowTarget::Inert,
+            kind,
+            target,
             close: None,
+            depth: 0,
+            shape: Shape::Leaf,
+            key: None,
         }
+    }
+
+    /// A top-level row outside any group, with no arrow column.
+    pub(super) fn header(element: impl Into<Element>) -> Self {
+        Self::new(RowKind::Header(Box::new(element.into())), RowTarget::Inert).shape(Shape::Flush)
     }
 
     pub(super) fn spacer() -> Self {
-        Self {
-            kind: RowKind::Spacer,
-            target: RowTarget::Inert,
-            close: None,
-        }
+        Self::new(RowKind::Spacer, RowTarget::Inert).shape(Shape::Flush)
     }
 
     pub(super) fn item(row: Row, target: RowTarget) -> Self {
-        Self {
-            kind: RowKind::Item(Box::new(row)),
-            target,
-            close: None,
+        Self::new(RowKind::Item(Box::new(row)), target)
+    }
+
+    /// Place the row `depth` levels beneath the tab's top-level rows.
+    pub(super) fn at(mut self, depth: usize) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    pub(super) fn shape(mut self, shape: Shape) -> Self {
+        self.shape = shape;
+        self
+    }
+
+    pub(super) fn keyed(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    /// The row's text, for the tree's accessible label.
+    pub(super) fn label(&self) -> &str {
+        match &self.kind {
+            RowKind::Item(row) => &row.title,
+            RowKind::Header(_) | RowKind::Spacer => "",
         }
     }
 

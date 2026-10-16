@@ -1,12 +1,13 @@
-//! Rendering for the hierarchical row tabs: Projects, JSON command tabs, and extension streams.
+//! Rendering for the sidebar's row tabs through the framework Tree.
 //!
-//! The generic framework Tree owns hierarchy layout and interaction. Rozi supplies ordinary
-//! [`Row`] content with its marker gutter, status, badge, and detail line. Producers describe
-//! meaning through [`SidebarTone`]; this module maps that meaning to themed row content.
+//! The Tree owns hierarchy layout and interaction. Rozi supplies ordinary [`Row`] content with its
+//! marker gutter, status, badge, and detail line, and places each row with a depth and a
+//! [`Shape`]. The hierarchical tabs (Projects, JSON command tabs, and extension streams) derive
+//! rows from a semantic projection, whose producers describe meaning through [`SidebarTone`].
 
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, SidebarRow};
+use super::row::{Priority, Row, Shape, SidebarRow};
 use crate::AppRoot;
 use crate::state::{SidebarTone, TreeItem, TreeLine};
 
@@ -21,13 +22,26 @@ pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<Sid
                 TreeItem::Header(header) => {
                     SidebarRow::header(super::row::header(ctx, header, false))
                 }
-                TreeItem::Loading(_) => SidebarRow::item(
+                TreeItem::Loading(branch) => SidebarRow::item(
                     Row::new("Loading…").title_style(super::super::fg_only(&ctx.state.theme.muted)),
                     target,
-                ),
+                )
+                .at(branch.depth()),
                 TreeItem::Row(line) => {
+                    let depth = line.branch.depth();
+                    let shape = if line.expandable {
+                        Shape::Collapsible {
+                            expanded: line.expanded,
+                        }
+                    } else {
+                        Shape::Leaf
+                    };
+                    let key = format!("{:?}", line.key);
                     let row = tree_row(ctx, *line);
-                    let mut row = SidebarRow::item(row, target);
+                    let mut row = SidebarRow::item(row, target)
+                        .at(depth)
+                        .shape(shape)
+                        .keyed(key);
                     if let Some(close) = close {
                         row = row.closable(close);
                     }
@@ -134,13 +148,12 @@ pub(super) fn tone_glyph(
     )
 }
 
-/// Convert the semantic projection into Tree nodes. Rozi supplies content and actions; the widget
-/// supplies tree chrome, expansion hit targets, scrolling, and navigation.
+/// A tab's placed rows as a Tree. Rozi supplies content and actions; the widget supplies tree
+/// chrome, expansion hit targets, scrolling, and navigation.
 pub(super) fn tab(
     ctx: &Context<AppRoot>,
     panel: usize,
     tab: &crate::config::SidebarTab,
-    items: Vec<TreeItem>,
 ) -> Element {
     let rows = super::body_rows(ctx, tab);
     if rows.is_empty() {
@@ -148,17 +161,15 @@ pub(super) fn tab(
     }
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
     let cursor = super::cursor_index(ctx, panel, tab);
-    let nodes = items
+    let nodes = rows
         .into_iter()
-        .zip(rows)
         .enumerate()
-        .map(|(index, (item, row))| {
+        .map(|(index, row)| {
             node(
                 ctx,
                 panel,
                 cursor.filter(|_| focused) == Some(index),
                 index,
-                item,
                 row,
             )
         })
@@ -168,18 +179,19 @@ pub(super) fn tab(
         .toggle_on_activate(false)
         .indent_style(IndentStyle::Branch)
         .indent_guide_style(Style::new().fg(super::fill(ctx).elevate_by(0.15)))
+        .indent(1)
         .content_gap(1)
-        .expanded_icon(if ctx.state.config.nerd_icons {
+        .expanded_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▼"
         })
-        .collapsed_icon(if ctx.state.config.nerd_icons {
+        .collapsed_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▶"
         })
-        .icon_style(super::super::fg_only(&ctx.state.theme.muted))
+        .arrow_style(super::super::fg_only(&ctx.state.theme.muted))
         .scrollbar(true)
         .scrollbar_config(super::scrollbar_config())
         .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
@@ -240,30 +252,24 @@ fn node(
     panel: usize,
     selected: bool,
     index: usize,
-    item: TreeItem,
     row: SidebarRow,
 ) -> (usize, TreeNode) {
-    let depth = match &item {
-        TreeItem::Row(line) => line.branch.depth(),
-        TreeItem::Loading(branch) => branch.depth(),
-        _ => 0,
-    };
+    let depth = row.depth;
+    let shape = row.shape;
+    let key = row
+        .key
+        .clone()
+        .unwrap_or_else(|| format!("structure-{index}"));
     let selectable = row.selectable();
     let close = super::close_affordance(ctx, panel, &row, index, selected);
     let hovered = ctx.state.sidebar.panels[panel].hovered_row == Some(index)
         && !ctx.state.sidebar.panels[panel].suppress_row_hover;
-    let label = match &item {
-        TreeItem::Row(line) => line.row.content.label.clone(),
-        TreeItem::Header(header) => header.clone(),
-        TreeItem::Loading(_) => "Loading…".to_string(),
-        TreeItem::Spacer => String::new(),
-    };
-    let metadata = ListItem::new(label).role(if selectable {
+    let metadata = ListItem::new(row.label().to_string()).role(if selectable {
         ListItemRole::Normal
     } else {
         ListItemRole::Header
     });
-    let mut node = TreeNode::new(metadata).indent(1);
+    let mut node = TreeNode::new(metadata);
     node = match row.kind {
         super::row::RowKind::Item(row) => {
             let parts = row.parts(ctx, selected, hovered, close);
@@ -273,26 +279,20 @@ fn node(
                 .content_height(parts.height)
                 .row_style(parts.style)
         }
-        super::row::RowKind::Header(element) => node
-            .content(*element)
-            .show_disclosure(matches!(item, TreeItem::Loading(_))),
-        super::row::RowKind::Spacer => node
-            .content(Text::new(" ").height(Length::Px(1)))
-            .show_disclosure(false),
+        super::row::RowKind::Header(element) => node.content(*element),
+        super::row::RowKind::Spacer => node.content(Text::new(" ").height(Length::Px(1))),
     };
-    if let TreeItem::Row(line) = item {
-        node = node
-            .expansion_mode(if line.expandable {
-                TreeExpansionMode::Collapsible
-            } else {
-                TreeExpansionMode::Auto
-            })
-            .expanded(line.expanded)
-            .key(format!("{:?}", line.key));
-    } else {
-        node = node.key(format!("structure-{index}"));
-    }
-    (depth, node)
+    node = match shape {
+        Shape::Leaf => node,
+        Shape::Flush => node.show_arrow(false),
+        Shape::Heading => node
+            .expansion_mode(TreeExpansionMode::AlwaysOpen)
+            .show_arrow(false),
+        Shape::Collapsible { expanded } => node
+            .expansion_mode(TreeExpansionMode::Collapsible)
+            .expanded(expanded),
+    };
+    (depth, node.key(key))
 }
 
 /// The model projects only visible rows. Retain its order and depth; controlled expansion keeps

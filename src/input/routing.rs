@@ -191,9 +191,7 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     {
         return Some(update);
     }
-    if crate::view::sidebar::active_tab(ctx)
-        .is_some_and(|tab| ctx.state.tree_sections(tab).is_some())
-    {
+    if crate::view::sidebar::active_tab(ctx).is_some_and(|tab| ctx.state.sidebar_tab_is_tree(tab)) {
         return if key.is(KeyCode::Char('x')) {
             Some(sidebar::close_cursor(ctx))
         } else {

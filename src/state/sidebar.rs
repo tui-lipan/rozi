@@ -203,6 +203,11 @@ impl State {
         }
     }
 
+    /// Whether `tab` renders through the framework Tree, which then owns its keyboard navigation.
+    pub fn sidebar_tab_is_tree(&self, tab: &SidebarTab) -> bool {
+        matches!(tab, SidebarTab::Sessions) || self.tree_sections(tab).is_some()
+    }
+
     /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.
     pub fn tree_items(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeItem>> {
         let sections = self.tree_sections(tab)?;

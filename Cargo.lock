@@ -3662,7 +3662,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 [[package]]
 name = "tui-lipan"
 version = "0.25.0"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=76e2bfeecf558720489db63e47e7dabc47b2e6f1#76e2bfeecf558720489db63e47e7dabc47b2e6f1"
+source = "git+https://github.com/tui-lipan/tui-lipan?rev=b47eed12a8f98f258c4744d112ca65795b55d3ba#b47eed12a8f98f258c4744d112ca65795b55d3ba"
 dependencies = [
  "ab_glyph_rasterizer",
  "alacritty_terminal",
@@ -3706,7 +3706,7 @@ dependencies = [
 [[package]]
 name = "tui-lipan-macro"
 version = "0.25.0"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=76e2bfeecf558720489db63e47e7dabc47b2e6f1#76e2bfeecf558720489db63e47e7dabc47b2e6f1"
+source = "git+https://github.com/tui-lipan/tui-lipan?rev=b47eed12a8f98f258c4744d112ca65795b55d3ba#b47eed12a8f98f258c4744d112ca65795b55d3ba"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

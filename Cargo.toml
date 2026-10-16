@@ -66,7 +66,7 @@ exclude = [
 # 0.25.0: independent FileTree icons/arrows, exact-width Branch guides, and content/icon gaps.
 # Temporary review pin for tui-lipan#348 (composed Tree rows, Ctrl activation, and Git suffixes).
 # Replace with the released crates.io version before merging/releasing this draft.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "76e2bfeecf558720489db63e47e7dabc47b2e6f1", features = [
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "b47eed12a8f98f258c4744d112ca65795b55d3ba", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -282,7 +282,11 @@ fn node(
     };
     if let TreeItem::Row(line) = item {
         node = node
-            .expandable(line.expandable)
+            .expansion_mode(if line.expandable {
+                TreeExpansionMode::Collapsible
+            } else {
+                TreeExpansionMode::Auto
+            })
             .expanded(line.expanded)
             .key(format!("{:?}", line.key));
     } else {

@@ -4,3 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # One weekly PR for every Actions bump; it is applied by hand and signed off by a maintainer.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

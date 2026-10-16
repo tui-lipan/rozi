@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 15] = [
+const SCENARIOS: [(&str, &str, fn()); 16] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -85,6 +85,11 @@ const SCENARIOS: [(&str, &str, fn()); 15] = [
         "sidebar-custom-trees",
         "command and extension-style stream trees with long labels and descriptions",
         sidebar_custom_trees,
+    ),
+    (
+        "sidebar-tree-concepts",
+        "design exploration: Sessions, Panes, Projects, and Agents mocked as stream trees",
+        sidebar_tree_concepts,
     ),
     (
         "sidebar-projects",
@@ -1208,6 +1213,128 @@ fn sidebar_custom_trees() {
                     if stream { "extension" } else { "command" }
                 ),
             );
+        }
+    }
+}
+
+/// Design exploration, not a shipped layout: the flat tabs re-expressed as producer rows so the
+/// real Tree renderer draws them. Only what a stream row can say today is used.
+fn sidebar_tree_concepts() {
+    let concepts: [(&str, &str, &str); 5] = [
+        (
+            "sessions",
+            "Sessions",
+            r#"[
+            {"id":"local","label":"Local","description":"2 running","expanded":true},
+            {"id":"dev","parent":"local","label":"dev","description":"Current · 3 panes","active":true},
+            {"id":"review","parent":"local","label":"review","description":"Background · 2 panes","tone":"blocked"},
+            {"id":"build","parent":"local","label":"build","description":"Running · 1 pane","tone":"working"},
+            {"id":"saved","parent":"local","label":"saved","description":"Restorable","tone":"muted"},
+            {"id":"wb","label":"workbox","description":"Connected","tone":"success","expanded":true},
+            {"id":"wb-api","parent":"wb","label":"api","description":"Running · 4 panes"},
+            {"id":"bb","label":"buildbox","description":"Unreachable","tone":"error","detail":"ssh: connection timed out"}
+        ]"#,
+        ),
+        (
+            "panes",
+            "Panes",
+            r#"[
+            {"id":"w1","label":"1 · Workspace","description":"~/Projects/rozi","expanded":true},
+            {"id":"p1","parent":"w1","label":"nvim","description":"src/view","active":true},
+            {"id":"p2","parent":"w1","label":"claude","description":"Blocked","tone":"blocked"},
+            {"id":"p3","parent":"w1","label":"cargo test","description":"Running","tone":"working"},
+            {"id":"w2","label":"2 · docs","description":"~/Projects/tui-lipan","expanded":true},
+            {"id":"p4","parent":"w2","label":"shell","description":"examples"},
+            {"id":"w3","label":"3","description":"empty","tone":"muted"}
+        ]"#,
+        ),
+        (
+            "projects",
+            "Projects",
+            r##"[
+            {"id":"rozi","label":"rozi","description":"5 checkouts","expanded":true},
+            {"id":"master","parent":"rozi","label":"master","description":"primary","expanded":true},
+            {"id":"master-dev","parent":"master","label":"dev","description":"Current · 3 panes","active":true},
+            {"id":"login","parent":"rozi","label":"feat/login","description":"#114 passed","tone":"success","expanded":true},
+            {"id":"login-r","parent":"login","label":"review","description":"Background · 2 panes"},
+            {"id":"race","parent":"rozi","label":"fix/config-test-race","description":"#115 failed","tone":"error"},
+            {"id":"rel","parent":"rozi","label":"release/0.1","description":"#117 running","tone":"working","detail":"locked · no session"},
+            {"id":"new","parent":"rozi","label":"+ New worktree","tone":"muted"},
+            {"id":"tl","label":"tui-lipan","description":"1 checkout","expanded":false},
+            {"id":"tl-m","parent":"tl","label":"master"}
+        ]"##,
+        ),
+        (
+            "agents",
+            "Agents",
+            r#"[
+            {"id":"rozi","label":"rozi","description":"master","expanded":true},
+            {"id":"cc","parent":"rozi","label":"Claude Code","description":"4 sessions","tone":"blocked","expanded":true},
+            {"id":"c1","parent":"cc","label":"fix login redirect","description":"Blocked · 2m","tone":"blocked","detail":"Approve edit to src/auth.rs?"},
+            {"id":"c2","parent":"cc","label":"github issue review","description":"Working · 14m","tone":"working","active":true},
+            {"id":"c3","parent":"cc","label":"sidebar audit","description":"Done · 1h","tone":"success"},
+            {"id":"c4","parent":"cc","label":"Review 日本語 changes","description":"Idle","tone":"muted"},
+            {"id":"cx","parent":"rozi","label":"Codex","description":"Working · 3m","tone":"working"},
+            {"id":"tl","label":"tui-lipan","description":"feat/tree-rich-rows","expanded":true},
+            {"id":"oc","parent":"tl","label":"opencode","description":"Error","tone":"error","detail":"rate limited"}
+        ]"#,
+        ),
+        (
+            "global-agents",
+            "Agents",
+            r#"[
+            {"id":"local","label":"Local","description":"3 agents","tone":"blocked","expanded":true},
+            {"id":"dev","parent":"local","label":"dev","description":"Current","tone":"blocked","expanded":true},
+            {"id":"cc","parent":"dev","label":"Claude Code","description":"2 sessions","tone":"blocked","expanded":true},
+            {"id":"c1","parent":"cc","label":"fix login redirect","description":"Blocked","tone":"blocked"},
+            {"id":"c2","parent":"cc","label":"github issue review","description":"Working","tone":"working"},
+            {"id":"cx","parent":"dev","label":"Codex","description":"Done","tone":"success"},
+            {"id":"wb","label":"workbox","description":"1 agent","tone":"working","expanded":true},
+            {"id":"api","parent":"wb","label":"api","description":"Running","tone":"working","expanded":true},
+            {"id":"oc","parent":"api","label":"opencode","description":"Working","tone":"working"}
+        ]"#,
+        ),
+    ];
+    for (slug, label, rows) in concepts {
+        let rows: Vec<rozi::state::SidebarRowSpec> = serde_json::from_str(rows).unwrap();
+        let mut backend = TestBackend::new(AppRoot::default());
+        let id = SidebarTabId::new(slug);
+        let (sender, _events) = std::sync::mpsc::sync_channel(64);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.sidebar.shown = [true, false];
+            state.config.sidebar.tabs = vec![SidebarTab::Stream {
+                name: id.clone(),
+                label: label.into(),
+            }];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].tabs = vec![id.clone()];
+            state.sidebar.panels[0].active_tab = Some(id.clone());
+            let key = rozi::state::SidebarProducerKey {
+                binding: None,
+                name: None,
+            };
+            state.sidebar_streams.tabs.entry(id).or_default().insert(
+                key.id(),
+                rozi::state::SidebarProducer {
+                    key,
+                    extension: None,
+                    stream_id: 1,
+                    sender,
+                    rows,
+                    actions: Vec::new(),
+                    visible: None,
+                    wedged: std::cell::Cell::new(false),
+                },
+            );
+        }
+        for width in [28, 36, 44] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            backend.set_viewport(viewport(100, 18));
+            backend.render();
+            write_png(&mut backend, &format!("concept-{slug}-{width}"));
         }
     }
 }

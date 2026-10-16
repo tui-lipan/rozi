@@ -392,6 +392,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CyclePaneCloseAnimation
         | CycleSessionAnimation
         | CyclePickerAnimation
+        | CycleCursorBlink
         | CycleWhichKey
         | CycleCopyOnSelect
         | CycleMiddleClickPaste
@@ -765,6 +766,13 @@ fn persist_applied_settings_choice(
 ) {
     use crate::state::SettingsAction::*;
     match action {
+        CycleCursorBlink => {
+            let value = format!("\"{}\"", ctx.state.config.cursor.blink.id());
+            if let Err(err) = crate::config::persist_section_values("cursor", &[("blink", &value)])
+            {
+                preference_error(ctx, err);
+            }
+        }
         CycleWhichKey => {
             if let Err(err) = crate::config::persist_input_string(
                 "which_key",
@@ -1853,6 +1861,31 @@ mod tests {
                 backend.state().settings_selected,
                 Some(crate::state::SettingsAction::Theme)
             );
+        });
+    }
+
+    #[test]
+    fn cursor_blink_is_saved_from_settings() {
+        on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            let action = crate::state::SettingsAction::CycleCursorBlink;
+            backend.update_level(Msg::SettingsActivate(action)).unwrap();
+            assert_eq!(
+                backend.state().settings_choice.as_ref().unwrap().options,
+                ["Inherit", "Static", "Blinking"]
+            );
+            backend.update_level(Msg::SettingsChoicePick(1)).unwrap();
+            assert_eq!(
+                backend.state().config.cursor.blink,
+                crate::config::CursorBlink::Static
+            );
+            assert_eq!(
+                crate::config::load_config().config.cursor.blink,
+                crate::config::CursorBlink::Static
+            );
+            assert!(backend.state().show_settings);
         });
     }
 

@@ -101,6 +101,7 @@ struct FileConfig {
     scrollback: Option<usize>,
     frame_rate: Option<u16>,
     nerd_icons: Option<bool>,
+    cursor: CursorFileConfig,
     input: InputFileConfig,
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
@@ -131,6 +132,12 @@ struct FileConfig {
     capture: CaptureFileConfig,
     recording: RecordingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct CursorFileConfig {
+    blink: Option<String>,
 }
 
 pub(crate) fn parse_extensions_config(text: &str) -> Result<ExtensionsFileConfig, toml::de::Error> {
@@ -334,7 +341,6 @@ pub(super) struct SidebarTabTableSpec {
     // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
     pub(super) root: Option<String>,
     pub(super) show_hidden: Option<bool>,
-    pub(super) icons: Option<bool>,
     pub(super) explorer: Option<bool>,
     pub(super) diff_stats: Option<bool>,
     pub(super) max_entries: Option<usize>,
@@ -927,6 +933,13 @@ fn load_config_from_text_with_extensions(
     );
     config.input = input;
     apply_animations(&mut config.animations, parsed.animations, &mut warnings);
+
+    if let Some(blink) = parsed.cursor.blink {
+        match blink.parse() {
+            Ok(blink) => config.cursor.blink = blink,
+            Err(warning) => warnings.push(warning),
+        }
+    }
 
     if let Some(name) = non_empty(parsed.theme.name) {
         config.theme.name = name;
@@ -3830,5 +3843,27 @@ command = "open"
             .iter()
             .find(|widget| widget.key.as_ref().is_some_and(|k| k.as_ref() == key))
             .map(|widget| widget.rect)
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_blink_values_load_and_invalid_values_warn() {
+        for value in super::super::CursorBlink::all() {
+            let text = format!("[cursor]\nblink = \"{}\"", value.id());
+            let loaded = load_config_from_text(&text, Path::new("config.toml"));
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.config.cursor.blink, *value);
+        }
+        let loaded = load_config_from_text("[cursor]\nblink = \"wrong\"", Path::new("config.toml"));
+        assert_eq!(
+            loaded.config.cursor.blink,
+            super::super::CursorBlink::Inherit
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].contains("cursor.blink"));
     }
 }

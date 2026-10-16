@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Row, RowTarget, SidebarRow};
+use super::row::{Priority, Row, RowTarget, SidebarRow};
 use crate::AppRoot;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::state::{HostEntry, HostStatus};
@@ -28,7 +28,7 @@ fn session_status_detail(entry: &DiscoveredSession) -> String {
                 if *panes == 1 { "" } else { "s" }
             )
         }
-        DiscoveredSessionStatus::Restorable => "restorable".to_string(),
+        DiscoveredSessionStatus::Restorable => String::new(),
         DiscoveredSessionStatus::Busy => "busy".to_string(),
         DiscoveredSessionStatus::Unknown => "incompatible or unavailable".to_string(),
     }
@@ -43,40 +43,64 @@ fn shared_client_count(entry: &DiscoveredSession, we_hold: bool) -> Option<u32> 
     }
 }
 
+/// Attachment state and shared-client count occupy one muted badge.
+fn session_badge(
+    state: &crate::state::State,
+    entry: &DiscoveredSession,
+    status: crate::view::session_status::SessionConnectionStatus,
+    we_hold: bool,
+) -> String {
+    use crate::view::session_status::{SessionConnectionStatus, session_status_label};
+    let label = match (status, &entry.status) {
+        (SessionConnectionStatus::Discovered, DiscoveredSessionStatus::Restorable) => {
+            Some("Restorable")
+        }
+        (SessionConnectionStatus::Discovered, DiscoveredSessionStatus::Running { .. }) => {
+            Some("Running")
+        }
+        (SessionConnectionStatus::Discovered, _) => None,
+        _ => Some(session_status_label(status)),
+    };
+    let clients = shared_client_count(entry, we_hold)
+        .map(|clients| format!("{}{clients}", state.config.shared_clients_icon()));
+    [label.map(str::to_string), clients]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// One live session row: name, current/background/reconnecting state, panes, and origin.
 fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow {
-    let current = ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
-        && ctx.state.current().remote_host == entry.host
-        && ctx.state.current().remote_target == entry.remote_target;
-    let connection = ctx
-        .state
-        .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-        .map(|attachment| attachment.connection);
-    // We hold a connection to this session (current or retained), so discovery's client count
-    // includes us. Show the total only when at least one other client is present.
-    let we_hold = current || connection.is_some();
+    let status = crate::view::session_status::session_status_for(
+        &ctx.state,
+        &entry.name,
+        entry.remote_target.as_ref(),
+    );
+    let current = status == crate::view::session_status::SessionConnectionStatus::Current;
+    let we_hold = current
+        || ctx
+            .state
+            .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+            .is_some();
     let label = if entry.ephemeral {
         "ephemeral".to_string()
     } else {
         entry.name.clone()
     };
     let muted = super::super::fg_only(&ctx.state.theme.muted);
-    let status = crate::view::session_status::session_connection_status(current, connection);
-    let styles = crate::view::session_status::SessionStatusStyles::from_theme(&ctx.state.theme);
+    let badge = session_badge(&ctx.state, entry, status, we_hold);
     let mut row = Row::new(label)
+        .priority(Priority::Balanced)
         .active(current)
         .title_style(super::super::fg_only(&ctx.state.theme.primary));
-    // Connection chrome+label owns the title-line badge when parked; otherwise a shared-client
-    // count can use that slot. Hover ✕ still replaces whichever badge is showing.
-    if let Some(badge) = crate::view::session_status::session_status_badge(status, styles) {
-        row = row.badge(badge);
-    } else if let Some(clients) = shared_client_count(entry, we_hold) {
-        row = row.badge_text(
-            format!("{}{clients}", ctx.state.config.shared_clients_icon()),
-            muted,
-        );
+    if !badge.is_empty() {
+        row = row.badge_text(badge, muted);
     }
-    let row = row.detail(session_detail(ctx, entry), muted);
+    let detail = session_detail(ctx, entry);
+    if !detail.is_empty() {
+        row = row.detail(detail, muted);
+    }
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
     // the one on screen is fine; the UI lands on the picker or launcher rather than quitting.
     SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(

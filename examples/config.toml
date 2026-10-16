@@ -41,8 +41,14 @@
 # session badges, the Sessions client-count badge, directory chevrons, the Files
 # explorer search prefix, and round/arrow end caps. Off, those badges use ⌁ / ∞ / ⋈,
 # directory chevrons use ▶ / ▼, the explorer prefix uses ⌕, and pane titles drop
-# the icon. File-kind icons in the sidebar still need a tab's icons = true.
+# the icon. Files/Git use colored file icons and Nerd Git marks without expand
+# arrows when enabled; otherwise they use Unicode arrows and text Git marks.
 #nerd_icons = true
+
+[cursor]
+# "inherit" follows the host in pickers and honors programs in panes.
+# "static" and "blinking" override blinking everywhere, including program requests.
+#blink = "inherit"
 
 [shell_integration]
 # "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;
@@ -383,7 +389,7 @@
 # An entry's `group` files it under a section header; a command tab's `group_prefix` turns
 # every output line starting with it into one. A `format = "json"` command prints a tree of rows,
 # and programs publish a stream tab's rows with `rozi sidebar publish --tab <name>`.
-# For the files/git trees: root, show_hidden, icons, explorer, diff_stats, max_entries.
+# For the files/git trees: root, show_hidden, explorer, diff_stats, max_entries.
 # A table cannot live in this file's `tabs` line without displacing the default above -
 # examples/sidebar.toml is a working two-panel setup using every form.
 # Paint the sidebar with the canvas backdrop instead of the elevated panel fill.

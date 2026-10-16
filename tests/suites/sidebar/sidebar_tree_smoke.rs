@@ -108,6 +108,7 @@ fn render_tree(
                 // real slide; these assertions are about the settled column, not a frame
                 // part-way through it.
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 let tab = SidebarTab::Tree {
                     view,
                     config: SidebarTreeConfig::for_view(view),
@@ -152,6 +153,9 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
         eprintln!("skipping: git is unavailable");
         return;
     };
+    for name in ["theme.md", "theme.rs", "theme.toml", "README.md"] {
+        std::fs::write(repo.0.join(name), "// palette fixture\n").unwrap();
+    }
     let cwd = repo.0.to_string_lossy().into_owned();
     let lines = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -188,7 +192,94 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
                 (joined.contains('▶') || joined.contains('▼')) && joined.contains("Find files")
             });
             backend.render();
-            sidebar_rows(&backend, 32)
+            let unicode = sidebar_rows(&backend, 32);
+            let src = unicode.iter().find(|row| row.contains("src")).unwrap();
+            assert!(
+                src.contains("├▶ src"),
+                "one-cell guides and one content gap: {src}"
+            );
+            assert!(
+                !unicode
+                    .join("\n")
+                    .chars()
+                    .any(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)),
+                "no Nerd icons in Unicode mode: {unicode:?}"
+            );
+
+            let frame = backend.capture_frame();
+            let (y, row) = frame
+                .to_fixed_grid_lines()
+                .into_iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("├▶ src"))
+                .unwrap();
+            let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
+            assert_eq!(
+                frame.cell(arrow_x as u16, y as u16).fg,
+                backend.state().theme.muted.fg.unwrap().color(),
+                "arrows use the muted theme color"
+            );
+
+            // The global switch changes the mounted tree immediately, without a per-tab option.
+            let icon_color = tui_lipan::prelude::Color::hex_u24(0x35b5a9);
+            backend.state_mut().theme.file_icons.blue = icon_color;
+            backend.state_mut().config.nerd_icons = true;
+            backend.render();
+            let nerd = sidebar_rows(&backend, 32);
+            let src = nerd.iter().find(|row| row.contains("src")).unwrap();
+            assert!(
+                src.contains("├─ src"),
+                "two-cell guides, no arrows, one icon gap: {src}"
+            );
+            assert!(!nerd.join("\n").contains(['▶', '▼']), "no arrows: {nerd:?}");
+            let frame = backend.capture_frame();
+            let (y, row) = frame
+                .to_fixed_grid_lines()
+                .into_iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("├─ src"))
+                .unwrap();
+            let icon_x = row.chars().position(|ch| ch == '').unwrap();
+            assert_eq!(
+                frame.cell(icon_x as u16, y as u16).fg,
+                icon_color,
+                "directory icon uses the active theme's file-icon palette"
+            );
+            assert_ne!(
+                frame.cell(icon_x as u16, y as u16).fg,
+                frame.cell((icon_x + 2) as u16, y as u16).fg,
+                "directory icon has its own semantic color"
+            );
+
+            let original_theme = backend.state().theme.clone();
+            for preset in [rozi::state::ThemePreset::Dracula, rozi::state::ThemePreset::Nord] {
+                backend.state_mut().theme = preset.theme();
+                backend.render();
+                let palette = &backend.state().theme.file_icons;
+                let frame = backend.capture_frame();
+                let rows = frame.to_fixed_grid_lines();
+                for (name, color) in [
+                    ("src", palette.blue),
+                    ("theme.md", palette.azure),
+                    ("theme.rs", palette.red),
+                    ("theme.toml", palette.grey),
+                    ("README.md", palette.yellow),
+                ] {
+                    let (y, row) = rows.iter().enumerate().find(|(_, row)| row.contains(name)).unwrap();
+                    let x = row.chars().position(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)).unwrap();
+                    assert_eq!(frame.cell(x as u16, y as u16).fg, color,
+                        "{name} icon must follow {preset:?} file-icon palette after a live theme change");
+                }
+            }
+            backend.state_mut().theme = original_theme;
+            backend.state_mut().config.nerd_icons = false;
+            backend.render();
+            assert_eq!(
+                sidebar_rows(&backend, 32),
+                unicode,
+                "switch restores Unicode mode"
+            );
+            unicode
         })
         .expect("spawn unicode-icon tree smoke thread")
         .join()
@@ -234,6 +325,7 @@ fn files_tab_refresh_tick_reloads_directory_without_remounting() {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
@@ -345,6 +437,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Changes,
@@ -399,6 +492,17 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 colored("+", git.added),
                 "diff additions use the theme added color: {seen:?}"
             );
+
+            backend.state_mut().config.nerd_icons = true;
+            backend.render();
+            let seen = markers(&mut backend);
+            for (symbol, color) in [("", git.modified), ("", git.untracked), ("+", git.added)]
+            {
+                assert!(
+                    seen.iter().any(|(s, c)| s == symbol && *c == color),
+                    "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
+                );
+            }
         })
         .expect("spawn color smoke thread")
         .join()
@@ -425,6 +529,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                     let state = backend.state_mut();
                     state.sidebar.shown = [true, false];
                     state.config.animations.sidebar = false;
+                    state.config.nerd_icons = false;
                     state.config.sidebar.layout.left.width = 34;
                     state.sidebar.panels[0].tabs = vec![tab.id()];
                     state.sidebar.panels[0].active_tab = Some(tab.id());
@@ -557,6 +662,7 @@ fn expanded_directories_survive_the_tree_re_rooting() {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
@@ -720,6 +826,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,
@@ -883,6 +990,7 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
                 state.config.animations.sidebar = false;
+                state.config.nerd_icons = false;
                 state.config.sidebar.layout.left.width = 34;
                 let tab = SidebarTab::Tree {
                     view: SidebarTreeView::Files,

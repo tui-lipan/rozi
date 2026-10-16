@@ -1,8 +1,8 @@
 use tui_lipan::prelude::{CapStyle, TextInput};
 
 use crate::config::{
-    Config, CopyOnSelect, ForegroundRestore, MiddleClickPaste, RightClickClipboardAction,
-    SessionPickerOpenOn, SessionStartup, WhichKey,
+    Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
+    RightClickClipboardAction, SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::layout::anim::PaneAnimationStyle;
 
@@ -101,6 +101,7 @@ pub enum SettingsAction {
     CyclePickerAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
+    CycleCursorBlink,
     CycleCopyOnSelect,
     CycleMiddleClickPaste,
     CycleRightClickClipboard,
@@ -178,6 +179,7 @@ impl SettingsAction {
             Self::Theme,
             Self::ToggleNerdIcons,
             Self::CycleWhichKey,
+            Self::CycleCursorBlink,
             Self::ToggleFocusOnHover,
             Self::EditScrollMultiplier,
             // Animations
@@ -269,6 +271,12 @@ impl SettingsAction {
     pub fn choice_ring(self, config: &Config) -> Option<SettingsChoiceRing> {
         let pane = &config.pane;
         match self {
+            Self::CycleCursorBlink => Some(choice_ring(
+                "Cursor blink",
+                CursorBlink::all(),
+                config.cursor.blink,
+                CursorBlink::label,
+            )),
             Self::CycleWhichKey => Some(choice_ring(
                 "Which-key",
                 WhichKey::all(),
@@ -505,6 +513,9 @@ impl SettingsAction {
     /// Write `index` into live config without persisting.
     pub fn apply_choice(self, config: &mut Config, index: usize) -> bool {
         match self {
+            Self::CycleCursorBlink => {
+                assign_choice(CursorBlink::all(), index, &mut config.cursor.blink)
+            }
             Self::CycleWhichKey => {
                 assign_choice(WhichKey::all(), index, &mut config.input.which_key)
             }

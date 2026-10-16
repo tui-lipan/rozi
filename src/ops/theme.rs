@@ -7,6 +7,25 @@ use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ensure_rozi_color};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
+/// Apply the client cursor preference without changing the stored theme.
+pub(crate) fn cursor_theme(
+    mut theme: Theme,
+    blink: crate::config::CursorBlink,
+    host: Option<tui_lipan::style::TerminalCursorStyle>,
+) -> Theme {
+    if let Some(blinking) = blink
+        .override_blinking()
+        .or(host.map(|style| style.blinking))
+    {
+        // TerminalDefault couples shape and blink. Resolve its shape before overriding blink.
+        if theme.caret.shape == CaretShape::TerminalDefault {
+            theme.caret.shape = host.map_or(CaretShape::Block, |style| style.shape);
+        }
+        theme.caret.blinking = blinking;
+    }
+    theme
+}
+
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
     Theme::from_host_colors(colors)
 }
@@ -1052,5 +1071,41 @@ mod tests {
             pane_border_title_foreground(&theme, false, Color::Black),
             pane_title_foreground(&theme, false, Color::Black)
         );
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    use crate::config::CursorBlink;
+    use tui_lipan::style::TerminalCursorStyle;
+
+    #[test]
+    fn cursor_policy_inherits_host_blink_and_resolves_terminal_default_shape() {
+        let host = TerminalCursorStyle {
+            shape: CaretShape::Bar,
+            blinking: false,
+        };
+        let theme = Theme::default().caret_blinking(true);
+        let inherited = cursor_theme(theme.clone(), CursorBlink::Inherit, Some(host));
+        assert!(!inherited.caret.blinking);
+        assert_eq!(inherited.caret.shape, theme.caret.shape);
+        assert!(
+            cursor_theme(theme.clone(), CursorBlink::Inherit, None)
+                .caret
+                .blinking
+        );
+        assert!(
+            !cursor_theme(theme.clone(), CursorBlink::Static, None)
+                .caret
+                .blinking
+        );
+        let forced = cursor_theme(
+            theme.caret_shape(CaretShape::TerminalDefault),
+            CursorBlink::Blinking,
+            Some(host),
+        );
+        assert!(forced.caret.blinking);
+        assert_eq!(forced.caret.shape, CaretShape::Bar);
     }
 }

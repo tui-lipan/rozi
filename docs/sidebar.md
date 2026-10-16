@@ -6,6 +6,11 @@ configure tabs or add your own.
 
 The sidebar belongs to your client. It is never part of a shared session layout.
 
+Rows in Sessions, Worktrees, Projects, and described command or extension trees share space
+between the name and its description. When both are long, the name keeps at least 40% of the
+available text width. Short names and descriptions leave their unused space to the other side;
+there are no fixed columns. Tree guides, icons, and row controls sit outside that text budget.
+
 <CaptureGallery title="~/src/rozi — web">
 <img src="./assets/captures/sidebar.webp" alt="The sidebar on the left showing the Panes tab, listing each pane in the workspace beside the panes themselves" data-caption="The Panes tab lists every pane in the session. Ctrl+A, then PageDown moves to the next tab.">
 <img src="./assets/captures/sidebar-docks.webp" alt="Left and right sidebar docks with three independently sized panels each" data-label="Two docks" data-caption="Both docks share space with the workspace; panel assignments survive compaction.">
@@ -54,6 +59,7 @@ After the `B` command key focuses the sidebar:
 | `PageUp`, `PageDown` | Move by a page |
 | `g`, `G`, `Home`, `End` | First or last row |
 | `Enter` | Activate the selected row |
+| `Ctrl+Enter` | Files/Git: insert the selected file or directory path into the focused pane |
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle directories and [tree rows](#expand-and-collapse) |
@@ -141,6 +147,11 @@ Pane titles follow the order described in
 Sessions lists local sessions and known remote hosts. Activating a live session attaches or
 switches to it. Restorable sessions, and cached rows for offline hosts, stay listed when available.
 
+Session rows show `Current`, `Background` for a connection held by this client, or `Running`
+for a live session this client is not attached to. `Reconnecting` and `Offline` describe retained
+connections that are unavailable. Stopped sessions with saved snapshots show `Restorable`;
+offline hosts' cached sessions show `last seen`. Agent activity is shown separately.
+
 Session names belong to their host, so a local `dev` session and a remote `dev` session are
 separate rows.
 
@@ -169,8 +180,22 @@ and authentication.
 Files browses the focused pane's working directory. It follows focus and `cd`, and directories load
 when you expand them. rozi remembers which directories are expanded until the client exits.
 
+Files and Git follow the global `nerd_icons` setting. When enabled, they show colored file icons
+and Nerd Font Git marks, hide expansion arrows, and indent two cells per level. When disabled,
+they hide file icons, show Unicode expansion arrows and text Git marks, and indent one cell per
+level. Both modes use Branch guides. Unicode mode leaves one cell after guides or arrows; Nerd
+icon mode has no guide gap and leaves one cell between file icons and labels. File-icon colors
+come from the active theme's `file_icons` palette, and
+Unicode arrows use its muted color. Remove the old per-tab `icons` option from your configuration.
+
 Activating a file runs the tab's `on_click` action. By default, that types the path into the focused
 pane without pressing `Enter`.
+
+Ctrl+click a file or directory to insert its path into the focused pane without pressing `Enter`.
+Ctrl+Enter does the same for the selected entry while the tree has keyboard focus. This gesture
+always inserts the path, independently of a custom `on_click` action, and does not expand or
+collapse directories. Ordinary directory clicks still expand or collapse them. The shortcut is
+available in both Files and Git.
 
 A symlink shows its target, as in `guide-link.md → AGENTS.md`. The target is the link's own text,
 not a resolved path, and clicking the row acts on the link itself.
@@ -183,6 +208,10 @@ have already expanded.
 Git shows changed files for the repository that contains the focused pane's working directory, with
 status markers and line-change counts when available. It always shows the whole repository, even
 when the pane is in a subdirectory.
+
+In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`, so the
+markers line up at the right edge. Nerd Font status symbols have a one-cell right margin to keep
+their full size; text markers have no added right margin.
 
 Instead of an empty tree, the tab says when the repository is clean, when the directory is not in a
 repository, when it is loading, or when changes are unavailable. In a remote session, `git` must be
@@ -237,23 +266,32 @@ Projects lists every Git checkout any of your sessions works in — on this mach
 [connected host](remote.md#projects-on-a-machine-you-are-not-in) — arranged by repository:
 
 ```text
-▾ ▲ rozi
-├ ▾   master
-│ └     api             1 pane
-└ ▾ ▲ fix/ssh
-  └   ▲ fix              Codex
+ ▼ ▲ rozi
+ ├▼ master
+ │└─ api                1 pane
+ └▼ ▲ fix/ssh
+▍ └─ ▲ fix               Codex
 ```
 
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
-works in, so a session with panes in two repositories appears under both. A row's marker shows the
+works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
 most urgent agent below it: blocked, then working, then done. A session row names its agent, counts
 several, or counts its panes when none runs an agent. When more than one machine has work, each
 machine gets a heading, `LOCAL` for this one.
 
-Activating a session row goes to the most urgent agent working in that checkout, or to a pane there
-when none is: it focuses the pane in the session on screen, and switches to or attaches the session
-first anywhere else. Activating a repository or checkout row shows or hides what is under it.
+Session rows use the same `Current`, `Background`, and `Running` labels as Sessions, alongside
+pane or agent counts. The activity glyph describes the most urgent agent, independently of the
+session's connection state. Saved restore snapshots do not add entries to Projects.
+
+The accent bar and subtle background mark the session row for the focused pane's checkout. Other
+appearances of the same session and parent branches have neither. The stronger row background
+follows the keyboard selection while the sidebar is focused.
+
+Activating a session row keeps the focused pane when it already belongs to that checkout and
+session. Otherwise it goes to the most urgent agent working there, or to a pane there when none
+is, switching to or attaching the session first if needed. Activating a repository or checkout
+row shows or hides what is under it.
 
 Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
 lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
@@ -262,7 +300,11 @@ are not listed.
 ### Expand and collapse
 
 Projects, [JSON command tabs](#json-command-tabs), and [stream tabs](#stream-tabs) are trees. Click
-the `▾` or `▸` beside a row to show or hide what is under it. In a focused sidebar:
+the disclosure chevron beside a row to show or hide what is under it. These trees use the Files
+tab's compact guide style. Files and Git hide arrows when Nerd icons are enabled and use `▼`
+and `▶` otherwise. The other trees use Nerd Font chevrons when enabled, with the same Unicode
+arrows as a fallback.
+Status icons appear only on rows with a status to report. In a focused sidebar:
 
 | Key | Action |
 | --- | --- |

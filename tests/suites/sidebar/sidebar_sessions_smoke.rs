@@ -148,9 +148,11 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
             assert!(lines[row("▍ dev")].starts_with("▍ dev"));
             assert!(lines[row("▍ dev")].contains("󰍺 2"));
+            assert!(lines[row("▍ dev")].contains("Current"));
             assert!(lines[row("2 panes")].starts_with("▍ 2 panes"));
             assert!(!lines[row("2 panes")].contains("shared"));
             assert!(lines[row("test")].starts_with("  test"));
+            assert!(lines[row("test")].contains("Running"));
             assert!(lines[row("3 panes")].starts_with("  3 panes"));
 
             let new_session_rows: Vec<_> = lines
@@ -299,6 +301,67 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
         .expect("workbox")
         .probe = probe;
     backend
+}
+
+#[test]
+fn session_labels_distinguish_current_background_running_and_restorable() {
+    rozi::test_support::isolate_user_dirs();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = settled_unswept_backend();
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar.shown = [true, false];
+                state.config.animations.enabled = false;
+                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+                state.config.sidebar.layout.left.panel_count = 1;
+                state.sidebar.apply_configured_panels(&state.config.sidebar);
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+                state.current_mut().session_name = Some("dev".into());
+                let mut saved = session("saved", 0, 0, None);
+                saved.status = DiscoveredSessionStatus::Restorable;
+                state.sidebar.sessions = vec![
+                    session("dev", 2, 0, None),
+                    session("review", 1, 0, None),
+                    session("build", 1, 0, None),
+                    session("session-with-a-very-long-name", 1, 0, None),
+                    saved,
+                ];
+                let mut background = rozi::state::Attachment::new();
+                background.session_name = Some("review".into());
+                background.connection = rozi::state::ConnectionState::Connected;
+                state.background.insert(1, background);
+            }
+            for width in [24, 44] {
+                backend.state_mut().config.sidebar.layout.left.width = width;
+                backend.render();
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                for (name, status) in [
+                    ("dev", "Current"),
+                    ("review", "Background"),
+                    ("build", "Running"),
+                    ("saved", "Restorable"),
+                    ("session", "Running"),
+                ] {
+                    assert!(
+                        lines
+                            .iter()
+                            .any(|line| line.contains(name) && line.contains(status)),
+                        "{name} should show {status} at width {width}: {lines:#?}"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 /// A mounted backend with its refresh loop disarmed, for a test that states a host's condition

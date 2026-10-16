@@ -16,7 +16,7 @@ pub(crate) use navigation::*;
 pub(crate) use polling::*;
 pub(crate) use sessions::*;
 pub(crate) use tree::*;
-pub(crate) use tree_rows::{TreeKey, row_toggle, tree_key};
+pub(crate) use tree_rows::{row_expanded, row_selected};
 pub(crate) use worktrees::sync_worktrees_tab;
 
 use tui_lipan::prelude::*;

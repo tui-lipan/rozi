@@ -107,7 +107,7 @@ fn launcher_start_key(state: &State, key: KeyEvent) -> bool {
 /// Keys rozi claims while the sidebar body has focus.
 ///
 /// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
-/// composed row lists have no widget behind them, so rozi owns their cursor too. Page movement
+/// flat row lists have no selection widget behind them, so rozi owns their cursor too. Page movement
 /// uses the active row list's measured viewport size, with a small fallback before its first layout.
 fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Update> {
     use crate::update::sidebar;
@@ -184,26 +184,21 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     if tree_tab_active(ctx) {
         return None;
     }
-    // `j`/`k` alongside the arrows, matching resize and copy mode — and matching the file tree,
-    // whose widget keymap has included the vim keys all along.
-    // Hierarchical row tabs take Left/Right and Space for their rows, the way the file tree does.
-    let tree = match key.code {
-        KeyCode::Right | KeyCode::Char('l') => Some(sidebar::TreeKey::Expand),
-        KeyCode::Left | KeyCode::Char('h') => Some(sidebar::TreeKey::Collapse),
-        KeyCode::Char(' ') => Some(sidebar::TreeKey::Toggle),
-        _ => None,
-    };
-    if let Some(tree) = tree
-        && let Some(update) = sidebar::tree_key(ctx, tree)
-    {
-        return Some(update);
-    }
     // A stream tab's producer may have bound a key to an action on the row under the cursor; `x`
     // stays the ✕, which a `close` action is reached through.
     if !key.is(KeyCode::Char('x'))
         && let Some(update) = crate::ops::sidebar_streams::key(ctx, key)
     {
         return Some(update);
+    }
+    if crate::view::sidebar::active_tab(ctx)
+        .is_some_and(|tab| ctx.state.tree_sections(tab).is_some())
+    {
+        return if key.is(KeyCode::Char('x')) {
+            Some(sidebar::close_cursor(ctx))
+        } else {
+            None
+        };
     }
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),

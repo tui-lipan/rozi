@@ -220,6 +220,7 @@ After the `B` command key focuses the sidebar:
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle file-tree directories |
+| `Ctrl+Enter` | Files/Git: insert the selected file or directory path into the focused pane |
 | `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
 | `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
 | `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
@@ -230,6 +231,9 @@ After the `B` command key focuses the sidebar:
 | `Esc` | Return focus to the pane |
 
 See [Sidebar](sidebar.md) for what each tab shows.
+
+In Files and Git, Ctrl+click inserts a file or directory path without toggling directories or
+running the tab's custom click action. Neither Ctrl+click nor Ctrl+Enter presses `Enter` in the pane.
 
 ## Picker keys
 

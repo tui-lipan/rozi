@@ -61,6 +61,21 @@ arguments, honoring quotes around a path that contains spaces (`"/opt/my editor/
 and passes the config path as a separate argument. Shell syntax in `EDITOR` — pipes, redirection,
 variable expansion — is not interpreted.
 
+## Cursor blinking
+
+Choose **Cursor blink** in Settings under General, or set `[cursor]` in `config.toml`.
+Changes apply immediately to pickers, prompts, text editors, and terminal panes.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cursor.blink` | string | `"inherit"` | `inherit`, `static`, or `blinking`. |
+
+`inherit` uses the host terminal's startup blink preference for editable controls. Terminal panes
+inherit the host default until a program requests its own cursor style. If the host does not report
+its preference, editable controls use the theme default and panes use the framework default.
+`static` and `blinking` override blink requests throughout rozi. Programs still control cursor
+shape and visibility. This preference is independent of the animation switch.
+
 ## Reloading
 
 rozi watches the config file and applies changes without replacing panes or workspaces. If the new
@@ -153,7 +168,13 @@ With `nerd_icons` on, rozi draws private-use glyphs for pane title icons, workba
 named-session badges, the Sessions sidebar client-count badge, directory chevrons, the Files
 explorer search prefix, and `round` and `arrow` caps. With it off, those badges use `⌁`, `∞`, and
 `⋈`, directory chevrons use `▶` and `▼`, the explorer prefix uses `⌕`, and pane titles drop the
-icon. File icons also need a sidebar tree tab with `icons = true`.
+icon. Files and Git use colored file icons and Nerd Font Git marks without expansion arrows
+when enabled. With it off, these trees hide file icons, use Unicode expansion arrows and text Git
+marks, and reduce indentation from two cells to one. Both modes use Branch guides, no gap after
+guides or arrows, and one cell between file icons and labels.
+
+Migration: remove `icons` from Files/Git tab tables. The global `nerd_icons` switch now controls
+file icons and Git marks.
 
 New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, and, when available,
 `ROZI_SOCKET` and `ROZI_BIN`.
@@ -611,7 +632,6 @@ command's output, or a stream tab that programs publish rows to.
 | `group_prefix` | string | none | Line command tabs only. Output lines starting with it become section headers. |
 | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
 | `show_hidden` | bool | `true` | Tree tabs only. |
-| `icons` | bool | `false` | Tree tabs only. Also needs `nerd_icons`. |
 | `explorer` | bool | `false` | Tree tabs only. |
 | `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
 | `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |

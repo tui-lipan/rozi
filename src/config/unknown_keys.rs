@@ -10,6 +10,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "frame_rate",
     "nerd_icons",
     "input",
+    "cursor",
     "animations",
     "theme",
     "profile",
@@ -201,7 +202,6 @@ const SIDEBAR_TAB_KEYS: &[&str] = &[
     "group_prefix",
     "root",
     "show_hidden",
-    "icons",
     "explorer",
     "diff_stats",
     "max_entries",
@@ -247,6 +247,7 @@ pub(super) fn collect_unknown_keys(table: &Table) -> Vec<String> {
 fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_named_table(table, "", "shell_integration", &["mode"], unknown);
     collect_named_table(table, "", "environment", &["forward"], unknown);
+    collect_named_table(table, "", "cursor", &["blink"], unknown);
     collect_named_table(table, "", "input", INPUT_KEYS, unknown);
     collect_named_table(table, "", "animations", ANIMATION_KEYS, unknown);
     collect_named_table(table, "", "theme", &["name"], unknown);
@@ -520,6 +521,14 @@ mod tests {
             "[sidebar]\ntabs = [{ name = \"x\", label = \"X\", entries = [], typo = true }]\n",
         );
         assert_eq!(unknown, ["sidebar.tabs[0].typo"]);
+    }
+
+    #[test]
+    fn removed_tree_icons_option_is_reported() {
+        assert_eq!(
+            parse("nerd_icons = true\n[sidebar]\ntabs = [{ name = \"files\", icons = false }]\n"),
+            ["sidebar.tabs[0].icons"]
+        );
     }
 
     #[test]

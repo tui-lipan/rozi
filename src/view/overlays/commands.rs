@@ -250,6 +250,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
     use SettingsAction::*;
 
     let mut aliases = match action {
+        CycleCursorBlink => alias_list(&["caret", "steady", "static", "blinking", "inherit"]),
         Theme => alias_list(&["color scheme", "colour scheme"]),
         ToggleNerdIcons => alias_list(&["nerd font", "patched font", "glyphs"]),
         CycleWhichKey => alias_list(&["prefix hints", "key hints", "chord panel"]),

@@ -63,7 +63,8 @@ exclude = [
 # 0.22.3: transparent-overlay protection and native forwarding inside portals.
 # 0.22.4: bounded file-frame reuse and cross-screen reclamation under budget pressure.
 # 0.23.0: graphics pacing, resize handling, synchronized frames and animation image masks.
-# 0.26.0: Tree forests and guides, composed Tree rows, and splitter focus fixes.
+# 0.26.0: Tree forests and guides, composed Tree rows, static editable carets, cursor blink
+# overrides, FileTree icon/arrow/gap controls, and splitter focus fixes.
 tui-lipan = { version = "0.26.0", features = [
   "terminal",
   "terminal-images",

@@ -625,6 +625,71 @@ fn tree_activation_runs_for_files_and_skips_directories_and_stale_clicks() {
     });
 }
 
+/// Ctrl path insertion sends literal bytes independently of custom click commands.
+#[test]
+fn ctrl_tree_activation_inserts_literal_paths_and_never_runs_the_click_command() {
+    use crate::session::client::{ClientOutbound, SessionClient};
+    on_test_thread(|| {
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        let mut config =
+            crate::config::SidebarTreeConfig::for_view(crate::config::SidebarTreeView::Files);
+        config.on_click = Some(UserCommandAction::run("should-not-run"));
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.tabs = vec![SidebarTab::Tree {
+                view: crate::config::SidebarTreeView::Files,
+                config,
+            }];
+            state.sidebar.config_epoch = 6;
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
+            state.current_mut().connection = crate::state::ConnectionState::Connected;
+            state.current_mut().pending_session_attach = None;
+        }
+        for path in [
+            "/repo/directory with spaces/",
+            "/repo/file 'quoted'; $name.rs",
+        ] {
+            backend
+                .dispatch(crate::Msg::SidebarTreeInsertPath {
+                    config_epoch: 6,
+                    tab_id: SidebarTabId::new("files"),
+                    path: path.into(),
+                })
+                .unwrap();
+            let bytes = outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                bytes,
+                [path.as_bytes().to_vec()],
+                "exact path, with no command or Enter"
+            );
+        }
+        for (epoch, tab) in [(5, "files"), (6, "removed-tab")] {
+            assert!(
+                !backend
+                    .dispatch(crate::Msg::SidebarTreeInsertPath {
+                        config_epoch: epoch,
+                        tab_id: SidebarTabId::new(tab),
+                        path: "/repo/stale".into(),
+                    })
+                    .unwrap()
+            );
+            assert!(
+                !outbound
+                    .try_iter()
+                    .any(|message| matches!(message, ClientOutbound::PaneInput { .. }))
+            );
+        }
+    });
+}
+
 /// A `run` action opens a pane whose command is untouched, with the activated path handed over
 /// as `ROZI_FILE`. This is what lets a diff viewer be scoped to the clicked file without the
 /// filename ever entering the command line: a repository can contain a file named
@@ -2472,6 +2537,218 @@ fn project(
     }
 }
 
+/// Repeated session rows preserve focus within a checkout, while other checkouts remain reachable.
+#[test]
+fn project_session_activation_preserves_focus_within_the_current_checkout() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        {
+            let state = backend.state_mut();
+            let rect = state.current().workspaces[0].panes[0].floating_rect;
+            state.current_mut().workspaces[0].panes =
+                [(1, "/x/rozi"), (2, "/x/rozi"), (3, "/x/other")]
+                    .into_iter()
+                    .map(|(id, root)| {
+                        let mut pane = Pane::new(id, 100, rect);
+                        pane.opening = false;
+                        pane.terminal.project_root = Some(root.into());
+                        pane
+                    })
+                    .collect();
+        }
+        for (focused, root, expected) in [(2, "/x/rozi", 2), (3, "/x/rozi", 1), (2, "/x/other", 3)]
+        {
+            backend.state_mut().current_mut().focused_pane = Some(focused);
+            backend.render();
+            let id = format!("session:{root}:dev");
+            let index = backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .iter()
+                .position(|item| item.line().is_some_and(|line| line.row.id == id))
+                .expect("checkout session row");
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index })
+                .unwrap();
+            assert_eq!(
+                backend.state().focused_pane(),
+                Some(expected),
+                "focused {focused}, clicked {root}"
+            );
+        }
+    });
+}
+
+#[test]
+fn projects_keep_long_session_names_and_connection_state_visible() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: Vec::new(),
+                projects: vec![project(
+                    "session-with-a-very-long-name",
+                    "/x/project",
+                    None,
+                    "main",
+                    &[1],
+                )],
+            });
+        for width in [24, 32, 44] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("sess") && line.contains("Running")),
+                "both session identity and connection state at width {width}: {lines:#?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn project_guides_gain_hover_contrast_and_restore_their_color_on_leave() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: Vec::new(),
+                projects: vec![project("other", "/x/hover-project", None, "main", &[1])],
+            });
+        backend.render();
+        let frame = backend.capture_frame();
+        let lines = frame.to_fixed_grid_lines();
+        let y = lines
+            .iter()
+            .position(|line| line.contains("other"))
+            .expect("session row") as u16;
+        let x = lines[y as usize]
+            .chars()
+            .position(|c| matches!(c, '└' | '├' | '│'))
+            .expect("session guide") as u16;
+        let before = frame.cell(x, y).clone();
+        backend
+            .send_mouse(tui_lipan::core::event::MouseEvent {
+                x: 8,
+                y,
+                kind: tui_lipan::core::event::MouseKind::Moved,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        let after = backend.capture_frame().cell(x, y).clone();
+        assert_ne!(after.bg, before.bg, "hover covers the guide column");
+        assert_ne!(
+            after.fg, before.fg,
+            "guides stay readable on the hovered background"
+        );
+        backend
+            .send_mouse(tui_lipan::core::event::MouseEvent {
+                x: 60,
+                y,
+                kind: tui_lipan::core::event::MouseKind::Moved,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        assert_eq!(backend.capture_frame().cell(x, y).fg, before.fg);
+        assert_eq!(backend.capture_frame().cell(x, y).bg, before.bg);
+    });
+}
+
+/// Label activation must resolve expansion in the clicked panel, independently of keyboard focus.
+#[test]
+fn project_label_clicks_toggle_the_clicked_panel_when_another_panel_is_active() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects, SidebarTab::Sessions]);
+        {
+            let state = backend.state_mut();
+            state.sidebar.panels[0].tabs = vec![SidebarTab::Projects.id()];
+            state.sidebar.panels[0].active_tab = Some(SidebarTab::Projects.id());
+            state.sidebar.panels[1].tabs = vec![SidebarTab::Sessions.id()];
+            state.sidebar.panels[1].active_tab = Some(SidebarTab::Sessions.id());
+            state.sidebar.select_panel(1);
+            state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: Vec::new(),
+                projects: vec![project("other", "/x/clickable-project", None, "main", &[1])],
+            });
+        }
+        backend.render();
+        let y = backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .position(|line| {
+                line.chars()
+                    .take(31)
+                    .collect::<String>()
+                    .contains("clickable-project")
+            })
+            .expect("project label is visible") as u16;
+        let resting_bg = backend.capture_frame().cell(8, y).bg;
+        backend
+            .send_mouse(tui_lipan::core::event::MouseEvent {
+                x: 8,
+                y,
+                kind: tui_lipan::core::event::MouseKind::Moved,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        let hovered_bg = backend.capture_frame().cell(8, y).bg;
+        assert_ne!(hovered_bg, resting_bg, "entering the row shows hover");
+        for kind in [
+            tui_lipan::core::event::MouseKind::Down(tui_lipan::core::event::MouseButton::Left),
+            tui_lipan::core::event::MouseKind::Up(tui_lipan::core::event::MouseButton::Left),
+        ] {
+            backend
+                .send_mouse(tui_lipan::core::event::MouseEvent {
+                    x: 8,
+                    y,
+                    kind,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            backend.render();
+        }
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            1,
+            "the clicked project collapses even while the Sessions panel is active"
+        );
+        assert_eq!(
+            backend.capture_frame().cell(8, y).bg,
+            hovered_bg,
+            "clicking keeps hover visible until the pointer leaves"
+        );
+        backend
+            .send_mouse(tui_lipan::core::event::MouseEvent {
+                x: 40,
+                y,
+                kind: tui_lipan::core::event::MouseKind::Moved,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        backend.render();
+        assert_ne!(
+            backend.capture_frame().cell(8, y).bg,
+            resting_bg,
+            "the clicked row retains its keyboard selection after the pointer leaves"
+        );
+        assert_eq!(backend.state().sidebar.panels[0].hovered_row, None);
+    });
+}
+
 /// The Projects tab draws repository, checkout, and session as a tree, and the keyboard opens and
 /// closes it: Left on a session steps out to its checkout, Left again collapses it, Right reopens.
 #[test]
@@ -2509,6 +2786,11 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
         assert!(at("master") < at("api"));
         assert!(at("fix/ssh") < at("Codex"));
         assert!(
+            sidebar[at("api")].contains("└─ api"),
+            "leaf guides continue through the unused arrow cell: {:?}",
+            sidebar[at("api")]
+        );
+        assert!(
             sidebar[at("fix/ssh")].contains('└'),
             "the last checkout ends its branch"
         );
@@ -2525,6 +2807,8 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
             })
             .expect("the fix session row");
         backend.state_mut().sidebar.panels[0].cursor = fix;
+        // Synchronize the controlled Tree selection before sending a widget key.
+        backend.render();
         send_sidebar_key(&mut backend, KeyCode::Left, KeyMods::NONE);
         let cursor = backend.state().sidebar.panels[0].cursor;
         assert_eq!(
@@ -2551,6 +2835,72 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
                 .len(),
             items.len(),
             "Right expands it again"
+        );
+        let click_label = |backend: &mut TestBackend<AppRoot>, x, y| {
+            backend
+                .send_mouse(tui_lipan::core::event::MouseEvent {
+                    x,
+                    y,
+                    kind: tui_lipan::core::event::MouseKind::Moved,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            backend.render();
+            for kind in [
+                tui_lipan::core::event::MouseKind::Down(tui_lipan::core::event::MouseButton::Left),
+                tui_lipan::core::event::MouseKind::Up(tui_lipan::core::event::MouseButton::Left),
+            ] {
+                backend
+                    .send_mouse(tui_lipan::core::event::MouseEvent {
+                        x,
+                        y,
+                        kind,
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+                backend.render();
+            }
+            backend.render();
+        };
+        click_label(&mut backend, 5, at("rozi") as u16);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            1,
+            "clicking the repository label collapses its subtree"
+        );
+        click_label(&mut backend, 5, at("rozi") as u16);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            items.len(),
+            "clicking the repository label reopens its subtree"
+        );
+        click_label(&mut backend, 10, at("fix/ssh") as u16);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            items.len() - 1,
+            "clicking the branch label collapses its session rows"
+        );
+        click_label(&mut backend, 10, at("fix/ssh") as u16);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            items.len(),
+            "clicking the branch label reopens its session rows"
         );
     });
 }
@@ -2652,6 +3002,7 @@ fn stream_tabs_merge_producers_and_route_events_to_the_owner() {
             .position(|item| item.line().is_some_and(|line| line.row.id == "main"))
             .expect("main row");
         backend.state_mut().sidebar.panels[0].cursor = main;
+        backend.render();
         let _ = a_events.try_recv();
         let _ = b_events.try_recv();
         send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);

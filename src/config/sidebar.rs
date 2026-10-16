@@ -58,9 +58,6 @@ fn build_tree_tab(
     if let Some(show_hidden) = table.show_hidden {
         config.show_hidden = show_hidden;
     }
-    if let Some(icons) = table.icons {
-        config.icons = icons;
-    }
     if let Some(explorer) = table.explorer {
         config.explorer = explorer;
     }
@@ -729,7 +726,7 @@ mod tests {
     fn file_tree_table_form_overrides_options() {
         let (config, warnings) = parse(
             r#"
-            tabs = [{ name = "files", label = "", show_hidden = false, icons = true, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
+            tabs = [{ name = "files", label = "", show_hidden = false, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
             "#,
         );
         assert!(
@@ -739,7 +736,7 @@ mod tests {
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Repo);
         assert!(!files.show_hidden);
-        assert!(files.icons && files.explorer && files.diff_stats);
+        assert!(files.explorer && files.diff_stats);
         assert_eq!(files.max_entries, 50);
         assert_eq!(
             files.on_click,

@@ -1792,6 +1792,10 @@ impl SidebarTreeConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarTab {
     Activity,
+    /// Every agent this client knows about, in every session and on every connected host.
+    Agents,
+    /// Every checkout any session works in, on every host, by repository.
+    Projects,
     Panes,
     Sessions,
     /// The focused pane's repository's Git worktrees.
@@ -1820,7 +1824,34 @@ pub enum SidebarTab {
         group_prefix: Option<String>,
         /// Environment for the polling process and for `on_click`. Empty for a `config.toml` tab.
         env: Vec<(String, String)>,
+        /// How the command's output becomes rows.
+        format: SidebarCommandFormat,
     },
+    /// Rows published by programs over `rozi sidebar publish` streams, one or more at once.
+    Stream {
+        name: SidebarTabId,
+        label: String,
+    },
+}
+
+/// How a command tab reads its command's output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarCommandFormat {
+    /// One row per output line.
+    #[default]
+    Lines,
+    /// One JSON object, `{"rows":[...]}`, describing a tree of rows.
+    Json,
+}
+
+impl SidebarCommandFormat {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "lines" => Some(Self::Lines),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
 }
 
 impl SidebarTab {
@@ -1835,22 +1866,30 @@ impl SidebarTab {
     pub fn id(&self) -> SidebarTabId {
         match self {
             Self::Activity => SidebarTabId::new("activity"),
+            Self::Agents => SidebarTabId::new("agents"),
+            Self::Projects => SidebarTabId::new("projects"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
             Self::Worktrees => SidebarTabId::new("worktrees"),
             Self::Tree { view, .. } => SidebarTabId::new(view.id()),
-            Self::Launcher { name, .. } | Self::Command { name, .. } => name.clone(),
+            Self::Launcher { name, .. }
+            | Self::Command { name, .. }
+            | Self::Stream { name, .. } => name.clone(),
         }
     }
 
     pub fn label(&self) -> &str {
         match self {
             Self::Activity => "Activity",
+            Self::Agents => "Agents",
+            Self::Projects => "Projects",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
             Self::Worktrees => "Worktrees",
             Self::Tree { view, .. } => view.label(),
-            Self::Launcher { label, .. } | Self::Command { label, .. } => label,
+            Self::Launcher { label, .. }
+            | Self::Command { label, .. }
+            | Self::Stream { label, .. } => label,
         }
     }
 
@@ -1951,11 +1990,21 @@ impl Default for SidebarDockLayout {
                 panels: vec![
                     SidebarDockPanel {
                         weight: 0.4,
-                        tabs: vec!["activity".into(), "panes".into(), "sessions".into()],
+                        tabs: vec![
+                            "activity".into(),
+                            "agents".into(),
+                            "panes".into(),
+                            "sessions".into(),
+                        ],
                     },
                     SidebarDockPanel {
                         weight: 0.6,
-                        tabs: vec!["files".into(), "git".into(), "worktrees".into()],
+                        tabs: vec![
+                            "files".into(),
+                            "git".into(),
+                            "worktrees".into(),
+                            "projects".into(),
+                        ],
                     },
                 ],
                 ..SidebarDock::default()
@@ -2128,11 +2177,13 @@ impl Default for SidebarConfig {
         // spends sidebar rows, not work.
         let tabs = vec![
             SidebarTab::Activity,
+            SidebarTab::Agents,
             SidebarTab::Panes,
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),
             SidebarTab::tree(SidebarTreeView::Changes),
             SidebarTab::Worktrees,
+            SidebarTab::Projects,
         ];
         Self {
             startup: false,

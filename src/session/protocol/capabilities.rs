@@ -23,6 +23,9 @@ pub const RUNTIME_METRICS: &str = "runtime-metrics";
 /// Semantic agent state in a [`super::ServerMessage::SessionInfo`] reply, for a host monitor that
 /// never attaches. See [`super::AgentSummary`].
 pub const AGENT_SUMMARIES: &str = "agent-summaries";
+/// The checkouts each session works in, in the same [`super::ServerMessage::SessionInfo`] reply.
+/// See [`super::ProjectSummary`].
+pub const PROJECT_SUMMARIES: &str = "project-summaries";
 
 /// An open set of capability names. Unknown ones deserialize and are dropped during negotiation,
 /// so a future peer offering more than this build knows is downgraded rather than refused.
@@ -34,7 +37,7 @@ impl Capabilities {
     /// Everything this build can do.
     pub fn current() -> Self {
         Self(
-            [RUNTIME_METRICS, AGENT_SUMMARIES]
+            [RUNTIME_METRICS, AGENT_SUMMARIES, PROJECT_SUMMARIES]
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),

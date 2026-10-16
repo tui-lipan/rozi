@@ -5,6 +5,7 @@ pub(crate) mod navigation;
 pub(crate) mod polling;
 pub(crate) mod sessions;
 pub(crate) mod tree;
+pub(crate) mod tree_rows;
 pub(crate) mod worktrees;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ pub(crate) use navigation::*;
 pub(crate) use polling::*;
 pub(crate) use sessions::*;
 pub(crate) use tree::*;
+pub(crate) use tree_rows::{TreeKey, row_toggle, tree_key};
 pub(crate) use worktrees::sync_worktrees_tab;
 
 use tui_lipan::prelude::*;

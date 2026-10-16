@@ -198,6 +198,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     reload_sleep_policy(ctx);
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);
     let _ = crate::ops::published_rows::unload_extensions(ctx, &stale_extensions);
+    crate::ops::sidebar_streams::unload_extensions(&mut ctx.state, &stale_extensions);
     crate::ops::extensions::unload(ctx, &stale_extensions);
     crate::ops::placement::retire(ctx, &stale_extensions);
     // A reload cannot change visibility, but it can change the tab set and panel split, so the

@@ -124,7 +124,7 @@ pub enum WorkerPurpose {
     TabListing {
         tab: crate::config::SidebarTabId,
         epoch: u64,
-        group_prefix: Option<String>,
+        parse: crate::update::sidebar::polling::CommandParse,
     },
     /// A placed tab's `on_click` `exec`.
     TabClick { label: String },

@@ -1149,6 +1149,7 @@ pub(crate) fn disconnect_host(
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
     ctx.state.remote.agents.remove(target);
+    ctx.state.remote.projects.remove(target);
     ctx.state
         .remote
         .monitors

@@ -35,6 +35,11 @@ pub(super) fn apply(
         (snapshot.as_mut(), ctx.state.local_agent_snapshot.as_ref())
     {
         retain_busy_agent_summaries(&current.sessions, &mut current.agents, &previous.agents);
+        crate::session::discovery::retain_busy_project_summaries(
+            &current.sessions,
+            &mut current.projects,
+            &previous.projects,
+        );
     }
     if ctx.state.local_agent_snapshot == snapshot {
         return Update::none();
@@ -123,12 +128,14 @@ mod tests {
             let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             backend
                 .dispatch(crate::Msg::LocalAgentMetadata(Some(LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![summary("dev", before)],
                 })))
                 .unwrap();
             backend
                 .dispatch(crate::Msg::LocalAgentMetadata(Some(LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: vec![busy_session("dev")],
                     agents: Vec::new(),
                 })))
@@ -151,6 +158,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::LocalAgentMetadata(Some(LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![summary("dev", "blocked")],
                 })))
@@ -166,6 +174,7 @@ mod tests {
             );
             backend
                 .dispatch(crate::Msg::LocalAgentMetadata(Some(LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: Vec::new(),
                 })))
@@ -216,6 +225,7 @@ mod tests {
     fn local_monitor_snapshot_replaces_stale_state_and_recovers_body() {
         let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
         let snapshot = |state| LocalAgentSnapshot {
+            projects: Vec::new(),
             sessions: Vec::new(),
             agents: vec![summary("dev", state)],
         };

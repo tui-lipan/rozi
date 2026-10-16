@@ -76,14 +76,17 @@ impl StartupTasks {
         std::thread::spawn(move || {
             let mut previous = None;
             loop {
-                let snapshot = crate::session::discovery::discover_sessions_with_agents()
+                let snapshot = crate::session::discovery::discover_host_metadata()
                     .ok()
-                    .map(
-                        |(sessions, agents)| crate::session::discovery::LocalAgentSnapshot {
-                            sessions: sessions.into_iter().filter(|row| !row.ephemeral).collect(),
-                            agents,
-                        },
-                    );
+                    .map(|metadata| crate::session::discovery::LocalAgentSnapshot {
+                        sessions: metadata
+                            .sessions
+                            .into_iter()
+                            .filter(|row| !row.ephemeral)
+                            .collect(),
+                        agents: metadata.agents,
+                        projects: metadata.projects,
+                    });
                 if previous.as_ref() != Some(&snapshot) {
                     local_link.send(Msg::LocalAgentMetadata(snapshot.clone()));
                     previous = Some(snapshot);

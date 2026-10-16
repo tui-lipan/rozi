@@ -411,6 +411,12 @@ pub(super) fn validate_sidebar_tab(
             command,
             on_click_exec: raw.on_click.as_ref().and_then(|action| action.exec.clone()),
         })
+    } else if raw.stream == Some(true) {
+        info.errors.push(format!(
+            "sidebar tab `{id}` has a placement but is a stream tab; place the services that \
+             publish to it instead"
+        ));
+        None
     } else {
         info.errors.push(format!(
             "sidebar tab `{id}` has a placement but no `command`; a launcher tab's entries \
@@ -442,6 +448,8 @@ pub(super) fn validate_sidebar_tab(
             action
         }),
         group_prefix: raw.group_prefix,
+        format: raw.format,
+        stream: raw.stream.unwrap_or(false),
         env: env.to_vec(),
     };
     let mut advisories = Vec::new();

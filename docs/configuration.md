@@ -574,7 +574,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `tabs` | array | `["activity", "panes", "sessions", "files", "git", "worktrees"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
+| `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
 | `startup` | bool | `false` | Open the remembered dock combination at client launch. When false, start hidden and restore with `b` or `B`. Memory is saved on exit or detach; toggles stay client-local. |
@@ -586,7 +586,8 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
 
-Unplaced tabs join the first left panel; Files, Git, and Worktrees join the second. Extension
+Unplaced tabs join the first panel of the left dock, or of the right dock when only it holds tabs;
+Files, Git, Worktrees, and Projects join that dock's second panel. Extension
 suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
 and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
 for arranging tabs and panels.
@@ -594,18 +595,20 @@ for arranging tabs and panels.
 ### Tab tables
 
 An entry in `tabs` can be a table instead of an ID. A table can configure the built-in `files` or
-`git` tree tab, or define a custom tab: a launcher tab with fixed rows, or a command tab that lists
-a command's output.
+`git` tree tab, or define a custom tab: a launcher tab with fixed rows, a command tab that lists a
+command's output, or a stream tab that programs publish rows to.
 
 | Tab key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `name` | string | required | Unique tab ID. `activity`, `panes`, and `sessions` are reserved. |
+| `name` | string | required | Unique tab ID. Built-in tab IDs are reserved. |
 | `label` | string | required for custom tabs | Built-in tree tab labels are fixed. |
-| `entries` | array of tables | none | Launcher rows. A custom tab needs exactly one of `entries` or `command`. |
-| `command` | string | none | Command whose output lines become the tab's rows. |
+| `entries` | array of tables | none | Launcher rows. A custom tab needs exactly one of `entries`, `command`, or `stream = true`. |
+| `command` | string | none | Command whose output becomes the tab's rows. |
+| `format` | string | `"lines"` | `"lines"` or `"json"`. Command tabs only. See [JSON command tabs](sidebar.md#json-command-tabs). |
+| `stream` | bool | `false` | A tab programs publish rows to. See [Stream tabs](sidebar.md#stream-tabs). |
 | `interval` | integer seconds | `30` | Minimum `5`. Command tabs only. |
 | `on_click` | action table | none; tree tabs type `{path}` | Action for a command or tree row. |
-| `group_prefix` | string | none | Command tabs only. Output lines starting with it become section headers. |
+| `group_prefix` | string | none | Line command tabs only. Output lines starting with it become section headers. |
 | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
 | `show_hidden` | bool | `true` | Tree tabs only. |
 | `icons` | bool | `false` | Tree tabs only. Also needs `nerd_icons`. |
@@ -630,7 +633,7 @@ with no header.
 ```toml
 [sidebar]
 tabs = [
-  { name = "agents", label = "Agents", entries = [
+  { name = "launch", label = "Launch", entries = [
     { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
     { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
     { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },

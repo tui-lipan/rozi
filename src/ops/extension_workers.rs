@@ -120,7 +120,10 @@ pub(crate) enum Gate {
 
 pub(crate) fn gate(command: &ControlCommand) -> Gate {
     match command {
+        // Which tabs a worker may publish to is decided when its stream opens: only its own
+        // extension's.
         ControlCommand::Pick { .. }
+        | ControlCommand::SidebarPublish { .. }
         | ControlCommand::Notify { .. }
         | ControlCommand::CommandVisibility { .. }
         | ControlCommand::Subscribe { .. } => Gate::Ui,
@@ -157,6 +160,12 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
             Gate::Denied("a UI capture shows this whole client, not one session")
         }
         ControlCommand::Metrics => Gate::Denied("metrics describe this whole client"),
+        ControlCommand::AgentsOverview => {
+            Gate::Denied("the overview lists every session and host this client knows")
+        }
+        ControlCommand::AgentGo { .. } => {
+            Gate::Denied("going to an agent switches this whole client to its session")
+        }
         ControlCommand::ExtensionRuntimeStatus => {
             Gate::Denied("the runtime status describes every placed process of this client")
         }

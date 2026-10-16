@@ -37,23 +37,21 @@ pub(super) fn tree_tab(
         .show_hidden(config.show_hidden)
         .tree_focus_key(tree_focus_key)
         .explorer_focus_key(explorer_focus_key)
-        // Keep the tree's file rows icon-free, but reserve its icon gutter for directory state.
-        .show_icons(true)
-        .directory_icon(if ctx.state.config.nerd_icons {
+        // Keep file rows icon-free and use the framework disclosure column for directory state.
+        .show_icons(false)
+        .show_arrows(true)
+        .collapsed_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▶"
         })
-        .opened_directory_icon(if ctx.state.config.nerd_icons {
+        .expanded_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▼"
         })
-        .file_icon("")
-        .symlink_icon("")
-        .other_icon("")
         .max_entries_per_dir(config.max_entries)
-        .indent_style(IndentStyle::Short)
+        .indent_style(IndentStyle::Branch)
         .indent_width(1)
         .indent_guide_style(Style::new().fg(fill.elevate_by(0.15)))
         .change_view(if changed_only {

@@ -24,6 +24,7 @@ const CAPABILITIES: &[&str] = &[
     "session-list",
     "health-check",
     crate::session::protocol::AGENT_SUMMARIES,
+    crate::session::protocol::PROJECT_SUMMARIES,
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,12 +73,15 @@ struct Snapshot {
     sessions: serde_json::Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     agents: Vec<crate::session::protocol::AgentSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    projects: Vec<crate::session::protocol::ProjectSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HostSnapshot {
     pub rows: Vec<DiscoveredSession>,
     pub agents: Vec<crate::session::protocol::AgentSummary>,
+    pub projects: Vec<crate::session::protocol::ProjectSummary>,
 }
 
 fn write_message(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
@@ -110,6 +114,9 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
     // rather than refused. Building them means one query per running session on this host, which
     // is work worth skipping for a peer that would only discard it.
     let include_agents = hello.supports(crate::session::protocol::AGENT_SUMMARIES);
+    // Asked for alongside the agents, so a peer that wants only one pays for one probe each either
+    // way; one that wants neither keeps the cheaper sweep.
+    let include_projects = hello.supports(crate::session::protocol::PROJECT_SUMMARIES);
     write_message(writer, &Hello::current())?;
     loop {
         let mut request = [0];
@@ -119,11 +126,25 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
         if request[0] != b'?' {
             return Err(io::Error::other("unknown host metadata request"));
         }
-        let (rows, agents) = if include_agents {
-            crate::session::discovery::discover_sessions_with_agents()?
+        let (rows, agents, projects) = if include_agents || include_projects {
+            let metadata = crate::session::discovery::discover_host_metadata()?;
+            (
+                metadata.sessions,
+                if include_agents {
+                    metadata.agents
+                } else {
+                    Vec::new()
+                },
+                if include_projects {
+                    metadata.projects
+                } else {
+                    Vec::new()
+                },
+            )
         } else {
             (
                 crate::session::discovery::discover_sessions_with_snapshots()?,
+                Vec::new(),
                 Vec::new(),
             )
         };
@@ -132,6 +153,7 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
             writer,
             &Snapshot {
                 agents,
+                projects,
                 sessions: serde_json::from_str(&json).map_err(io::Error::other)?,
             },
         )?;
@@ -189,9 +211,13 @@ fn snapshot(connection: &mut IpcConnection, target: &RemoteTarget) -> io::Result
     for row in &mut rows {
         row.remote_target = Some(target.clone());
     }
+    // Ephemeral sessions are not listed, so neither is the work inside them.
+    let mut projects = snapshot.projects;
+    projects.retain(|project| rows.iter().any(|row| row.name == project.session));
     Ok(HostSnapshot {
         rows,
         agents: snapshot.agents,
+        projects,
     })
 }
 
@@ -346,6 +372,7 @@ mod tests {
     #[test]
     fn snapshot_agents_are_omitted_when_empty_and_optional_when_read() {
         let empty = serde_json::to_value(Snapshot {
+            projects: Vec::new(),
             sessions: serde_json::json!([]),
             agents: Vec::new(),
         })

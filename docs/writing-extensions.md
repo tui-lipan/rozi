@@ -344,7 +344,7 @@ extension stops its placed processes on every host.
 ### What a placed process may do
 
 A placed process uses the normal `rozi` commands through `ROZI_BIN` and `ROZI_SOCKET`, including
-streams such as `rozi publish`, `rozi subscribe`, and `rozi pick`. Each process receives a
+streams such as `rozi publish`, `rozi sidebar publish`, `rozi subscribe`, and `rozi pick`. Each process receives a
 credential in `ROZI_EXTENSION_CREDENTIAL` that tells the client which extension, generation, and
 host it was started for. The `rozi` CLI sends it automatically; never pass it on or log it. The
 client ignores any other identity a request claims, and refuses a credential that was revoked, that
@@ -354,6 +354,8 @@ What the client honors depends on the command:
 
 - `pick`, `notify`, and `show-command`/`hide-command` work anywhere. Pickers and notifications from
   a remote host name that host.
+- `sidebar publish` works anywhere, into the extension's own stream tabs. Its rows are headed with
+  the process's host and, for a session-bound placement, its session.
 - Commands that act on panes, such as `list-panes`, `capture-pane`, `send-text`, `send-keys`,
   `split`, `focus`, `publish`, `agents list`, and `agents prompt`, apply only while the session on
   screen is on the process's host (and, for an `active-session` or `each-session` placement, is its
@@ -363,7 +365,7 @@ What the client honors depends on the command:
 - `run-action` runs only the extension's own `active-session` commands.
 - Anything that could start a process on the client or read the whole client fails with
   `not-permitted`: other actions, popups, UI captures, recordings, pane logging, metrics,
-  `extensions status`, and `agents report`/`release`.
+  `extensions status`, `agents list --all`, `agents go`, and `agents report`/`release`.
 - `subscribe` receives only events that happen while a session within the process's binding is on
   screen.
 
@@ -495,9 +497,9 @@ suppressed, or conflicting.
 
 ## Sidebar tabs
 
-An extension can add [sidebar](sidebar.md) tabs with `[[sidebar_tabs]]`. A tab takes the launcher
-and command forms that [`[sidebar]` tab tables](configuration.md#sidebar) accept, except the options
-that apply only to the built-in `files` and `git` trees.
+An extension can add [sidebar](sidebar.md) tabs with `[[sidebar_tabs]]`. A tab takes the launcher,
+command, and stream forms that [`[sidebar]` tab tables](configuration.md#sidebar) accept, except the
+options that apply only to the built-in `files` and `git` trees.
 
 ```toml
 [[sidebar_tabs]]
@@ -521,12 +523,14 @@ on_click = { send = "{line}" }
 | --- | --- | --- |
 | `name` | string | required, `[a-z0-9_-]+` |
 | `label` | string | required |
-| `entries` | array of tables | mutually exclusive with `command` |
+| `entries` | array of tables | exactly one of `entries`, `command`, or `stream = true` |
 | `group` (per entry) | string | none |
-| `command` | string | mutually exclusive with `entries` |
+| `command` | string | exactly one of `entries`, `command`, or `stream = true` |
+| `format` | `lines` or `json` | `lines`; command tabs only |
+| `stream` | bool | `false` |
 | `interval` | integer seconds | `30`, minimum `5` |
 | `on_click` | action table | none |
-| `group_prefix` | string | none; command tabs only |
+| `group_prefix` | string | none; line command tabs only |
 | `placement` | `client` or `active-session` | `client`; command tabs only |
 
 - `{extension_dir}` is replaced in `command` and in action strings, and the processes they start
@@ -540,6 +544,41 @@ on_click = { send = "{line}" }
   makes it a section header. Print status and empty-state lines with the prefix.
 - `on_click` with `send` may use `{line}`. With `run`, `popup`, or `exec`, the clicked row arrives in
   `ROZI_ROW` instead; quote it (`"$ROZI_ROW"`).
+- A command tab with `format = "json"` prints a tree of rows; a clicked row's `id` also arrives in
+  `ROZI_ROW_ID`. See [JSON command tabs](sidebar.md#json-command-tabs).
+
+### Stream tabs
+
+A stream tab's rows come from the extension's own processes, usually a service, through
+[`rozi sidebar publish`](control.md#sidebar-streams). The process names the tab by its local
+`name`; it cannot publish to another extension's tab or to one in `config.toml`.
+
+```toml
+[[sidebar_tabs]]
+name = "machines"
+label = "Machines"
+stream = true
+
+[[services]]
+name = "machines"
+exec = ["{extension_dir}/machines-watch"]
+placement = "each-host"
+```
+
+```sh
+# machines-watch: one snapshot per change, and read what the user did on stdout.
+rozi sidebar publish --tab machines
+```
+
+A tab can have several producers at once. With `placement = "each-host"`, every host's instance
+publishes its own rows to the same tab, and the tab heads each with its host, so a row called
+`main` on two machines stays two rows. With `each-session` or `active-session`, the heading also
+names the session. Each producer's rows, actions, and events are its own: a click on a host's row
+is reported only to that host's instance, and an instance that stops takes only its rows with it.
+A producer restarted in the same place replaces its earlier rows. Several processes in one place
+tell themselves apart with `--name`.
+
+Stream tabs take no `placement`; place the services that publish to them instead.
 
 A tab's public ID is `<extension-id>.<name>`, so an extension can add tabs but never replace a
 built-in one. If a `config.toml` tab has the same ID, it wins and the extension's tab is skipped.
@@ -547,7 +586,7 @@ Out-of-range values are clamped without a warning, unlike the same settings in `
 
 An extension tab may declare `suggested_location = { dock = "right", panel = 2 }`, with a one-based
 panel number from 1 to 3. An explicit saved placement wins. Tabs without a suggestion start in the
-first left panel. The user's hidden state and placement survive disabling, failed loads, updates,
+first panel of the left dock, or of the right dock when only it holds tabs. The user's hidden state and placement survive disabling, failed loads, updates,
 removal, and reinstallation. Unavailable tabs remain listed in **Sidebar tabs…**.
 
 Extensions may also declare `[[sidebar_presets]]` with `name`, `label`, and `layout`. The layout uses

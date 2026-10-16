@@ -140,6 +140,22 @@ pub(crate) fn handle_control_request(
         ControlCommand::AgentsList => {
             ControlResponse::ok(crate::control::AgentListPayload(list_agents(ctx)))
         }
+        ControlCommand::AgentsOverview => ControlResponse::ok(
+            crate::control::GlobalAgentListPayload(crate::ops::agents::overview(&ctx.state)),
+        ),
+        ControlCommand::AgentGo { location } => {
+            match crate::ops::agents::location_from_spec(&ctx.state, &location) {
+                Ok(location) => {
+                    let update = crate::ops::agents::activate_from_sidebar(ctx, location);
+                    let _ = envelope.reply.send(ControlResponse::empty());
+                    return update;
+                }
+                Err(message) => ControlResponse::error_with(
+                    crate::control::ControlErrorCode::InvalidArgument,
+                    message,
+                ),
+            }
+        }
         ControlCommand::ExtensionRuntimeStatus => {
             ControlResponse::ok(crate::ops::placement::status_report(&ctx.state))
         }
@@ -304,6 +320,9 @@ pub(crate) fn handle_control_request(
         }
         ControlCommand::Publish { .. } => {
             ControlResponse::error("publish is handled by the control listener")
+        }
+        ControlCommand::SidebarPublish { .. } => {
+            ControlResponse::error("sidebar-publish is handled by the control listener")
         }
         ControlCommand::Pick { .. } => {
             ControlResponse::error("pick is handled by the control listener")

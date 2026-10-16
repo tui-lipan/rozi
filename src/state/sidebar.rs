@@ -19,6 +19,9 @@ pub struct SidebarCommandRow {
 pub struct SidebarCommandOutput {
     pub epoch: u64,
     pub rows: Vec<SidebarCommandRow>,
+    /// A JSON command tab's rows. `None` for a line tab, and for a JSON tab whose command failed or
+    /// printed something that is not a snapshot, whose `rows` then say why.
+    pub tree: Option<Vec<crate::state::SidebarRowSpec>>,
     /// Directory the command was run in. Output describes one project, so it stops being an answer
     /// the moment the focused pane moves to another one - including while the tab is off screen,
     /// where nothing else would notice before it is shown again.
@@ -43,6 +46,12 @@ pub enum RowTarget {
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// An offline host row in the Sessions tab: connect (probe) that host.
     HostConnect(crate::session::remote::RemoteTarget),
+    /// A row in a hierarchical tab whose only job is to hold children: activating it shows or hides
+    /// them.
+    TreeToggle(crate::state::TreeExpansionKey),
+    /// One agent in the Agents tab, wherever it is running: a focus change for the session on
+    /// screen, a switch or attach first for any other.
+    Agent(crate::state::AgentLocation),
     /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
     NewSession(Option<crate::session::remote::RemoteTarget>),
     /// A "New pane" action row. Spawns an interactive pane on that workspace.
@@ -66,6 +75,15 @@ pub enum RowTarget {
         output_epoch: u64,
         line: String,
     },
+    /// A row of a JSON command tab, by the id its command gave it.
+    CommandTreeRow {
+        config_epoch: u64,
+        tab_id: SidebarTabId,
+        output_epoch: u64,
+        id: String,
+    },
+    /// A row a stream producer published: activating it is reported back to that producer.
+    StreamRow(crate::state::StreamRowRef),
 }
 
 /// What a row's ✕ destroys. Held by identity rather than by row index or by the discovered entry
@@ -82,6 +100,11 @@ pub enum SidebarClose {
     Session {
         name: String,
         remote_target: Option<crate::session::remote::RemoteTarget>,
+    },
+    /// Fire a stream producer's `close` action on one of its rows.
+    StreamAction {
+        row: crate::state::StreamRowRef,
+        action: String,
     },
     /// Disconnect the host: close every attachment to it — their servers keep running — and return
     /// it to offline. Not a kill, but destructive enough to deserve the same two-step ✕ as one.
@@ -139,7 +162,67 @@ impl State {
         self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
     }
 
+    /// The sections a hierarchical tab lists. `None` for a flat tab.
+    pub fn tree_sections(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeSection>> {
+        match tab {
+            SidebarTab::Projects => Some(self.project_sections()),
+            SidebarTab::Command {
+                name,
+                format: crate::config::SidebarCommandFormat::Json,
+                on_click,
+                ..
+            } => {
+                let output = self.fresh_command_output(name)?;
+                let rows = output.tree.as_ref()?;
+                let config_epoch = self.sidebar.config_epoch;
+                Some(vec![crate::state::TreeSection {
+                    key: "rows".into(),
+                    header: None,
+                    rows: rows
+                        .iter()
+                        .map(|spec| {
+                            // With nothing to run, a row only expands or collapses.
+                            let target = if on_click.is_some() {
+                                RowTarget::CommandTreeRow {
+                                    config_epoch,
+                                    tab_id: name.clone(),
+                                    output_epoch: output.epoch,
+                                    id: spec.id.clone(),
+                                }
+                            } else {
+                                RowTarget::Inert
+                            };
+                            crate::state::TreeRow::from_spec(spec, target, None)
+                        })
+                        .collect(),
+                    lazy: false,
+                }])
+            }
+            SidebarTab::Stream { name, .. } => Some(self.stream_sections(name)),
+            _ => None,
+        }
+    }
+
+    /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.
+    pub fn tree_items(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeItem>> {
+        let sections = self.tree_sections(tab)?;
+        Some(crate::state::flatten(
+            &tab.id(),
+            &sections,
+            &self.sidebar.tree_rows_expanded,
+        ))
+    }
+
     pub fn sidebar_item_projections(&self, tab: &SidebarTab) -> Vec<SidebarItemProjection> {
+        if let Some(items) = self.tree_items(tab) {
+            return items
+                .iter()
+                .map(|item| SidebarItemProjection {
+                    target: item.target(),
+                    close: item.close(),
+                })
+                .collect();
+        }
         match tab {
             SidebarTab::Panes => {
                 let mut items = Vec::new();
@@ -188,7 +271,17 @@ impl State {
                 }
                 items
             }
+            // Hierarchical, and projected above.
+            SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
             SidebarTab::Activity => self.activity_item_projections(),
+            // The same projection the view draws from, so a row index means one agent to both.
+            SidebarTab::Agents => crate::view::agents::global_agent_rows(self)
+                .into_iter()
+                .map(|row| SidebarItemProjection {
+                    target: RowTarget::Agent(row.location),
+                    close: None,
+                })
+                .collect(),
             SidebarTab::Worktrees => self
                 .worktree_tab_items()
                 .into_iter()
@@ -778,6 +871,9 @@ pub struct SidebarState {
     /// only ever grows by an explicit user expansion, and dies with the client — this is view
     /// state, not a preference worth persisting.
     pub tree_expanded: HashMap<SidebarTabId, std::collections::HashSet<String>>,
+    /// Rows the user expanded or collapsed in the hierarchical row tabs: Projects, JSON command
+    /// tabs, and stream tabs. Like [`Self::tree_expanded`], view state that dies with the client.
+    pub tree_rows_expanded: crate::state::TreeExpansion,
     /// Successful local Git snapshots shared by keyed Files/Git tree mounts. The framework keeps
     /// this bounded and revalidates every mount; retaining the handle here prevents indicators from
     /// disappearing while a remounted tree's background scan runs.
@@ -928,6 +1024,8 @@ impl SidebarState {
         self.apply_panel_layout(config, &ids);
         self.command_output.retain(|id, _| ids.contains(id));
         self.tree_expanded.retain(|id, _| ids.contains(id));
+        self.tree_rows_expanded
+            .retain(|key, _| ids.contains(&key.tab));
         self.invalidate_commands();
         self.config_epoch = self.config_epoch.wrapping_add(1);
         self.invalidate_sessions();
@@ -1219,7 +1317,15 @@ mod docking_tests {
                 .iter()
                 .map(|id| id.as_str())
                 .collect::<Vec<_>>(),
-            ["activity", "sessions", "files", "git", "worktrees"]
+            [
+                "activity",
+                "agents",
+                "sessions",
+                "files",
+                "git",
+                "worktrees",
+                "projects"
+            ]
         );
         assert!(state.panels[1].tabs.is_empty());
         state.panels[0].active_tab = Some(SidebarTabId::new("git"));
@@ -1278,7 +1384,7 @@ mod docking_tests {
         let config = SidebarConfig::default();
         let mut state = SidebarState::new(&config);
         state.panels[0].active_tab = Some(SidebarTab::Panes.id());
-        assert!(state.transfer_tab(0, 2, 1, 0));
+        assert!(state.transfer_tab(0, 2, 2, 0));
         assert_eq!(state.panels[0].active_tab, Some(SidebarTab::Sessions.id()));
         assert_eq!(state.panels[2].active_tab, Some(SidebarTab::Panes.id()));
         let epoch = state.layout_epoch;

@@ -130,6 +130,12 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Publish { .. } => Some(
             "publish belongs to the pane that publishes; run it inside the pane, which reaches its own session",
         ),
+        ControlCommand::SidebarPublish { .. } => {
+            Some("sidebar tabs belong to a UI; a session server draws no sidebar")
+        }
+        ControlCommand::AgentsOverview | ControlCommand::AgentGo { .. } => Some(
+            "only a UI knows other sessions and hosts; a session server knows its own agents (`agents list`)",
+        ),
         ControlCommand::Subscribe { .. } => Some(
             "subscribe streams UI events; a session server does not raise them (poll `list-panes` for pane state)",
         ),

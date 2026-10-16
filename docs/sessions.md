@@ -162,6 +162,8 @@ the agent's state but no running clock. The agent's current activity, project, a
 in the [Activity tab](sidebar.md#activity), need an attached session; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
+To keep the same list on screen while you work, show the sidebar's [Agents tab](sidebar.md#agents).
+
 ## Name or rename a session
 
 Press `Ctrl+A`, then `S` to run **Name session** or **Rename session**. The same server, panes,

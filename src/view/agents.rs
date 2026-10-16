@@ -5,6 +5,7 @@
 //! local sessions and connected hosts contribute semantic summaries. The overlay renders
 //! whatever comes out; this is where the boundary between the two is decided.
 
+use crate::session::protocol::pane_status;
 use crate::state::{AgentLocation, State};
 
 /// One row of the global Agents view: an agent, where it is running, and what it is doing.
@@ -22,11 +23,13 @@ pub(crate) struct GlobalAgentRow {
     /// The agent finished a run since its pane was last looked at. Live panes only: an unseen
     /// finish is a fact about this client's attention, and nothing on another machine can know it.
     pub finished_unseen: bool,
-    /// How long the status has held.
+    /// The time the row shows, by the Agents tab's rule: how long a working or blocked state has
+    /// held, what a finished run cost, and nothing for an idle agent. See
+    /// [`crate::view::sidebar::agents::elapsed`].
     ///
     /// Live panes only. Local and remote summaries expose a change time, but the UI has no
     /// maintained elapsed timer for them; remote clocks may also differ from this client's.
-    pub age: Option<std::time::Duration>,
+    pub elapsed: Option<std::time::Duration>,
     /// What the agent is working on, when it said (`fix login redirect`). Live panes only.
     pub activity: Option<String>,
     /// The project and branch it works in (`rozi (fix-login)`). Live panes only: this is what
@@ -94,7 +97,7 @@ impl GlobalAgentRow {
             &self.status,
             self.finished_unseen,
         )];
-        parts.extend(self.age.map(crate::view::sidebar::agents::format_age));
+        parts.extend(self.elapsed.map(crate::view::sidebar::agents::format_age));
         parts.extend(self.place.clone());
         parts.join(" · ")
     }
@@ -142,6 +145,13 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             // sessions it is. A lone agent's is its live terminal title, which only adds churn
             // to a label that is meant to be typed.
             let activity = row.slot.as_ref().and(row.activity.clone());
+            let elapsed = crate::view::sidebar::agents::elapsed(
+                row.status.as_deref().unwrap_or(pane_status::IDLE),
+                row.finished_unseen,
+                row.age,
+                row.run,
+            )
+            .map(|(elapsed, _)| elapsed);
             rows.push(GlobalAgentRow {
                 activity,
                 place,
@@ -154,7 +164,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 session: session.to_string(),
                 status: row.status.unwrap_or_default(),
                 finished_unseen: row.finished_unseen,
-                age: row.age,
+                elapsed,
             });
         }
     }
@@ -175,7 +185,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 session: agent.session.clone(),
                 status: agent.state.clone(),
                 finished_unseen: false,
-                age: None,
+                elapsed: None,
                 activity: None,
                 place: None,
             });
@@ -204,7 +214,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 session: agent.session.clone(),
                 status: agent.state.clone(),
                 finished_unseen: false,
-                age: None,
+                elapsed: None,
                 activity: None,
                 place: None,
             });
@@ -319,7 +329,7 @@ mod tests {
             session: "dev".into(),
             status: "working".into(),
             finished_unseen: false,
-            age: Some(std::time::Duration::from_secs(240)),
+            elapsed: Some(std::time::Duration::from_secs(240)),
             activity: Some("fix login redirect".into()),
             place: Some("rozi (worktree-fix)".into()),
         };
@@ -352,12 +362,12 @@ mod tests {
         );
     }
 
-    /// An age is the field a reader trusts without checking, and the only timestamp a summary
-    /// carries was stamped by another machine's clock. See [`GlobalAgentRow::age`].
+    /// An elapsed time is the field a reader trusts without checking, and the only timestamp a
+    /// summary carries was stamped by another machine's clock. See [`GlobalAgentRow::elapsed`].
     #[test]
-    fn a_remote_row_claims_no_age() {
+    fn a_remote_row_claims_no_elapsed_time() {
         let state = state_with_hosts(&[("workbox", vec![summary("backend", 1, "working")])]);
-        assert_eq!(global_agent_rows(&state)[0].age, None);
+        assert_eq!(global_agent_rows(&state)[0].elapsed, None);
     }
 
     /// The session on screen reports itself through its live panes. A monitor snapshot of the same
@@ -395,6 +405,7 @@ mod tests {
         let mut state = state_with_hosts(&[("workbox", vec![summary("dev", 9, "working")])]);
         state.current_mut().session_name = Some("dev".into());
         state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            projects: Vec::new(),
             sessions: Vec::new(),
             agents: vec![summary("dev", 1, "idle"), summary("api", 2, "blocked")],
         });
@@ -411,6 +422,6 @@ mod tests {
             }
         );
         assert_eq!(rows[1].label(), "Codex · workbox/dev");
-        assert_eq!(rows[0].age, None);
+        assert_eq!(rows[0].elapsed, None);
     }
 }

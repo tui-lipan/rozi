@@ -67,6 +67,23 @@ pub(crate) fn command_tab(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<(
         })
 }
 
+/// How the tab reads its output, read at poll time like its section marker.
+pub(crate) fn command_format(
+    ctx: &Context<AppRoot>,
+    id: &SidebarTabId,
+) -> crate::config::SidebarCommandFormat {
+    ctx.state
+        .config
+        .sidebar
+        .tabs
+        .iter()
+        .find_map(|tab| match tab {
+            SidebarTab::Command { name, format, .. } if name == id => Some(*format),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 /// The tab's section marker, read at poll time so a config reload takes effect on the next run
 /// rather than on the next restart.
 pub(crate) fn command_group_prefix(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<String> {
@@ -174,27 +191,27 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
     // A tab placed on the active session lists on that session's host, in the focused pane's
     // directory there; its rows arrive when the listing exits.
     if let Some((placements, placed)) = placed {
-        let group_prefix = command_group_prefix(ctx, &tab_id);
+        let parse = CommandParse {
+            group_prefix: command_group_prefix(ctx, &tab_id),
+            format: command_format(ctx, &tab_id),
+        };
         let env = command_tab_env(ctx, &tab_id);
         return crate::ops::placement::poll_tab(
-            ctx,
-            tab_id,
-            epoch,
-            placements,
-            &placed,
-            env,
-            group_prefix,
+            ctx, tab_id, epoch, placements, &placed, env, parse,
         );
     }
     let shell = crate::platform::command::resolve_command_shell(
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
-    let group_prefix = command_group_prefix(ctx, &tab_id);
+    let parse = CommandParse {
+        group_prefix: command_group_prefix(ctx, &tab_id),
+        format: command_format(ctx, &tab_id),
+    };
     let env = command_tab_env(ctx, &tab_id);
     let cwd = client_poll_cwd(&ctx.state);
     Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let rows = command_rows(
+        let (rows, tree) = command_listing(
             crate::platform::command::run_bounded_shell_command_with_env(
                 &shell,
                 &command_line,
@@ -203,10 +220,11 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
                 COMMAND_TIMEOUT,
                 COMMAND_CAPTURE_BYTES,
             ),
-            group_prefix.as_deref(),
+            &parse,
         );
         link.send(crate::Msg::SidebarCommandOutput {
             epoch,
+            tree,
             tab_id,
             rows,
         });
@@ -218,6 +236,7 @@ pub(crate) fn command_output(
     epoch: u64,
     tab_id: SidebarTabId,
     rows: Vec<SidebarCommandRow>,
+    tree: Option<Vec<crate::state::SidebarRowSpec>>,
 ) -> Update {
     if ctx.state.sidebar.command_in_flight.get(&tab_id) == Some(&epoch) {
         ctx.state.sidebar.command_in_flight.remove(&tab_id);
@@ -233,7 +252,11 @@ pub(crate) fn command_output(
         .sidebar
         .command_output
         .get(&tab_id)
-        .is_none_or(|output| output.rows != rows || output.cwd != ctx.state.sidebar.command_cwd);
+        .is_none_or(|output| {
+            output.rows != rows
+                || output.tree != tree
+                || output.cwd != ctx.state.sidebar.command_cwd
+        });
     if changed {
         ctx.state.sidebar.next_output_epoch = ctx.state.sidebar.next_output_epoch.wrapping_add(1);
         ctx.state.sidebar.command_output.insert(
@@ -241,6 +264,7 @@ pub(crate) fn command_output(
             SidebarCommandOutput {
                 epoch: ctx.state.sidebar.next_output_epoch,
                 rows,
+                tree,
                 cwd: ctx.state.sidebar.command_cwd.clone(),
             },
         );
@@ -308,6 +332,44 @@ pub(crate) fn refresh_active_tabs(ctx: &mut Context<AppRoot>) -> Update {
     }
     request_command_poll(ctx);
     Update::full()
+}
+
+/// How a command tab's output becomes rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommandParse {
+    pub group_prefix: Option<String>,
+    pub format: crate::config::SidebarCommandFormat,
+}
+
+/// A command's output as a tab shows it: line rows, or a JSON tab's tree.
+///
+/// A JSON tab whose command failed, or printed something that is not a snapshot, gets the same
+/// error rows a line tab would, so a broken script says why instead of showing nothing.
+pub(crate) fn command_listing(
+    result: std::io::Result<crate::platform::command::CommandOutput>,
+    parse: &CommandParse,
+) -> (
+    Vec<SidebarCommandRow>,
+    Option<Vec<crate::state::SidebarRowSpec>>,
+) {
+    if parse.format == crate::config::SidebarCommandFormat::Lines {
+        return (command_rows(result, parse.group_prefix.as_deref()), None);
+    }
+    let output = match result {
+        Ok(output) if !output.timed_out && output.status == Some(0) && output.stderr.is_empty() => {
+            output
+        }
+        failed => return (command_rows(failed, None), None),
+    };
+    match serde_json::from_slice::<crate::state::SidebarSnapshot>(&output.stdout) {
+        Ok(snapshot) => (Vec::new(), Some(crate::state::sanitize_rows(snapshot.rows))),
+        Err(error) => (
+            vec![error_row(&format!(
+                "output is not a JSON snapshot: {error}"
+            ))],
+            None,
+        ),
+    }
 }
 
 pub(crate) fn command_rows(

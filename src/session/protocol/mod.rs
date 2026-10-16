@@ -23,6 +23,7 @@ pub mod identity;
 pub mod messages;
 pub mod negotiation;
 pub mod pane_runtime;
+pub mod project_summary;
 
 pub use agent_runtime::*;
 pub use agent_summary::*;
@@ -33,6 +34,7 @@ pub use identity::*;
 pub use messages::*;
 pub use negotiation::*;
 pub use pane_runtime::*;
+pub use project_summary::*;
 
 #[cfg(test)]
 mod tests;

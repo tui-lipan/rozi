@@ -20,6 +20,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         rows: &[
             row("list [--format text|json]", "List semantic agent occupants"),
             row(
+                "list --all [--format text|json]",
+                "List agents in every session and on every host",
+            ),
+            row("go --location <JSON>", "Go to an agent, from list --all"),
+            row(
                 "get --target <PANE> [--format text|json]",
                 "Show one agent record",
             ),
@@ -52,6 +57,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         rows: &[
             row("    --target <PANE>", "An agent by pane id"),
             row("    --ref <JSON>", "An exact agent run, from list or get"),
+            row("    --all", "Every session and connected host (UI only)"),
+            row(
+                "    --location <JSON>",
+                "Where an agent runs, from list --all",
+            ),
             row("    --until <STATE>", "working, blocked, idle, done,"),
             row("", "quiescent (idle or done), or gone"),
             row("    --wait <STATE>", "The same states as --until"),
@@ -92,15 +102,41 @@ pub(super) fn parse_agents_args(
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
     let subcommand = iter.next().ok_or_else(|| {
-        "agents requires a subcommand (list, get, read, wait, prompt, report, or release)"
+        "agents requires a subcommand (list, go, get, read, wait, prompt, report, or release)"
             .to_string()
     })?;
     let args = iter.collect::<Vec<_>>();
     match subcommand.as_str() {
         "list" => {
-            let (format, rest) = take_format(args, "agents list")?;
+            let (format, mut rest) = take_format(args, "agents list")?;
+            let all = rest.iter().any(|arg| arg == "--all");
+            rest.retain(|arg| arg != "--all");
             reject_rest(rest, "agents list")?;
-            Ok((ControlCommand::AgentsList, format))
+            let command = if all {
+                ControlCommand::AgentsOverview
+            } else {
+                ControlCommand::AgentsList
+            };
+            Ok((command, format))
+        }
+        "go" => {
+            let mut location = None;
+            let mut iter = args.into_iter();
+            while let Some(flag) = iter.next() {
+                match flag.as_str() {
+                    "--location" => {
+                        let value = next_value(&mut iter, "--location requires a JSON object")?;
+                        let parsed = serde_json::from_str(&value)
+                            .map_err(|error| format!("--location is not a location: {error}"))?;
+                        if location.replace(parsed).is_some() {
+                            return Err("agents go --location specified more than once".into());
+                        }
+                    }
+                    other => return Err(unexpected("agents go", other)),
+                }
+            }
+            let location = location.ok_or_else(|| "agents go requires --location".to_string())?;
+            Ok((ControlCommand::AgentGo { location }, None))
         }
         "get" => {
             let (target, format, rest) = parse_target_and_format(args, "agents get")?;
@@ -113,7 +149,7 @@ pub(super) fn parse_agents_args(
         "report" => parse_report(args),
         "release" => parse_release(args),
         other => Err(format!(
-            "unknown agents subcommand `{other}`; expected list, get, read, wait, prompt, report, or release"
+            "unknown agents subcommand `{other}`; expected list, go, get, read, wait, prompt, report, or release"
         )),
     }
 }
@@ -548,6 +584,33 @@ mod tests {
                 timeout_ms: Some(30_000),
             }
         );
+    }
+
+    /// `list --all` asks for every agent anywhere, and `go` takes back the location it printed.
+    #[test]
+    fn list_all_and_go_round_trip_a_location() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
+        let (command, format) =
+            parse_agents_args(args(&["list", "--all", "--format", "json"])).unwrap();
+        assert_eq!(command, ControlCommand::AgentsOverview);
+        assert_eq!(format, Some(ListFormat::Json));
+        let (command, _) = parse_agents_args(args(&[
+            "go",
+            "--location",
+            r#"{"host":"workbox","session":"backend","pane":4,"row":{"publisher":"sessions","id":"fix"}}"#,
+        ]))
+        .unwrap();
+        let ControlCommand::AgentGo { location } = command else {
+            panic!("agent-go");
+        };
+        assert_eq!(location.host.as_deref(), Some("workbox"));
+        assert_eq!(location.pane, 4);
+        assert_eq!(
+            location.row.as_ref().map(|row| row.id.as_str()),
+            Some("fix")
+        );
+        let error = parse_agents_args(args(&["go"])).unwrap_err();
+        assert!(error.contains("requires --location"), "{error}");
     }
 
     #[test]

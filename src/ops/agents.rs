@@ -139,47 +139,159 @@ pub(crate) fn select(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Upd
 /// gesture — immediately when the session was merely parked in the background, and after the
 /// attach lands otherwise.
 pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
-    match location {
+    match location.clone() {
         AgentLocation::Here { pane, row } => {
             // Landed on before the overlay closes, so the focus the close returns to the "current"
             // pane is the pane the user just asked for rather than the one they came from.
             land_on_pane(ctx, pane, row.as_ref());
             close_agent_picker(ctx)
         }
-        AgentLocation::OtherSession {
-            target,
-            session,
-            pane,
-            row,
-        } => {
-            let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
-                // Session rows and agent summaries come from the same poll, so a summary without
-                // its session row can no longer be activated.
-                return Update::none();
-            };
-            ctx.state.pending_agent_jump = Some(PendingAgentJump {
-                target,
-                session,
-                pane,
-                row,
-            });
-            let update = crate::ops::session::activate_discovered_session(ctx, entry);
+        AgentLocation::OtherSession { .. } => jump_to_other_session(ctx, location, |ctx, _| {
             // Installing a session dismisses the pickers that led into it, so an overlay still
             // standing here means the activation refused (an incompatible server, say) and left
-            // its reason on screen. Nothing is coming, so the destination is dropped rather than
-            // left to fire on some unrelated later attach to the same name.
-            if ctx.state.agent_picker.is_some() {
-                ctx.state.pending_agent_jump = None;
-                return update;
+            // its reason on screen.
+            ctx.state.agent_picker.is_some()
+        }),
+    }
+}
+
+/// Go to the agent a sidebar row describes. The same destination as [`activate`], from a surface
+/// that stays on screen: there is no overlay to close, and none whose survival could say the
+/// attach was refused.
+pub(crate) fn activate_from_sidebar(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
+    match location {
+        AgentLocation::Here { pane, row } => {
+            if land_on_pane(ctx, pane, row.as_ref()) {
+                Update::full()
+            } else {
+                Update::none()
             }
-            // A session already parked in the background switches in synchronously, so its panes
-            // are on screen by the time this returns and there is no attach to wait for.
-            if land_on_pending_agent(ctx) {
-                return Update::full();
-            }
-            update
+        }
+        AgentLocation::OtherSession { .. } => {
+            jump_to_other_session(ctx, location, |_, entry| {
+                // The one refusal `activate_discovered_session` makes before attaching: discovery
+                // already found the server unable to speak to this client.
+                matches!(
+                    entry.status,
+                    crate::session::discovery::DiscoveredSessionStatus::Unknown
+                )
+            })
         }
     }
+}
+
+/// Every agent this client knows about, in the Agents tab's order, for `agents-overview`.
+pub(crate) fn overview(state: &crate::state::State) -> Vec<crate::control::GlobalAgentInfo> {
+    crate::view::agents::global_agent_rows(state)
+        .into_iter()
+        .map(|row| {
+            let here = row.is_here();
+            let state_word = if row.finished_unseen
+                && crate::session::protocol::ActivityState::from_status(&row.status)
+                    .is_successful_terminal()
+            {
+                crate::session::protocol::pane_status::DONE.to_string()
+            } else {
+                row.status.clone()
+            };
+            let (target, pane, slot) = match row.location {
+                AgentLocation::Here { pane, row: slot } => {
+                    (state.current().remote_target.clone(), pane, slot)
+                }
+                AgentLocation::OtherSession {
+                    target,
+                    pane,
+                    row: slot,
+                    ..
+                } => (target, pane, slot),
+            };
+            crate::control::GlobalAgentInfo {
+                location: crate::control::AgentLocationSpec {
+                    host: target.map(|target| target.to_spec()),
+                    session: row.session,
+                    pane,
+                    row: slot,
+                },
+                label: row.agent,
+                state: state_word,
+                here,
+            }
+        })
+        .collect()
+}
+
+/// The agent location a caller described, if it names a session this client knows.
+pub(crate) fn location_from_spec(
+    state: &crate::state::State,
+    spec: &crate::control::AgentLocationSpec,
+) -> std::result::Result<AgentLocation, String> {
+    let target = spec
+        .host
+        .as_deref()
+        .map(crate::session::remote::parse_remote_target)
+        .transpose()?;
+    let here = state.current().remote_target == target
+        && state.current().session_name.as_deref() == Some(spec.session.as_str());
+    if here {
+        return Ok(AgentLocation::Here {
+            pane: spec.pane,
+            row: spec.row.clone(),
+        });
+    }
+    if session_for_agent(state, target.as_ref(), &spec.session).is_none() {
+        return Err(match &spec.host {
+            Some(host) => format!("no session `{}` on a connected host `{host}`", spec.session),
+            None => format!("no running local session `{}`", spec.session),
+        });
+    }
+    Ok(AgentLocation::OtherSession {
+        target,
+        session: spec.session.clone(),
+        pane: spec.pane,
+        row: spec.row.clone(),
+    })
+}
+
+/// Open the session an agent lives in, then land on its pane once that session is on screen.
+///
+/// `refused` reports, after activation, whether the session is not coming. A refused destination is
+/// dropped rather than left to fire on some unrelated later attach to the same name.
+fn jump_to_other_session(
+    ctx: &mut Context<AppRoot>,
+    location: AgentLocation,
+    refused: impl FnOnce(&Context<AppRoot>, &crate::session::discovery::DiscoveredSession) -> bool,
+) -> Update {
+    let AgentLocation::OtherSession {
+        target,
+        session,
+        pane,
+        row,
+    } = location
+    else {
+        return Update::none();
+    };
+    let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
+        // Session rows and agent summaries come from the same poll, so a summary without its
+        // session row can no longer be activated.
+        return Update::none();
+    };
+    ctx.state.pending_agent_jump = Some(PendingAgentJump {
+        target,
+        session,
+        pane,
+        row,
+    });
+    let update = crate::ops::session::activate_discovered_session(ctx, entry.clone());
+    if refused(ctx, &entry) {
+        ctx.state.pending_agent_jump = None;
+        return update;
+    }
+    // A session already parked in the background switches in synchronously, so its panes are on
+    // screen by the time this returns and there is no attach to wait for.
+    if land_on_pending_agent(ctx) {
+        return Update::full();
+    }
+    update
 }
 
 fn session_for_agent(
@@ -290,6 +402,60 @@ mod tests {
 
     /// An agent in the session already on screen is a focus change and nothing else — no attach, no
     /// round trip, and the overlay is gone by the time the pane has the keyboard.
+    /// The overview names where every agent runs in a form `agent-go` takes back, and a location
+    /// naming a session this client does not know is refused rather than guessed at.
+    #[test]
+    fn overview_locations_resolve_back_to_where_the_agent_runs() {
+        let mut state =
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
+        state.remote.agents.insert(
+            RemoteTarget::Alias("workbox".into()),
+            vec![crate::session::protocol::AgentSummary {
+                session: "backend".into(),
+                pane: 4,
+                generation: 0,
+                row: None,
+                agent: "codex".into(),
+                label: "Codex".into(),
+                state: "blocked".into(),
+                changed_at: 0,
+                launch: 0,
+            }],
+        );
+        state
+            .remote
+            .live_sessions
+            .push(crate::session::discovery::DiscoveredSession {
+                name: "backend".into(),
+                status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    panes: 1,
+                    clients: 0,
+                    has_layout: true,
+                },
+                origin: Default::default(),
+                ephemeral: false,
+                host: Some("workbox".into()),
+                remote_target: Some(RemoteTarget::Alias("workbox".into())),
+            });
+        let overview = overview(&state);
+        assert_eq!(overview.len(), 1);
+        assert_eq!(overview[0].location.host.as_deref(), Some("workbox"));
+        assert_eq!(overview[0].state, "blocked");
+        assert!(!overview[0].here);
+        assert_eq!(
+            location_from_spec(&state, &overview[0].location),
+            Ok(AgentLocation::OtherSession {
+                target: Some(RemoteTarget::Alias("workbox".into())),
+                session: "backend".into(),
+                pane: 4,
+                row: None,
+            })
+        );
+        let mut unknown = overview[0].location.clone();
+        unknown.session = "gone".into();
+        assert!(location_from_spec(&state, &unknown).is_err());
+    }
+
     #[test]
     fn a_row_in_this_session_goes_straight_to_its_pane() {
         on_large_stack(|| {
@@ -342,6 +508,7 @@ mod tests {
             remote_target,
         };
         state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            projects: Vec::new(),
             sessions: vec![row(None)],
             agents: Vec::new(),
         });
@@ -409,6 +576,7 @@ mod tests {
                 crate::layout::anim::PickerAnimationStyle::Off;
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![crate::session::protocol::AgentSummary {
                         session: "backend".into(),
@@ -454,6 +622,7 @@ mod tests {
         };
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
+                projects: Vec::new(),
                 sessions: Vec::new(),
                 agents: vec![summary(1, "Local Codex", "idle")],
             });
@@ -710,6 +879,7 @@ mod tests {
             };
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
+                    projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![summary(1), summary(2), summary(3)],
                 });
@@ -772,6 +942,7 @@ mod tests {
             crate::layout::anim::PickerAnimationStyle::Off;
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
+                projects: Vec::new(),
                 sessions: Vec::new(),
                 agents,
             });

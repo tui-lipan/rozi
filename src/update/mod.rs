@@ -78,7 +78,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             generation,
             rows,
             agents,
-        } => hosts::apply(ctx, target, generation, rows, agents),
+            projects,
+        } => hosts::apply(ctx, target, generation, rows, agents, projects),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
@@ -270,6 +271,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             hovered,
         } => sidebar::row_hover(ctx, panel, index, hovered),
         Msg::SidebarRowClose { panel, index } => sidebar::row_close(ctx, panel, index),
+        Msg::SidebarRowToggle { panel, index } => sidebar::row_toggle(ctx, panel, index),
         Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
         Msg::SidebarTreeFocused => sidebar::tree_focused(ctx),
@@ -316,9 +318,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
         Msg::SidebarCommandOutput {
             epoch,
+            tree,
             tab_id,
             rows,
-        } => sidebar::command_output(ctx, epoch, tab_id, rows),
+        } => sidebar::command_output(ctx, epoch, tab_id, rows, tree),
         Msg::SidebarCommandRowActivate {
             config_epoch,
             tab_id,
@@ -546,6 +549,20 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::extensions::subscription_closed(ctx, id)
         }
         Msg::ControlRequest(envelope) => panes::control_request(ctx, envelope),
+        Msg::SidebarStreamOpen { open, sender, ack } => {
+            crate::ops::sidebar_streams::open(ctx, *open, sender, ack)
+        }
+        Msg::SidebarStreamSnapshot {
+            stream_id,
+            tab,
+            producer,
+            snapshot,
+        } => crate::ops::sidebar_streams::snapshot(ctx, stream_id, tab, producer, snapshot),
+        Msg::SidebarStreamClosed {
+            stream_id,
+            tab,
+            producer,
+        } => crate::ops::sidebar_streams::closed(ctx, stream_id, tab, producer),
         Msg::PublishStreamOpen {
             stream_id,
             requested_pane,
@@ -1112,6 +1129,9 @@ fn post_update_sync(
     }
     crate::ops::worktrees::ensure_tick(ctx);
     sidebar::sync_command_cwd(ctx);
+    // Stream producers follow their tab: dropped when a reload removes it, told when it is shown.
+    crate::ops::sidebar_streams::reconcile(&mut ctx.state);
+    crate::ops::sidebar_streams::sync_visibility(&mut ctx.state);
     sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.

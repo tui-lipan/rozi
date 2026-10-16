@@ -290,6 +290,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "publish [--kind agent|activity] [--name N]",
                 "Publish activity rows over stdio",
             ),
+            row(
+                "sidebar publish --tab T [--name N]",
+                "Publish rows to a sidebar stream tab over stdio",
+            ),
             row("subscribe [EVENT...]", "Stream application events as JSON"),
             row(
                 "pick [--title T] [--placeholder P] [--json]",

@@ -1109,6 +1109,7 @@ fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
                     let _ = rozi::session::protocol::write_frame(
                         &mut stream,
                         &ServerMessage::SessionInfo {
+                            projects: Vec::new(),
                             capabilities: None,
                             agents: Vec::new(),
                             session: session.clone(),

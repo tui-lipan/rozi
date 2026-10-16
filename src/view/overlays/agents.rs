@@ -113,11 +113,11 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let status =
             crate::view::sidebar::agents::row_status_label(&row.status, row.finished_unseen);
         let mut description = vec![Span::new(status).style(Style::new().fg(*color))];
-        if let Some(age) = row.age {
+        if let Some(elapsed) = row.elapsed {
             description.push(
                 Span::new(format!(
                     " · {}",
-                    crate::view::sidebar::agents::format_age(age)
+                    crate::view::sidebar::agents::format_age(elapsed)
                 ))
                 .style(detail_style),
             );
@@ -213,8 +213,8 @@ fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: boo
             let activity = row.activity.as_deref().map_or(0, |text| text.width() + 2);
             let status =
                 crate::view::sidebar::agents::row_status_label(&row.status, row.finished_unseen);
-            let age = row.age.map_or(0, |age| {
-                crate::view::sidebar::agents::format_age(age).width() + 3
+            let elapsed = row.elapsed.map_or(0, |elapsed| {
+                crate::view::sidebar::agents::format_age(elapsed).width() + 3
             });
             let context = row_context(row, show_location);
             row.agent.width()
@@ -225,7 +225,7 @@ fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: boo
                     context.width() + 3
                 }
                 + status.width()
-                + age
+                + elapsed
         })
         .max()
         .unwrap_or(0);
@@ -247,7 +247,7 @@ mod tests {
             session: "dev".into(),
             status: "working".into(),
             finished_unseen: false,
-            age: Some(std::time::Duration::from_secs(240)),
+            elapsed: Some(std::time::Duration::from_secs(240)),
             activity: Some(activity.into()),
             place: Some("api (fix-login)".into()),
         }

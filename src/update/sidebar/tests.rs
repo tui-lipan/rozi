@@ -31,6 +31,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
                 on_click: None,
                 group_prefix: None,
                 env: Vec::new(),
+                format: crate::config::SidebarCommandFormat::Lines,
             }];
             state.sidebar.panels[0].tabs = vec![id.clone()];
             state.sidebar.panels[0].active_tab = Some(id.clone());
@@ -38,6 +39,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
                 id.clone(),
                 SidebarCommandOutput {
                     epoch: 1,
+                    tree: None,
                     cwd: None,
                     rows: vec![row("stale")],
                 },
@@ -130,6 +132,7 @@ fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
             on_click: None,
             group_prefix: None,
             env: Vec::new(),
+            format: crate::config::SidebarCommandFormat::Lines,
         };
         backend.state_mut().config.sidebar.tabs = vec![tab.clone()];
         let cwd = backend.state().sidebar.command_cwd.clone();
@@ -137,6 +140,7 @@ fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
             id.clone(),
             SidebarCommandOutput {
                 epoch: 1,
+                tree: None,
                 cwd: cwd.clone(),
                 rows: vec![row("first-project")],
             },
@@ -1788,6 +1792,7 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
             on_click: Some(UserCommandAction::Send("{line}\n".to_string())),
             group_prefix: Some("#".to_string()),
             env: Vec::new(),
+            format: crate::config::SidebarCommandFormat::Lines,
         };
         backend.state_mut().config.sidebar.tabs = vec![tab.clone()];
         let cwd = backend.state().sidebar.command_cwd.clone();
@@ -1795,6 +1800,7 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
             id,
             SidebarCommandOutput {
                 epoch: 1,
+                tree: None,
                 cwd,
                 rows,
             },
@@ -1869,6 +1875,7 @@ fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
             on_click: Some(UserCommandAction::run("printf fixed".to_string())),
             group_prefix: None,
             env: Vec::new(),
+            format: crate::config::SidebarCommandFormat::Lines,
         }];
         backend.state_mut().sidebar.config_epoch = 2;
         // Cached output only counts while it still describes where the focused pane is.
@@ -1877,6 +1884,7 @@ fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
             id.clone(),
             SidebarCommandOutput {
                 epoch: 9,
+                tree: None,
                 cwd,
                 rows: vec![row("safe")],
             },
@@ -1923,6 +1931,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
                 id.clone(),
                 SidebarCommandOutput {
                     epoch: 3,
+                    tree: None,
                     cwd: None,
                     rows: vec![row("current")],
                 },
@@ -1931,6 +1940,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
         backend
             .dispatch(crate::Msg::SidebarCommandOutput {
                 epoch: 7,
+                tree: None,
                 tab_id: id.clone(),
                 rows: vec![row("stale")],
             })
@@ -1958,6 +1968,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
                 on_click: None,
                 group_prefix: None,
                 env: Vec::new(),
+                format: crate::config::SidebarCommandFormat::Lines,
             }];
             state.sidebar.panels[0].active_tab = Some(id.clone());
             state.sidebar.command_epoch = 6;
@@ -2010,6 +2021,7 @@ fn sessions_and_command_panels_refresh_together() {
                     on_click: None,
                     group_prefix: None,
                     env: Vec::new(),
+                    format: crate::config::SidebarCommandFormat::Lines,
                 },
             ];
             state.sidebar.panels = vec![
@@ -2357,5 +2369,495 @@ fn remote_directory_requests_reject_old_sessions_but_survive_configuration_chang
             })
             .collect();
         assert_eq!(paths, ["/current"], "valid requests remain deduplicated");
+    });
+}
+
+fn monitored_agent(
+    session: &str,
+    pane: crate::state::PaneId,
+    state: &str,
+) -> crate::session::protocol::AgentSummary {
+    crate::session::protocol::AgentSummary {
+        session: session.into(),
+        pane,
+        generation: 0,
+        row: None,
+        agent: "codex".into(),
+        label: "Codex".into(),
+        state: state.into(),
+        changed_at: 0,
+        launch: 0,
+    }
+}
+
+/// The Agents tab lists every agent this client knows about with the one that wants an answer on
+/// top, wherever it runs, and Enter lands on an agent in the session on screen.
+#[test]
+fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Agents]);
+        let pane = {
+            let state = backend.state_mut();
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state: crate::session::protocol::DetectedAgentState::Idle,
+            });
+            let id = pane.id;
+            pane.agent_refs = vec![crate::session::protocol::AgentRef {
+                pane: crate::session::protocol::PaneRef {
+                    session_instance: crate::session::protocol::SessionInstanceId::generate(),
+                    pane_id: id,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            }];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+            state.remote.agents.insert(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                vec![monitored_agent("backend", 4, "blocked")],
+            );
+            id
+        };
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let line = |needle: &str| {
+            lines
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", lines.join("\n")))
+        };
+        assert!(
+            line("workbox/backend") < line("Claude Code"),
+            "the blocked remote agent leads"
+        );
+
+        let targets: Vec<_> = backend
+            .state()
+            .sidebar_item_projections(&SidebarTab::Agents)
+            .into_iter()
+            .map(|item| item.target)
+            .collect();
+        assert_eq!(targets.len(), 2);
+        assert!(matches!(
+            &targets[1],
+            crate::state::RowTarget::Agent(crate::state::AgentLocation::Here { pane: here, .. })
+                if *here == pane
+        ));
+
+        backend.state_mut().current_mut().focused_pane = None;
+        send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::NONE);
+        send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);
+        assert_eq!(backend.state().current().focused_pane, Some(pane));
+    });
+}
+
+fn project(
+    session: &str,
+    root: &str,
+    repository: Option<&str>,
+    branch: &str,
+    panes: &[crate::state::PaneId],
+) -> crate::session::protocol::ProjectSummary {
+    crate::session::protocol::ProjectSummary {
+        session: session.into(),
+        root: root.into(),
+        repository: repository.map(str::to_string),
+        branch: Some(branch.into()),
+        panes: panes.to_vec(),
+        rows: Vec::new(),
+    }
+}
+
+/// The Projects tab draws repository, checkout, and session as a tree, and the keyboard opens and
+/// closes it: Left on a session steps out to its checkout, Left again collapses it, Right reopens.
+#[test]
+fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTab::Projects.id());
+            state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![monitored_agent("fix", 3, "blocked")],
+                projects: vec![
+                    project("api", "/x/rozi", None, "master", &[1]),
+                    project("fix", "/x/rozi/.wt/fix", Some("/x/rozi"), "fix/ssh", &[3]),
+                ],
+            });
+        }
+        backend.render();
+        let frame = backend.capture_frame().to_fixed_grid_lines();
+        let sidebar: Vec<String> = frame
+            .iter()
+            .map(|line| line.chars().take(31).collect::<String>())
+            .collect();
+        eprintln!("{}", sidebar.join("\n"));
+        let at = |needle: &str| {
+            sidebar
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", sidebar.join("\n")))
+        };
+        assert!(at("rozi") < at("master"));
+        assert!(at("master") < at("api"));
+        assert!(at("fix/ssh") < at("Codex"));
+        assert!(
+            sidebar[at("fix/ssh")].contains('└'),
+            "the last checkout ends its branch"
+        );
+
+        let items = backend
+            .state()
+            .tree_items(&SidebarTab::Projects)
+            .expect("projects is hierarchical");
+        let fix = items
+            .iter()
+            .position(|item| {
+                item.line()
+                    .is_some_and(|line| line.row.content.label == "fix")
+            })
+            .expect("the fix session row");
+        backend.state_mut().sidebar.panels[0].cursor = fix;
+        send_sidebar_key(&mut backend, KeyCode::Left, KeyMods::NONE);
+        let cursor = backend.state().sidebar.panels[0].cursor;
+        assert_eq!(
+            items[cursor]
+                .line()
+                .map(|line| line.row.content.label.as_str()),
+            Some("fix/ssh"),
+            "Left steps out to the checkout"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Left, KeyMods::NONE);
+        let collapsed = backend.state().tree_items(&SidebarTab::Projects).unwrap();
+        assert!(
+            !collapsed.iter().any(|item| item
+                .line()
+                .is_some_and(|line| line.row.content.label == "fix")),
+            "Left collapses the checkout"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Right, KeyMods::NONE);
+        assert_eq!(
+            backend
+                .state()
+                .tree_items(&SidebarTab::Projects)
+                .unwrap()
+                .len(),
+            items.len(),
+            "Right expands it again"
+        );
+    });
+}
+
+/// Open a `sidebar-publish` stream the way the control listener does, returning what the UI wrote
+/// back to it and the producer it was admitted as.
+fn open_stream(
+    backend: &mut TestBackend<AppRoot>,
+    stream_id: u64,
+    tab: &str,
+    name: Option<&str>,
+) -> (
+    std::sync::mpsc::Receiver<String>,
+    std::result::Result<(SidebarTabId, String), crate::control::ControlResponse>,
+) {
+    let (sender, events) = std::sync::mpsc::sync_channel(64);
+    let (ack, admitted) = std::sync::mpsc::channel();
+    backend
+        .dispatch(crate::Msg::SidebarStreamOpen {
+            open: Box::new(crate::ops::sidebar_streams::StreamOpen {
+                stream_id,
+                tab: tab.into(),
+                name: name.map(str::to_string),
+                extension: None,
+                worker: None,
+            }),
+            sender,
+            ack,
+        })
+        .expect("open the stream");
+    (events, admitted.recv().expect("admission answered"))
+}
+
+fn stream_snapshot(json: &str) -> crate::state::SidebarSnapshot {
+    serde_json::from_str(json).expect("snapshot parses")
+}
+
+/// Two producers share one stream tab, each owning its rows under its own heading; activating and
+/// expanding a row is reported to the producer that owns it, and a replaced stream's late close
+/// withdraws nothing.
+#[test]
+fn stream_tabs_merge_producers_and_route_events_to_the_owner() {
+    on_test_thread(|| {
+        let id = SidebarTabId::new("deploys");
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Stream {
+            name: id.clone(),
+            label: "Deploys".into(),
+        }]);
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].tabs = vec![id.clone()];
+            state.sidebar.panels[0].active_tab = Some(id.clone());
+        }
+        let (a_events, admitted) = open_stream(&mut backend, 1, "deploys", Some("prod"));
+        let (_, a) = admitted.expect("a config stream tab admits a local producer");
+        let (b_events, admitted) = open_stream(&mut backend, 2, "deploys", Some("staging"));
+        let (_, b) = admitted.expect("a second producer joins");
+        assert_eq!(
+            a_events.try_recv().as_deref(),
+            Ok("{\"visible\":true}\n"),
+            "a producer learns its tab is on screen"
+        );
+        for (stream, producer, json) in [
+            (
+                1,
+                &a,
+                r#"{"rows":[{"id":"api","label":"api","tone":"working"},{"id":"main","parent":"api","label":"main","expandable":true,"expanded":false}]}"#,
+            ),
+            (
+                2,
+                &b,
+                r#"{"rows":[{"id":"api","label":"api","tone":"blocked"}]}"#,
+            ),
+        ] {
+            backend
+                .dispatch(crate::Msg::SidebarStreamSnapshot {
+                    stream_id: stream,
+                    tab: id.clone(),
+                    producer: producer.clone(),
+                    snapshot: stream_snapshot(json),
+                })
+                .expect("snapshot");
+        }
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let text = lines.join("\n");
+        assert!(text.contains("LOCAL · prod"), "{text}");
+        assert!(text.contains("LOCAL · staging"), "{text}");
+
+        let items = backend.state().tree_items(&SidebarTab::Stream {
+            name: id.clone(),
+            label: "Deploys".into(),
+        });
+        let items = items.expect("stream tabs are hierarchical");
+        let main = items
+            .iter()
+            .position(|item| item.line().is_some_and(|line| line.row.id == "main"))
+            .expect("main row");
+        backend.state_mut().sidebar.panels[0].cursor = main;
+        let _ = a_events.try_recv();
+        let _ = b_events.try_recv();
+        send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);
+        assert_eq!(
+            a_events.try_recv().as_deref(),
+            Ok("{\"activate\":\"main\"}\n")
+        );
+        assert!(
+            b_events.try_recv().is_err(),
+            "the other producer hears nothing"
+        );
+        send_sidebar_key(&mut backend, KeyCode::Right, KeyMods::NONE);
+        assert_eq!(
+            a_events.try_recv().as_deref(),
+            Ok("{\"expand\":\"main\"}\n")
+        );
+
+        // `prod` restarts: its new stream takes over, and the old one closing afterwards must not
+        // take the new stream's rows with it.
+        let (_, admitted) = open_stream(&mut backend, 3, "deploys", Some("prod"));
+        assert_eq!(admitted.expect("readmitted").1, a);
+        backend
+            .dispatch(crate::Msg::SidebarStreamClosed {
+                stream_id: 1,
+                tab: id.clone(),
+                producer: a.clone(),
+            })
+            .expect("stale close");
+        assert_eq!(
+            backend.state().sidebar_streams.tabs[&id][&a].rows.len(),
+            2,
+            "the replacement keeps the rows until its own snapshot"
+        );
+        backend
+            .dispatch(crate::Msg::SidebarStreamClosed {
+                stream_id: 2,
+                tab: id.clone(),
+                producer: b.clone(),
+            })
+            .expect("close");
+        assert!(!backend.state().sidebar_streams.tabs[&id].contains_key(&b));
+    });
+}
+
+/// A local process cannot publish into an extension's tab, or into a tab that is not a stream.
+#[test]
+fn stream_admission_refuses_other_owners_and_other_kinds() {
+    on_test_thread(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Panes]);
+        let (_, refused) = open_stream(&mut backend, 1, "git-tools.branches", None);
+        assert!(refused.is_err(), "an extension's tab");
+        let (_, refused) = open_stream(&mut backend, 2, "panes", None);
+        assert!(refused.is_err(), "not a stream tab");
+        let (_, refused) = open_stream(&mut backend, 3, "missing", None);
+        assert!(refused.is_err(), "no such tab");
+    });
+}
+
+fn json_output(
+    stdout: &str,
+    status: i32,
+) -> std::io::Result<crate::platform::command::CommandOutput> {
+    Ok(crate::platform::command::CommandOutput {
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: Vec::new(),
+        status: Some(status),
+        timed_out: false,
+    })
+}
+
+/// A JSON tab's output becomes a tree of rows; a broken script still says why, as error rows.
+#[test]
+fn json_command_output_becomes_rows_or_says_why_not() {
+    let parse = CommandParse {
+        group_prefix: None,
+        format: crate::config::SidebarCommandFormat::Json,
+    };
+    let (rows, tree) = command_listing(
+        json_output(
+            r#"{"rows":[{"id":"api","label":"api"},{"id":"main","parent":"api","label":"main"}]}"#,
+            0,
+        ),
+        &parse,
+    );
+    assert!(rows.is_empty());
+    let tree = tree.expect("a snapshot");
+    assert_eq!(tree[1].parent.as_deref(), Some("api"));
+
+    let (rows, tree) = command_listing(json_output("api\nmain\n", 0), &parse);
+    assert!(tree.is_none());
+    assert!(
+        rows[0].error && rows[0].raw.contains("not a JSON snapshot"),
+        "{rows:?}"
+    );
+
+    let (rows, tree) = command_listing(json_output("{}", 3), &parse);
+    assert!(tree.is_none());
+    assert!(
+        rows[0].error && rows[0].raw.contains("status 3"),
+        "{rows:?}"
+    );
+}
+
+/// Activating a JSON tab's row runs its `on_click` with the row's id and label.
+#[test]
+fn a_json_tab_row_runs_on_click_with_its_id() {
+    on_test_thread(|| {
+        let id = SidebarTabId::new("deps");
+        let tab = SidebarTab::Command {
+            name: id.clone(),
+            label: "Deps".into(),
+            command: "true".into(),
+            interval_secs: 30,
+            on_click: Some(UserCommandAction::Send("open {line}".into())),
+            group_prefix: None,
+            env: Vec::new(),
+            format: crate::config::SidebarCommandFormat::Json,
+        };
+        let mut backend = focused_sidebar_backend(vec![tab.clone()]);
+        {
+            let state = backend.state_mut();
+            state.sidebar.command_output.insert(
+                id.clone(),
+                SidebarCommandOutput {
+                    epoch: 4,
+                    tree: Some(vec![crate::state::SidebarRowSpec {
+                        id: "serde".into(),
+                        parent: None,
+                        label: "serde 1.0".into(),
+                        description: None,
+                        detail: None,
+                        tone: crate::state::SidebarTone::Warning,
+                        active: false,
+                        disabled: None,
+                        expandable: false,
+                        expanded: None,
+                        actions: None,
+                    }]),
+                    cwd: state.sidebar.command_cwd.clone(),
+                    rows: Vec::new(),
+                },
+            );
+        }
+        let items = backend.state().sidebar_item_projections(&tab);
+        assert_eq!(
+            items[0].target,
+            crate::state::RowTarget::CommandTreeRow {
+                config_epoch: backend.state().sidebar.config_epoch,
+                tab_id: id.clone(),
+                output_epoch: 4,
+                id: "serde".into(),
+            }
+        );
+        assert_eq!(
+            crate::update::sidebar::activation::resolve_row_action(
+                &UserCommandAction::Send("open {line}".into()),
+                "serde 1.0"
+            ),
+            UserCommandAction::Send("open serde 1.0".into())
+        );
+    });
+}
+
+/// A producer's confirming action arms on its key, says so on the row, and fires on the second
+/// press; its `close` action is the row's ✕, confirmed the same way.
+#[test]
+fn stream_actions_confirm_on_the_row_before_they_fire() {
+    on_test_thread(|| {
+        let id = SidebarTabId::new("deploys");
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Stream {
+            name: id.clone(),
+            label: "Deploys".into(),
+        }]);
+        let (events, admitted) = open_stream(&mut backend, 1, "deploys", None);
+        let (_, producer) = admitted.expect("admitted");
+        backend
+            .dispatch(crate::Msg::SidebarStreamSnapshot {
+                stream_id: 1,
+                tab: id.clone(),
+                producer,
+                snapshot: stream_snapshot(
+                    r#"{"rows":[{"id":"api","label":"api"}],
+                        "actions":[{"id":"rollback","key":"r","label":"roll back","confirm":true},
+                                   {"id":"remove","key":"d","label":"remove","close":true}]}"#,
+                ),
+            })
+            .expect("snapshot");
+        backend.render();
+        while events.try_recv().is_ok() {}
+
+        send_sidebar_key(&mut backend, KeyCode::Char('r'), KeyMods::NONE);
+        assert!(events.try_recv().is_err(), "the first press only arms");
+        let text = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        assert!(text.contains("Again to roll back"), "{text}");
+        send_sidebar_key(&mut backend, KeyCode::Char('r'), KeyMods::NONE);
+        assert_eq!(
+            events.try_recv().as_deref(),
+            Ok("{\"action\":\"rollback\",\"row\":\"api\"}\n")
+        );
+
+        send_sidebar_key(&mut backend, KeyCode::Char('x'), KeyMods::NONE);
+        assert!(events.try_recv().is_err(), "the ✕ arms first");
+        send_sidebar_key(&mut backend, KeyCode::Char('x'), KeyMods::NONE);
+        assert_eq!(
+            events.try_recv().as_deref(),
+            Ok("{\"action\":\"remove\",\"row\":\"api\"}\n")
+        );
     });
 }

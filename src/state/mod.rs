@@ -20,6 +20,7 @@ mod layout;
 mod mode;
 mod pane;
 mod pickers;
+mod projects;
 mod remote;
 mod search;
 mod services;
@@ -27,6 +28,8 @@ mod session;
 mod sessions_view;
 mod settings;
 mod sidebar;
+mod sidebar_streams;
+mod sidebar_tree;
 mod workbar;
 mod workspace;
 
@@ -49,6 +52,8 @@ pub use session::*;
 pub use sessions_view::*;
 pub use settings::*;
 pub use sidebar::*;
+pub use sidebar_streams::*;
+pub use sidebar_tree::*;
 pub use workbar::*;
 pub use workspace::*;
 
@@ -330,6 +335,8 @@ pub struct State {
     /// Latest metadata from running local session servers. The current session's live panes win
     /// over their copy here; `None` means no successful local sweep has arrived.
     pub local_agent_snapshot: Option<crate::session::discovery::LocalAgentSnapshot>,
+    /// Rows programs publish to stream tabs, by tab and producer.
+    pub sidebar_streams: SidebarStreams,
     /// The pane the Agents view aimed at, waiting for the session that owns it to arrive.
     pub pending_agent_jump: Option<PendingAgentJump>,
     /// Live remote-host monitors, caches, and discovery. Overlay pickers stay on this struct.
@@ -686,6 +693,7 @@ impl State {
             remote_picker: None,
             agent_picker: None,
             local_agent_snapshot: None,
+            sidebar_streams: SidebarStreams::default(),
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),
             collaboration: None,

@@ -1,7 +1,7 @@
 # Sidebar
 
-The sidebar provides optional left and right docks beside your panes with tabs for agent activity,
-panes, sessions, files, Git changes, and worktrees. This page covers opening and navigating it, what each tab shows, and how to
+The sidebar provides optional left and right docks beside your panes with tabs for activity, agents,
+panes, sessions, files, Git changes, worktrees, and projects. This page covers opening and navigating it, what each tab shows, and how to
 configure tabs or add your own.
 
 The sidebar belongs to your client. It is never part of a shared session layout.
@@ -56,7 +56,7 @@ After the `B` command key focuses the sidebar:
 | `Enter` | Activate the selected row |
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
-| `h/l`, arrows, `Space` | Collapse, expand, or toggle directories |
+| `h/l`, arrows, `Space` | Collapse, expand, or toggle directories and [tree rows](#expand-and-collapse) |
 | `Alt+Left/Right`, `Alt+h/l` | Move the active tab; cross into the other visible dock at the inner edge |
 | `Ctrl+Up/Down`, `Ctrl+k/j` | Focus the previous or next panel in this dock |
 | `Ctrl+Left/Right`, `Ctrl+h/l` | Focus the dock in that direction, keeping the panel level |
@@ -92,10 +92,37 @@ pane. Programs can report their own progress here; see [Program status](terminal
 attached client sees the same thing.
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
-use the [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`).
+use the [Agents](#agents) tab or the [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then
+`a`).
 
 rozi ships definitions for common coding-agent CLIs. To add or override one, see
 [Agent definitions](agents.md).
+
+## Agents
+
+Agents lists every coding agent rozi knows about: in the session on screen, in your other running
+local sessions, and on every [connected host](remote.md#connected-host-monitoring). It is the
+sidebar form of the [Agents view](sessions.md#go-to-an-agent) and lists the same agents in the same
+order — blocked first, then working, then done, then idle — so the agent that needs an answer is
+at the top wherever it runs.
+
+```text
+▲ Codex           workbox/backend
+  Blocked
+⠋ Claude Code 4m00s           dev
+  Working · rozi (fix-login)
+```
+
+Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
+The second line gives its status and, for the session on screen, what it is working on or the
+project and branch it works in. Agents in the session on screen also show a time: how long a
+working or blocked state has held, or how long a finished run took, which then stops. An idle agent
+shows no time. The [picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left
+margin shows the agent in the focused pane.
+
+Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
+or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
+activities such as `rozi status` reports or published activity rows.
 
 ## Panes
 
@@ -204,6 +231,47 @@ The list follows the focused pane and refreshes along with the Git tab, so a che
 a shell appears without further action. See [Worktrees](worktrees.md) for the picker, the CLI, and
 settings.
 
+## Projects
+
+Projects lists every Git checkout any of your sessions works in — on this machine and on every
+[connected host](remote.md#projects-on-a-machine-you-are-not-in) — arranged by repository:
+
+```text
+▾ ▲ rozi
+├ ▾   master
+│ └     api             1 pane
+└ ▾ ▲ fix/ssh
+  └   ▲ fix              Codex
+```
+
+Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
+the sessions working in it. A session is listed under every checkout one of its panes or agents
+works in, so a session with panes in two repositories appears under both. A row's marker shows the
+most urgent agent below it: blocked, then working, then done. A session row names its agent, counts
+several, or counts its panes when none runs an agent. When more than one machine has work, each
+machine gets a heading, `LOCAL` for this one.
+
+Activating a session row goes to the most urgent agent working in that checkout, or to a pane there
+when none is: it focuses the pane in the session on screen, and switches to or attaches the session
+first anywhere else. Activating a repository or checkout row shows or hides what is under it.
+
+Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
+lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
+are not listed.
+
+### Expand and collapse
+
+Projects, [JSON command tabs](#json-command-tabs), and [stream tabs](#stream-tabs) are trees. Click
+the `▾` or `▸` beside a row to show or hide what is under it. In a focused sidebar:
+
+| Key | Action |
+| --- | --- |
+| `Right`, `l` | Expand the row, or move to its first child when it is already expanded |
+| `Left`, `h` | Collapse the row, or move to its parent |
+| `Space` | Expand or collapse the row |
+
+rozi remembers which rows you expanded or collapsed until the client exits.
+
 ## Configure tabs and panels
 
 <CaptureGallery title="Sidebar tabs">
@@ -229,10 +297,10 @@ dock; bind them under `[keys]` if you use them often.
 ```toml
 [sidebar]
 startup = false
-tabs = ["activity", "panes", "sessions", "files", "git", "worktrees"]
+tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
 layout = { left = { width = 32, panel_count = 2, panels = [
-  { weight = 0.4, tabs = ["activity", "panes", "sessions"] },
-  { weight = 0.6, tabs = ["files", "git", "worktrees"] },
+  { weight = 0.4, tabs = ["activity", "agents", "panes", "sessions"] },
+  { weight = 0.6, tabs = ["files", "git", "worktrees", "projects"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false
 gap = true
@@ -251,13 +319,16 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 
 ## Custom tabs
 
-You can add two kinds of tab of your own:
+You can add three kinds of tab of your own:
 
 - A launcher tab lists configured entries. Each entry runs a `run`, `send`, or `popup` action, the
   same actions custom key commands use.
-- A command tab runs a command and shows its output as rows.
+- A command tab runs a command and shows its output as rows: one row per line, or a tree of rows
+  when the command prints JSON.
+- A stream tab shows rows that running programs publish to it, and tells them when you click,
+  expand, or act on a row.
 
-Extensions can add tabs of either kind; see [Extension sidebar tabs](#extension-sidebar-tabs).
+Extensions can add tabs of every kind; see [Extension sidebar tabs](#extension-sidebar-tabs).
 
 ### Launcher tabs
 
@@ -266,7 +337,7 @@ Groups appear in the order they first occur, and entries without a group come fi
 header. For example, a tab that starts an agent in a project, grouped by agent:
 
 ```toml
-{ name = "agents", label = "Agents", entries = [
+{ name = "launch", label = "Launch", entries = [
   { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
   { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
 ] }
@@ -295,12 +366,80 @@ working in and runs again when you `cd`. If the tab was off screen while you cha
 shows its placeholder until the new result arrives, not the previous project's rows. With
 `--remote`, the pane's directory is on the server, so the tab runs in the client's own directory.
 
+### JSON command tabs
+
+With `format = "json"`, a command tab's command prints one JSON object describing its rows instead
+of one row per line. Rows can nest, carry a state, and say more than a line of text can:
+
+```toml
+{ name = "deps", label = "Deps", command = "deps-report --json", format = "json", on_click = { run = "deps-open \"$ROZI_ROW_ID\"" } }
+```
+
+```json
+{"rows":[
+  {"id":"serde","label":"serde","description":"1.0.219","tone":"warning","detail":"1.0.228 available"},
+  {"id":"serde/derive","parent":"serde","label":"serde_derive","description":"1.0.219"}
+]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Required. The row's identity, unique in the output. Expansion and clicks follow it. |
+| `label` | Required. The row's text. |
+| `parent` | The `id` of the row it sits under. A missing parent makes it a top-level row. |
+| `description` | Right-aligned text on the label's line. |
+| `detail` | A second line under the label. |
+| `tone` | The row's state, which picks its marker and colour: `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. |
+| `active` | Marks the current one of its kind. |
+| `disabled` | Shows the row dimmed with this reason as its second line, and makes it inert. |
+| `expanded` | Whether the row starts expanded. Your own choice wins once you make one. |
+
+A row with children starts expanded unless it says otherwise. Activating a row runs the tab's
+`on_click` with the row's `id` in `ROZI_ROW_ID` and its label as the row text, so `send` may use
+`{line}` for the label. Without `on_click`, activating a row with children shows or hides them.
+
+The same limits apply as for line output, and unknown fields are ignored. Output that is not such
+an object, a command that fails, or one that writes to standard error shows error rows instead.
+rozi strips control sequences and shortens long text. A command tab cannot use `group_prefix`
+with `format = "json"`; nest rows with `parent` instead.
+
+### Stream tabs
+
+A stream tab has no command of its own. Programs publish its rows with
+[`rozi sidebar publish`](control.md#sidebar-streams) while they run, and rozi tells them what you do
+with those rows. Use one for something a program already watches: deployments, build jobs, a test
+watcher, the machines a service is connected to.
+
+```toml
+{ name = "deploys", label = "Deploys", stream = true }
+```
+
+```sh
+deploy-watch | rozi sidebar publish --tab deploys
+```
+
+Each line a program writes is a complete snapshot of its rows, in the same row format as a
+[JSON command tab](#json-command-tabs). When you activate a row, expand a row marked `expandable`,
+or press one of the program's action keys on a row, rozi writes a line back. Several programs can
+publish to one tab at once; each owns only its own rows, and each gets a heading when there is more
+than one, such as `LOCAL · prod` or `WORKBOX`. A program that exits takes its rows with it.
+
+A program can offer actions on its rows, each bound to a key that works while the sidebar is
+focused. One action can be the row's `✕`, which, like every `✕` in the sidebar, asks for a second
+click or `x`. The sidebar's own keys are never available to a program. See the
+[protocol](control-protocol.md#sidebar-stream) for the full format.
+
+Only processes you run and the extension that owns a tab can publish to it: an extension's
+processes publish only to that extension's own stream tabs, and other programs only to stream tabs
+in your `config.toml`.
+
 ### Pass the selected row or path
 
 | Action | Tab | How the selection is passed |
 | --- | --- | --- |
 | `send` | Command | `{line}` in the text is replaced with the row |
 | `run`, `popup`, `exec` | Command | `ROZI_ROW` environment variable |
+| any | JSON command | the row's `id` in `ROZI_ROW_ID`, its label as above |
 | `send` | File tree | `{path}` in the text is replaced with the path |
 | `run`, `popup` | File tree | `ROZI_FILE` environment variable |
 
@@ -311,8 +450,8 @@ evaluate it. `{line}` is rejected in `run` and
 
 ### Extension sidebar tabs
 
-Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher and command
-forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
+Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher, command, and
+stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
 disablement, failed loads, updates, removal, and reinstallation. See
 [Extensions](writing-extensions.md#sidebar-tabs).
 

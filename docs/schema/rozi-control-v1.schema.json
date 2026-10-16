@@ -94,6 +94,42 @@
       },
       "type": "array"
     },
+    "AgentLocationSpec": {
+      "description": "Where an agent runs, as `agents-overview` reports it and `agent-go` takes it back.",
+      "properties": {
+        "host": {
+          "description": "The connected host, spelled the way `--remote` takes it. Absent for this machine.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pane": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "row": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RowKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The published row, for a program running several agents in one pane."
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "pane"
+      ],
+      "type": "object"
+    },
     "AgentPromptAccepted": {
       "description": "What `agents prompt` answers with when it was asked not to wait.",
       "properties": {
@@ -946,6 +982,36 @@
           "type": "object"
         },
         {
+          "description": "Every agent this UI knows about: the session on screen, its other local sessions, and every\nconnected host, the ones that want attention first. Reached through `agents list --all`.",
+          "properties": {
+            "cmd": {
+              "const": "agents-overview",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or\nattach its session first. Takes a `location` from `agents-overview`.",
+          "properties": {
+            "cmd": {
+              "const": "agent-go",
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/$defs/AgentLocationSpec"
+            }
+          },
+          "required": [
+            "cmd",
+            "location"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "agent-get",
@@ -1436,6 +1502,31 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Publish rows into a sidebar stream tab and receive activations, expansions, actions, and\nvisibility for them. Like `publish`, the connection stays open both ways, and closing it\nwithdraws this producer's rows. Reached through `rozi sidebar publish`.",
+          "properties": {
+            "cmd": {
+              "const": "sidebar-publish",
+              "type": "string"
+            },
+            "name": {
+              "description": "Distinguishes several producers of one caller in the same place.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab": {
+              "description": "The tab: an extension names its own tab's local name, anything else a `config.toml`\nstream tab's id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "tab"
           ],
           "type": "object"
         },
@@ -2334,6 +2425,36 @@
           "type": "object"
         },
         {
+          "description": "Every agent this UI knows about: the session on screen, its other local sessions, and every\nconnected host, the ones that want attention first. Reached through `agents list --all`.",
+          "properties": {
+            "cmd": {
+              "const": "agents-overview",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or\nattach its session first. Takes a `location` from `agents-overview`.",
+          "properties": {
+            "cmd": {
+              "const": "agent-go",
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/$defs/AgentLocationSpec"
+            }
+          },
+          "required": [
+            "cmd",
+            "location"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "agent-get",
@@ -2824,6 +2945,31 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Publish rows into a sidebar stream tab and receive activations, expansions, actions, and\nvisibility for them. Like `publish`, the connection stays open both ways, and closing it\nwithdraws this producer's rows. Reached through `rozi sidebar publish`.",
+          "properties": {
+            "cmd": {
+              "const": "sidebar-publish",
+              "type": "string"
+            },
+            "name": {
+              "description": "Distinguishes several producers of one caller in the same place.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab": {
+              "description": "The tab: an extension names its own tab's local name, anything else a `config.toml`\nstream tab's id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "tab"
           ],
           "type": "object"
         },
@@ -3717,6 +3863,40 @@
         "t"
       ],
       "type": "object"
+    },
+    "GlobalAgentInfo": {
+      "description": "One agent anywhere this UI knows about.",
+      "properties": {
+        "here": {
+          "description": "In the session on screen.",
+          "type": "boolean"
+        },
+        "label": {
+          "description": "The agent's name, numbered per row where a pane runs several (`Codex`, `Claude #2`).",
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/AgentLocationSpec"
+        },
+        "state": {
+          "description": "`working`, `blocked`, `done`, `idle`, or a publisher's own word. `done` covers a finished\nrun the user has not looked at yet.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "location",
+        "label",
+        "state",
+        "here"
+      ],
+      "type": "object"
+    },
+    "GlobalAgentListPayload": {
+      "description": "`agents-overview`: most urgent first, the order the Agents view and tab use.",
+      "items": {
+        "$ref": "#/$defs/GlobalAgentInfo"
+      },
+      "type": "array"
     },
     "GraphicsSessionMetrics": {
       "description": "Semantic graphics supersession is counted separately from overload/resync loss.",
@@ -5944,6 +6124,234 @@
       ],
       "type": "object"
     },
+    "SidebarActionSpec": {
+      "description": "A key a stream producer offers on its rows.",
+      "properties": {
+        "close": {
+          "description": "Show it as the row's ✕ and bind `x` to it too. Always confirms, like every sidebar ✕.",
+          "type": "boolean"
+        },
+        "confirm": {
+          "description": "Require a second press on the same row.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Returned as `action`.",
+          "type": "string"
+        },
+        "key": {
+          "description": "The chord that fires it on the row under the cursor, spelled as in `[keys]` (`d`,\n`ctrl-r`). The sidebar's own navigation keys are refused.",
+          "type": "string"
+        },
+        "label": {
+          "description": "What it does, in a few words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "label"
+      ],
+      "type": "object"
+    },
+    "SidebarRowSpec": {
+      "description": "One row a JSON command tab prints or a `rozi sidebar publish` stream sends.\n\nThe fields say what a row means; rozi decides how it looks. `id` is the row's identity, unique\nwithin one producer and stable across snapshots: expansion, the cursor, and activations follow\nit, never a position.",
+      "properties": {
+        "actions": {
+          "description": "Stream tabs: which of the producer's actions apply to this row, by id. Absent means all.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "active": {
+          "description": "The current one of its kind. At most one row per producer should set it.",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Right-aligned on the label's line.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "description": "A second line under the label.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "disabled": {
+          "description": "Shown but not selectable, with this reason as its second line.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expandable": {
+          "description": "Has children even before any are listed. A stream is told when the user expands it.",
+          "type": "boolean"
+        },
+        "expanded": {
+          "description": "Initial expansion. The user's own choice wins once made.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "parent": {
+          "description": "The row this one sits under. A parent that is not in the snapshot makes it a top-level row.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tone": {
+          "$ref": "#/$defs/SidebarTone"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "SidebarSnapshot": {
+      "description": "What a JSON command tab prints, and each line a stream producer writes: the complete current\nset of its rows.",
+      "properties": {
+        "actions": {
+          "description": "Stream tabs only: this producer's actions. Replaces the previous set when present and keeps\nit when absent, so a producer can declare them once.",
+          "items": {
+            "$ref": "#/$defs/SidebarActionSpec"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rows": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SidebarRowSpec"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SidebarStreamEvent": {
+      "anyOf": [
+        {
+          "description": "The row was clicked, or Enter was pressed on it.",
+          "properties": {
+            "activate": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "activate"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An `expandable` row was expanded: list its children.",
+          "properties": {
+            "expand": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "expand"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One of the producer's actions fired on a row.",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "row": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whether the tab is on screen. Sent when the stream opens and whenever it changes, so a\nproducer can stop working while nobody looks.",
+          "properties": {
+            "visible": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "visible"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "What rozi writes back on a stream, one JSON object per line."
+    },
+    "SidebarTone": {
+      "description": "What a row's state means. Rozi maps it to a glyph and the theme's colors.",
+      "oneOf": [
+        {
+          "const": "normal",
+          "description": "Nothing to report. No glyph.",
+          "type": "string"
+        },
+        {
+          "const": "muted",
+          "description": "Secondary or inactive. Dimmed label, no glyph.",
+          "type": "string"
+        },
+        {
+          "const": "info",
+          "description": "Worth noticing, not urgent.",
+          "type": "string"
+        },
+        {
+          "const": "working",
+          "description": "Work in progress. Animated.",
+          "type": "string"
+        },
+        {
+          "const": "success",
+          "description": "Finished or healthy.",
+          "type": "string"
+        },
+        {
+          "const": "warning",
+          "description": "Needs a look.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Waiting on the user.",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "Failed.",
+          "type": "string"
+        }
+      ]
+    },
     "SpanColor": {
       "anyOf": [
         {
@@ -6708,5 +7116,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 19
+  "x-rozi-schema-version": 20
 }

@@ -2112,7 +2112,8 @@ mod tests {
             entry
                 .errors
                 .iter()
-                .any(|error| error.contains("exactly one of `entries` or `command`")),
+                .any(|error| error
+                    .contains("exactly one of `entries`, `command`, or `stream = true`")),
             "{:?}",
             entry.errors
         );

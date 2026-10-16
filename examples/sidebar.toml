@@ -7,6 +7,7 @@
 startup = true
 tabs = [
   "activity",
+  "agents",
   "panes",
   "sessions",
   { name = "files", label = "", explorer = true },
@@ -25,7 +26,7 @@ tabs = [
   },
   # Grouped launcher: one section per agent, one row per project. Clicking a row opens a pane
   # running that agent in that directory.
-  { name = "agents", label = "Agents", entries = [
+  { name = "launch", label = "Launch", entries = [
     { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
     { label = "docs", group = "claude", run = "cd ~/Projects/docs && claude" },
     { label = "rozi", group = "codex", run = "cd ~/Projects/rozi && codex" },
@@ -40,8 +41,21 @@ tabs = [
     group_prefix = "## ",
     on_click = { send = "{line}" },
   },
+  # JSON command tab: the command prints {"rows":[...]}, rows nest under their `parent`, and a
+  # row's `tone` picks its marker. A run/popup/exec action gets the clicked row's id in
+  # $ROZI_ROW_ID; `send` types the row's label for {line}.
+  {
+    name = "todo",
+    label = "TODO",
+    command = "rg --json TODO | jq -nc '{rows: [inputs | select(.type == \"end\") | {id: .data.path.text, label: .data.path.text, description: (.data.stats.matches | tostring), tone: \"warning\"}]}'",
+    format = "json",
+    on_click = { send = "{line}" },
+  },
+  # Stream tab: rows come from running programs, published with
+  # `some-watcher | rozi sidebar publish --tab deploys`.
+  { name = "deploys", label = "Deploys", stream = true },
 ]
 layout = { left = { width = 38, panel_count = 2, panels = [
-  { weight = 0.62, tabs = ["activity", "panes", "files", "git", "worktrees"] },
-  { weight = 0.38, tabs = ["sessions", "dev", "branches", "agents", "remotes"] },
+  { weight = 0.62, tabs = ["activity", "agents", "panes", "files", "git", "worktrees"] },
+  { weight = 0.38, tabs = ["sessions", "dev", "branches", "launch", "remotes", "todo", "deploys"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }

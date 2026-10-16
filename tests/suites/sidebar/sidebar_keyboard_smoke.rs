@@ -1079,3 +1079,82 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
         .join()
         .expect("theme hover completes");
 }
+
+#[test]
+fn sidebar_width_drag_preserves_pane_focus() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            for shown in [[true, false], [false, true], [true, true]] {
+                let mut backend = backend_with_panes();
+                backend.state_mut().sidebar.shown = shown;
+                backend.render();
+                // Establish real widget focus, rather than only the app's focused pane ID.
+                backend
+                    .dispatch(Msg::RunAction(Action::FocusSidebar))
+                    .unwrap();
+                settle(&mut backend);
+                backend.send_key(key(KeyCode::Esc)).unwrap();
+                settle(&mut backend);
+                let pane_focus = backend.focused_key().cloned().expect("pane focus");
+                assert_eq!(
+                    pane_focus.as_ref(),
+                    backend.state().current().workspaces[0].panes[0]
+                        .keys
+                        .terminal
+                        .as_ref()
+                );
+
+                for (side, is_shown) in shown.into_iter().enumerate() {
+                    if !is_shown {
+                        continue;
+                    }
+                    let frame = backend.capture_frame();
+                    let x = if side == 0 {
+                        (0..50).find(|x| frame.cell(*x, 3).symbol == "│")
+                    } else {
+                        (50..100).rev().find(|x| frame.cell(*x, 3).symbol == "│")
+                    }
+                    .expect("outer sidebar divider");
+                    let target = if side == 0 { x + 3 } else { x - 3 };
+                    for (x, kind) in [
+                        (x, MouseKind::Down(MouseButton::Left)),
+                        (target, MouseKind::Drag(MouseButton::Left)),
+                        (target, MouseKind::Up(MouseButton::Left)),
+                    ] {
+                        backend
+                            .send_mouse(MouseEvent {
+                                x,
+                                y: 3,
+                                kind,
+                                mods: KeyMods::NONE,
+                            })
+                            .unwrap();
+                        settle(&mut backend);
+                        assert_eq!(
+                            backend.focused_key(),
+                            Some(&pane_focus),
+                            "dock {side}, {kind:?}"
+                        );
+                    }
+                    assert_eq!(
+                        backend
+                            .state()
+                            .config
+                            .sidebar
+                            .layout
+                            .dock(if side == 0 {
+                                rozi::config::SidebarPosition::Left
+                            } else {
+                                rozi::config::SidebarPosition::Right
+                            })
+                            .width,
+                        35
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

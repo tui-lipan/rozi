@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 15] = [
+const SCENARIOS: [(&str, &str, fn()); 16] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -80,6 +80,11 @@ const SCENARIOS: [(&str, &str, fn()); 15] = [
         "sidebar-sessions",
         "current, background, running, and restorable session labels",
         sidebar_sessions,
+    ),
+    (
+        "sidebar-panes",
+        "workspace headings with their panes, programs, and locations",
+        sidebar_panes,
     ),
     (
         "sidebar-custom-trees",
@@ -1209,6 +1214,43 @@ fn sidebar_custom_trees() {
                 ),
             );
         }
+    }
+}
+
+/// Two workspaces: the focused one with an editor, an agent, and a build, and a second with one
+/// shell, so headings, nesting, and the focused-pane marker all show.
+fn sidebar_panes() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Panes];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+        let pane = |id: u32, title: &str, program: &str, cwd: &str| {
+            let mut pane = live_pane(id);
+            pane.set_custom_title(title);
+            pane.terminal.foreground_program = Some(program.to_string());
+            pane.terminal.cwd = Some(cwd.to_string());
+            pane
+        };
+        let workspaces = &mut state.current_mut().workspaces;
+        workspaces[0].panes = vec![
+            pane(10, "editor", "nvim", "/home/me/src/rozi/src/view"),
+            pane(11, "claude", "claude", "/home/me/src/rozi"),
+            pane(12, "tests", "cargo", "/home/me/src/rozi"),
+        ];
+        workspaces[0].focused_pane = Some(10);
+        workspaces[1].panes = vec![pane(13, "docs", "zsh", "/home/me/src/tui-lipan/docs")];
+        state.current_mut().focused_pane = Some(10);
+    }
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 20));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-panes-{width}"));
     }
 }
 

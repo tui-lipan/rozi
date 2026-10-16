@@ -132,8 +132,8 @@ activities such as `rozi status` reports or published activity rows.
 
 ## Panes
 
-Panes lists live panes grouped by workspace. Each row shows the pane title, foreground program, and
-working directory. Activating a row switches to that workspace and focuses the pane. Each group ends
+Panes lists live panes grouped by workspace: each workspace is a heading with its panes beneath
+it. Each row shows the pane title, foreground program, and working directory. Activating a row switches to that workspace and focuses the pane. Each group ends
 with **+ New pane**, which opens a pane on that workspace.
 
 To close a pane, hover its row and click `x` twice, or select the row in a focused sidebar and press

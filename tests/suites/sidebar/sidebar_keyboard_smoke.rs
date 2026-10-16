@@ -1109,11 +1109,13 @@ fn sidebar_width_drag_preserves_pane_focus() {
                     if !is_shown {
                         continue;
                     }
+                    // Find the divider on the tab bar: rows below it draw tree guides with the
+                    // same glyph.
                     let frame = backend.capture_frame();
                     let x = if side == 0 {
-                        (0..50).find(|x| frame.cell(*x, 3).symbol == "│")
+                        (0..50).find(|x| frame.cell(*x, 0).symbol == "│")
                     } else {
-                        (50..100).rev().find(|x| frame.cell(*x, 3).symbol == "│")
+                        (50..100).rev().find(|x| frame.cell(*x, 0).symbol == "│")
                     }
                     .expect("outer sidebar divider");
                     let target = if side == 0 { x + 3 } else { x - 3 };

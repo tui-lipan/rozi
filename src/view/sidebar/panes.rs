@@ -1,8 +1,10 @@
 use tui_lipan::prelude::*;
 
-use super::row::{self, Row, RowTarget, SidebarRow};
+use super::row::{self, Row, RowTarget, Shape, SidebarRow};
 use crate::AppRoot;
 
+/// The Panes tab as a tree: each workspace is a heading, with its panes and the way to open
+/// another beneath it.
 pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
     let active = ctx.state.current().active_workspace;
@@ -12,10 +14,14 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             continue;
         }
         if !rows.is_empty() {
-            rows.push(SidebarRow::spacer());
+            rows.push(SidebarRow::spacer().keyed(format!("spacer:{workspace_index}")));
         }
         let workspace_label = super::workspace_heading(&ctx.state, workspace_index);
-        rows.push(SidebarRow::header(row::header(ctx, workspace_label, false)));
+        rows.push(
+            SidebarRow::header(row::header(ctx, workspace_label, false))
+                .shape(Shape::Heading)
+                .keyed(format!("workspace:{workspace_index}")),
+        );
         for pane in panes {
             let id = pane.id;
             let program = pane
@@ -45,10 +51,16 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             };
             rows.push(
                 SidebarRow::item(row, RowTarget::Pane(id))
-                    .closable(crate::state::SidebarClose::Pane(id)),
+                    .closable(crate::state::SidebarClose::Pane(id))
+                    .at(1)
+                    .keyed(format!("pane:{id}")),
             );
         }
-        rows.push(new_pane_row(ctx, workspace_index));
+        rows.push(
+            new_pane_row(ctx, workspace_index)
+                .at(1)
+                .keyed(format!("new-pane:{workspace_index}")),
+        );
     }
     rows
 }

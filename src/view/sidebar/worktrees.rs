@@ -1,10 +1,11 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, RowTarget, SidebarRow};
+use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
 use crate::AppRoot;
 use crate::state::{WorktreeTabItem, WorktreeTabRow};
 
-/// The Worktrees tab: the focused pane's repository, then one row per checkout.
+/// The Worktrees tab: the focused pane's repository as a heading, with one row per checkout
+/// beneath it.
 ///
 /// Each checkout reads like a session row. The branch is the title, PR/CI is the detail, and
 /// the right edge says what the checkout is to Rozi: the session using it, or `primary`/`locked`/
@@ -18,27 +19,42 @@ pub(super) fn worktrees_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     ctx.state
         .worktree_tab_items()
         .into_iter()
-        .map(|item| match item {
+        .enumerate()
+        .map(|(index, item)| match item {
             // The host is short and says which machine every row below lives on; the repository
             // name is the one that can afford to clip.
             WorktreeTabItem::Header { repository, host } => SidebarRow::header(
                 super::row::header_with_note(ctx, repository, host, Priority::Description),
-            ),
-            WorktreeTabItem::Checkout(row) => checkout_row(ctx, row),
-            WorktreeTabItem::Creating { branch } => SidebarRow::item(
-                Row::new(branch)
-                    .title_style(muted)
-                    .priority(Priority::Description)
-                    .badge_text("creating…", accent),
-                RowTarget::Inert,
-            ),
+            )
+            .shape(Shape::Heading)
+            .keyed("repository"),
+            WorktreeTabItem::Checkout(row) => {
+                let key = format!("checkout:{}", row.tree.path);
+                checkout_row(ctx, row).at(1).keyed(key)
+            }
+            WorktreeTabItem::Creating { branch } => {
+                let key = format!("creating:{branch}");
+                SidebarRow::item(
+                    Row::new(branch)
+                        .title_style(muted)
+                        .priority(Priority::Description)
+                        .badge_text("creating…", accent),
+                    RowTarget::Inert,
+                )
+                .at(1)
+                .keyed(key)
+            }
             WorktreeTabItem::Message(text) => {
                 SidebarRow::item(Row::new(text).title_style(muted), RowTarget::Inert)
+                    .at(1)
+                    .keyed(format!("message:{index}"))
             }
             WorktreeTabItem::New => SidebarRow::item(
                 Row::new("+ New worktree").title_style(accent),
                 RowTarget::NewWorktree,
-            ),
+            )
+            .at(1)
+            .keyed("new"),
         })
         .collect()
 }

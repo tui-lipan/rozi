@@ -205,7 +205,10 @@ impl State {
 
     /// Whether `tab` renders through the framework Tree, which then owns its keyboard navigation.
     pub fn sidebar_tab_is_tree(&self, tab: &SidebarTab) -> bool {
-        matches!(tab, SidebarTab::Sessions | SidebarTab::Panes) || self.tree_sections(tab).is_some()
+        matches!(
+            tab,
+            SidebarTab::Sessions | SidebarTab::Panes | SidebarTab::Worktrees
+        ) || self.tree_sections(tab).is_some()
     }
 
     /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.

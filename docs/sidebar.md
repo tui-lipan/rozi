@@ -224,7 +224,8 @@ switch every visible panel to other tabs.
 ## Worktrees
 
 Worktrees lists the Git worktrees of the focused pane's repository, on the host running that pane's
-session. A heading names the repository and host. Each checkout is listed by branch, with PR/CI
+session. A heading names the repository and host, with the checkouts beneath it. Each checkout is
+listed by branch, with PR/CI
 status underneath, such as `#114 · passed` or `#112 · merged`. Paths stay hidden; open the
 **Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in the left margin marks
 the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for

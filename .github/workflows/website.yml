@@ -1,0 +1,67 @@
+# Point the `website` branch at the release users install.
+#
+# rozi.tui-lipan.dev deploys from `website`, not `master`, so the documentation describes the
+# latest release rather than work that has not shipped. The install scripts the site serves come
+# from the same commit, so they always match the published binaries.
+#
+# After a successful release this moves `website` to the release tag. Run it by hand with a `ref`
+# to publish a documentation fix before the next release: branch from the latest tag, cherry-pick
+# the fix, push that branch, and pass its name. Never pass `master` - it describes unreleased work.
+name: Website
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit, tag, or branch to publish (default: the latest release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: website
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: move website to the release
+    # A release run also happens for pull requests that touch release files; only a tag push
+    # publishes anything.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move the website branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.ref }}
+          RELEASED: ${{ github.event.workflow_run.head_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          ref="${REQUESTED:-$latest}"
+
+          # A release run for an older tag finishing late must not move the site backwards.
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] && [ "$ref" != "$RELEASED" ]; then
+            echo "latest release is $latest; leaving website alone"
+            exit 0
+          fi
+
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ref" --jq .sha)"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/website" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/website" \
+              -f sha="$sha" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/heads/website -f sha="$sha" >/dev/null
+          fi
+          echo "website now at $ref ($sha)"

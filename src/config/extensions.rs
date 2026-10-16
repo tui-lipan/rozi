@@ -2247,7 +2247,7 @@ mod tests {
 
     /// The frozen shape of extension API 1.
     ///
-    /// Every key here is a promise (`docs/extensions.md#stability`). Adding one is compatible and
+    /// Every key here is a promise (`docs/writing-extensions.md#stability`). Adding one is compatible and
     /// means adding it to this list too; removing or renaming one is not, and needs `api = 2`. The
     /// list is spelled out rather than derived so the diff, not the reader, catches a change.
     #[test]

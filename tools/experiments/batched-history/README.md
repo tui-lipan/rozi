@@ -1,6 +1,6 @@
 # Bounded batch compaction experiment
 
-See the [measurement report](../../../docs/performance/audits/2026-09-14.md).
+See the [measurement report](../../../dev/performance/audits/2026-09-14.md).
 
 This third experiment builds on the dense viewport / compact history split. It is not enabled
 in Rozi. The patches apply to the published `alacritty_terminal 0.26.0` and `tui-lipan 0.9.0`

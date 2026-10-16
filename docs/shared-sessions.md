@@ -25,21 +25,9 @@ A joining client receives the pane list and layout first, then each pane's termi
 produced while a pane is being sent arrives after it, so the pane never shows live output in the
 middle of its history.
 
-### Limits while joining
-
-- The server queues at most 4 MiB of pane history for a joining client at a time. There is no limit
-  on the total history sent.
-- Live output retained behind a slow join is capped at 8 MiB. When it would exceed the cap, the
-  server drops queued output for the busiest pane and replays its latest screen when the client
-  catches up. Other clients continue receiving output. The same recovery applies to an attached
-  client that falls behind.
-- Pane history up to 256 KiB is sent from memory. Larger history is written to an unnamed file in
-  rozi's private cache directory, sent in 256 KiB pieces, and deleted afterwards. If the cache is
-  unavailable, rozi sends it from memory instead.
-
-Using the cache directory keeps rozi's own memory use bounded, and lets the operating system
-reclaim those pages under memory pressure. The system may still count them as memory while they
-are cached, and a memory-backed `XDG_CACHE_HOME` stores them in memory.
+Joining a session with a lot of history takes a moment, but never slows down the clients already
+attached. If a client falls far behind a busy pane, rozi skips the output it missed and redraws the
+pane from its current screen.
 
 ## Layout control
 

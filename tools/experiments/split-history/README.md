@@ -1,6 +1,6 @@
 # Dense viewport and compact history experiment
 
-This prototype is not enabled in Rozi. See the [results and decision](../../../docs/performance/audits/2026-09-13.md). It keeps the original width-sized `Vec<Cell>` row
+This prototype is not enabled in Rozi. See the [results and decision](../../../dev/performance/audits/2026-09-13.md). It keeps the original width-sized `Vec<Cell>` row
 representation for the viewport and moves completed rows into a separate history deque.
 History stores either a dense row or an exact prefix plus a repeated final cell. The repeated
 cell retains colors, flags, hyperlinks, and Unicode data. Uncompressible rows stay dense.

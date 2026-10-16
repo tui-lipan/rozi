@@ -1,7 +1,7 @@
 # Compact scrollback port to Alacritty master
 
 This experiment is not used by Rozi. See the
-[measurement report](../../../docs/performance/audits/2026-09-15-alacritty-port.md).
+[measurement report](../../../dev/performance/audits/2026-09-15-alacritty-port.md).
 
 `engine.patch` ports the dense viewport / compact history split to Alacritty `master` at
 `d692748d3f61253ebe9f5094320120d22f6a046f`, the revision proposed upstream in

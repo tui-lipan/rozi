@@ -350,7 +350,7 @@ Both keep every change with the moment it happened, so the GIF or video plays in
 
 ## Package a script as an extension
 
-Turn a script into an [extension](extensions.md) to give it a stable command ID, lifecycle
+Turn a script into an [extension](writing-extensions.md) to give it a stable command ID, lifecycle
 management, and a manifest you can share. This one packages the branch picker from
 [Pick and switch a Git branch](#pick-and-switch-a-git-branch):
 
@@ -382,4 +382,5 @@ action:
 "git-tools.pick-branch" = "ctrl-a b"
 ```
 
-See [Extensions](extensions.md) for installation, trust, manifests, services, and testing.
+See [Write an extension](writing-extensions.md) for manifests and services, and
+[Extensions](extensions.md) for installing and trusting one.

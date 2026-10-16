@@ -2,6 +2,7 @@
 import { useData, withBase } from "vitepress";
 import { computed, onMounted, ref } from "vue";
 import RoziStage from "./composition/RoziStage.vue";
+import ClipGallery from "./ClipGallery.vue";
 import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
@@ -13,28 +14,29 @@ import shotWorkspace from "../../assets/captures/workspace.webp";
 import shotTokyoNight from "../../assets/captures/theme-tokyo-night.webp";
 import shotRosePineDawn from "../../assets/captures/theme-rose-pine-dawn.webp";
 import shotMerged from "../../assets/captures/style-merged.webp";
-import shotPowerline from "../../assets/captures/style-powerline.webp";
+import shotTmux from "../../assets/captures/style-tmux.webp";
 import shotPersonalized from "../../assets/captures/personalized.webp";
+import clipParticles from "../../assets/captures/pane-particles.mp4";
+import posterParticles from "../../assets/captures/pane-particles-poster.webp";
+import clipPortal from "../../assets/captures/pane-portal.mp4";
+import posterPortal from "../../assets/captures/pane-portal-poster.webp";
+import clipScan from "../../assets/captures/pane-scan.mp4";
+import posterScan from "../../assets/captures/pane-scan-poster.webp";
+import clipSlide from "../../assets/captures/pane-slide.mp4";
+import posterSlide from "../../assets/captures/pane-slide-poster.webp";
+import clipScale from "../../assets/captures/pane-scale.mp4";
+import posterScale from "../../assets/captures/pane-scale-poster.webp";
+import clipWorkspaces from "../../assets/captures/workspace-switch.mp4";
+import posterWorkspaces from "../../assets/captures/workspace-switch-poster.webp";
+import clipImages from "../../assets/captures/image-effects.mp4";
+import posterImages from "../../assets/captures/image-effects-poster.webp";
 
 /* The pre-paint script in config.ts has already decided this and hidden the
    page accordingly; reading its class back is what keeps the two in step. */
 const introPlaying = ref(false);
-/* The capture clip is left paused, with controls, for anybody who asked for
-   less motion; everybody else sees it loop. Started here rather than with
-   `autoplay` so the server-rendered page never plays it before that is known. */
-const captureVideo = ref<HTMLVideoElement | null>(null);
-const captureStill = ref(false);
 onMounted(() => {
   introPlaying.value =
     document.documentElement.classList.contains("rozi-intro-pending");
-  captureStill.value = window.matchMedia(
-    "(prefers-reduced-motion: reduce)",
-  ).matches;
-  if (!captureStill.value) {
-    captureVideo.value?.play().catch(() => {
-      captureStill.value = true;
-    });
-  }
 });
 
 // From Cargo.toml via config.ts - see NavTitleMeta.vue.
@@ -278,13 +280,8 @@ const exampleExtensions = [
 type DocPage = { text: string; link: string };
 type DocGroup = { text: string; items?: DocPage[] };
 
-/* One dated audit report per audit, forever. They belong in the sidebar, where
-   somebody is reading the performance docs, and not in a directory of the
-   documentation - `Performance Records` is the page that indexes them. */
-const isArchive = (page: DocPage) => page.link.startsWith("/performance/audits/");
-
 const docGroups = (theme.value.sidebar as DocGroup[])
-  .map((group) => ({ ...group, items: (group.items ?? []).filter((p) => !isArchive(p)) }))
+  .map((group) => ({ ...group, items: group.items ?? [] }))
   .filter((group) => group.items.length > 0);
 
 const docPages = docGroups.reduce((total, group) => total + group.items.length, 0);
@@ -325,14 +322,16 @@ titlebar = "integrated"
 title_style = "round"`,
   },
   {
-    src: shotPowerline,
-    alt: "Thick pane frames with arrow-shaped titles, tabs, and badges",
-    label: "Powerline",
+    src: shotTmux,
+    alt: "Panes separated by thin dividers with no titles, and the workbar along the bottom edge",
+    label: "tmux",
     code: `[pane]
-border_style = "thick"
-title_style = "arrow"
-workbar_style = "arrow"
-workbar_tab_style = "arrow"`,
+focus_on_hover = false
+border_mode = "dividers"
+show_titles = false
+workbar_gap = false
+show_workbar = true
+workbar_at_bottom = true`,
   },
   {
     src: shotPersonalized,
@@ -353,6 +352,78 @@ position = "right"`,
 ];
 const themeShot = ref(0);
 const themeCode = computed(() => highlightToml(THEME_SHOTS[themeShot.value].code));
+
+/* "Motion": one clip per pane style, each opening an editor and closing it again, then the
+   workspace slide. The config beside the frame follows the selected tab. */
+const paneStyle = (style: string) => `[animations]
+pane_open_style = "${style}"
+pane_close_style = "${style}"`;
+const MOTION_CLIPS = [
+  {
+    src: clipParticles,
+    poster: posterParticles,
+    label: "Particles",
+    alt: "An editor pane gathers out of drifting motes, then bursts into fragments that fall away",
+    code: paneStyle("particles"),
+  },
+  {
+    src: clipPortal,
+    poster: posterPortal,
+    label: "Portal",
+    alt: "An editor pane opens radially from its center inside a ring of punctuation, then closes the same way",
+    code: paneStyle("portal"),
+  },
+  {
+    src: clipScan,
+    poster: posterScan,
+    label: "Scan",
+    alt: "An editor pane is drawn in along a diagonal sweep, then erased by one",
+    code: paneStyle("scan"),
+  },
+  {
+    src: clipSlide,
+    poster: posterSlide,
+    label: "Slide",
+    alt: "An editor pane slides in from its split edge while its neighbours make room, then slides out",
+    code: paneStyle("slide"),
+  },
+  {
+    src: clipScale,
+    poster: posterScale,
+    label: "Scale",
+    alt: "An editor pane grows from its center with a soft fade, then shrinks away",
+    code: paneStyle("scale"),
+  },
+  {
+    src: clipWorkspaces,
+    poster: posterWorkspaces,
+    label: "Workspaces",
+    alt: "Three workspaces slide past one another as the view moves from the first to the third and back",
+    code: `[animations]
+workspace = true
+workspace_ms = 220`,
+  },
+];
+const motionClip = ref(0);
+const motionCode = computed(() => highlightToml(MOTION_CLIPS[motionClip.value].code));
+
+const CAPTURE_CLIP = [
+  {
+    src: captureClip,
+    poster: capturePoster,
+    label: "Recording",
+    alt: "A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops.",
+  },
+];
+
+const IMAGE_CLIP = [
+  {
+    src: clipImages,
+    poster: posterImages,
+    label: "Images",
+    alt: "The rozi logo as an image beside the rozi website in terminal-browser. The command palette dims both pictures, then the browser pane bursts into particles.",
+  },
+];
 
 const CONFIG_SAMPLE = highlightToml(`[theme]
 name = "catppuccin-mocha"
@@ -591,6 +662,59 @@ restart = "on-failure"`);
         </div>
       </section>
 
+      <section class="lp-section">
+        <header class="lp-head">
+          <h2>Motion</h2>
+          <p class="lp-head-note">Five pane styles · one switch turns it all off</p>
+        </header>
+        <div class="lp-two lp-capture">
+          <div>
+            <p class="lp-lead">
+              Panes arrive and leave with one of five effects, chosen separately
+              for opening and closing, and workspaces slide past one another as
+              you switch between them.
+            </p>
+            <p class="lp-lead">
+              Prefer a still screen? <code>[animations] enabled = false</code>
+              turns every animation off at once, and
+              <b>Settings › General › Animations</b> has a switch for each one.
+            </p>
+            <a
+              class="lp-more"
+              :href="withBase('/layouts-and-panes#pane-open-and-close-animation-styles')"
+              >Animation styles →</a
+            >
+            <div class="lp-code lp-motion-code">
+              <pre><code v-html="motionCode"></code></pre>
+            </div>
+          </div>
+          <ClipGallery
+            v-model:active="motionClip"
+            :clips="MOTION_CLIPS"
+            title="~/src/rozi — api"
+          />
+        </div>
+
+        <div class="lp-two lp-capture lp-capture-flip">
+          <div>
+            <h3 class="lp-h3">Pictures that move with their panes</h3>
+            <p class="lp-lead">
+              Programs can draw real images with the Kitty graphics protocol: a
+              logo, a plot, a whole web page in terminal-browser. They take part
+              in every effect, so a closing portal clips them, particles scatter
+              them, and an open picker dims them along with the text around them.
+            </p>
+            <p class="lp-lead">
+              On Kitty-protocol terminals such as Ghostty, rozi passes pictures
+              straight to the terminal wherever it can, so even a live web page
+              keeps up. Other terminals get iTerm2, sixel, or text-cell images.
+            </p>
+            <a class="lp-more" :href="withBase('/terminal#images')">Images in panes →</a>
+          </div>
+          <ClipGallery :clips="IMAGE_CLIP" title="~/src/rozi — media" />
+        </div>
+      </section>
+
       <section class="lp-section lp-two">
         <div>
           <header class="lp-head">
@@ -741,22 +865,7 @@ rozi record export ~/demo.rozirec --to png-frames frames</code></pre>
               >Recording →</a
             >
           </div>
-          <figure class="lp-shot">
-            <video
-              ref="captureVideo"
-              :src="captureClip"
-              :poster="capturePoster"
-              :controls="captureStill"
-              width="1920"
-              height="1088"
-              muted
-              loop
-              playsinline
-              preload="metadata"
-              aria-label="A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops."
-            ></video>
-            <figcaption>Recorded by rozi itself.</figcaption>
-          </figure>
+          <ClipGallery :clips="CAPTURE_CLIP" title="~/src/rozi — api" />
         </div>
       </section>
 

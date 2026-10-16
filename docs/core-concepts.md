@@ -13,6 +13,8 @@ Because the two are separate, closing the client does not stop a named session. 
 editors, and builds keep running, and you can attach to them again later, from the same terminal or
 another one.
 
+![Two rozi windows attached to one session named dev, whose first workspace shows three panes running nvim, cargo watch, and claude](./assets/diagrams/sessions-and-clients.svg)
+
 A client does not have to show a session. A bare `rozi` opens the session picker without starting
 anything. If you dismiss the picker, rozi stays open with no session attached until you choose one.
 

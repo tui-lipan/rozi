@@ -143,7 +143,7 @@ def exclusion_reason(subject: str, paths: Sequence[str]) -> str | None:
         or path.startswith(".agents/")
         or path.startswith(".opencode/")
         or path.startswith("scripts/")
-        or path == "docs/release-process.md",
+        or path == "dev/release-process.md",
     ):
         return "CI-only change"
     if re.match(r"^test(?:\([^)]*\))?:", lowered) and paths_are(

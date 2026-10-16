@@ -30,7 +30,7 @@ venv/
 /.claude/worktrees/
 
 # Documentation site (docs/ doubles as the VitePress source for rozi.tui-lipan.dev)
-/docs/node_modules/
+/docs/node_modules
 /docs/.vitepress/dist/
 /docs/.vitepress/cache/
 /docs/.vitepress/.temp/

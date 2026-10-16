@@ -1,6 +1,6 @@
 # Render-oriented history reads
 
-This prototype is not enabled in Rozi. See the [measurement report](../../../docs/performance/audits/2026-09-14-render.md).
+This prototype is not enabled in Rozi. See the [measurement report](../../../dev/performance/audits/2026-09-14-render.md).
 It keeps the dense viewport / compact history split and changes how snapshots read it.
 
 Live viewport rendering indexes dense rows directly. History traversal stays explicit for

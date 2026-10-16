@@ -107,21 +107,3 @@ the client holding layout control runs its hooks.
 
 No hooks run while every client is detached, and a client that crashes cannot run a final
 `session-detached` hook.
-
-## Migrate from `[hooks]`
-
-The old flat `[hooks]` table is no longer supported, and a config that uses it fails to load:
-
-```toml
-# Old
-[hooks]
-pane-exited = "notify-send 'pane exited'"
-```
-
-Convert each value to a `[[hooks]]` entry:
-
-```toml
-[[hooks]]
-event = "pane-exited"
-run = "notify-send 'pane exited'"
-```

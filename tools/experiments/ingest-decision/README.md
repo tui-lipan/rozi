@@ -1,7 +1,7 @@
 # Compact history ingest decision
 
 This is the last compact-history experiment. It is not enabled in Rozi. See the
-[measurement report](../../../docs/performance/audits/2026-09-14-ingest.md).
+[measurement report](../../../dev/performance/audits/2026-09-14-ingest.md).
 
 The candidate is the render-history engine, unchanged, with its framework changes ported to
 released `tui-lipan` 0.9.1. The bulk `RowParts` builder uses the released attr-keyed run helpers.

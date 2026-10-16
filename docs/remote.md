@@ -41,9 +41,6 @@ configured hosts, hosts you added, recently used hosts, and hosts with a live at
 returning to this list does not contact any machine.
 
 `Enter` opens **Sessions** with that host’s tab selected.
-Switch tabs to browse local sessions or another host without backing through the host list.
-If you came from a Sessions search, opening a host keeps that query on its Sessions tab;
-returning without opening a host restores the original tab and query.
 
 | Key | Remote hosts |
 | --- | --- |
@@ -65,10 +62,7 @@ on its row so you can retry or edit the host. Opening a host does not attach a s
 shell; choose or create a session in Sessions.
 
 While a host is connecting, its row shows a spinner and `connecting…`, and `Esc` cancels the
-attempt. Only one connection runs at a time: `Enter` and `Ctrl+R` wait until it finishes, and a host
-added in the meantime is saved and selected but not connected. You can still move through the list
-and edit or forget other hosts. Opening Add or Edit keeps you in Remote hosts when the connection
-finishes, preserving your form. Canceling a startup connection also cancels resuming its last session.
+attempt. One host connects at a time.
 
 `rozi --remote <host>` also opens Sessions on the host’s tab as soon as it connects.
 `Ctrl+R` reconnects and refreshes the host while staying on Remote hosts.
@@ -184,15 +178,11 @@ A running rozi client shows SSH prompts in a dialog by default:
 - Any other yes-or-no question from SSH offers `Yes` and `No`. `←` and `→` move between them, and
   `Enter` or a click chooses one.
 - A rejected password is reported on the prompt when SSH asks again.
-- `Esc` cancels the connection attempt. SSH asks up to three times per connection, so `Esc` also
-  declines the remaining attempts and gives up on that host connection. Activating the host again
-  starts a new connection and prompts normally.
+- `Esc` cancels the connection attempt.
 - A prompt left unanswered for five minutes fails its connection and closes.
 
-To do this, rozi sets `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force`, and its own variables on every
-`ssh` and `scp` it runs, overriding a desktop `SSH_ASKPASS` for those commands only. This needs
-OpenSSH 8.4 or newer on the client, which rozi checks with `ssh -V`. An older client would prompt
-on the terminal, over the rozi window, so with one rozi runs SSH in batch mode instead: load a key
+The dialog needs OpenSSH 8.4 or newer on your machine, and it replaces a desktop `SSH_ASKPASS`
+program for rozi's own connections. With an older OpenSSH, rozi cannot show prompts, so load a key
 into your agent, or connect once with `ssh <HOST>` to accept its host key.
 
 Interactive command-line runs keep SSH's ordinary terminal prompt: `rozi sessions list --remote`,
@@ -239,15 +229,9 @@ Opening a host runs several SSH commands in a row. On Linux and macOS, they shar
 so you authenticate once per host: a password host asks for the password a single time, and later
 commands skip the handshake.
 
-For its own commands, rozi passes `ControlMaster=auto`, a `ControlPath` in its runtime directory,
-and `ControlPersist=60`, overriding any `ControlMaster` or `ControlPath` in your SSH config. The
-shared connection closes about a minute after the last command using it finishes.
-`ServerAliveInterval` and `ServerAliveCountMax` apply to it, because a shared connection takes its
-settings from the command that opened it.
-
-The shared connection is per user, not per client, so two rozi clients on the same machine share
-one connection per host. For that reason, disconnecting from a host in rozi does not close the
-shared connection: closing it would also end another client's sessions on that host.
+rozi manages this connection itself, so its own `ControlMaster` and `ControlPath` settings take
+the place of yours for rozi's commands. The connection is shared by every rozi window on your
+machine, and closes about a minute after the last command using it finishes.
 
 Windows clients do not share SSH connections and authenticate for each command.
 
@@ -277,8 +261,7 @@ On POSIX hosts, rozi checks `PATH` and common install locations: `~/.local/bin`,
 hosts, it checks `PATH`, `%USERPROFILE%\.local\bin`, and `%USERPROFILE%\.cargo\bin`. After these,
 it checks its own managed install directory. Listing, attaching, monitoring, and killing sessions
 all use the path found, so the host's non-interactive SSH `PATH` does not need these directories.
-Use `binary_path` for an installation anywhere else. Found paths are cached briefly and checked
-again after a remote command fails.
+Use `binary_path` for an installation anywhere else.
 
 ### Where rozi installs
 
@@ -298,9 +281,8 @@ host's platform. The manifest is verified against a signing key built into rozi 
 expiry, and it is used to verify the archive and binary. A release server or
 `ROZI_RELEASE_BASE_URL` mirror is only a download location; it cannot sign releases.
 
-rozi uploads to a temporary path and checks that the binary runs and is compatible before moving it
-into place. If the check fails, rozi removes the temporary file and leaves any existing install
-untouched. rozi refuses to overwrite an install target that is not a regular file.
+rozi checks that the new binary runs before it moves it into place. A failed install leaves any
+existing one untouched.
 
 For development or CI:
 
@@ -311,15 +293,10 @@ For development or CI:
 
 ### Version compatibility
 
-The graphics pipeline uses session protocol 30. Update both clients and servers from protocol 29,
-and restart existing sessions before attaching.
-
-The client and the session server must speak the same session protocol version. This release
-supports only one, so after an update that changes it, update both ends and restart any running
-named sessions on the host. Optional features are agreed per connection: when one side lacks a
-feature, only that feature is unavailable. A client update therefore does not always require
-restarting a remote session and the processes in it. rozi may reject a configured or discovered
-binary before attaching when it can tell the versions do not match.
+Your rozi and the rozi on the host must speak the same session protocol. When a release changes it,
+its release notes say so: update both ends, then restart the named sessions running on the host.
+Releases that keep the protocol work with each other, and updating the client alone does not
+restart remote sessions.
 
 ## Understand the client and server boundary
 
@@ -344,7 +321,7 @@ Hooks run locally and receive `ROZI_REMOTE_HOST`. The control socket also stays 
 
 Extension commands, services, and sidebar tabs run on your client by default, and a command that
 runs there starts in `rozi`'s own directory rather than the remote pane's. An extension can
-[place](extensions.md#run-on-the-session-host) a contribution on the session's host instead: rozi
+[place](writing-extensions.md#run-on-the-session-host) a contribution on the session's host instead: rozi
 then runs it on the remote machine, over a separate SSH connection, from a copy of the extension's
 files, and relays its requests back to your client. `rozi extensions status` shows what runs where.
 `rozi sessions list --remote`, `rozi sessions kill --remote`, and `rozi worktrees --remote` each run
@@ -390,26 +367,21 @@ Connecting a host also opens a separate channel that watches the host's sessions
 when you close the Sessions sidebar or switch to another machine. rozi never contacts a saved host
 just because rozi starts or a picker opens.
 
-Every two seconds, the channel checks the host's health and refreshes its session list. It does not
-attach to sessions, receive terminal output, or take layout control. Each host reconnects on its
-own, waiting between 500 ms and 30 seconds between attempts. While a host is unreachable, its last
-session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `last seen` row forgets
+The channel keeps the host's session list current. It does not attach to sessions, receive terminal
+output, or take layout control. If the host becomes unreachable, rozi keeps trying in the
+background, and its last session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `last seen` row forgets
 it without contacting the host; if the host still reports the session later, it is listed again.
 
 Background reconnects never prompt. If a host needs a password or host-key approval, select it in
 Remote hosts and reconnect with `Enter`, or `Ctrl+R` if it still shows connected; unless
 `[remote] batch_mode = true`, the SSH dialog then handles the prompt.
 
-Monitoring runs `rozi sessions watch` on the host, a protocol meant only for rozi clients. It is
-versioned separately from session attachment. If the host's rozi lacks a required feature
-(`session-list` or `health-check`), the host shows an error until you update rozi on the host and
-reconnect; a missing optional feature disables only that feature. Updating rozi on the host does not
-restart its running sessions.
+If the host's rozi is too old to be monitored, the host shows an error until you update rozi there
+and reconnect. Updating rozi on the host does not restart its running sessions.
 
 ### Agents on a machine you are not in
 
-When both ends support the `agent-summaries` feature, monitoring also reports what the agents in
-each session are doing. Session rows then read:
+Monitoring also reports what the agents in each session are doing. Session rows then read:
 
 ```text
 WORKBOX                                     ● Connected
@@ -498,4 +470,4 @@ See also [Troubleshooting](troubleshooting.md).
   [Shared sessions](shared-sessions.md#security-and-caveats).
 - An extension process placed on a remote host acts on your client only through rozi, which checks
   each request against the host and session it was placed for and never lets it start a process on
-  your client; see [Run on the session host](extensions.md#run-on-the-session-host).
+  your client; see [Run on the session host](writing-extensions.md#run-on-the-session-host).

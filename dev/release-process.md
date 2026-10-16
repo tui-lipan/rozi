@@ -3,7 +3,7 @@
 This page is for maintainers publishing a signed rozi release. It covers preparation, tagging, what
 the Release workflow checks, verification after publication, signing-key rotation, and what to do
 when a release fails. Installation and update behavior for users is in
-[Installation](installation.md). When this page and `.github/workflows/release.yml` disagree, the
+[Installation](../docs/installation.md). When this page and `.github/workflows/release.yml` disagree, the
 workflow is the source of truth.
 
 ## Prerequisites
@@ -236,6 +236,11 @@ Check that all five archives, all five checksums, `rozi-release.json`,
 `rozi-release.signatures.json`, and `rozi-compatibility.json` are present. crates.io should list the
 version only after the final workflow job succeeds.
 
+When the Release workflow succeeds, the **Website** workflow moves the `website` branch to the new
+tag, and rozi.tui-lipan.dev redeploys from it. The documentation site and the install scripts it
+serves therefore always match the latest release. To publish a documentation fix between releases,
+see [the site's deploy notes](../docs/.vitepress/README.md#deploy-cloudflare-workers-builds).
+
 ## Smoke verification after publication
 
 1. Download the public assets into an ignored directory and verify them with the pinned release
@@ -346,7 +351,7 @@ the workflow passes.
 `.github/workflows/nightly.yml` publishes a disposable build of `master` every night. It is not a
 release channel and shares nothing with release signing: no protected environment, no private key,
 no crates.io token. What users get is described in
-[Installation](installation.md#nightly-builds).
+[Installation](../docs/installation.md#nightly-builds).
 
 The workflow runs at 03:17 UTC and can be started by hand with `workflow_dispatch`. It runs three
 stages:

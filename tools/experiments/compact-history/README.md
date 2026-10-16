@@ -2,7 +2,7 @@
 
 This experiment is **not enabled in Rozi**. It saves substantial short-line history memory but
 fails the ingest performance gate. Keep it as a reproducible starting point, not a dependency
-patch to ship. See the [investigation](../../../docs/performance/audits/2026-09-10.md).
+patch to ship. See the [investigation](../../../dev/performance/audits/2026-09-10.md).
 
 `engine.patch` applies to the published `alacritty_terminal 0.26.0` crate. It changes row storage
 to an exact prefix plus a repeated final cell, compacts rows entering history, and adapts reflow.

@@ -37,7 +37,8 @@ workbar_powerline = true
 padding = [0, 1]
 
 [animations]
-pane_style = "slide"        # or "scale"
+pane_open_style = "portal"  # or "scale", "slide", "scan"
+pane_close_style = "particles"
 geometry_ms = 220`,
   },
   {

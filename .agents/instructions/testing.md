@@ -40,7 +40,7 @@ live-reloads config. An unisolated test can alter the UI the developer is using.
 
 Benchmarks are local performance evidence, not timing assertions. `cargo check --all-targets`
 compiles them. Run `cargo bench` on a stable, idle machine. Keep benchmark corpora generated and
-deterministic; do not add captured terminal output. See `docs/benchmarks.md`.
+deterministic; do not add captured terminal output. See `dev/benchmarks.md`.
 
 A render with nothing to assert - a colour or layout judgement made by looking - is a sketch, not a
 test. Add it as a scenario in `tools/ui-sketches/main.rs` (`cargo run --features ui-snapshot

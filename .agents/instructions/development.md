@@ -101,7 +101,7 @@ trust store passes `relswap trust-check`, `relswap verify` accepts the live asse
 90 days of manifest validity remain. A signed release stops being valid on its own schedule, so
 treat a failure there as release work, not as a flaky job. Signing keys, the manifest lifetime
 (`MANIFEST_LIFETIME_DAYS` in `release.yml`) and the rotation order are documented in
-`docs/release-process.md`; the trust anchor's shape is covered by tests in `src/release_app.rs`.
+`dev/release-process.md`; the trust anchor's shape is covered by tests in `src/release_app.rs`.
 Release and nightly archives both carry `actions/attest-build-provenance` attestations, which are
 independent of rozi's signing key - do not describe them as a replacement for it.
 
@@ -111,7 +111,7 @@ gate of its own, and it holds no signing secret: nightlies are unsigned and no i
 path selects them. Its build matrix mirrors the release targets, including the manylinux
 containers and the `GLIBC_2.28` ceiling, and it compiles `ROZI_NIGHTLY_COMMIT` and
 `ROZI_NIGHTLY_BUILT` into the binary so `rozi --version` names the build. Keep those two lines
-`key=value`: the release workflow parses `--version` that way. `docs/release-process.md` covers
+`key=value`: the release workflow parses `--version` that way. `dev/release-process.md` covers
 the workflow, `docs/installation.md` what a user gets. CI deliberately ignores the moving
 `nightly` tag.
 
@@ -144,5 +144,5 @@ cargo build --profile release-debug
 samply record ./target/release-debug/rozi profile
 ```
 
-See `docs/benchmarks.md` for benchmark targets, comparison rules, stress recipes, and profiling
-commands. Dated results live under `docs/performance/audits/`.
+See `dev/benchmarks.md` for benchmark targets, comparison rules, stress recipes, and profiling
+commands. Dated results live under `dev/performance/audits/`.

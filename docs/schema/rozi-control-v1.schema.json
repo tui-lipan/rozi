@@ -6204,11 +6204,22 @@
             "null"
           ]
         },
+        "heading": {
+          "description": "A top-level row that titles the rows beneath it: drawn as a section heading, always open,\nand never activated.",
+          "type": "boolean"
+        },
         "id": {
           "type": "string"
         },
         "label": {
           "type": "string"
+        },
+        "meta": {
+          "description": "A short value beside the label in the row's tone, such as how long it has run.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "parent": {
           "description": "The row this one sits under. A parent that is not in the snapshot makes it a top-level row.",

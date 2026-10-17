@@ -439,13 +439,16 @@ of one row per line. Rows can nest, carry a state, and say more than a line of t
 | `label` | Required. The row's text. |
 | `parent` | The `id` of the row it sits under. A missing parent makes it a top-level row. |
 | `description` | Right-aligned text on the label's line. |
+| `meta` | A short value beside the label, such as how long something has run, in the row's state colour. |
 | `detail` | A second line under the label. |
 | `tone` | The row's state, which picks its marker and colour: `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. |
 | `active` | Marks the current one of its kind. |
 | `disabled` | Shows the row dimmed with this reason as its second line, and makes it inert. |
 | `expanded` | Whether the row starts expanded. Your own choice wins once you make one. |
+| `heading` | Shows a top-level row as a section heading, with its rows always open beneath it. A heading cannot be activated, and its `description` sits at the right edge. |
 
-A row with children starts expanded unless it says otherwise. Activating a row runs the tab's
+A row with children starts expanded unless it says otherwise. A collapsed row tints its arrow with
+the most urgent state among the rows it hides. Activating a row runs the tab's
 `on_click` with the row's `id` in `ROZI_ROW_ID` and its label as the row text, so `send` may use
 `{line}` for the label. Without `on_click`, activating a row with children shows or hides them.
 

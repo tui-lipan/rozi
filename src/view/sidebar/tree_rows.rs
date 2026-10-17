@@ -27,14 +27,33 @@ pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> 
                     target,
                 )
                 .at(branch.depth()),
+                TreeItem::Row(line) if line.heading => {
+                    let key = format!("{:?}", line.key);
+                    let content = line.row.content;
+                    let heading = match content.description {
+                        Some(note) => super::row::header_with_note(
+                            state,
+                            content.label,
+                            note,
+                            Priority::Label,
+                        ),
+                        None => super::row::header(state, content.label, false),
+                    };
+                    SidebarRow::header(heading).shape(Shape::Heading).keyed(key)
+                }
                 TreeItem::Row(line) => {
                     let depth = line.branch.depth();
                     let key = format!("{:?}", line.key);
                     let expansion = line.expandable.then(|| (line.key.clone(), line.expanded));
+                    // A folded row's arrow takes the color of the most urgent row it hides.
+                    let tint = line.hidden_tone.and_then(|tone| tone_color(state, tone));
                     let row = tree_row(state, *line);
                     let mut row = SidebarRow::item(row, target).at(depth).keyed(key);
                     if let Some((key, expanded)) = expansion {
                         row = row.collapsible(key, expanded);
+                    }
+                    if let Some(tint) = tint {
+                        row = row.arrow_style(Style::new().fg(tint));
                     }
                     if let Some(close) = close {
                         row = row.closable(close);
@@ -75,6 +94,9 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
             .priority(Priority::Balanced)
             .badge_text(description, muted.dim());
     }
+    if let Some(meta) = content.meta {
+        row = row.meta(meta, color.map_or(muted, |color| Style::new().fg(color)));
+    }
     // A keyed action waiting for its second press says so on the row it will act on. The ✕'s own
     // arming is drawn by the ✕.
     if let crate::state::RowTarget::StreamRow(reference) = &line.row.target
@@ -106,37 +128,40 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
     row
 }
 
-/// The glyph and color a tone shows. `None` color for tones that draw nothing.
-pub(super) fn tone_glyph(state: &State, tone: SidebarTone) -> (Option<Element>, Option<Color>) {
+/// The color a tone shows. `None` for tones that draw nothing.
+fn tone_color(state: &State, tone: SidebarTone) -> Option<Color> {
     let status = &state.theme.status;
-    let (glyph, color) = match tone {
-        SidebarTone::Normal | SidebarTone::Muted => return (None, None),
-        SidebarTone::Working => {
-            return (
-                Some(
-                    Spinner::new()
-                        .style(Style::new().fg(status.info))
-                        .height(Length::Px(1))
-                        .into(),
-                ),
-                Some(status.info),
-            );
-        }
-        SidebarTone::Info => ("•", status.info),
-        SidebarTone::Success => ("✓", status.success),
-        SidebarTone::Warning => ("!", status.warning),
-        SidebarTone::Blocked => ("▲", status.warning),
-        SidebarTone::Error => ("×", status.error),
+    match tone {
+        SidebarTone::Normal | SidebarTone::Muted => None,
+        SidebarTone::Working | SidebarTone::Info => Some(status.info),
+        SidebarTone::Success => Some(status.success),
+        SidebarTone::Warning | SidebarTone::Blocked => Some(status.warning),
+        SidebarTone::Error => Some(status.error),
+    }
+}
+
+/// The glyph and color a tone shows. `None` color for tones that draw nothing.
+fn tone_glyph(state: &State, tone: SidebarTone) -> (Option<Element>, Option<Color>) {
+    let Some(color) = tone_color(state, tone) else {
+        return (None, None);
     };
-    (
-        Some(
-            Text::new(glyph)
-                .style(Style::new().fg(color))
-                .height(Length::Px(1))
-                .into(),
-        ),
-        Some(color),
-    )
+    let glyph = match tone {
+        SidebarTone::Working => Spinner::new()
+            .style(Style::new().fg(color))
+            .height(Length::Px(1))
+            .into(),
+        _ => Text::new(match tone {
+            SidebarTone::Success => "✓",
+            SidebarTone::Warning => "!",
+            SidebarTone::Blocked => "▲",
+            SidebarTone::Error => "×",
+            _ => "•",
+        })
+        .style(Style::new().fg(color))
+        .height(Length::Px(1))
+        .into(),
+    };
+    (Some(glyph), Some(color))
 }
 
 /// A tab's placed rows as a Tree. Rozi supplies content and actions; the widget supplies tree

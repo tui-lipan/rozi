@@ -1141,10 +1141,13 @@ fn session_picker_no_results() {
 fn sidebar_custom_trees() {
     let snapshot: rozi::state::SidebarSnapshot = serde_json::from_str(r#"{
         "rows": [
-            {"id":"root","label":"Build pipeline","expanded":true},
-            {"id":"api","parent":"root","label":"api-integration-and-contract-tests","description":"Running · 42 tests","tone":"working"},
+            {"id":"root","label":"Build pipeline","heading":true,"description":"main"},
+            {"id":"api","parent":"root","label":"api-integration-and-contract-tests","description":"Running · 42 tests","tone":"working","meta":"3m12s"},
             {"id":"review","parent":"root","label":"review","description":"Waiting for approval","tone":"blocked"},
-            {"id":"ui","parent":"root","label":"frontend-production-build","description":"Passed","tone":"success"}
+            {"id":"ui","parent":"root","label":"frontend-production-build","description":"Passed","tone":"success"},
+            {"id":"deploys","label":"Deploys","expanded":false},
+            {"id":"eu","parent":"deploys","label":"eu-west-1","description":"Failed","tone":"error"},
+            {"id":"us","parent":"deploys","label":"us-east-1","description":"Live","tone":"success"}
         ]
     }"#).unwrap();
     for stream in [false, true] {

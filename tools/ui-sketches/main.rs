@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 16] = [
+const SCENARIOS: [(&str, &str, fn()); 17] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -80,6 +80,11 @@ const SCENARIOS: [(&str, &str, fn()); 16] = [
         "sidebar-sessions",
         "current, background, running, and restorable session labels",
         sidebar_sessions,
+    ),
+    (
+        "sidebar-activity",
+        "project headings, two-line agents, and a harness of published sessions, open and folded",
+        sidebar_activity,
     ),
     (
         "sidebar-panes",
@@ -1215,6 +1220,103 @@ fn sidebar_custom_trees() {
             );
         }
     }
+}
+
+/// One project with Claude Code publishing four sessions beside a Codex pane, and a second project
+/// with one agent: a harness open, then folded with its tally and tinted arrow.
+fn sidebar_activity() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
+        PublishedRow, PublisherKind, RowKey, SessionInstanceId,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let agent_ref = |pane_id: u32, slot: Option<&str>, incarnation: u64| AgentRef {
+        pane: PaneRef {
+            session_instance: SessionInstanceId::generate(),
+            pane_id,
+            generation: 0,
+        },
+        slot: slot.map(|id| RowKey::new("sessions", id)),
+        incarnation,
+    };
+    let agent_pane = |id: u32, label: &str, status: &str, cwd: &str| {
+        let mut pane = live_pane(id);
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new(&label.to_lowercase(), label).into(),
+            state: DetectedAgentState::Idle,
+        });
+        pane.terminal.reported_status = Some(PaneStatus {
+            value: status.to_string(),
+            reason: None,
+            set_at: now.saturating_sub(180),
+        });
+        pane.agent_refs = vec![agent_ref(id, None, 1)];
+        pane.terminal.cwd = Some(cwd.to_string());
+        pane
+    };
+    let session = |id: &str, title: &str, status: &str, active: bool| PublishedRow {
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: id.to_string(),
+        title: title.to_string(),
+        status: status.to_string(),
+        reason: None,
+        active,
+        work_started_at: Some(now.saturating_sub(120)),
+        cwd: None,
+        project: None,
+        native_session: None,
+    };
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        let mut claude = agent_pane(10, "Claude Code", "idle", "/home/me/src/rozi");
+        claude.terminal.published_rows = vec![
+            session("a", "fix login redirect", "blocked", false),
+            session("b", "github issue review", "working", true),
+            session("c", "sidebar audit", "done", false),
+            session("d", "notes", "idle", false),
+        ];
+        claude.agent_refs = ["a", "b", "c", "d"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| agent_ref(10, Some(slot), index as u64 + 1))
+            .collect();
+        let codex = agent_pane(11, "Codex", "working", "/home/me/src/rozi");
+        let opencode = agent_pane(12, "OpenCode", "error", "/home/me/src/tui-lipan");
+        let workspaces = &mut state.current_mut().workspaces;
+        workspaces[0].panes = vec![claude, codex];
+        workspaces[1].panes = vec![opencode];
+        workspaces[0].focused_pane = Some(10);
+        state.current_mut().focused_pane = Some(10);
+    }
+    for width in [28, 36, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 22));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-activity-{width}"));
+    }
+    backend
+        .dispatch(Msg::SidebarRowExpanded {
+            panel: 0,
+            index: 1,
+            expanded: false,
+        })
+        .expect("fold the harness");
+    backend.state_mut().config.sidebar.layout.left.width = 36;
+    backend.render();
+    write_png(&mut backend, "sidebar-activity-folded");
 }
 
 /// Two workspaces: the focused one with an editor, an agent, and a build, and a second with one

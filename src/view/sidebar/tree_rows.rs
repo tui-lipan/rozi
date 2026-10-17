@@ -256,6 +256,7 @@ fn node(
 ) -> (usize, TreeNode) {
     let depth = row.depth;
     let shape = row.shape;
+    let arrow_style = row.arrow_style;
     let key = row
         .key
         .clone()
@@ -292,6 +293,9 @@ fn node(
             .expansion_mode(TreeExpansionMode::Collapsible)
             .expanded(expanded),
     };
+    if let Some(style) = arrow_style {
+        node = node.arrow_style(style);
+    }
     (depth, node.key(key))
 }
 

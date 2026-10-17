@@ -39,6 +39,8 @@ pub(crate) struct SidebarRow {
     pub shape: Shape,
     /// Identity that follows the row across updates, for its rendered content and expansion.
     pub key: Option<String>,
+    /// Style for the row's arrow, such as a folded row tinted with what it hides.
+    pub arrow_style: Option<Style>,
 }
 
 impl SidebarRow {
@@ -50,6 +52,7 @@ impl SidebarRow {
             depth: 0,
             shape: Shape::Leaf,
             key: None,
+            arrow_style: None,
         }
     }
 
@@ -79,6 +82,11 @@ impl SidebarRow {
 
     pub(super) fn keyed(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
+        self
+    }
+
+    pub(super) fn arrow_style(mut self, style: Style) -> Self {
+        self.arrow_style = Some(style);
         self
     }
 

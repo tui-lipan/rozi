@@ -20,6 +20,19 @@ pub(crate) fn row_expanded(
     index: usize,
     expanded: bool,
 ) -> Update {
+    // A harness in the Activity tab folds the sessions one pane publishes.
+    if matches!(
+        ctx.state.active_sidebar_tab(panel),
+        Some(crate::config::SidebarTab::Activity)
+    ) {
+        return match crate::view::sidebar::agents::activity_lines(&ctx.state).get(index) {
+            Some(crate::view::sidebar::agents::ActivityLine::Harness { harness, .. }) => {
+                let key = crate::view::sidebar::agents::harness_key(harness.pane_id);
+                set_expanded(ctx, key, expanded)
+            }
+            _ => Update::none(),
+        };
+    }
     let Some(line) = panel_items(ctx, panel)
         .and_then(|items| items.into_iter().nth(index))
         .and_then(|item| match item {

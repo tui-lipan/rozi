@@ -207,7 +207,7 @@ impl State {
     pub fn sidebar_tab_is_tree(&self, tab: &SidebarTab) -> bool {
         matches!(
             tab,
-            SidebarTab::Sessions | SidebarTab::Panes | SidebarTab::Worktrees
+            SidebarTab::Activity | SidebarTab::Sessions | SidebarTab::Panes | SidebarTab::Worktrees
         ) || self.tree_sections(tab).is_some()
     }
 
@@ -281,7 +281,14 @@ impl State {
             }
             // Hierarchical, and projected above.
             SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
-            SidebarTab::Activity => self.activity_item_projections(),
+            // The same lines the view draws, so a row index means one agent to both.
+            SidebarTab::Activity => crate::view::sidebar::agents::activity_lines(self)
+                .iter()
+                .map(|line| SidebarItemProjection {
+                    target: line.target(),
+                    close: None,
+                })
+                .collect(),
             // The same projection the view draws from, so a row index means one agent to both.
             SidebarTab::Agents => crate::view::agents::global_agent_rows(self)
                 .into_iter()
@@ -522,136 +529,6 @@ impl State {
             }
             SidebarTab::Tree { .. } => Vec::new(),
         }
-    }
-
-    pub(crate) fn activity_item_projections(&self) -> Vec<SidebarItemProjection> {
-        struct ActivityItem {
-            target: RowTarget,
-            host: Option<String>,
-            path: Option<String>,
-            /// What the group is named after; see [`crate::state::AgentPlace::label_path`].
-            label_path: Option<String>,
-            rank: u8,
-            workspace: usize,
-            pane: usize,
-            slot: usize,
-        }
-
-        fn group_label(path: Option<&str>, host: Option<&str>) -> String {
-            let label = path
-                .and_then(|path| {
-                    crate::platform::paths::path_segments(path)
-                        .last()
-                        .map(|segment| (*segment).to_string())
-                })
-                .unwrap_or_else(|| "Unknown".to_string());
-            match host.filter(|host| !host.is_empty()) {
-                Some(host) => format!("{label}@{host}"),
-                None => label,
-            }
-        }
-
-        let mut rows = Vec::new();
-        for (workspace, workspace_state) in self.current().workspaces.iter().enumerate() {
-            for (pane_index, pane) in workspace_state.panes.iter().enumerate() {
-                let occupants = pane.occupants();
-                if pane.id == crate::state::POPUP_PANE_ID || pane.closing || occupants.is_empty() {
-                    continue;
-                }
-                for (slot, occupant) in occupants.into_iter().enumerate() {
-                    let place = pane.agent_place(occupant.slot.as_ref());
-                    let path = place.group_path().map(str::to_string);
-                    let label_path = place.label_path().map(str::to_string);
-                    let host = place.host;
-                    let finished = if occupant.program_status.is_some() {
-                        pane.terminal.program_status_attention
-                    } else {
-                        occupant
-                            .slot
-                            .as_ref()
-                            .map_or(pane.terminal.finished_unseen, |key| {
-                                pane.terminal
-                                    .published_row_ui
-                                    .get(key)
-                                    .is_some_and(|ui| ui.finished_unseen)
-                            })
-                    };
-                    let state = occupant.state;
-                    let target = match occupant.slot {
-                        Some(row) => RowTarget::PublishedRow {
-                            pane_id: pane.id,
-                            row,
-                        },
-                        None => RowTarget::Pane(pane.id),
-                    };
-                    rows.push(ActivityItem {
-                        target,
-                        host,
-                        path,
-                        label_path,
-                        rank: state.presentation_rank(finished),
-                        workspace,
-                        pane: pane_index,
-                        slot,
-                    });
-                }
-            }
-        }
-        rows.sort_by_key(|row| (row.rank, row.workspace, row.pane, row.slot));
-
-        let mut groups: Vec<(Option<String>, Option<String>, Vec<ActivityItem>)> = Vec::new();
-        for row in rows {
-            let existing = groups.iter_mut().find(|(host, path, _)| {
-                *host == row.host
-                    && match (path.as_deref(), row.path.as_deref()) {
-                        (Some(left), Some(right)) => {
-                            crate::platform::paths::paths_equal(left, right)
-                        }
-                        (None, None) => true,
-                        _ => false,
-                    }
-            });
-            if let Some((_, _, items)) = existing {
-                items.push(row);
-            } else {
-                groups.push((row.host.clone(), row.path.clone(), vec![row]));
-            }
-        }
-        // Every row of a group shares its root, and so the repository it is named after.
-        let label = |host: &Option<String>, items: &[ActivityItem]| {
-            let path = items.first().and_then(|item| item.label_path.as_deref());
-            group_label(path, host.as_deref()).to_lowercase()
-        };
-        groups.sort_by(|(host_a, path_a, items_a), (host_b, path_b, items_b)| {
-            path_a
-                .is_none()
-                .cmp(&path_b.is_none())
-                .then_with(|| label(host_a, items_a).cmp(&label(host_b, items_b)))
-                .then_with(|| path_a.cmp(path_b))
-        });
-
-        let show_headers =
-            groups.len() > 1 || groups.first().is_some_and(|(_, path, _)| path.is_some());
-        let mut items = Vec::new();
-        for (index, (_, _, group)) in groups.into_iter().enumerate() {
-            if index > 0 {
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-            }
-            if show_headers {
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-            }
-            items.extend(group.into_iter().map(|row| SidebarItemProjection {
-                target: row.target,
-                close: None,
-            }));
-        }
-        items
     }
 }
 

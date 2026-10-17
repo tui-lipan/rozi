@@ -91,6 +91,11 @@ repository's name, and the branch beside it tells the checkouts apart.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
+When one pane runs several sessions of an agent, such as Claude Code with background sessions,
+they are listed beneath one row for the agent, titled by what each session is working on. That
+row shows the most urgent session's state and can be collapsed; collapsed, it counts its sessions
+by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
+
 Each row shows `blocked`, `working`, `done`, `error`, or `idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
 for you stands apart from work that failed. A finished run stays marked `done` until you visit its

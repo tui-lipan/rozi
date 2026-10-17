@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""gh api graphql ...: answer Rozi's PR status query with no pull requests.
+
+Captures never reach GitHub, so a checkout shows no PR badge and no sign-in error.
+"""
+import json
+import re
+import sys
+
+query = next((arg[len("query=") :] for arg in sys.argv if arg.startswith("query=")), "")
+branches = re.findall(r"\b(b\d+):pullRequests", query)
+print(json.dumps({"data": {"repository": {alias: {"nodes": []} for alias in branches}}}))

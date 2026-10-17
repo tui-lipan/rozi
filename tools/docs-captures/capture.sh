@@ -31,6 +31,8 @@ mkdir -p "$out"
 if [[ ! -d $base/.git ]]; then
   rm -rf "$base"
   git clone --quiet --depth 40 "file://$repo" "$base"
+  # Captures show the checkout's branch; keep it the same whichever branch they run from.
+  git -C "$base" checkout --quiet -B master
   git -C "$base" config user.name "rozi docs"
   git -C "$base" config user.email docs@example.invalid
 fi

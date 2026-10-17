@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use super::row::{self, Row, RowTarget, SidebarRow};
+use super::row::{self, Row, RowTarget, Shape, SidebarRow};
 use crate::AppRoot;
 use crate::config::{SidebarLauncherEntry, SidebarTabId, UserCommandAction};
 
@@ -19,8 +19,9 @@ fn action_glyph(action: &UserCommandAction) -> (&'static str, &'static str) {
 }
 
 /// Entries arrive already clustered by group (see `config::sidebar::cluster_by_group`), so a
-/// section starts wherever the group changes. `crate::state::State::sidebar_item_projections`
-/// walks the same shape; keep the two in step.
+/// section starts wherever the group changes: a heading, with its entries beneath it. Entries
+/// outside any group are top-level rows. `crate::state::State::sidebar_item_projections` walks the
+/// same shape; keep the two in step.
 pub(super) fn launcher_rows(
     ctx: &Context<AppRoot>,
     tab_id: &SidebarTabId,
@@ -32,9 +33,13 @@ pub(super) fn launcher_rows(
     for (entry_index, entry) in entries.iter().enumerate() {
         if let Some(group) = entry.group.as_ref().filter(|group| Some(*group) != current) {
             if !rows.is_empty() {
-                rows.push(SidebarRow::spacer());
+                rows.push(SidebarRow::spacer().keyed(format!("spacer:{entry_index}")));
             }
-            rows.push(SidebarRow::header(row::header(ctx, group.clone(), false)));
+            rows.push(
+                SidebarRow::header(row::header(ctx, group.clone(), false))
+                    .shape(Shape::Heading)
+                    .keyed(format!("group:{group}")),
+            );
             current = Some(group);
         }
         let (glyph, kind) = action_glyph(&entry.action);
@@ -54,14 +59,19 @@ pub(super) fn launcher_rows(
                 row::truncate(target.as_ref(), 24),
                 super::super::fg_only(&ctx.state.theme.muted).dim(),
             );
-        rows.push(SidebarRow::item(
+        let placed = SidebarRow::item(
             row,
             RowTarget::Launcher {
                 config_epoch,
                 tab_id: tab_id.clone(),
                 entry_index,
             },
-        ));
+        )
+        .keyed(format!("entry:{entry_index}"));
+        rows.push(match entry.group {
+            Some(_) => placed.at(1),
+            None => placed.shape(Shape::Flush),
+        });
     }
     rows
 }
@@ -77,18 +87,21 @@ pub(super) fn command_rows(
     let config_epoch = ctx.state.sidebar.config_epoch;
     let output_epoch = output.epoch;
     let mut rows = Vec::new();
-    for row in &output.rows {
+    // Lines after a `group_prefix` heading sit beneath it; lines before any heading are top-level.
+    let mut grouped = false;
+    for (line, row) in output.rows.iter().enumerate() {
         // A `group_prefix` line labels the rows beneath it, so it renders as the same section
         // header the launcher and the built-in tabs use rather than as a row of output.
         if row.header {
             if !rows.is_empty() {
-                rows.push(SidebarRow::spacer());
+                rows.push(SidebarRow::spacer().keyed(format!("spacer:{line}")));
             }
-            rows.push(SidebarRow::header(row::header(
-                ctx,
-                row.display.clone(),
-                false,
-            )));
+            rows.push(
+                SidebarRow::header(row::header(ctx, row.display.clone(), false))
+                    .shape(Shape::Heading)
+                    .keyed(format!("heading:{line}")),
+            );
+            grouped = true;
             continue;
         }
         let style = if row.error {
@@ -110,7 +123,7 @@ pub(super) fn command_rows(
         }
         // An error row carries no command to re-run, and a tab without `on_click` has nothing to
         // do with any row; both stay in the list as context but refuse selection and activation.
-        rows.push(if clickable && !row.error {
+        let placed = if clickable && !row.error {
             SidebarRow::item(
                 built,
                 RowTarget::CommandRow {
@@ -122,6 +135,12 @@ pub(super) fn command_rows(
             )
         } else {
             SidebarRow::header(built.build(ctx, false, false, None))
+        }
+        .keyed(format!("line:{line}"));
+        rows.push(if grouped {
+            placed.at(1).shape(Shape::Leaf)
+        } else {
+            placed.shape(Shape::Flush)
         });
     }
     rows

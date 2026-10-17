@@ -256,11 +256,6 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             sidebar::dock_panels_resized(ctx, side, event)
         }
         Msg::SidebarPanelsResized(event) => sidebar::panels_resized(ctx, event),
-        Msg::SidebarViewportChanged {
-            panel,
-            tab_id,
-            event,
-        } => sidebar::viewport_changed(ctx, panel, tab_id, event),
         Msg::SidebarWidthResizing(event) => sidebar::width_resizing(ctx, event),
         Msg::SidebarWidthResized(event) => sidebar::width_resized(ctx, event),
         Msg::SidebarPointerMoved(panel) => sidebar::pointer_moved(ctx, panel),

@@ -699,35 +699,39 @@ fn page_navigation_uses_the_visible_row_count() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().current_mut().workspaces[0].panes =
-                (1..=12).map(pane).collect();
-            backend.state_mut().current_mut().workspaces[1].panes.clear();
-
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 10,
-            });
-            backend.render();
-            settle(&mut backend);
-            let short_page = backend.state().sidebar.panels[0].page_rows;
-
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            backend.render();
-            settle(&mut backend);
-            let tall_page = backend.state().sidebar.panels[0].page_rows;
+            // How far one PageDown moves the cursor, from the first row, in a sidebar this tall.
+            let page = |height: u16| {
+                let mut backend = backend_with_panes();
+                backend.state_mut().current_mut().workspaces[0].panes =
+                    (1..=12).map(pane).collect();
+                backend.state_mut().current_mut().workspaces[1]
+                    .panes
+                    .clear();
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: height,
+                });
+                backend.render();
+                backend
+                    .dispatch(Msg::RunAction(Action::FocusSidebar))
+                    .unwrap();
+                settle(&mut backend);
+                let _ = backend.send_key(key(KeyCode::Home));
+                settle(&mut backend);
+                let start = backend.state().sidebar.panels[0].cursor;
+                let _ = backend.send_key(key(KeyCode::PageDown));
+                settle(&mut backend);
+                backend.state().sidebar.panels[0].cursor - start
+            };
+            let short_page = page(10);
+            let tall_page = page(30);
 
             assert!(short_page > 0);
             assert!(
                 tall_page > short_page,
-                "a taller sidebar should page across more selectable rows: {short_page} -> {tall_page}"
+                "a taller sidebar should page across more rows: {short_page} -> {tall_page}"
             );
         })
         .expect("spawn page navigation thread")

@@ -381,9 +381,9 @@ Extensions can add tabs of every kind; see [Extension sidebar tabs](#extension-s
 
 ### Launcher tabs
 
-An entry's `group` puts it under a section header like the ones in Activity, Panes, and Sessions.
+An entry's `group` puts it beneath a heading like the ones in Activity, Panes, and Sessions.
 Groups appear in the order they first occur, and entries without a group come first, without a
-header. For example, a tab that starts an agent in a project, grouped by agent:
+heading. For example, a tab that starts an agent in a project, grouped by agent:
 
 ```toml
 { name = "launch", label = "Launch", entries = [
@@ -407,8 +407,8 @@ rozi strips terminal control sequences from the output. A command that fails to 
 writes to standard error, or exits non-zero shows non-clickable error rows.
 
 To group the output, set `group_prefix`. Each output line that starts with the prefix becomes a
-section header showing the rest of the line. A line that is only the prefix is dropped. Headers
-cannot be selected. `group_prefix` applies only to command tabs; launcher tabs use `group`.
+heading showing the rest of the line, with the lines after it beneath it. A line that is only the
+prefix is dropped. Headings cannot be selected. `group_prefix` applies only to command tabs; launcher tabs use `group`.
 
 A command tab runs in the focused pane's working directory, so it describes the project you are
 working in and runs again when you `cd`. If the tab was off screen while you changed directory, it

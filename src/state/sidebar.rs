@@ -162,7 +162,8 @@ impl State {
         self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
     }
 
-    /// The sections a hierarchical tab lists. `None` for a flat tab.
+    /// The sections a tab built from a semantic projection lists: Projects, JSON command tabs, and
+    /// extension streams. `None` for a tab whose rows the view builds.
     pub fn tree_sections(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeSection>> {
         match tab {
             SidebarTab::Projects => Some(self.project_sections()),
@@ -203,15 +204,7 @@ impl State {
         }
     }
 
-    /// Whether `tab` renders through the framework Tree, which then owns its keyboard navigation.
-    pub fn sidebar_tab_is_tree(&self, tab: &SidebarTab) -> bool {
-        matches!(
-            tab,
-            SidebarTab::Activity | SidebarTab::Sessions | SidebarTab::Panes | SidebarTab::Worktrees
-        ) || self.tree_sections(tab).is_some()
-    }
-
-    /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.
+    /// The visible lines of a tab built from tree sections, in display order. `None` otherwise.
     pub fn tree_items(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeItem>> {
         let sections = self.tree_sections(tab)?;
         Some(crate::state::flatten(
@@ -539,8 +532,6 @@ pub struct SidebarPanelState {
     pub tabs: Vec<SidebarTabId>,
     pub active_tab: Option<SidebarTabId>,
     pub cursor: usize,
-    /// Number of selectable rows visible in the active row list, used by PageUp/PageDown.
-    pub page_rows: usize,
     pub suppress_row_hover: bool,
     pub hovered_row: Option<usize>,
 }
@@ -553,7 +544,6 @@ impl Default for SidebarPanelState {
             tabs: Vec::new(),
             active_tab: None,
             cursor: 0,
-            page_rows: 5,
             suppress_row_hover: false,
             hovered_row: None,
         }
@@ -970,7 +960,6 @@ impl SidebarState {
                         && old.active_tab == panel.active_tab
                 }) {
                     panel.cursor = old.cursor;
-                    panel.page_rows = old.page_rows;
                     panel.suppress_row_hover = old.suppress_row_hover;
                 }
                 panel.reconcile_active();

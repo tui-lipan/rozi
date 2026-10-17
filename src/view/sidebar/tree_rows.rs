@@ -233,14 +233,6 @@ pub(super) fn tab(
         .on_pointer_move(super::callback(ctx, move |_| {
             crate::Msg::SidebarPointerMoved(panel)
         }));
-    let tab_id = tab.id();
-    tree = tree.on_viewport_change(super::callback(ctx, move |event| {
-        crate::Msg::SidebarViewportChanged {
-            panel,
-            tab_id: tab_id.clone(),
-            event,
-        }
-    }));
     if let Some(index) = cursor {
         tree = tree.selected(index);
     }

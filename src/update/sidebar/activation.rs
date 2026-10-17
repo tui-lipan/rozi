@@ -53,11 +53,6 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     }
 }
 
-/// Enter: run whatever the row under the cursor does — the same path a click on it takes.
-pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
-    with_cursor_row(ctx, row_activate)
-}
-
 /// `x`: destroy whatever the row under the cursor's ✕ would — the same path a click on that ✕ takes.
 pub(crate) fn close_cursor(ctx: &mut Context<AppRoot>) -> Update {
     with_cursor_row(ctx, row_close)

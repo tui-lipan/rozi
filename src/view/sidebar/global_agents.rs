@@ -8,7 +8,7 @@
 
 use tui_lipan::prelude::*;
 
-use super::row::{Row, RowTarget, SidebarRow};
+use super::row::{Row, RowTarget, Shape, SidebarRow};
 use crate::AppRoot;
 use crate::view::agents::GlobalAgentRow;
 
@@ -17,7 +17,11 @@ pub(super) fn global_agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         .into_iter()
         .map(|row| {
             let target = RowTarget::Agent(row.location.clone());
+            let key = format!("agent:{:?}", row.location);
+            // Ordered by attention, not grouped by place: every row is top-level.
             SidebarRow::item(agent_row(ctx, row), target)
+                .shape(Shape::Flush)
+                .keyed(key)
         })
         .collect()
 }

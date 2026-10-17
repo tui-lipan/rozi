@@ -191,27 +191,13 @@ fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Updat
     {
         return Some(update);
     }
-    if crate::view::sidebar::active_tab(ctx).is_some_and(|tab| ctx.state.sidebar_tab_is_tree(tab)) {
-        return if key.is(KeyCode::Char('x')) {
-            Some(sidebar::close_cursor(ctx))
-        } else {
-            None
-        };
-    }
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),
-        KeyCode::Down | KeyCode::Char('j') => Some(sidebar::move_cursor(ctx, 1)),
-        KeyCode::PageUp => Some(sidebar::move_cursor_page(ctx, false)),
-        KeyCode::PageDown => Some(sidebar::move_cursor_page(ctx, true)),
-        KeyCode::Home | KeyCode::Char('g') => Some(sidebar::move_cursor(ctx, isize::MIN)),
-        KeyCode::End | KeyCode::Char('G') => Some(sidebar::move_cursor(ctx, isize::MAX)),
-        KeyCode::Enter => Some(sidebar::activate_cursor(ctx)),
-        KeyCode::Char('x') => Some(sidebar::close_cursor(ctx)),
-        _ => None,
-    }
+    // The Tree owns navigation and activation for every row tab; `x` closes the row under its
+    // cursor.
+    key.is(KeyCode::Char('x'))
+        .then(|| sidebar::close_cursor(ctx))
 }
 
-/// The file tree owns its own keyboard navigation; the composed row lists do not.
+/// The file tree handles every key itself, `x` included.
 fn tree_tab_active(ctx: &Context<AppRoot>) -> bool {
     matches!(
         crate::view::sidebar::active_tab(ctx),

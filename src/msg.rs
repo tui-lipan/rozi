@@ -177,11 +177,6 @@ pub enum Msg {
         event: SplitterResizeEvent,
     },
     SidebarPanelsResized(SplitterResizeEvent),
-    SidebarViewportChanged {
-        panel: usize,
-        tab_id: crate::config::SidebarTabId,
-        event: ScrollViewportEvent,
-    },
     SidebarWidthResizing(SplitterResizeEvent),
     SidebarWidthResized(SplitterResizeEvent),
     SidebarPointerMoved(usize),

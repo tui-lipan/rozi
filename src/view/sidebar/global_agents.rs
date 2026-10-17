@@ -26,19 +26,11 @@ pub(super) fn global_agents_rows(state: &State) -> Vec<SidebarRow> {
         .collect()
 }
 
-/// Where a row's agent runs, as the badge says it: the session, prefixed by the host when it is
-/// not this machine. The session on screen is named too — on this tab every row is somewhere, and
-/// "here" is only a fact about the current moment.
+/// Where a row's agent runs, as the badge says it: the session, `@host` when it is not this
+/// machine. The session on screen is named too — on this tab every row is somewhere, and "here" is
+/// only a fact about the current moment.
 fn place_badge(row: &GlobalAgentRow) -> String {
-    let session = if crate::state::is_ephemeral_session_name(&row.session) {
-        "ephemeral"
-    } else {
-        row.session.as_str()
-    };
-    match row.host.as_deref() {
-        Some(host) => format!("{host}/{session}"),
-        None => session.to_string(),
-    }
+    crate::view::vocabulary::session_at(&row.session, row.host.as_deref())
 }
 
 /// A two-line row: status glyph, agent and where it runs, then the status with what it works on.
@@ -141,7 +133,7 @@ mod tests {
     fn the_badge_names_host_and_session() {
         assert_eq!(
             place_badge(&row(Some("workbox"), "backend")),
-            "workbox/backend"
+            "backend@workbox"
         );
         assert_eq!(place_badge(&row(None, "dev")), "dev");
     }

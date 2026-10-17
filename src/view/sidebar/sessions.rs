@@ -3,99 +3,33 @@ use tui_lipan::prelude::*;
 use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::state::{HostEntry, HostStatus, State};
+use crate::view::vocabulary::{self, SessionPresence};
 
-fn session_detail(state: &State, entry: &DiscoveredSession) -> String {
-    let mut detail = session_status_detail(entry);
-    if let Some(agents) = crate::view::session_status::host_agent_label(state, entry) {
-        detail.push_str(&format!(" · {agents}"));
-    }
-    detail
-}
-
-fn session_status_detail(entry: &DiscoveredSession) -> String {
-    match &entry.status {
-        DiscoveredSessionStatus::Running { panes, .. } => {
-            let mut detail = format!("{panes} pane{}", if *panes == 1 { "" } else { "s" });
-            if let Some(profile) = &entry.origin.profile {
-                detail.push_str(&format!(" · from {profile}"));
-            }
-            detail
-        }
-        DiscoveredSessionStatus::LastSeen { panes } => {
-            format!(
-                "{panes} pane{} · last seen",
-                if *panes == 1 { "" } else { "s" }
-            )
-        }
-        DiscoveredSessionStatus::Restorable => String::new(),
-        DiscoveredSessionStatus::Busy => "busy".to_string(),
-        DiscoveredSessionStatus::Unknown => "incompatible or unavailable".to_string(),
-    }
-}
-
-fn shared_client_count(entry: &DiscoveredSession, we_hold: bool) -> Option<u32> {
-    match &entry.status {
-        DiscoveredSessionStatus::Running { clients, .. } => {
-            (clients.saturating_sub(u32::from(we_hold)) > 0).then_some(*clients)
-        }
-        _ => None,
-    }
-}
-
-/// Attachment state and shared-client count occupy one muted badge.
-fn session_badge(
-    state: &crate::state::State,
-    entry: &DiscoveredSession,
-    status: crate::view::session_status::SessionConnectionStatus,
-    we_hold: bool,
-) -> String {
-    use crate::view::session_status::{SessionConnectionStatus, session_status_label};
-    let label = match (status, &entry.status) {
-        (SessionConnectionStatus::Discovered, DiscoveredSessionStatus::Restorable) => {
-            Some("Restorable")
-        }
-        (SessionConnectionStatus::Discovered, DiscoveredSessionStatus::Running { .. }) => {
-            Some("Running")
-        }
-        (SessionConnectionStatus::Discovered, _) => None,
-        _ => Some(session_status_label(status)),
-    };
-    let clients = shared_client_count(entry, we_hold)
-        .map(|clients| format!("{}{clients}", state.config.shared_clients_icon()));
-    [label.map(str::to_string), clients]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
-}
-
-/// One live session row: name, current/background/reconnecting state, panes, and origin.
+/// One live session row: name, its standing with this client, then panes, agents, and origin.
 fn session_row(state: &State, entry: &DiscoveredSession) -> SidebarRow {
-    let status = crate::view::session_status::session_status_for(
-        state,
-        &entry.name,
-        entry.remote_target.as_ref(),
-    );
-    let current = status == crate::view::session_status::SessionConnectionStatus::Current;
-    let we_hold = current
-        || state
-            .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-            .is_some();
+    let presence =
+        vocabulary::session_presence_for(state, &entry.name, entry.remote_target.as_ref())
+            .discovered(&entry.status);
+    let muted = super::super::fg_only(&state.theme.muted);
     let label = if entry.ephemeral {
-        "ephemeral".to_string()
+        vocabulary::EPHEMERAL.to_string()
     } else {
         entry.name.clone()
     };
-    let muted = super::super::fg_only(&state.theme.muted);
-    let badge = session_badge(state, entry, status, we_hold);
+    // The word, then how many other clients share the session. Who they are and what they do is
+    // the picker's business; the sidebar only says that someone else is here. The word stands
+    // without its picker marker: at the narrowest width the marker's two cells would clip it.
+    let others = vocabulary::other_clients(entry, presence);
+    let shared = (others > 0).then(|| format!("{}{others}", state.config.shared_clients_icon()));
+    let badge = vocabulary::fields([presence.label(), shared.as_deref().unwrap_or_default()]);
     let mut row = Row::new(label)
         .priority(Priority::Balanced)
-        .active(current)
-        .title_style(super::super::fg_only(&state.theme.primary));
-    if !badge.is_empty() {
-        row = row.badge_text(badge, muted);
-    }
-    let detail = session_detail(state, entry);
+        .active(presence == SessionPresence::Current)
+        .title_style(super::super::fg_only(&state.theme.primary))
+        .badge_text(badge, muted);
+    // The badge already counts the other clients; the detail carries the rest.
+    let agents = vocabulary::host_agent_label(state, entry);
+    let detail = vocabulary::session_facts(entry, agents.as_deref(), 0);
     if !detail.is_empty() {
         row = row.detail(detail, muted);
     }
@@ -131,11 +65,12 @@ fn cached_session_row(
     };
     let muted = super::super::fg_only(&state.theme.muted);
     // A cached row is a memory of a session on a host nothing can reach, so there is no monitor
-    // snapshot to draw an agent token from — `session_status_detail` alone is the whole line.
-    let detail = session_status_detail(&entry);
+    // snapshot to draw an agent token from — the pane count alone is the whole line.
+    let detail = vocabulary::session_facts(&entry, None, 0);
     SidebarRow::item(
         Row::new(cached.name.clone())
             .title_style(muted)
+            .badge_text(SessionPresence::LastSeen.label(), muted)
             .detail(detail, muted),
         RowTarget::Session(Box::new(entry)),
     )
@@ -149,7 +84,7 @@ fn cached_session_row(
 /// - a connected host is one line, and its ✕ appears under the pointer;
 /// - a host that failed spends its second line on the reason, so its connect affordance hides in
 ///   the badge's slot rather than growing the row to three lines;
-/// - an offline host with nothing to explain has that line free, and a standing "Click to connect"
+/// - an offline host with nothing to explain has that line free, and a standing "click to connect"
 ///   is plainer than one the pointer has to go looking for.
 fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>) -> SidebarRow {
     let theme = &state.theme;
@@ -157,9 +92,9 @@ fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>
     let Some((host, status)) = host else {
         return SidebarRow::item(row, RowTarget::Inert);
     };
-    row = row.badge(crate::view::session_status::host_status_badge(
+    row = row.badge(vocabulary::host_status_badge(
         status,
-        crate::view::session_status::HostStatusStyles::from_theme(theme),
+        vocabulary::HostStatusStyles::from_theme(theme),
     ));
     match status {
         HostStatus::Connected | HostStatus::Reachable => SidebarRow::item(row, RowTarget::Inert)
@@ -182,10 +117,10 @@ fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>
                         crate::session::discovery::probe_failure_reason(error),
                         Style::new().fg(theme.status.error),
                     )
-                    .hover_badge_text("Connect", super::super::fg_only(&theme.muted)),
+                    .hover_badge_text("connect", super::super::fg_only(&theme.muted)),
                 // Nothing to explain, so the second line is free. Spend it: a standing invitation
                 // is plainer than one the pointer has to go looking for.
-                None => row.detail("Click to connect", super::super::fg_only(&theme.muted)),
+                None => row.detail("click to connect", super::super::fg_only(&theme.muted)),
             };
             SidebarRow::item(row, RowTarget::HostConnect(host.target.clone()))
         }
@@ -245,7 +180,7 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
             .collect();
         // Only a live row is evidence the host answered. The list also carries the host's cached
         // last-seen rows, and a memory must not talk an idle host into "reached".
-        let status = crate::view::session_status::host_connection_status(
+        let status = vocabulary::host_connection_status(
             state,
             &host.target,
             sessions

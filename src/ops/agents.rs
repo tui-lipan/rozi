@@ -2,7 +2,7 @@
 //!
 //! Everything the view lists is derived state — live panes for the session on screen, host-monitor
 //! snapshots for other sessions — so there is nothing here to build or refresh. What this module
-//! owns is the one act the view exists for: turning "Codex is blocked on workbox/backend" into
+//! owns is the one act the view exists for: turning "Codex is blocked on backend@workbox" into
 //! being *there*, across an attach when the session is somewhere else.
 
 use tui_lipan::prelude::*;
@@ -557,7 +557,7 @@ mod tests {
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
                 frame.lines().any(
-                    |line| line.contains("Codex") && line.contains("Blocked · workbox/backend")
+                    |line| line.contains("Codex") && line.contains("Blocked · backend@workbox")
                 ),
                 "the row names who and where:\n{frame}"
             );
@@ -650,7 +650,7 @@ mod tests {
                     .iter()
                     .map(|tab| tab.label(backend.state()))
                     .collect::<Vec<_>>(),
-                ["dev", "workbox/dev", "All"]
+                ["dev", "dev@workbox", "All"]
             );
             assert!(matches!(
                 backend.state().agent_picker.as_ref().unwrap().selected,
@@ -722,7 +722,7 @@ mod tests {
                     .unwrap()
                     .tab
                     .label(backend.state()),
-                "workbox/dev"
+                "dev@workbox"
             );
         });
     }
@@ -754,11 +754,11 @@ mod tests {
             let tabs = picker_tabs(backend.state());
             let labels: Vec<_> = tabs.iter().map(|tab| tab.label(backend.state())).collect();
             assert!(
-                labels.contains(&"workbox (workbox)/dev".into()),
+                labels.contains(&"dev@workbox (workbox)".into()),
                 "{labels:?}"
             );
             assert!(
-                labels.contains(&"workbox (ssh://workbox)/dev".into()),
+                labels.contains(&"dev@workbox (ssh://workbox)".into()),
                 "{labels:?}"
             );
             backend.render();
@@ -767,12 +767,12 @@ mod tests {
                 frame
                     .lines()
                     .any(|line| line.contains("Remote Codex")
-                        && line.contains("workbox (workbox)/dev")),
+                        && line.contains("dev@workbox (workbox)")),
                 "{frame}"
             );
             assert!(
                 frame.lines().any(|line| line.contains("URL Codex")
-                    && line.contains("workbox (ssh://workbox)/dev")),
+                    && line.contains("dev@workbox (ssh://workbox)")),
                 "{frame}"
             );
             for ch in "ssh://workbox".chars() {

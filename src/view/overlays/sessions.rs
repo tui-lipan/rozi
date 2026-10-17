@@ -302,13 +302,17 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         )]
     };
     let status: Element = if offline {
-        Text::new(if lost { "session lost" } else { "offline" })
+        Text::new(if lost { "Session lost" } else { "Offline" })
             .style(Style::new().fg(ctx.state.theme.status.warning))
             .into()
     } else {
         Spinner::new()
             .spinner_style(SpinnerStyle::Dots)
-            .label(if lost { "recreating" } else { "reconnecting" })
+            .label(if lost {
+                "Recreating…"
+            } else {
+                "Reconnecting…"
+            })
             .style(Style::new().fg(ctx.state.theme.status.warning))
             .label_style(fg_only(&ctx.state.theme.primary))
             .into()
@@ -404,14 +408,11 @@ fn push_session_activation(
         );
         actions.push(session_forget_action(ctx, picker));
     } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
-        let held = ctx
-            .state
-            .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-            .map(|attachment| attachment.connection);
-        let label = match held {
-            Some(crate::state::ConnectionState::Connected) => "switch",
-            _ => "connect",
-        };
+        let label =
+            vocabulary::session_presence_for(&ctx.state, &entry.name, entry.remote_target.as_ref())
+                .discovered(&entry.status)
+                .verb()
+                .unwrap_or("attach");
         actions.push(
             OverlayAction::new(
                 "enter",
@@ -540,9 +541,7 @@ fn push_session_management_actions(
     }
 }
 
-use crate::view::session_status::{
-    SessionConnectionStatus, session_connection_status, session_status_gutter,
-};
+use crate::view::vocabulary::{self, SessionPresence};
 
 /// The currently highlighted session, if it is still on screen after filtering.
 fn selected_session<'a>(
@@ -576,7 +575,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     let current_name = ctx.state.current().session_name.as_deref();
     let current_host = ctx.state.current().remote_host.as_deref();
     let current_remote_target = &ctx.state.current().remote_target;
-    let statuses: Vec<SessionConnectionStatus> = picker
+    let statuses: Vec<SessionPresence> = picker
         .entries
         .iter()
         .map(|entry| {
@@ -587,7 +586,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
                 .state
                 .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
                 .map(|attachment| attachment.connection);
-            session_connection_status(is_current, connection)
+            SessionPresence::held(is_current, connection).discovered(&entry.status)
         })
         .collect();
     let ephemeral_entries = picker
@@ -597,7 +596,6 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         .filter_map(|(index, entry)| entry.ephemeral.then_some(index))
         .collect::<Vec<_>>();
     let mut entries = Vec::new();
-    let mut reserve_discovered_gutter = false;
     // The palette's highlight is a position among the rows it draws, which on a tab is not the
     // row's index into every host's entries.
     let selected_position = picker
@@ -611,11 +609,10 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
         })
     {
-        reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
         // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
         let name = if entry.ephemeral {
-            "ephemeral"
+            vocabulary::EPHEMERAL
         } else {
             entry.name.as_str()
         };
@@ -640,12 +637,15 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         if let Some(host) = entry.host.as_deref() {
             aliases.push(format!("{}@{host}", entry.name));
         }
-        let we_hold = !matches!(statuses[index], SessionConnectionStatus::Discovered);
-        let agents = crate::view::session_status::host_agent_label(&ctx.state, entry);
+        let agents = vocabulary::host_agent_label(&ctx.state, entry);
         entries.push(SearchEntry::Item(
             SearchItem::new(label, index)
                 .aliases(aliases)
-                .description(session_description(entry, we_hold, agents)),
+                .description(picker_description(session_description(
+                    entry,
+                    statuses[index],
+                    agents.as_deref(),
+                ))),
         ));
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
@@ -660,7 +660,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     let pending_restart = picker.pending_restart;
     let ephemeral_style = fg_only(&theme.primary).italic();
     let description_style = fg_only(&theme.muted);
-    let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
+    let status_styles = vocabulary::SessionStatusStyles::from_theme(theme);
     let fallback = ctx.link().key_handler(|key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)
@@ -710,8 +710,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
     )
     .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
-        let status = *statuses.get(item.value)?;
-        session_status_gutter(status, status_styles, reserve_discovered_gutter)
+        Some(statuses.get(item.value)?.gutter(status_styles))
     }));
     if let Some(render_item) = render_item {
         overlay = overlay.render_item(render_item);
@@ -744,75 +743,30 @@ fn remote_tab_status(
     ctx: &Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> String {
-    let status = crate::view::session_status::host_connection_status(&ctx.state, target, false);
-    crate::view::session_status::host_status_label(status).to_string()
+    let status = vocabulary::host_connection_status(&ctx.state, target, false);
+    vocabulary::host_status_label(status).to_string()
 }
 
-/// A picker row's right-aligned line. `agents` is what a host monitor knows about the session's
-/// agents, already rendered by [`crate::view::session_status::host_agent_label`]; it goes last,
-/// after the facts about the session itself.
 /// How much of a session row its name keeps when the description wins the row.
 const SESSION_LABEL_SHARE: u16 = 40;
 
+/// What a session row says about the session. The gutter already marks a live or held session, so
+/// only a session with nothing running to connect to leads with its status word; the facts follow.
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
-    we_hold: bool,
-    agents: Option<String>,
-) -> ItemDescription {
-    picker_description(session_status_description(
-        entry,
-        we_hold,
-        agents.as_deref(),
-    ))
-}
-
-/// What a session row says about the session. The agents' state follows the pane count rather
-/// than trailing the row, because a description cut short loses its end first and "blocked" is
-/// the part worth going to the session for.
-fn session_status_description(
-    entry: &crate::session::discovery::DiscoveredSession,
-    we_hold: bool,
+    presence: SessionPresence,
     agents: Option<&str>,
 ) -> String {
-    let with_agents = |label: String| match agents {
-        Some(agents) => format!("{label} · {agents}"),
-        None => label,
+    let status = match presence {
+        SessionPresence::Restorable
+        | SessionPresence::LastSeen
+        | SessionPresence::Busy
+        | SessionPresence::Unavailable => presence.label(),
+        _ => "",
     };
-    use crate::session::discovery::DiscoveredSessionStatus;
-    match &entry.status {
-        DiscoveredSessionStatus::Running { panes, clients, .. } => {
-            let panes_label = panes_label(*panes);
-            // `clients` counts every client attached to the server, ours included. Drop our own
-            // connection (current or retained in the background) so this reports only *other* people
-            // sharing the session — the ones a new attach would join.
-            let others = clients.saturating_sub(u32::from(we_hold));
-            let mut label = with_agents(panes_label);
-            match others {
-                0 => {}
-                1 => label.push_str(" · shared with 1 other"),
-                count => label.push_str(&format!(" · shared with {count} others")),
-            }
-            if let Some(profile) = &entry.origin.profile {
-                label.push_str(&format!(" · from {profile}"));
-            }
-            label
-        }
-        // A remembered row from a host nothing has reached this sweep. The pane count is still the
-        // most useful thing to say about it, but on its own it is exactly what a live session says,
-        // so it goes out qualified. Same words the sidebar's cached rows have always used.
-        DiscoveredSessionStatus::LastSeen { panes } => {
-            with_agents(format!("{} · last seen", panes_label(*panes)))
-        }
-        DiscoveredSessionStatus::Restorable => with_agents("restorable".to_string()),
-        DiscoveredSessionStatus::Busy => with_agents("busy".to_string()),
-        DiscoveredSessionStatus::Unknown => with_agents("unavailable".to_string()),
-    }
-}
-
-fn panes_label(panes: usize) -> String {
-    if panes == 1 {
-        "1 pane".to_string()
-    } else {
-        format!("{panes} panes")
-    }
+    let others = vocabulary::other_clients(entry, presence);
+    vocabulary::fields([
+        status,
+        vocabulary::session_facts(entry, agents, others).as_str(),
+    ])
 }

@@ -185,7 +185,7 @@ fn picker_hides_long_paths_at_wide_and_narrow_viewports() {
             !frame.contains("rozi/.claude/worktrees/session-fade-duration"),
             "{frame}"
         );
-        assert!(frame.contains("primary"), "{frame}");
+        assert!(frame.contains("Primary"), "{frame}");
 
         backend.set_viewport(Rect {
             x: 0,
@@ -241,7 +241,7 @@ fn narrow_picker_keeps_work_status_and_lock() {
             .find(|line| line.contains("feat/narrow-layout"))
             .unwrap_or_else(|| panic!("the branch is kept whole: {frame}"));
         assert!(!row.contains("duration"), "{frame}");
-        assert!(row.contains("#114 ✓ · locked"), "{frame}");
+        assert!(row.contains("Locked · #114 · Passed"), "{frame}");
     });
 }
 
@@ -420,7 +420,12 @@ fn status_replies_are_scoped_cached_and_shared_with_the_sidebar() {
                 .is_empty()
         );
         backend.render();
-        assert!(backend.capture_frame().plain_text().contains("#112 merged"));
+        assert!(
+            backend
+                .capture_frame()
+                .plain_text()
+                .contains("#112 · Merged")
+        );
     });
 }
 

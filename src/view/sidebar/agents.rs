@@ -751,7 +751,7 @@ pub(crate) fn row_glyph(
 /// forced cost four cells on every row of the narrowest surface in the app.
 fn group_header(state: &State, project: Option<&str>, branch: Option<&str>) -> Element {
     let Some(label) = project else {
-        return row::header(state, "elsewhere", true);
+        return row::header(state, "Elsewhere", true);
     };
     // The project name is what the group is; the branch qualifies it and takes whatever width the
     // name leaves, down to nothing.

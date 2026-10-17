@@ -241,14 +241,14 @@ fn installed_row(
     if updating {
         row.description(crate::ops::extensions_manager::EXTENSION_UPDATING_LABEL)
             .description_style(style)
-            .description_spinner(crate::view::session_status::picker_circle_spinner(
+            .description_spinner(crate::view::vocabulary::picker_circle_spinner(
                 Style::new().fg(theme.status.info),
             ))
     } else if checking {
         // The spinner's slot replaces picker_row's leading separator, keeping the row's width and
         // sitting one cell from the version.
         row.description(description).description_spinner(
-            crate::view::session_status::picker_circle_spinner(fg_only(&theme.muted)),
+            crate::view::vocabulary::picker_circle_spinner(fg_only(&theme.muted)),
         )
     } else {
         row

@@ -148,7 +148,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             // Each host is a heading, and its sessions hang from it.
             assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
             assert!(lines[row("▍├ dev")].starts_with("▍├ dev"));
-            assert!(lines[row("▍├ dev")].contains("󰍺 2"));
+            assert!(lines[row("▍├ dev")].contains("󰍺 1"));
             assert!(lines[row("▍├ dev")].contains("Current"));
             assert!(lines[row("2 panes")].starts_with("▍│ 2 panes"));
             assert!(!lines[row("2 panes")].contains("shared"));
@@ -183,9 +183,11 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             // invitation, rather than hiding it under the pointer.
             let winvm = row("WINVM");
             assert!(lines[winvm].starts_with(" WINVM"));
-            assert!(lines[winvm + 1].starts_with(" Click to connect"));
-            assert!(lines[winvm + 2].starts_with(" └ dev"));
-            assert!(lines[winvm + 3].starts_with("   2 panes · last seen"));
+            assert!(lines[winvm + 1].starts_with(" click to connect"));
+            assert!(
+                lines[winvm + 2].starts_with(" └ dev") && lines[winvm + 2].contains("Last seen")
+            );
+            assert!(lines[winvm + 3].starts_with("   2 panes"));
             assert!(lines[row("+ Connect a host")].starts_with(" + Connect a host"));
 
             let accent = backend
@@ -254,7 +256,7 @@ fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
                 .position(|line| line.contains("▍└ dev"))
                 .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
             assert!(
-                lines[row].contains("⋈ 2"),
+                lines[row].contains("⋈ 1"),
                 "shared-client count uses the standard-unicode stand-in: {}",
                 lines[row]
             );
@@ -478,14 +480,14 @@ fn a_failed_host_offers_the_connect_affordance_in_place_of_its_status() {
             let host = host_row_index(&lines);
             assert!(lines[host].contains("Unreachable"), "{:?}", lines[host]);
             assert!(
-                !lines[host].contains("Connect"),
+                !lines[host].contains("connect"),
                 "nothing about connecting until the pointer arrives: {:?}",
                 lines[host]
             );
 
-            let (lines, host) = hover_host_row_until(&mut backend, "Connect");
+            let (lines, host) = hover_host_row_until(&mut backend, "connect");
             assert!(
-                lines[host].contains("Connect"),
+                lines[host].contains("connect"),
                 "the affordance arrives on hover: {:?}",
                 lines[host]
             );
@@ -517,7 +519,7 @@ fn an_offline_host_keeps_a_standing_invitation_to_connect() {
             let host = host_row_index(&lines);
             assert!(lines[host].contains("Disconnected"), "{:?}", lines[host]);
             assert!(
-                lines[host + 1].contains("Click to connect"),
+                lines[host + 1].contains("click to connect"),
                 "the invitation stands without hovering: {:?}",
                 lines[host + 1]
             );
@@ -618,7 +620,7 @@ fn a_row_that_stops_being_selectable_still_releases_the_pointer() {
                 "the status is back, not the hover affordance: {:?}",
                 lines[host]
             );
-            assert!(!lines[host].contains("Connect"), "{:?}", lines[host]);
+            assert!(!lines[host].contains("connect"), "{:?}", lines[host]);
         })
         .expect("spawn thread")
         .join()

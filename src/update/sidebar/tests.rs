@@ -2494,7 +2494,7 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
                 .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", lines.join("\n")))
         };
         assert!(
-            line("workbox/backend") < line("Claude Code"),
+            line("backend@workbox") < line("Claude Code"),
             "the blocked remote agent leads"
         );
 

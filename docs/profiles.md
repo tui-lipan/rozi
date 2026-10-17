@@ -42,10 +42,11 @@ origin.
 
 Press `Ctrl+A`, then `o` to open **Profiles**.
 
-The left marker shows the same-name session's status: `●` for the attached session,
-`◐` for a connected attachment retained in the background, `○` for a running session
-without our attachment, and `·` when it is not running. The right side labels attached,
-background, and running sessions and marks the default profile.
+The left marker shows the same-name session's status with the markers
+[Sessions](sessions.md#use-the-session-picker) uses: `●` for the session you are in, `◐` for one
+held in the background, `○` for a running session this client is not attached to, and `·` when it
+is not running. The right side says `Default` for the default profile, then `Current`,
+`Background`, or `Running`.
 
 | Key | Action |
 | --- | --- |

@@ -65,7 +65,8 @@ exclude = [
 # 0.23.0: graphics pacing, resize handling, synchronized frames and animation image masks.
 # 0.26.0: Tree forests and guides, composed Tree rows, static editable carets, cursor blink
 # overrides, FileTree icon/arrow/gap controls, and splitter focus fixes.
-tui-lipan = { version = "0.26.0", features = [
+# 0.27.2: runtime `Context::set_scroll_wheel_multiplier` updates and `TestBackend` parity.
+tui-lipan = { version = "0.27.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

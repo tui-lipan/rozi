@@ -168,18 +168,19 @@ pub(super) fn tab(
         .toggle_on_activate(false)
         .indent_style(IndentStyle::Branch)
         .indent_guide_style(Style::new().fg(super::fill(ctx).elevate_by(0.15)))
+        .indent(1)
         .content_gap(1)
-        .expanded_icon(if ctx.state.config.nerd_icons {
+        .expanded_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▼"
         })
-        .collapsed_icon(if ctx.state.config.nerd_icons {
+        .collapsed_arrow(if ctx.state.config.nerd_icons {
             ""
         } else {
             "▶"
         })
-        .icon_style(super::super::fg_only(&ctx.state.theme.muted))
+        .arrow_style(super::super::fg_only(&ctx.state.theme.muted))
         .scrollbar(true)
         .scrollbar_config(super::scrollbar_config())
         .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
@@ -263,7 +264,7 @@ fn node(
     } else {
         ListItemRole::Header
     });
-    let mut node = TreeNode::new(metadata).indent(1);
+    let mut node = TreeNode::new(metadata);
     node = match row.kind {
         super::row::RowKind::Item(row) => {
             let parts = row.parts(ctx, selected, hovered, close);
@@ -275,10 +276,10 @@ fn node(
         }
         super::row::RowKind::Header(element) => node
             .content(*element)
-            .show_disclosure(matches!(item, TreeItem::Loading(_))),
+            .show_arrow(matches!(item, TreeItem::Loading(_))),
         super::row::RowKind::Spacer => node
             .content(Text::new(" ").height(Length::Px(1)))
-            .show_disclosure(false),
+            .show_arrow(false),
     };
     if let TreeItem::Row(line) = item {
         node = node

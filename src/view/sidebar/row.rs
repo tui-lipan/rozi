@@ -61,13 +61,12 @@ impl SidebarRow {
         }
     }
 
-    /// A way to add something: a pane, a session, a host. It follows its group's tree rather than
-    /// joining it, muted, so it neither reads as one of the group's rows nor competes with the
-    /// headings. A blank glyph cell puts its `+` in the label column of the rows above it.
+    /// A way to add something: a pane, a session, a host. It closes its group in the heading's
+    /// column and accent, a footer for the group rather than one of its rows; unlike the heading
+    /// it is not bold.
     pub(super) fn action(state: &State, label: &str, target: RowTarget) -> Self {
-        let row = Row::new(format!("+ {label}"))
-            .glyph(Text::new(" ").height(Length::Px(1)))
-            .title_style(super::super::fg_only(&state.theme.muted));
+        let row =
+            Row::new(format!("+ {label}")).title_style(super::super::fg_only(&state.theme.accent));
         Self::item(row, target).shape(Shape::Flush)
     }
 

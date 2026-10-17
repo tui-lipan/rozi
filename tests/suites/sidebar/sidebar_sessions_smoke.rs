@@ -164,7 +164,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert!(
                 new_session_rows
                     .iter()
-                    .all(|line| line.starts_with("   + New session"))
+                    .all(|line| line.starts_with(" + New session"))
             );
 
             // A connected host is one line: the badge says it is connected, and disconnecting is
@@ -186,7 +186,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert!(lines[winvm + 1].starts_with(" Click to connect"));
             assert!(lines[winvm + 2].starts_with(" └ dev"));
             assert!(lines[winvm + 3].starts_with("   2 panes · last seen"));
-            assert!(lines[row("+ Connect a host")].starts_with("   + Connect a host"));
+            assert!(lines[row("+ Connect a host")].starts_with(" + Connect a host"));
 
             let accent = backend
                 .state()
@@ -208,8 +208,8 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert_eq!(frame.cell(1, (winvm + 1) as u16).fg, muted);
             assert_eq!(frame.cell(3, (winvm + 2) as u16).fg, muted);
             assert_eq!(frame.cell(3, (winvm + 3) as u16).fg, muted);
-            // Actions follow their group's tree in the label column, muted beside the headings.
-            assert_eq!(frame.cell(3, row("+ Connect a host") as u16).fg, muted);
+            // Actions close their group in the heading column and accent.
+            assert_eq!(frame.cell(1, row("+ Connect a host") as u16).fg, accent);
         })
         .expect("spawn Sessions sidebar smoke thread")
         .join()

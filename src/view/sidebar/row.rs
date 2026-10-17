@@ -8,8 +8,6 @@ pub(crate) use crate::state::RowTarget;
 /// What a row renders as. Items are kept unbuilt so the list can hand each one its selection state
 /// at build time; headers carry their own glyphs and are finished elements already.
 pub(crate) enum RowKind {
-    /// Blank separator between groups.
-    Spacer,
     /// Boxed alongside `Item` because `Element` is large; an unboxed variant would make every row
     /// in the vector pay for the biggest one.
     Header(Box<Element>),
@@ -23,7 +21,7 @@ pub(crate) enum Shape {
     /// where some row folds, so it lines up with that row or reads as nested in it.
     #[default]
     Leaf,
-    /// A top-level row outside any group, such as an action or a spacer: no arrow column.
+    /// A top-level row outside any group, such as an action: no arrow column.
     Flush,
     /// A section title: no arrow column, and the rows beneath it always show.
     Heading,
@@ -43,6 +41,8 @@ pub(crate) struct SidebarRow {
     pub key: Option<String>,
     /// Style for the row's arrow, such as a folded row tinted with what it hides.
     pub arrow_style: Option<Style>,
+    /// Blank lines setting the row's group apart from the rows above it.
+    pub gap_before: u16,
     /// Where a collapsible row's open state is kept.
     pub expansion: Option<crate::state::TreeExpansionKey>,
 }
@@ -57,6 +57,7 @@ impl SidebarRow {
             shape: Shape::Leaf,
             key: None,
             arrow_style: None,
+            gap_before: 0,
             expansion: None,
         }
     }
@@ -75,8 +76,11 @@ impl SidebarRow {
         Self::new(RowKind::Header(Box::new(element.into())), RowTarget::Inert).shape(Shape::Flush)
     }
 
-    pub(super) fn spacer() -> Self {
-        Self::new(RowKind::Spacer, RowTarget::Inert).shape(Shape::Flush)
+    /// Set the row's group apart from the rows above it with a blank line that is not a row: it
+    /// takes no hover or index. The tree ignores it on its first row and below the top level.
+    pub(super) fn apart(mut self) -> Self {
+        self.gap_before = 1;
+        self
     }
 
     pub(super) fn item(row: Row, target: RowTarget) -> Self {
@@ -119,7 +123,7 @@ impl SidebarRow {
     pub(super) fn label(&self) -> &str {
         match &self.kind {
             RowKind::Item(row) => &row.title,
-            RowKind::Header(_) | RowKind::Spacer => "",
+            RowKind::Header(_) => "",
         }
     }
 

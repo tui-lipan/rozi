@@ -31,12 +31,10 @@ pub(super) fn launcher_rows(
     let mut current: Option<&String> = None;
     for (entry_index, entry) in entries.iter().enumerate() {
         if let Some(group) = entry.group.as_ref().filter(|group| Some(*group) != current) {
-            if !rows.is_empty() {
-                rows.push(SidebarRow::spacer().keyed(format!("spacer:{entry_index}")));
-            }
             rows.push(
                 SidebarRow::header(row::header(state, group.clone(), false))
                     .shape(Shape::Heading)
+                    .apart()
                     .keyed(format!("group:{group}")),
             );
             current = Some(group);
@@ -92,12 +90,10 @@ pub(super) fn command_rows(
         // A `group_prefix` line labels the rows beneath it, so it renders as the same section
         // header the launcher and the built-in tabs use rather than as a row of output.
         if row.header {
-            if !rows.is_empty() {
-                rows.push(SidebarRow::spacer().keyed(format!("spacer:{line}")));
-            }
             rows.push(
                 SidebarRow::header(row::header(state, row.display.clone(), false))
                     .shape(Shape::Heading)
+                    .apart()
                     .keyed(format!("heading:{line}")),
             );
             grouped = true;

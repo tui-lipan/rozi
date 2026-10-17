@@ -14,9 +14,6 @@ pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
         if panes.is_empty() && workspace_index != active {
             continue;
         }
-        if !rows.is_empty() {
-            rows.push(SidebarRow::spacer().keyed(format!("spacer:{workspace_index}")));
-        }
         let label = super::workspace_heading(state, workspace_index);
         let locations: Vec<Option<String>> = panes.iter().map(|pane| pane_location(pane)).collect();
         let shared = shared_directory(&locations);
@@ -27,6 +24,7 @@ pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
         rows.push(
             SidebarRow::header(heading)
                 .shape(Shape::Heading)
+                .apart()
                 .keyed(format!("workspace:{workspace_index}")),
         );
         for (pane, location) in panes.into_iter().zip(locations) {

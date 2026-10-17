@@ -12,57 +12,63 @@ use crate::AppRoot;
 use crate::state::{SidebarTone, State, TreeItem, TreeLine};
 
 pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> {
-    items
-        .into_iter()
-        .map(|item| {
-            let target = item.target();
-            let close = item.close();
-            match item {
-                TreeItem::Spacer => SidebarRow::spacer(),
-                TreeItem::Header(header) => {
-                    SidebarRow::header(super::row::header(state, header, false))
-                }
-                TreeItem::Loading(branch) => SidebarRow::item(
-                    Row::new("Loading…").title_style(super::super::fg_only(&state.theme.muted)),
-                    target,
-                )
-                .at(branch.depth()),
-                TreeItem::Row(line) if line.heading => {
-                    let key = format!("{:?}", line.key);
-                    let content = line.row.content;
-                    let heading = match content.description {
-                        Some(note) => super::row::header_with_note(
-                            state,
-                            content.label,
-                            note,
-                            Priority::Label,
-                        ),
-                        None => super::row::header(state, content.label, false),
-                    };
-                    SidebarRow::header(heading).shape(Shape::Heading).keyed(key)
-                }
-                TreeItem::Row(line) => {
-                    let depth = line.branch.depth();
-                    let key = format!("{:?}", line.key);
-                    let expansion = line.expandable.then(|| (line.key.clone(), line.expanded));
-                    // A folded row's arrow takes the color of the most urgent row it hides.
-                    let tint = line.hidden_tone.and_then(|tone| tone_color(state, tone));
-                    let row = tree_row(state, *line);
-                    let mut row = SidebarRow::item(row, target).at(depth).keyed(key);
-                    if let Some((key, expanded)) = expansion {
-                        row = row.collapsible(key, expanded);
-                    }
-                    if let Some(tint) = tint {
-                        row = row.arrow_style(Style::new().fg(tint));
-                    }
-                    if let Some(close) = close {
-                        row = row.closable(close);
-                    }
-                    row
-                }
+    let mut rows = Vec::with_capacity(items.len());
+    // A break between sections is the next row's gap, not a row of its own.
+    let mut apart = false;
+    for item in items {
+        let target = item.target();
+        let close = item.close();
+        let row = match item {
+            TreeItem::Spacer => {
+                apart = true;
+                continue;
             }
-        })
-        .collect()
+            TreeItem::Header(header) => {
+                SidebarRow::header(super::row::header(state, header, false))
+            }
+            TreeItem::Loading(branch) => SidebarRow::item(
+                Row::new("Loading…").title_style(super::super::fg_only(&state.theme.muted)),
+                target,
+            )
+            .at(branch.depth()),
+            TreeItem::Row(line) if line.heading => {
+                let key = format!("{:?}", line.key);
+                let content = line.row.content;
+                let heading = match content.description {
+                    Some(note) => {
+                        super::row::header_with_note(state, content.label, note, Priority::Label)
+                    }
+                    None => super::row::header(state, content.label, false),
+                };
+                SidebarRow::header(heading).shape(Shape::Heading).keyed(key)
+            }
+            TreeItem::Row(line) => {
+                let depth = line.branch.depth();
+                let key = format!("{:?}", line.key);
+                let expansion = line.expandable.then(|| (line.key.clone(), line.expanded));
+                // A folded row's arrow takes the color of the most urgent row it hides.
+                let tint = line.hidden_tone.and_then(|tone| tone_color(state, tone));
+                let row = tree_row(state, *line);
+                let mut row = SidebarRow::item(row, target).at(depth).keyed(key);
+                if let Some((key, expanded)) = expansion {
+                    row = row.collapsible(key, expanded);
+                }
+                if let Some(tint) = tint {
+                    row = row.arrow_style(Style::new().fg(tint));
+                }
+                if let Some(close) = close {
+                    row = row.closable(close);
+                }
+                row
+            }
+        };
+        rows.push(if std::mem::take(&mut apart) {
+            row.apart()
+        } else {
+            row
+        });
+    }
+    rows
 }
 
 fn tree_row(state: &State, line: TreeLine) -> Row {
@@ -270,6 +276,7 @@ fn node(
     let depth = row.depth;
     let shape = row.shape;
     let arrow_style = row.arrow_style;
+    let gap_before = row.gap_before;
     let key = row
         .key
         .clone()
@@ -294,7 +301,6 @@ fn node(
                 .row_style(parts.style)
         }
         super::row::RowKind::Header(element) => node.content(*element),
-        super::row::RowKind::Spacer => node.content(Text::new(" ").height(Length::Px(1))),
     };
     node = match shape {
         Shape::Leaf => node,
@@ -309,7 +315,7 @@ fn node(
     if let Some(style) = arrow_style {
         node = node.arrow_style(style);
     }
-    (depth, shape, node.key(key))
+    (depth, shape, node.gap_before(gap_before).key(key))
 }
 
 /// The model projects only visible rows. Retain its order and depth; controlled expansion keeps

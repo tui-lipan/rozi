@@ -637,13 +637,11 @@ pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
     for group in groups {
         let project = group.project.as_deref();
-        if !rows.is_empty() {
-            rows.push(SidebarRow::spacer().keyed(format!("spacer:{}", project.unwrap_or(""))));
-        }
         let depth = if show_headers {
             rows.push(
                 SidebarRow::header(group_header(state, project, group.branch.as_deref()))
                     .shape(Shape::Heading)
+                    .apart()
                     .keyed(format!("project:{}", project.unwrap_or(""))),
             );
             1

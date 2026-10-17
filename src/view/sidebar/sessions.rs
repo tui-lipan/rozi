@@ -237,7 +237,6 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
     // returns it to offline.
     for host in state.remote.hosts.iter() {
         let id = &host.alias;
-        rows.push(SidebarRow::spacer().keyed(format!("spacer:{id}")));
         let sessions: Vec<&DiscoveredSession> = state
             .sidebar
             .sessions
@@ -256,6 +255,7 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
         rows.push(
             header_row(state, &host.alias.to_uppercase(), Some((host, status)))
                 .shape(Shape::Heading)
+                .apart()
                 .keyed(format!("host:{id}")),
         );
 
@@ -306,9 +306,10 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
 
     // A discoverable path to the connect-remote-host prompt, so a host that is not yet configured or
     // recent can still be reached without knowing the Ctrl+R binding.
-    rows.push(SidebarRow::spacer().keyed("spacer:connect"));
     rows.push(
-        SidebarRow::action(state, "Connect a host…", RowTarget::ConnectHost).keyed("connect"),
+        SidebarRow::action(state, "Connect a host…", RowTarget::ConnectHost)
+            .apart()
+            .keyed("connect"),
     );
 
     rows

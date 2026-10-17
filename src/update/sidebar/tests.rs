@@ -905,11 +905,11 @@ fn host_connect_and_two_click_disconnect() {
 
         // `row_activate` rebuilds the rows from the current state before the post-update sweep
         // repopulates local sessions, so clearing them here makes the layout deterministic:
-        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer
-        //   4 WINVM (one line) · 5 spacer · 6 "Connect a host…"
+        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 WINVM (one line)
+        //   4 "Connect a host…"
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 3 })
             .expect("connect through host row");
         assert_eq!(
             backend.state().remote.hosts.get(&target).unwrap().probe,
@@ -928,7 +928,7 @@ fn host_connect_and_two_click_disconnect() {
             .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("arm disconnect");
         assert_eq!(
             backend.state().sidebar.pending_row_close,
@@ -952,7 +952,7 @@ fn host_connect_and_two_click_disconnect() {
             .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("confirm disconnect");
         assert_eq!(
             backend.state().remote.hosts.get(&target).unwrap().probe,
@@ -997,14 +997,14 @@ fn cached_rows_do_not_mark_an_idle_host_reached() {
                     remote_target: Some(target.clone()),
                 });
         }
-        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer · 4 WINVM
+        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 WINVM
         let items = backend.state().sidebar_rows(&SidebarTab::Sessions);
         assert_eq!(
-            items[4].target,
+            items[3].target,
             crate::state::RowTarget::HostConnect(target.clone()),
             "the offline host row connects"
         );
-        assert!(items[4].close.is_none(), "and offers no disconnect ✕");
+        assert!(items[3].close.is_none(), "and offers no disconnect ✕");
     });
 }
 
@@ -1393,9 +1393,9 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
             state.sidebar.sessions.clear();
         }
 
-        // Row 4 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
+        // Row 3 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("confirm disconnect");
 
         let state = backend.state();
@@ -1776,7 +1776,7 @@ fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
     });
 }
 
-/// Headers and their spacers are extra rows the click path never saw before: the projection has to
+/// Headers are extra rows the click path never saw before: the rows have to
 /// keep every entry index pointing at the entry the row actually shows, or a click under one header
 /// runs an action from another section.
 #[test]
@@ -1809,10 +1809,10 @@ fn grouped_launcher_rows_stay_inert_at_headers_and_keep_entry_indices_aligned() 
                 _ => None,
             })
             .collect();
-        // Ungrouped entry, then spacer + header ahead of each section's first entry.
+        // Ungrouped entry, then a header ahead of each section's first entry.
         assert_eq!(
             indices,
-            vec![Some(0), None, None, Some(1), Some(2), None, None, Some(3)]
+            vec![Some(0), None, Some(1), Some(2), None, Some(3)]
         );
     });
 }
@@ -1874,8 +1874,8 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
             .iter()
             .map(crate::view::sidebar::SidebarRow::selectable)
             .collect();
-        // Header, spacer + header, and the two output rows between them.
-        assert_eq!(selectable, vec![false, true, false, false, true]);
+        // A header over each of the two output rows.
+        assert_eq!(selectable, vec![false, true, false, true]);
     });
 }
 

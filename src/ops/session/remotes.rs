@@ -371,7 +371,7 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
 /// session attachment that is still live.
 pub(crate) fn host_is_connected(state: &crate::state::State, target: &RemoteTarget) -> bool {
     matches!(
-        crate::view::session_status::host_connection_status(state, target, false),
+        crate::view::vocabulary::host_connection_status(state, target, false),
         crate::state::HostStatus::Connected | crate::state::HostStatus::Reachable
     )
 }

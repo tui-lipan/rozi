@@ -6,7 +6,7 @@ fn remote_host_status(
     ctx: &Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> crate::state::HostStatus {
-    crate::view::session_status::host_connection_status(&ctx.state, target, false)
+    crate::view::vocabulary::host_connection_status(&ctx.state, target, false)
 }
 
 fn remote_host_description(
@@ -35,16 +35,15 @@ fn remote_host_description(
             | crate::state::HostStatus::Installing
             | crate::state::HostStatus::Unreachable,
             _,
-        ) => crate::view::session_status::host_status_label(status).to_string(),
-        (1, _, _) => "1 session".to_string(),
-        (count, _, _) if count > 1 => format!("{count} sessions"),
+        ) => crate::view::vocabulary::host_status_label(status).to_string(),
+        (count, _, _) if count > 0 => crate::view::vocabulary::count(count, "session"),
         (_, crate::state::HostStatus::Connected | crate::state::HostStatus::Reachable, _) => {
-            crate::view::session_status::host_status_label(status).to_string()
+            crate::view::vocabulary::host_status_label(status).to_string()
         }
-        (_, _, crate::state::HostOrigin::Configured) => "configured".to_string(),
-        (_, _, crate::state::HostOrigin::Saved) => "saved".to_string(),
-        (_, _, crate::state::HostOrigin::Recent) => "recent".to_string(),
-        (_, _, crate::state::HostOrigin::Attached) => "attached".to_string(),
+        (_, _, crate::state::HostOrigin::Configured) => "Configured".to_string(),
+        (_, _, crate::state::HostOrigin::Saved) => "Saved".to_string(),
+        (_, _, crate::state::HostOrigin::Recent) => "Recent".to_string(),
+        (_, _, crate::state::HostOrigin::Attached) => "Attached".to_string(),
     };
     picker_description(label)
 }
@@ -164,7 +163,7 @@ fn remote_hosts_overlay(
     .empty_text(empty_text)
     .fallback_interceptor(fallback)
     .item_gutter(Arc::new({
-        let styles = crate::view::session_status::HostStatusStyles::from_theme(&ctx.state.theme);
+        let styles = crate::view::vocabulary::HostStatusStyles::from_theme(&ctx.state.theme);
         let statuses: Vec<(
             crate::session::remote::RemoteTarget,
             crate::state::HostStatus,
@@ -187,9 +186,7 @@ fn remote_hosts_overlay(
                 }
                 known => known?,
             };
-            Some(crate::view::session_status::host_status_gutter(
-                status, styles,
-            ))
+            Some(crate::view::vocabulary::host_status_gutter(status, styles))
         }
     }))
     .on_query_change(

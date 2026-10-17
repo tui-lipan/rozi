@@ -18,14 +18,14 @@ checkouts. The palette lists **Worktrees** only while the focused pane is in a G
 The picker title names the repository, and the host when it is a remote one.
 
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
-marks the checkout the focused pane is in. Each row shows the branch and its PR/CI status, with
-`primary`, `locked`, `stale lock`, or `prunable` alongside it when applicable. Paths stay searchable
-without appearing in rows. Press `Ctrl+C` or click **copy path** to copy the selected checkout's full
+marks the checkout the focused pane is in. Each row shows the branch, then `Primary`, `Locked`,
+`Stale lock`, or `Prunable` when it applies, then its PR/CI status. Paths stay searchable without
+appearing in rows. Press `Ctrl+C` or click **copy path** to copy the selected checkout's full
 path, including a remote host's path, to your clipboard.
 
 The list is current when the picker opens, and PR status refreshes about once a minute while it
 stays open. Press `Ctrl+R` to refresh both now. If a lookup fails, the last results stay visible
-with a `stale` label, and a missing tool or an authentication problem is explained in a
+marked `Stale`, and a missing tool or an authentication problem is explained in a
 notification; fix it and press `Ctrl+R`.
 
 Press `Enter` on a checkout to open it:
@@ -59,16 +59,18 @@ client with layout control and is unavailable while the scratchpad is open.
 For GitHub repositories, install [GitHub CLI](https://cli.github.com/) and authenticate with
 `gh auth login` on the host running the session. Remote sessions use that host's GitHub account.
 
-| Picker | Sidebar detail | Meaning |
-| --- | --- | --- |
-| `#114 ✓` | `#114 · passed` | CI passed for the current branch commit |
-| `#113 ✕` | `#113 · failed` | CI failed for the current branch commit |
-| `#115 ◌` | `#115 · running` | CI is pending or running |
-| `#116 open` | `#116 · open` | Open PR without checks for the current branch commit |
-| `#111 draft` | `#111 · draft` | Draft PR |
-| `#112 merged` | `#112 · merged` | Merged PR, including squash merges |
-| `#110 closed` | `#110 · closed` | Closed without merging |
-| `PR unavailable` | `PR unavailable` | GitHub status could not be read |
+The picker and the sidebar show the same status:
+
+| Status | Meaning |
+| --- | --- |
+| `#114 · Passed` | CI passed for the current branch commit |
+| `#113 · Failed` | CI failed for the current branch commit |
+| `#115 · Running` | CI is pending or running |
+| `#116 · Open` | Open PR without checks for the current branch commit |
+| `#111 · Draft` | Draft PR |
+| `#112 · Merged` | Merged PR, including squash merges |
+| `#110 · Closed` | Closed without merging |
+| `PR unavailable` | GitHub status could not be read |
 
 Merged, closed, and draft states take precedence over CI. Passing or failing checks on an older
 pushed commit are not shown for a newer local branch commit. PR status does not describe uncommitted
@@ -147,7 +149,7 @@ Removal follows these rules:
   removal. Forcing affects only that Git check, never a lock.
 
 In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
-During removal, the checkout shows an animated spinner and `removing…` in the picker and sidebar
+During removal, the checkout shows an animated spinner and `Removing…` in the picker and sidebar
 until the host finishes or reports an error.
 
 A create or remove that has started finishes even if you close the picker, and rozi reports the
@@ -160,9 +162,9 @@ Git can lock a checkout so that it is not removed or pruned. Coding agents such 
 the checkouts they create, and a lock stays behind when an agent exits without cleaning up, even
 after its branch is merged.
 
-The picker and the sidebar show a locked checkout as `locked`. When the lock names a process with
+The picker and the sidebar show a locked checkout as `Locked`. When the lock names a process with
 `pid <N>` and that process is no longer running on the session host, the checkout shows as
-`stale lock`. A lock that names no process is never stale.
+`Stale lock`. A lock that names no process is never stale.
 
 Select a locked checkout and press `Ctrl+U` to remove its lock. This works for any lock, so check
 that nothing still uses the checkout before unlocking one that is not stale. Unlocking changes

@@ -199,7 +199,7 @@ fn agents_tab_renders_project_groups() {
             let api = line_index("api");
             let rozi_group = line_index("rozi");
             let tools = line_index("tools");
-            let elsewhere = line_index("elsewhere");
+            let elsewhere = line_index("Elsewhere");
             assert!(api < rozi_group && rozi_group < tools && tools < elsewhere);
             assert!(api < line_index("Codex"));
             assert!(rozi_group < line_index("Claude Code"));

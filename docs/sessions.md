@@ -74,24 +74,35 @@ press `Ctrl+N`; the footer shows which host it will be created on, such as **new
 session, `Ctrl+S` names it. `Ctrl+R` opens **Remote hosts**, and `Ctrl+X` disconnects the selected
 host.
 
-A row shows when a session is attached in the background, shared with other clients, restorable,
-or created from a profile, along with what its agents are doing.
+The marker before each name shows how the session stands with this client:
+
+| Marker | Session |
+| --- | --- |
+| `●` | The one you are in |
+| `◐` | Held by this client in the background |
+| `○` | Running, with this client not attached |
+| `◌` | Saved; `Enter` restores it |
+| `·` | Remembered from a host, or not answering |
+
+A session with nothing running to attach to says so first — `Restorable`, `Last seen`, `Busy`, or
+`Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
+clients share it, and the profile it was created from.
 
 Opening Sessions never contacts a remote host. Sessions on remote hosts are listed from the last
 time each host answered. A host's tab shows the host's state in the picker's top-right corner, and
-rows on a host this client is not attached to are marked `last seen`, with the pane count the host
+rows on a host this client is not attached to are marked `Last seen`, with the pane count the host
 last reported:
 
 ```text
-╭Sessions────────────────────────────────────disconnected╮
+╭Sessions────────────────────────────────────Disconnected╮
 │ Search sessions…                                   1/1 │
 ├───────────────────────────────────────────────────────┤
 │ Local   workbox                                        │
 │                                                       │
-│ dev                                3 panes · last seen │
+│ · dev                              Last seen · 3 panes │
 ```
 
-On a `last seen` row:
+On a `Last seen` row:
 
 - `Enter` connects the host and attaches to the session.
 - `Ctrl+E` is unavailable, because rozi cannot confirm the session is still running.
@@ -138,8 +149,8 @@ then working, then done, then idle.
 
 ```text
 Agents
- api   dev   workbox/backend   All
- !  Codex                                    Blocked · workbox/backend
+ api   dev   backend@workbox   All
+ !  Codex                                    Blocked · backend@workbox
  ⠋  Claude #2: fix login      Working · 4m00s · dev · api (fix-login)
  ✓  Claude                                  Done · api · api (main)
 ```
@@ -148,7 +159,7 @@ The picker opens on **All**. Each session with agents also gets its own tab; swi
 `Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter.
 
 On **All**, each row names the agent and where it runs: the session name for local agents, and
-`host/session` for remote agents. Both parts are searchable, so typing a host name narrows the list
+`session@host` for remote agents. Both parts are searchable, so typing a host name narrows the list
 to that machine. For the session on screen, a row also shows the project and branch the agent
 works in, and a program running several agents adds each one's title after its name.
 
@@ -260,7 +271,7 @@ Named sessions have no such timer. They persist until you kill them.
 With `[session] resurrect = true`, the default, rozi saves a snapshot of each named session
 periodically and when the last client detaches after a change.
 
-When the session server is no longer running, the picker lists a usable snapshot as `restorable`.
+When the session server is no longer running, the picker lists a usable snapshot as `Restorable`.
 Restoring recreates:
 
 - workspace layouts, names, and pane placement

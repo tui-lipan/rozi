@@ -106,14 +106,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
     let branch_style = fg_only(&theme.primary).bold();
     let marker_style = fg_only(&theme.accent);
     let muted = fg_only(&theme.muted);
-    let status_styles = rows
-        .iter()
-        .map(|row| {
-            row.status.map_or(muted, |status| {
-                crate::view::worktree_status_style(theme, status)
-            })
-        })
-        .collect::<Vec<_>>();
+    let status_styles = rows.iter().map(|row| row.styles(theme)).collect::<Vec<_>>();
     let rows = Arc::new(rows);
     // Keep the marker column outside the label, which confirmation rendering replaces.
     let marker_rows = Arc::clone(&rows);
@@ -132,23 +125,22 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             if row.removing {
                 return Some(
                     ListItem::from_spans([Span::new(row.branch.clone()).style(branch_style)])
-                        .description("removing…")
+                        .description(REMOVING)
                         .description_style(muted)
-                        .description_spinner(crate::view::session_status::picker_circle_spinner(
-                            muted,
-                        )),
+                        .description_spinner(crate::view::vocabulary::picker_circle_spinner(muted)),
                 );
             }
+            // Status first: what the checkout is, then its pull request.
+            let (kind_style, pull_request_style) = status_styles[item.value];
             let mut description = Vec::new();
-            if !row.work_status.is_empty() {
-                description
-                    .push(Span::new(row.work_status.clone()).style(status_styles[item.value]));
+            if let Some(kind) = row.kind {
+                description.push(Span::new(kind.label()).style(kind_style));
             }
-            if !row.state.is_empty() {
+            if let Some((text, _)) = &row.pull_request {
                 if !description.is_empty() {
-                    description.push(Span::new(" · ").style(muted));
+                    description.push(Span::new(crate::view::vocabulary::SEPARATOR).style(muted));
                 }
-                description.push(Span::new(row.state.clone()).style(muted));
+                description.push(Span::new(text.clone()).style(pull_request_style));
             }
             Some(
                 ListItem::from_spans([Span::new(row.branch.clone()).style(branch_style)])
@@ -236,9 +228,9 @@ fn branch_picker(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
         .map(|(index, branch)| {
             SearchEntry::Item(SearchItem::new(branch.name.clone(), index).description(
                 ItemDescription::new().right(if branch.checkout.is_some() {
-                    "checked out"
+                    "Checked out"
                 } else {
-                    "existing branch"
+                    "Existing branch"
                 }),
             ))
         })
@@ -292,11 +284,11 @@ fn branch_picker(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
                 primary
             })])
             .description_spans([Span::new(if checked_out {
-                "checked out"
+                "Checked out"
             } else if item.value == branches.len() {
                 "create branch"
             } else {
-                "existing branch"
+                "Existing branch"
             })
             .style(muted)]),
         )
@@ -438,12 +430,13 @@ fn worktree_form(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
 /// Cells before the branch: the current-checkout marker.
 const MARKER_WIDTH: usize = 2;
 
-/// The path remains an alias, while the right edge carries work and checkout status.
+const REMOVING: &str = "Removing…";
+
+/// The path remains an alias, while the right edge carries checkout and work status.
 struct WorktreeRow {
     branch: String,
-    work_status: String,
-    status: Option<crate::git::pull_requests::WorkStatus>,
-    state: String,
+    kind: Option<crate::view::vocabulary::CheckoutKind>,
+    pull_request: Option<(String, Option<crate::git::pull_requests::WorkStatus>)>,
     current: bool,
     removing: bool,
 }
@@ -453,45 +446,10 @@ impl WorktreeRow {
         tree: &crate::git::worktrees::WorktreeInfo,
         picker: &crate::state::WorktreePickerState,
     ) -> Self {
-        let branch = match (&tree.branch, tree.bare) {
-            (_, true) => "(bare)".to_string(),
-            (Some(branch), false) => branch.clone(),
-            (None, false) => "(detached)".to_string(),
-        };
-        let state = if !tree.linked {
-            "primary"
-        } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
-            "stale lock"
-        } else if tree.lock.is_some() {
-            "locked"
-        } else if tree.prunable {
-            "prunable"
-        } else {
-            ""
-        }
-        .to_string();
-        let pr = picker.statuses.checkouts.get(&tree.path);
-        let work_status = match pr {
-            Some(pr) => format!(
-                "#{} {}{}",
-                pr.number,
-                pr.status.picker_label(),
-                if picker.statuses.unavailable {
-                    " · stale"
-                } else {
-                    ""
-                }
-            ),
-            None if tree.linked && tree.branch.is_some() && picker.statuses.unavailable => {
-                "PR unavailable".into()
-            }
-            None => String::new(),
-        };
         Self {
-            branch,
-            work_status,
-            status: pr.map(|pr| pr.status),
-            state,
+            branch: crate::view::vocabulary::checkout_branch(tree).to_string(),
+            kind: crate::view::vocabulary::CheckoutKind::of(tree),
+            pull_request: crate::view::vocabulary::pull_request_text(tree, &picker.statuses),
             current: tree.path == picker.cwd,
             removing: false,
         }
@@ -499,13 +457,28 @@ impl WorktreeRow {
 
     fn description(&self) -> String {
         if self.removing {
-            return "  removing…".into();
+            return format!("  {REMOVING}");
         }
-        [self.work_status.as_str(), self.state.as_str()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ")
+        crate::view::vocabulary::fields([
+            self.kind.map_or("", |kind| kind.label()),
+            self.pull_request
+                .as_ref()
+                .map_or("", |(text, _)| text.as_str()),
+        ])
+    }
+
+    /// Each part's colour: the kind's, then the pull request's.
+    fn styles(&self, theme: &Theme) -> (Style, Style) {
+        let muted = fg_only(&theme.muted);
+        (
+            self.kind.map_or(muted, |kind| kind.style(theme)),
+            self.pull_request
+                .as_ref()
+                .and_then(|(_, status)| *status)
+                .map_or(muted, |status| {
+                    crate::view::vocabulary::work_status_style(theme, status)
+                }),
+        )
     }
 }
 

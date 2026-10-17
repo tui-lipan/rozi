@@ -1,11 +1,13 @@
 use super::*;
 
+use crate::view::vocabulary::SessionPresence;
+
 pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.profile_picker.as_ref() else {
         return Text::new("").into();
     };
     let theme = &ctx.state.theme;
-    let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
+    let status_styles = crate::view::vocabulary::SessionStatusStyles::from_theme(theme);
     let statuses: Vec<_> = picker
         .entries
         .iter()
@@ -118,20 +120,11 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     )
     .entries(profile_picker_entries(ctx, picker))
     .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
-        use crate::view::session_status::{
-            picker_filled_gutter, picker_marker_gutter, picker_ring_gutter,
-        };
+        // A profile with no session gets the quiet dot, so the column reads as a status column
+        // rather than ragged indentation.
         Some(match statuses.get(item.value)? {
-            ProfileSessionStatus::Attached => picker_filled_gutter(status_styles.current),
-            ProfileSessionStatus::Background => {
-                return crate::view::session_status::session_status_gutter(
-                    crate::view::session_status::SessionConnectionStatus::Background,
-                    status_styles,
-                    true,
-                );
-            }
-            ProfileSessionStatus::Running => picker_ring_gutter(status_styles.background),
-            ProfileSessionStatus::Inactive => picker_marker_gutter("·", status_styles.label),
+            Some(presence) => presence.gutter(status_styles),
+            None => crate::view::vocabulary::picker_marker_gutter("·", status_styles.label),
         })
     }))
     .actions(actions)
@@ -176,59 +169,43 @@ fn profile_picker_entries(
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             let mut item = SearchEntry::item(entry.name.clone(), index);
-            let status = profile_session_status(ctx, picker, &entry.name).label();
-            let description = match (default_name == Some(entry.name.as_str()), status) {
-                (true, Some(status)) => format!("default · {status}"),
-                (true, None) => "default".to_string(),
-                (false, Some(status)) => status.to_string(),
-                (false, None) => String::new(),
-            };
+            let presence = profile_session_status(ctx, picker, &entry.name);
+            let description = crate::view::vocabulary::fields([
+                if default_name == Some(entry.name.as_str()) {
+                    "Default"
+                } else {
+                    ""
+                },
+                presence.map_or("", SessionPresence::label),
+            ]);
             item = item.description(picker_description(description));
             item
         })
         .collect()
 }
 
-#[derive(Clone, Copy)]
-enum ProfileSessionStatus {
-    Attached,
-    Background,
-    Running,
-    Inactive,
-}
-
-impl ProfileSessionStatus {
-    fn label(self) -> Option<&'static str> {
-        match self {
-            Self::Attached => Some("attached"),
-            Self::Background => Some("background"),
-            Self::Running => Some("running"),
-            Self::Inactive => None,
-        }
-    }
-}
-
+/// The standing of the session a profile launches, if one exists.
 fn profile_session_status(
     ctx: &Context<AppRoot>,
     picker: &ProfilePickerState,
     name: &str,
-) -> ProfileSessionStatus {
+) -> Option<SessionPresence> {
     if ctx.state.current().session_name.as_deref() == Some(name) {
-        ProfileSessionStatus::Attached
+        Some(SessionPresence::Current)
     } else if ctx
         .state
         .parked_attachment_id(name, None)
         .and_then(|id| ctx.state.background.get(&id))
         .is_some_and(|attachment| attachment.connection == crate::state::ConnectionState::Connected)
     {
-        ProfileSessionStatus::Background
+        Some(SessionPresence::Background)
     } else if matches!(
         picker.running.get(name),
         Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
     ) {
-        ProfileSessionStatus::Running
+        Some(SessionPresence::Running)
     } else {
-        ProfileSessionStatus::Inactive
+        None
     }
 }
 
@@ -258,9 +235,11 @@ pub(super) fn render_ephemeral_session_item(
     description_style: &Style,
 ) -> ListItem {
     let label = item.label.as_ref();
-    let suffix = label.strip_prefix("ephemeral").unwrap_or_default();
+    let suffix = label
+        .strip_prefix(crate::view::vocabulary::EPHEMERAL)
+        .unwrap_or_default();
     let label_spans = vec![
-        Span::new("ephemeral").style(*label_style),
+        Span::new(crate::view::vocabulary::EPHEMERAL).style(*label_style),
         Span::new(suffix),
     ];
     let description = item

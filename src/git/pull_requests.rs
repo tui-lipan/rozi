@@ -20,29 +20,6 @@ pub enum WorkStatus {
     Running,
 }
 
-impl WorkStatus {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Draft => "draft",
-            Self::Merged => "merged",
-            Self::Closed => "closed",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Running => "running",
-        }
-    }
-
-    pub fn picker_label(self) -> &'static str {
-        match self {
-            Self::Passed => "✓",
-            Self::Failed => "✕",
-            Self::Running => "◌",
-            other => other.label(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestStatus {
     pub number: u64,

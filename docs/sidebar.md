@@ -96,9 +96,9 @@ they are listed beneath one row for the agent, titled by what each session is wo
 row shows the most urgent session's state and can be collapsed; collapsed, it counts its sessions
 by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
 
-Each row shows `blocked`, `working`, `done`, `error`, or `idle` in its configured status colour.
+Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
-for you stands apart from work that failed. A finished run stays marked `done` until you visit its
+for you stands apart from work that failed. A finished run stays marked `Done` until you visit its
 pane. Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
 attached client sees the same thing.
 
@@ -158,7 +158,8 @@ switches to it. Restorable sessions, and cached rows for offline hosts, stay lis
 Session rows show `Current`, `Background` for a connection held by this client, or `Running`
 for a live session this client is not attached to. `Reconnecting` and `Offline` describe retained
 connections that are unavailable. Stopped sessions with saved snapshots show `Restorable`;
-offline hosts' cached sessions show `last seen`. Agent activity is shown separately.
+offline hosts' cached sessions show `Last seen`. When other clients share a session, their
+number follows its state, such as `Current · 󰍺 1`. Agent activity is shown separately.
 
 Session names belong to their host, so a local `dev` session and a remote `dev` session are
 separate rows.
@@ -233,30 +234,30 @@ switch every visible panel to other tabs.
 Worktrees lists the Git worktrees of the focused pane's repository, on the host running that pane's
 session. A heading names the repository and host, with the checkouts beneath it. Each checkout is
 listed by branch, with PR/CI
-status underneath, such as `#114 · passed` or `#112 · merged`. Paths stay hidden; open the
+status underneath, such as `#114 · Passed` or `#112 · Merged`. Paths stay hidden; open the
 **Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in the left margin marks
 the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
 GitHub setup and status meanings.
 
 The marker on the right shows whether a session was started from that checkout, using the same
-markers as the Sessions tab:
+markers as the [Sessions picker](sessions.md#use-the-session-picker):
 
 | Marker | Session |
 | --- | --- |
-| `●` green | The one you are in |
+| `●` | The one you are in |
 | `◐` | Held by this client in the background |
-| `●` | Running on the host; activating attaches to it |
-| `○` | Saved; activating restores it |
+| `○` | Running on the host; activating attaches to it |
+| `◌` | Saved; activating restores it |
 
-A number after the marker counts the sessions using the checkout. `primary`, `locked`,
-`stale lock`, or `prunable` appears to its left when it applies; see
-[Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to what activating
-it does: `attach`, `switch`, `restore`, `choose`, or `new session`.
+A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
+`Stale lock`, or `Prunable` appears to its left when it applies; see
+[Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to
+what activating it does: `open`, `switch`, `attach`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.
 
-**+ New worktree** opens the new-worktree form. The checkout appears as `creating…`, and its session
+**+ New worktree** opens the new-worktree form. The checkout appears as `Creating…`, and its session
 opens when Git finishes.
 
 To remove a linked checkout, hover it and click `x` twice, or select it in a focused sidebar and

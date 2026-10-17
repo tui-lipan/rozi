@@ -1,11 +1,14 @@
-use super::row::{self, Row, RowTarget, Shape, SidebarRow};
+use super::row::{self, Priority, Row, RowTarget, Shape, SidebarRow};
 use crate::state::State;
 
-/// The Panes tab as a tree: each workspace is a heading, with its panes and the way to open
-/// another beneath it.
+/// The Panes tab as a tree: each workspace is a heading naming the directory its panes share, with
+/// a one-line row per pane and the way to open another beneath it.
 pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
     let active = state.current().active_workspace;
+    let muted = super::super::fg_only(&state.theme.muted).dim();
+    let budget =
+        location_budget(state.sidebar_tab_width(&crate::config::SidebarTabId::new("panes")));
     for (workspace_index, workspace) in state.current().workspaces.iter().enumerate() {
         let panes = ordered_sidebar_panes(workspace);
         if panes.is_empty() && workspace_index != active {
@@ -14,38 +17,35 @@ pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
         if !rows.is_empty() {
             rows.push(SidebarRow::spacer().keyed(format!("spacer:{workspace_index}")));
         }
-        let workspace_label = super::workspace_heading(state, workspace_index);
+        let label = super::workspace_heading(state, workspace_index);
+        let locations: Vec<Option<String>> = panes.iter().map(|pane| pane_location(pane)).collect();
+        let shared = shared_directory(&locations);
+        let heading = match shared.as_deref() {
+            Some(directory) => row::header_with_note(state, label, directory, Priority::Label),
+            None => row::header(state, label, false),
+        };
         rows.push(
-            SidebarRow::header(row::header(state, workspace_label, false))
+            SidebarRow::header(heading)
                 .shape(Shape::Heading)
                 .keyed(format!("workspace:{workspace_index}")),
         );
-        for pane in panes {
+        for (pane, location) in panes.into_iter().zip(locations) {
             let id = pane.id;
             let program = pane
                 .terminal
                 .foreground_program
                 .as_deref()
                 .unwrap_or("shell");
+            // The heading already says where the workspace is; a pane elsewhere says where.
+            let badge = match place(location.as_deref(), shared.as_deref()) {
+                Some(place) => format!("{} · {program}", row::truncate_start(place, budget)),
+                None => program.to_string(),
+            };
             let row = Row::new(pane_identity(pane))
                 .active(state.current().focused_pane == Some(id))
-                .title_style(super::super::fg_only(&state.theme.primary));
-            let row = match pane_location(pane) {
-                Some(location) => row
-                    .badge_text(program, super::super::fg_only(&state.theme.muted).dim())
-                    .detail(
-                        row::truncate_start(
-                            &location,
-                            location_budget(
-                                state.sidebar_tab_width(&crate::config::SidebarTabId::new("panes")),
-                            ),
-                        ),
-                        super::super::fg_only(&state.theme.muted),
-                    ),
-                // Nothing is known about where the pane is, so what it runs takes the line the
-                // location would have used rather than leaving the row a lone title.
-                None => row.detail(program, super::super::fg_only(&state.theme.muted)),
-            };
+                .title_style(super::super::fg_only(&state.theme.primary))
+                .priority(Priority::Balanced)
+                .badge_text(badge, muted);
             rows.push(
                 SidebarRow::item(row, RowTarget::Pane(id))
                     .closable(crate::state::SidebarClose::Pane(id))
@@ -60,6 +60,46 @@ pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
         );
     }
     rows
+}
+
+/// The deepest directory every pane is in, for the workspace heading. `None` when a pane's location
+/// is unknown or on another machine, or when the panes share nothing more specific than the root.
+fn shared_directory(locations: &[Option<String>]) -> Option<String> {
+    let mut shared: Option<Vec<&str>> = None;
+    for location in locations {
+        let location = location
+            .as_deref()
+            .filter(|location| !location.contains('@'))?;
+        let parts: Vec<&str> = location.split('/').collect();
+        shared = Some(match shared {
+            None => parts,
+            Some(shared) => shared
+                .into_iter()
+                .zip(parts)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a)
+                .collect(),
+        });
+    }
+    let shared = shared?.join("/");
+    (!shared.is_empty()).then_some(shared)
+}
+
+/// Where a pane is, said relative to its workspace's shared directory: nothing when it is there, the
+/// path beneath it when below, and the whole location otherwise.
+fn place<'a>(location: Option<&'a str>, shared: Option<&str>) -> Option<&'a str> {
+    let location = location?;
+    let Some(shared) = shared else {
+        return Some(location);
+    };
+    if location == shared {
+        return None;
+    }
+    let below = location
+        .strip_prefix(shared)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| !rest.is_empty());
+    Some(below.unwrap_or(location))
 }
 
 /// A child-level "+ New pane" action row, matching the Sessions tab's "+ New session".
@@ -154,10 +194,10 @@ fn pane_location(pane: &crate::state::Pane) -> Option<String> {
     })
 }
 
-/// Character budget for the location line: the sidebar's configured width less the gutter, the
-/// detail line's leading indent, the divider and the scrollbar column.
+/// Character budget for a pane's place in its badge: half the sidebar's width, so the title keeps
+/// the rest.
 fn location_budget(width: u16) -> usize {
-    usize::from(width).saturating_sub(4).max(8)
+    usize::from(width / 2).max(8)
 }
 
 /// The working directory a shell prompt echoed into OSC 2, if that is what the title is.
@@ -236,6 +276,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             [30, 20, 10, 40]
         );
+    }
+
+    #[test]
+    fn the_heading_names_the_deepest_directory_every_pane_shares() {
+        let at = |paths: &[&str]| -> Vec<Option<String>> {
+            paths.iter().map(|path| Some(path.to_string())).collect()
+        };
+        assert_eq!(
+            shared_directory(&at(&["~/src/rozi/src/view", "~/src/rozi"])).as_deref(),
+            Some("~/src/rozi")
+        );
+        assert_eq!(
+            shared_directory(&at(&["~/src/rozi"])).as_deref(),
+            Some("~/src/rozi")
+        );
+        // A shared prefix that is not a whole component is not a directory.
+        assert_eq!(
+            shared_directory(&at(&["~/src/rozi", "~/src/rozi-docs"])).as_deref(),
+            Some("~/src")
+        );
+        // Nothing more specific than the root, an unknown pane, or a remote one: no heading note.
+        assert_eq!(shared_directory(&at(&["/srv/a", "/home/b"])), None);
+        assert_eq!(shared_directory(&at(&["~/a", "/srv"])), None);
+        assert_eq!(shared_directory(&[Some("~/a".into()), None]), None);
+        assert_eq!(shared_directory(&at(&["/srv/a@builder"])), None);
+    }
+
+    #[test]
+    fn a_pane_says_where_it_is_only_when_the_heading_does_not() {
+        assert_eq!(place(Some("~/src/rozi"), Some("~/src/rozi")), None);
+        assert_eq!(
+            place(Some("~/src/rozi/src/view"), Some("~/src/rozi")),
+            Some("src/view")
+        );
+        assert_eq!(place(Some("/srv/a"), None), Some("/srv/a"));
+        assert_eq!(place(None, Some("~/src/rozi")), None);
     }
 
     #[test]

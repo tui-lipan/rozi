@@ -168,9 +168,10 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     // command-shell-only changes. Keep matching in-flight guards until their old results arrive so
     // the replacement polls cannot overlap them.
     ctx.state.workbar.reconcile(&new_config.workbar);
-    // The reveal delay lives in the runtime rather than in `State`, so a reload has to push it
-    // across explicitly - otherwise it is the one `[input]` key that silently needs a restart.
+    // The reveal delay and wheel multiplier live in the runtime rather than in `State`, so a reload
+    // has to push them across explicitly - otherwise they silently need a restart.
     ctx.set_command_chord_reveal_delay(new_config.input.which_key.reveal_delay());
+    ctx.set_scroll_wheel_multiplier(new_config.input.scroll_multiplier);
     ctx.set_clipboard_config(crate::app::clipboard_config(&new_config));
     let (extension_generations, stale_extensions) = crate::config::reconcile_generations(
         Some(&ctx.state.config),

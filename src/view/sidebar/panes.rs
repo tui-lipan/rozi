@@ -54,9 +54,14 @@ pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
             );
         }
         rows.push(
-            new_pane_row(state, workspace_index)
-                .at(1)
-                .keyed(format!("new-pane:{workspace_index}")),
+            SidebarRow::action(
+                state,
+                "New pane",
+                RowTarget::NewPane {
+                    workspace: workspace_index,
+                },
+            )
+            .keyed(format!("new-pane:{workspace_index}")),
         );
     }
     rows
@@ -100,15 +105,6 @@ fn place<'a>(location: Option<&'a str>, shared: Option<&str>) -> Option<&'a str>
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| !rest.is_empty());
     Some(below.unwrap_or(location))
-}
-
-/// A child-level "+ New pane" action row, matching the Sessions tab's "+ New session".
-fn new_pane_row(state: &State, workspace: usize) -> SidebarRow {
-    let style = super::super::fg_only(&state.theme.accent);
-    SidebarRow::item(
-        Row::new("+ New pane").title_style(style),
-        RowTarget::NewPane { workspace },
-    )
 }
 
 /// Sidebar order follows the authoritative tiling tree, while floating panes retain their

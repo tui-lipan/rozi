@@ -19,7 +19,8 @@ pub(crate) enum RowKind {
 /// How a row takes part in its tab's tree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Shape {
-    /// A row with nothing beneath it. It keeps the arrow column, so it lines up with its siblings.
+    /// A row with nothing beneath it. It keeps the arrow column only at or just below a depth
+    /// where some row folds, so it lines up with that row or reads as nested in it.
     #[default]
     Leaf,
     /// A top-level row outside any group, such as an action or a spacer: no arrow column.
@@ -58,6 +59,16 @@ impl SidebarRow {
             arrow_style: None,
             expansion: None,
         }
+    }
+
+    /// A way to add something: a pane, a session, a host. It follows its group's tree rather than
+    /// joining it, muted, so it neither reads as one of the group's rows nor competes with the
+    /// headings. A blank glyph cell puts its `+` in the label column of the rows above it.
+    pub(super) fn action(state: &State, label: &str, target: RowTarget) -> Self {
+        let row = Row::new(format!("+ {label}"))
+            .glyph(Text::new(" ").height(Length::Px(1)))
+            .title_style(super::super::fg_only(&state.theme.muted));
+        Self::item(row, target).shape(Shape::Flush)
     }
 
     /// A top-level row outside any group, with no arrow column.

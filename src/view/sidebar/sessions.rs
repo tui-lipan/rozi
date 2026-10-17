@@ -201,23 +201,6 @@ fn empty_row(state: &State, text: &str) -> SidebarRow {
     )
 }
 
-/// A child-level "＋ …" action row within a session group.
-fn session_action_row(state: &State, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&state.theme.accent);
-    SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
-}
-
-/// A group-level "＋ …" action row (connect a host).
-fn action_row(state: &State, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&state.theme.accent);
-    SidebarRow::item(
-        Row::new(label)
-            .glyph(Text::new("+").style(style))
-            .title_style(style),
-        target,
-    )
-}
-
 /// The Sessions tab as a tree: each host is a heading, with its sessions and the way to start
 /// another beneath it.
 pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
@@ -246,9 +229,7 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
         );
     }
     rows.push(
-        session_action_row(state, "New session", RowTarget::NewSession(None))
-            .at(1)
-            .keyed("new:local"),
+        SidebarRow::action(state, "New session", RowTarget::NewSession(None)).keyed("new:local"),
     );
 
     // One group per known remote host — configured, recently used, or currently attached — so a
@@ -298,12 +279,11 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
                     }
                 }
                 rows.push(
-                    session_action_row(
+                    SidebarRow::action(
                         state,
                         "New session",
                         RowTarget::NewSession(Some(host.target.clone())),
                     )
-                    .at(1)
                     .keyed(format!("new:{id}")),
                 );
             }
@@ -328,9 +308,7 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
     // recent can still be reached without knowing the Ctrl+R binding.
     rows.push(SidebarRow::spacer().keyed("spacer:connect"));
     rows.push(
-        action_row(state, "Connect a host…", RowTarget::ConnectHost)
-            .shape(Shape::Flush)
-            .keyed("connect"),
+        SidebarRow::action(state, "Connect a host…", RowTarget::ConnectHost).keyed("connect"),
     );
 
     rows

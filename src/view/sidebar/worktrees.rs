@@ -48,12 +48,9 @@ pub(super) fn worktrees_rows(state: &State) -> Vec<SidebarRow> {
                     .at(1)
                     .keyed(format!("message:{index}"))
             }
-            WorktreeTabItem::New => SidebarRow::item(
-                Row::new("+ New worktree").title_style(accent),
-                RowTarget::NewWorktree,
-            )
-            .at(1)
-            .keyed("new"),
+            WorktreeTabItem::New => {
+                SidebarRow::action(state, "New worktree", RowTarget::NewWorktree).keyed("new")
+            }
         })
         .collect()
 }

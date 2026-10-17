@@ -190,7 +190,12 @@ pub(super) fn tab(
             )
         })
         .collect::<Vec<_>>();
-    let mut tree = Tree::forest(nested_nodes(&nodes, &mut 0, 0))
+    let folding: Vec<usize> = nodes
+        .iter()
+        .filter(|(_, shape, _)| matches!(shape, Shape::Collapsible { .. }))
+        .map(|(depth, _, _)| *depth)
+        .collect();
+    let mut tree = Tree::forest(nested_nodes(&nodes, &mut 0, 0, &folding))
         .controlled_expansion(true)
         .toggle_on_activate(false)
         .indent_style(IndentStyle::Branch)
@@ -261,7 +266,7 @@ fn node(
     selected: bool,
     index: usize,
     row: SidebarRow,
-) -> (usize, TreeNode) {
+) -> (usize, Shape, TreeNode) {
     let depth = row.depth;
     let shape = row.shape;
     let arrow_style = row.arrow_style;
@@ -304,21 +309,34 @@ fn node(
     if let Some(style) = arrow_style {
         node = node.arrow_style(style);
     }
-    (depth, node.key(key))
+    (depth, shape, node.key(key))
 }
 
 /// The model projects only visible rows. Retain its order and depth; controlled expansion keeps
 /// the widget synchronized with the identity-keyed expansion choices held by the application.
-fn nested_nodes(nodes: &[(usize, TreeNode)], index: &mut usize, depth: usize) -> Vec<TreeNode> {
+///
+/// Leaves keep the arrow column only at a depth where some row folds, so every label at that depth
+/// lines up across groups too, or just beneath one, so its children read a level deeper than its
+/// label. Elsewhere the branch meets the label directly: `├ editor`, not `├─ editor`.
+fn nested_nodes(
+    nodes: &[(usize, Shape, TreeNode)],
+    index: &mut usize,
+    depth: usize,
+    folding: &[usize],
+) -> Vec<TreeNode> {
     let mut siblings = Vec::new();
-    while let Some((node_depth, node)) = nodes.get(*index) {
+    while let Some((node_depth, shape, node)) = nodes.get(*index) {
         if *node_depth < depth {
             break;
         }
         let mut node = node.clone();
         *index += 1;
-        if nodes.get(*index).is_some_and(|(next, _)| *next > depth) {
-            node = node.children(nested_nodes(nodes, index, depth + 1));
+        if nodes.get(*index).is_some_and(|(next, _, _)| *next > depth) {
+            node = node.children(nested_nodes(nodes, index, depth + 1, folding));
+        }
+        let beneath_fold = depth > 0 && folding.contains(&(depth - 1));
+        if *shape == Shape::Leaf && !folding.contains(&depth) && !beneath_fold {
+            node = node.show_arrow(false);
         }
         siblings.push(node);
     }

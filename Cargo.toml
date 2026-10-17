@@ -67,7 +67,7 @@ exclude = [
 # overrides, FileTree icon/arrow/gap controls, and splitter focus fixes.
 # 0.27.0: Tree shares FileTree's row layout and option names, row icons, per-row arrow styles,
 # and always-open rows that line up with their siblings.
-tui-lipan = { version = "0.27.1", features = [
+tui-lipan = { version = "0.27.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

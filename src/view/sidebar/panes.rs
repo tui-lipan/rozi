@@ -1,14 +1,12 @@
-use tui_lipan::prelude::*;
-
 use super::row::{self, Row, RowTarget, Shape, SidebarRow};
-use crate::AppRoot;
+use crate::state::State;
 
 /// The Panes tab as a tree: each workspace is a heading, with its panes and the way to open
 /// another beneath it.
-pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
+pub(super) fn panes_rows(state: &State) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
-    let active = ctx.state.current().active_workspace;
-    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
+    let active = state.current().active_workspace;
+    for (workspace_index, workspace) in state.current().workspaces.iter().enumerate() {
         let panes = ordered_sidebar_panes(workspace);
         if panes.is_empty() && workspace_index != active {
             continue;
@@ -16,9 +14,9 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         if !rows.is_empty() {
             rows.push(SidebarRow::spacer().keyed(format!("spacer:{workspace_index}")));
         }
-        let workspace_label = super::workspace_heading(&ctx.state, workspace_index);
+        let workspace_label = super::workspace_heading(state, workspace_index);
         rows.push(
-            SidebarRow::header(row::header(ctx, workspace_label, false))
+            SidebarRow::header(row::header(state, workspace_label, false))
                 .shape(Shape::Heading)
                 .keyed(format!("workspace:{workspace_index}")),
         );
@@ -30,24 +28,23 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
                 .as_deref()
                 .unwrap_or("shell");
             let row = Row::new(pane_identity(pane))
-                .active(ctx.state.current().focused_pane == Some(id))
-                .title_style(super::super::fg_only(&ctx.state.theme.primary));
+                .active(state.current().focused_pane == Some(id))
+                .title_style(super::super::fg_only(&state.theme.primary));
             let row = match pane_location(pane) {
                 Some(location) => row
-                    .badge_text(program, super::super::fg_only(&ctx.state.theme.muted).dim())
+                    .badge_text(program, super::super::fg_only(&state.theme.muted).dim())
                     .detail(
                         row::truncate_start(
                             &location,
                             location_budget(
-                                ctx.state
-                                    .sidebar_tab_width(&crate::config::SidebarTabId::new("panes")),
+                                state.sidebar_tab_width(&crate::config::SidebarTabId::new("panes")),
                             ),
                         ),
-                        super::super::fg_only(&ctx.state.theme.muted),
+                        super::super::fg_only(&state.theme.muted),
                     ),
                 // Nothing is known about where the pane is, so what it runs takes the line the
                 // location would have used rather than leaving the row a lone title.
-                None => row.detail(program, super::super::fg_only(&ctx.state.theme.muted)),
+                None => row.detail(program, super::super::fg_only(&state.theme.muted)),
             };
             rows.push(
                 SidebarRow::item(row, RowTarget::Pane(id))
@@ -57,7 +54,7 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
             );
         }
         rows.push(
-            new_pane_row(ctx, workspace_index)
+            new_pane_row(state, workspace_index)
                 .at(1)
                 .keyed(format!("new-pane:{workspace_index}")),
         );
@@ -66,8 +63,8 @@ pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 }
 
 /// A child-level "+ New pane" action row, matching the Sessions tab's "+ New session".
-fn new_pane_row(ctx: &Context<AppRoot>, workspace: usize) -> SidebarRow {
-    let style = super::super::fg_only(&ctx.state.theme.accent);
+fn new_pane_row(state: &State, workspace: usize) -> SidebarRow {
+    let style = super::super::fg_only(&state.theme.accent);
     SidebarRow::item(
         Row::new("+ New pane").title_style(style),
         RowTarget::NewPane { workspace },

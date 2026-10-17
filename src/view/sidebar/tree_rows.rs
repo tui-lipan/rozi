@@ -9,9 +9,9 @@ use tui_lipan::prelude::*;
 
 use super::row::{Priority, Row, Shape, SidebarRow};
 use crate::AppRoot;
-use crate::state::{SidebarTone, TreeItem, TreeLine};
+use crate::state::{SidebarTone, State, TreeItem, TreeLine};
 
-pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<SidebarRow> {
+pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> {
     items
         .into_iter()
         .map(|item| {
@@ -20,28 +20,22 @@ pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<Sid
             match item {
                 TreeItem::Spacer => SidebarRow::spacer(),
                 TreeItem::Header(header) => {
-                    SidebarRow::header(super::row::header(ctx, header, false))
+                    SidebarRow::header(super::row::header(state, header, false))
                 }
                 TreeItem::Loading(branch) => SidebarRow::item(
-                    Row::new("Loading…").title_style(super::super::fg_only(&ctx.state.theme.muted)),
+                    Row::new("Loading…").title_style(super::super::fg_only(&state.theme.muted)),
                     target,
                 )
                 .at(branch.depth()),
                 TreeItem::Row(line) => {
                     let depth = line.branch.depth();
-                    let shape = if line.expandable {
-                        Shape::Collapsible {
-                            expanded: line.expanded,
-                        }
-                    } else {
-                        Shape::Leaf
-                    };
                     let key = format!("{:?}", line.key);
-                    let row = tree_row(ctx, *line);
-                    let mut row = SidebarRow::item(row, target)
-                        .at(depth)
-                        .shape(shape)
-                        .keyed(key);
+                    let expansion = line.expandable.then(|| (line.key.clone(), line.expanded));
+                    let row = tree_row(state, *line);
+                    let mut row = SidebarRow::item(row, target).at(depth).keyed(key);
+                    if let Some((key, expanded)) = expansion {
+                        row = row.collapsible(key, expanded);
+                    }
                     if let Some(close) = close {
                         row = row.closable(close);
                     }
@@ -52,8 +46,8 @@ pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<Sid
         .collect()
 }
 
-fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
-    let theme = &ctx.state.theme;
+fn tree_row(state: &State, line: TreeLine) -> Row {
+    let theme = &state.theme;
     let content = line.row.content;
     let muted = super::super::fg_only(&theme.muted);
     let disabled = content.disabled.is_some();
@@ -63,7 +57,7 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
         super::super::fg_only(&theme.primary)
     };
     let (glyph, color) = tone_glyph(
-        ctx,
+        state,
         if disabled {
             SidebarTone::Muted
         } else {
@@ -85,10 +79,10 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
     // arming is drawn by the ✕.
     if let crate::state::RowTarget::StreamRow(reference) = &line.row.target
         && let Some(crate::state::SidebarClose::StreamAction { row: armed, action }) =
-            &ctx.state.sidebar.pending_row_close
+            &state.sidebar.pending_row_close
         && armed == reference
-        && line.row.close.as_ref() != ctx.state.sidebar.pending_row_close.as_ref()
-        && let Some(label) = ctx.state.stream_row(reference).and_then(|(producer, _)| {
+        && line.row.close.as_ref() != state.sidebar.pending_row_close.as_ref()
+        && let Some(label) = state.stream_row(reference).and_then(|(producer, _)| {
             producer
                 .actions
                 .iter()
@@ -113,11 +107,8 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
 }
 
 /// The glyph and color a tone shows. `None` color for tones that draw nothing.
-pub(super) fn tone_glyph(
-    ctx: &Context<AppRoot>,
-    tone: SidebarTone,
-) -> (Option<Element>, Option<Color>) {
-    let status = &ctx.state.theme.status;
+pub(super) fn tone_glyph(state: &State, tone: SidebarTone) -> (Option<Element>, Option<Color>) {
+    let status = &state.theme.status;
     let (glyph, color) = match tone {
         SidebarTone::Normal | SidebarTone::Muted => return (None, None),
         SidebarTone::Working => {
@@ -155,12 +146,12 @@ pub(super) fn tab(
     panel: usize,
     tab: &crate::config::SidebarTab,
 ) -> Element {
-    let rows = super::body_rows(ctx, tab);
+    let rows = super::rows(&ctx.state, tab);
     if rows.is_empty() {
         return super::empty_body(ctx, panel, Some(super::empty_text(ctx, tab)));
     }
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
-    let cursor = super::cursor_index(ctx, panel, tab);
+    let cursor = super::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows);
     let nodes = rows
         .into_iter()
         .enumerate()

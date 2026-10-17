@@ -1,17 +1,11 @@
-//! Expanding and collapsing rows in the hierarchical row tabs: Projects, JSON command tabs, and
-//! extension stream tabs. Tree owns navigation and disclosure interaction; rozi stores expansion
-//! under data identities so it survives producer updates and notifies producers of lazy requests.
+//! Expanding and collapsing sidebar rows. Tree owns navigation and disclosure interaction; rozi
+//! stores expansion under data identities so it survives updates, and notifies producers of lazy
+//! requests.
 
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::state::{TreeExpansionKey, TreeItem};
-
-/// The visible lines of the active tab in `panel`, when it is hierarchical.
-fn panel_items(ctx: &Context<AppRoot>, panel: usize) -> Option<Vec<TreeItem>> {
-    let tab = ctx.state.active_sidebar_tab(panel)?;
-    ctx.state.tree_items(tab)
-}
+use crate::state::TreeExpansionKey;
 
 /// A framework Tree expansion event, applied to the current semantic row identity.
 pub(crate) fn row_expanded(
@@ -20,32 +14,15 @@ pub(crate) fn row_expanded(
     index: usize,
     expanded: bool,
 ) -> Update {
-    // A harness in the Activity tab folds the sessions one pane publishes.
-    if matches!(
-        ctx.state.active_sidebar_tab(panel),
-        Some(crate::config::SidebarTab::Activity)
-    ) {
-        return match crate::view::sidebar::agents::activity_lines(&ctx.state).get(index) {
-            Some(crate::view::sidebar::agents::ActivityLine::Harness { harness, .. }) => {
-                let key = crate::view::sidebar::agents::harness_key(harness.pane_id);
-                set_expanded(ctx, key, expanded)
-            }
-            _ => Update::none(),
-        };
+    let key = ctx
+        .state
+        .active_sidebar_tab(panel)
+        .and_then(|tab| ctx.state.sidebar_rows(tab).into_iter().nth(index))
+        .and_then(|row| row.expansion);
+    match key {
+        Some(key) => set_expanded(ctx, key, expanded),
+        None => Update::none(),
     }
-    let Some(line) = panel_items(ctx, panel)
-        .and_then(|items| items.into_iter().nth(index))
-        .and_then(|item| match item {
-            TreeItem::Row(line) => Some(line),
-            _ => None,
-        })
-    else {
-        return Update::none();
-    };
-    if !line.expandable {
-        return Update::none();
-    }
-    set_expanded(ctx, line.key, expanded)
 }
 
 /// Show or hide a row's children. Expanding a row whose children a producer lists only on request
@@ -76,12 +53,12 @@ pub(crate) fn toggle_key(
     panel: usize,
     key: TreeExpansionKey,
 ) -> Update {
-    let current = panel_items(ctx, panel).and_then(|items| {
-        items.into_iter().find_map(|item| {
-            item.line()
-                .filter(|line| line.key == key)
-                .map(|line| line.expanded)
-        })
+    let current = ctx.state.active_sidebar_tab(panel).and_then(|tab| {
+        ctx.state
+            .sidebar_rows(tab)
+            .into_iter()
+            .find(|row| row.expansion.as_ref() == Some(&key))
+            .and_then(|row| row.expanded())
     });
     match current {
         Some(expanded) => set_expanded(ctx, key, !expanded),
@@ -96,7 +73,7 @@ pub(crate) fn row_selected(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     };
     if !ctx
         .state
-        .sidebar_item_projections(tab)
+        .sidebar_rows(tab)
         .get(index)
         .is_some_and(|row| row.selectable())
     {

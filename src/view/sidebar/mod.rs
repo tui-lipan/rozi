@@ -8,9 +8,12 @@ mod tree_rows;
 mod user_tabs;
 mod worktrees;
 
+pub(crate) use row::SidebarRow;
+
 use tui_lipan::prelude::*;
 
 use crate::config::SidebarTab;
+use crate::state::State;
 use crate::{AppRoot, Msg};
 
 /// `width` is the panel's settled width, which is not always the width it is being drawn into: on
@@ -422,51 +425,37 @@ pub(crate) fn body_key(ctx: &Context<AppRoot>, panel: usize) -> String {
     )
 }
 
-/// Every sidebar row, in display order, with interaction metadata supplied by the model projection
-/// that update handlers consume too.
-pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
-    let mut rows = visual_body_rows(ctx, tab);
-    let projections = ctx.state.sidebar_item_projections(tab);
-    debug_assert_eq!(
-        rows.len(),
-        projections.len(),
-        "sidebar visual rows and semantic projections diverged for {:?}",
-        tab.id()
-    );
-    if rows.len() != projections.len() {
-        // Fail closed in release builds: a stale visual/model mapping must never activate or close
-        // a different row merely because it happens to occupy the same index.
-        for row in &mut rows {
-            row.target = crate::state::RowTarget::Inert;
-            row.close = None;
-        }
-        return rows;
-    }
-    for (row, projection) in rows.iter_mut().zip(projections) {
-        row.target = projection.target;
-        row.close = projection.close;
-    }
-    rows
-}
-
-fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
-    if let Some(items) = ctx.state.tree_items(tab) {
-        return tree_rows::tree_rows(ctx, items);
+/// A row tab's rows, in display order. The view draws them and update handlers resolve clicks,
+/// keys, and the cursor against them, so a row index means the same row to both.
+pub(crate) fn rows(state: &State, tab: &SidebarTab) -> Vec<row::SidebarRow> {
+    if let Some(items) = state.tree_items(tab) {
+        return tree_rows::tree_rows(state, items);
     }
     match tab {
-        SidebarTab::Panes => panes::panes_rows(ctx),
-        SidebarTab::Activity => agents::agents_rows(ctx),
-        SidebarTab::Agents => global_agents::global_agents_rows(ctx),
-        SidebarTab::Sessions => sessions::sessions_rows(ctx),
-        SidebarTab::Worktrees => worktrees::worktrees_rows(ctx),
-        SidebarTab::Launcher { name, entries, .. } => user_tabs::launcher_rows(ctx, name, entries),
-        SidebarTab::Command { name, on_click, .. } => {
-            user_tabs::command_rows(ctx, name, on_click.is_some())
+        SidebarTab::Panes => panes::panes_rows(state),
+        SidebarTab::Activity => agents::agents_rows(state),
+        SidebarTab::Agents => global_agents::global_agents_rows(state),
+        SidebarTab::Sessions => sessions::sessions_rows(state),
+        SidebarTab::Worktrees => worktrees::worktrees_rows(state),
+        SidebarTab::Launcher { name, entries, .. } => {
+            user_tabs::launcher_rows(state, name, entries)
         }
-        // The tree owns its own rows inside the widget; nothing to enumerate here. Projects is
-        // hierarchical and drawn above.
+        SidebarTab::Command { name, on_click, .. } => {
+            user_tabs::command_rows(state, name, on_click.is_some())
+        }
+        // The file tree owns its rows inside the widget; Projects and stream tabs are listed above.
         SidebarTab::Tree { .. } | SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
     }
+}
+
+/// Where the cursor actually sits: the stored index if it still points at a selectable row,
+/// otherwise the nearest one.
+pub(crate) fn resolve_cursor(cursor: usize, rows: &[row::SidebarRow]) -> Option<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.selectable())
+        .map(|(index, _)| index)
+        .min_by_key(|index| index.abs_diff(cursor))
 }
 
 /// The message a tab shows in place of rows. Distinct from "loading" for command tabs, where an
@@ -524,13 +513,6 @@ fn close_affordance(
         index,
         armed,
     })
-}
-
-fn cursor_index(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Option<usize> {
-    crate::state::SidebarItemProjection::resolve_cursor(
-        ctx.state.sidebar.panels[panel].cursor,
-        &ctx.state.sidebar_item_projections(tab),
-    )
 }
 
 /// Scrollbar presentation shared by every scrolling surface in the sidebar, including the file

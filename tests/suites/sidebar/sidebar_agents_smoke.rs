@@ -174,9 +174,9 @@ fn agents_tab_renders_project_groups() {
             }
             let targets: Vec<_> = backend
                 .state()
-                .sidebar_item_projections(&SidebarTab::Activity)
+                .sidebar_targets(&SidebarTab::Activity)
                 .into_iter()
-                .filter_map(|item| match item.target {
+                .filter_map(|target| match target {
                     rozi::state::RowTarget::Pane(id) => Some(id),
                     _ => None,
                 })

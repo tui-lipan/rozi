@@ -7,9 +7,7 @@
 //! built-in tabs around it.
 //!
 //! Rows arrive flat, each naming its parent, grouped in sections (one per producer, or one host per
-//! section in Projects). [`flatten`] turns them into the visible list, in display order, for both
-//! the view and the click/keyboard projection: the two can never disagree about which row an index
-//! means. Expansion is client-local view state, keyed by tab, section, and row id, and a producer's
+//! section in Projects). [`flatten`] turns them into the visible list, in display order. Expansion is client-local view state, keyed by tab, section, and row id, and a producer's
 //! own `expanded` hint applies only until the user chooses otherwise.
 
 use std::collections::HashMap;

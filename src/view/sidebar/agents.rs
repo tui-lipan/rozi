@@ -1,7 +1,6 @@
 use tui_lipan::prelude::*;
 
 use super::row::{self, Row, RowTarget, Shape, SidebarRow};
-use crate::AppRoot;
 use crate::platform::paths::path_segments;
 use crate::session::protocol::pane_status;
 use crate::state::{PaneId, State, TreeExpansionKey};
@@ -351,51 +350,6 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
     rows
 }
 
-/// A program in one pane publishing several sessions, such as Claude Code's background sessions:
-/// one parent row holding them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Harness {
-    pub pane_id: PaneId,
-    pub workspace_index: usize,
-    pub label: String,
-    pub expanded: bool,
-    /// Its sessions, most urgent first.
-    pub sessions: Vec<AgentRow>,
-}
-
-/// One line of the Activity tab. The view draws these and the semantic projection maps them, so
-/// the two cannot disagree about which row an index names.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ActivityLine {
-    Spacer,
-    /// A project group's heading; `project` is `None` for agents whose pane has no usable cwd.
-    Header {
-        project: Option<String>,
-        branch: Option<String>,
-    },
-    Harness {
-        harness: Box<Harness>,
-        depth: usize,
-    },
-    Agent {
-        row: Box<AgentRow>,
-        depth: usize,
-        /// Listed beneath its harness, which already names the program and its workspace.
-        in_harness: bool,
-    },
-}
-
-impl ActivityLine {
-    /// What activating the line does.
-    pub(crate) fn target(&self) -> RowTarget {
-        match self {
-            Self::Spacer | Self::Header { .. } => RowTarget::Inert,
-            Self::Harness { harness, .. } => RowTarget::Pane(harness.pane_id),
-            Self::Agent { row, .. } => agent_target(row),
-        }
-    }
-}
-
 fn agent_target(row: &AgentRow) -> RowTarget {
     match &row.slot {
         Some(slot) => RowTarget::PublishedRow {
@@ -407,89 +361,12 @@ fn agent_target(row: &AgentRow) -> RowTarget {
 }
 
 /// Where a harness's open or folded state is kept, by its pane, so it survives updates.
-pub(crate) fn harness_key(pane_id: PaneId) -> TreeExpansionKey {
+fn harness_key(pane_id: PaneId) -> TreeExpansionKey {
     TreeExpansionKey {
         tab: crate::config::SidebarTab::Activity.id(),
         section: String::new(),
         row: format!("harness:{pane_id}"),
     }
-}
-
-/// The Activity tab's lines: a heading per project, its agents beneath, and a harness wherever one
-/// pane publishes several sessions, holding them unless folded.
-pub(crate) fn activity_lines(state: &State) -> Vec<ActivityLine> {
-    let groups = agent_groups(state);
-    // A lone fallback group renders flat, exactly as before grouping existed; a known project is
-    // always headed, even alone — which project the agents operate in is the point of the tab.
-    let show_headers = groups.len() > 1 || groups.first().is_some_and(|g| g.project.is_some());
-    let mut lines = Vec::new();
-    for group in groups {
-        if !lines.is_empty() {
-            lines.push(ActivityLine::Spacer);
-        }
-        let depth = if show_headers {
-            lines.push(ActivityLine::Header {
-                project: group.project.clone(),
-                branch: group.branch.clone(),
-            });
-            1
-        } else {
-            0
-        };
-        let published = |pane_id: PaneId| {
-            group
-                .rows
-                .iter()
-                .filter(|row| row.pane_id == pane_id && row.harness.is_some())
-                .count()
-        };
-        let mut grouped: Vec<PaneId> = Vec::new();
-        for row in &group.rows {
-            let Some(label) = row.harness.clone().filter(|_| published(row.pane_id) > 1) else {
-                lines.push(ActivityLine::Agent {
-                    row: Box::new(row.clone()),
-                    depth,
-                    in_harness: false,
-                });
-                continue;
-            };
-            // The harness takes the place of its most urgent session; the rest follow it.
-            if grouped.contains(&row.pane_id) {
-                continue;
-            }
-            grouped.push(row.pane_id);
-            let sessions: Vec<AgentRow> = group
-                .rows
-                .iter()
-                .filter(|other| other.pane_id == row.pane_id && other.harness.is_some())
-                .cloned()
-                .collect();
-            let expanded = state
-                .sidebar
-                .tree_rows_expanded
-                .get(&harness_key(row.pane_id))
-                .copied()
-                .unwrap_or(true);
-            lines.push(ActivityLine::Harness {
-                harness: Box::new(Harness {
-                    pane_id: row.pane_id,
-                    workspace_index: row.workspace_index,
-                    label,
-                    expanded,
-                    sessions: sessions.clone(),
-                }),
-                depth,
-            });
-            if expanded {
-                lines.extend(sessions.into_iter().map(|row| ActivityLine::Agent {
-                    row: Box::new(row),
-                    depth: depth + 1,
-                    in_harness: true,
-                }));
-            }
-        }
-    }
-    lines
 }
 
 /// Group agent rows by project (host + project root, falling back to the working directory when the
@@ -750,50 +627,71 @@ pub(super) fn activity_budget(width: u16) -> usize {
     (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
-pub(super) fn agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
-    activity_lines(&ctx.state)
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            let target = line.target();
-            match line {
-                ActivityLine::Spacer => SidebarRow::spacer().keyed(format!("spacer:{index}")),
-                ActivityLine::Header { project, branch } => {
-                    let key = format!("project:{}", project.as_deref().unwrap_or(""));
-                    SidebarRow::header(group_header(ctx, project.as_deref(), branch.as_deref()))
-                        .shape(Shape::Heading)
-                        .keyed(key)
-                }
-                ActivityLine::Harness { harness, depth } => {
-                    let key = harness_key(harness.pane_id).row;
-                    let (row, tint) = harness_row(ctx, &harness);
-                    let mut row = SidebarRow::item(row, target)
-                        .at(depth)
-                        .shape(Shape::Collapsible {
-                            expanded: harness.expanded,
-                        })
-                        .keyed(key);
-                    if let Some(tint) = tint {
-                        row = row.arrow_style(Style::new().fg(tint));
-                    }
-                    row
-                }
-                ActivityLine::Agent {
-                    row,
-                    depth,
-                    in_harness,
-                } => {
-                    let key = match &row.slot {
-                        Some(slot) => format!("agent:{}:{:?}", row.pane_id, slot.key),
-                        None => format!("agent:{}:{}", row.pane_id, row.order),
-                    };
-                    SidebarRow::item(agent_row(ctx, *row, in_harness), target)
-                        .at(depth)
-                        .keyed(key)
-                }
+/// The Activity tab: a heading per project with its agents beneath, and a harness wherever one
+/// pane publishes several sessions of a program, holding them unless folded.
+pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
+    let groups = agent_groups(state);
+    // A lone fallback group renders flat, exactly as before grouping existed; a known project is
+    // always headed, even alone — which project the agents operate in is the point of the tab.
+    let show_headers = groups.len() > 1 || groups.first().is_some_and(|g| g.project.is_some());
+    let mut rows = Vec::new();
+    for group in groups {
+        let project = group.project.as_deref();
+        if !rows.is_empty() {
+            rows.push(SidebarRow::spacer().keyed(format!("spacer:{}", project.unwrap_or(""))));
+        }
+        let depth = if show_headers {
+            rows.push(
+                SidebarRow::header(group_header(state, project, group.branch.as_deref()))
+                    .shape(Shape::Heading)
+                    .keyed(format!("project:{}", project.unwrap_or(""))),
+            );
+            1
+        } else {
+            0
+        };
+        let mut grouped: Vec<PaneId> = Vec::new();
+        for row in &group.rows {
+            let sessions: Vec<&AgentRow> = group
+                .rows
+                .iter()
+                .filter(|other| other.pane_id == row.pane_id && other.harness.is_some())
+                .collect();
+            let Some(label) = row.harness.as_deref().filter(|_| sessions.len() > 1) else {
+                rows.push(agent_line(state, row, false).at(depth));
+                continue;
+            };
+            // The harness takes the place of its most urgent session; the rest follow it.
+            if grouped.contains(&row.pane_id) {
+                continue;
             }
-        })
-        .collect()
+            grouped.push(row.pane_id);
+            let expanded = state
+                .sidebar
+                .tree_rows_expanded
+                .get(&harness_key(row.pane_id))
+                .copied()
+                .unwrap_or(true);
+            rows.push(harness_row(state, label, row, &sessions, expanded).at(depth));
+            if expanded {
+                rows.extend(
+                    sessions
+                        .into_iter()
+                        .map(|session| agent_line(state, session, true).at(depth + 1)),
+                );
+            }
+        }
+    }
+    rows
+}
+
+/// An agent's placed row, keyed by its pane and published slot.
+fn agent_line(state: &State, row: &AgentRow, in_harness: bool) -> SidebarRow {
+    let key = match &row.slot {
+        Some(slot) => format!("agent:{}:{:?}", row.pane_id, slot.key),
+        None => format!("agent:{}:{}", row.pane_id, row.order),
+    };
+    SidebarRow::item(agent_row(state, row, in_harness), agent_target(row)).keyed(key)
 }
 
 /// Whether a row is in the "finished a run, not looked at yet" state: quiescent (neither working
@@ -853,15 +751,15 @@ pub(crate) fn row_glyph(
 /// The header deliberately carries no aggregated status glyph. Groups never collapse, so every row
 /// it would summarize is already on screen directly beneath it — and the glyph plus the nesting it
 /// forced cost four cells on every row of the narrowest surface in the app.
-fn group_header(ctx: &Context<AppRoot>, project: Option<&str>, branch: Option<&str>) -> Element {
+fn group_header(state: &State, project: Option<&str>, branch: Option<&str>) -> Element {
     let Some(label) = project else {
-        return row::header(ctx, "elsewhere", true);
+        return row::header(state, "elsewhere", true);
     };
     // The project name is what the group is; the branch qualifies it and takes whatever width the
     // name leaves, down to nothing.
     match branch {
-        Some(branch) => row::header_with_note(ctx, label, branch.trim(), row::Priority::Label),
-        None => row::header(ctx, label, false),
+        Some(branch) => row::header_with_note(state, label, branch.trim(), row::Priority::Label),
+        None => row::header(state, label, false),
     }
 }
 
@@ -909,36 +807,51 @@ fn status_icon(glyph: String, color: Color, spinner: bool) -> Element {
 /// A harness's one-line row: the program, the most urgent of its sessions' glyphs, and its
 /// workspace. Folded, it also counts its sessions by state, and its arrow takes the most urgent
 /// session's color, which is returned alongside the row.
-fn harness_row(ctx: &Context<AppRoot>, harness: &Harness) -> (Row, Option<Color>) {
-    let theme = &ctx.state.theme;
+fn harness_row(
+    state: &State,
+    label: &str,
+    first: &AgentRow,
+    sessions: &[&AgentRow],
+    expanded: bool,
+) -> SidebarRow {
+    let theme = &state.theme;
     let status = |row: &AgentRow| {
         row.status
             .as_deref()
             .unwrap_or(pane_status::IDLE)
             .to_string()
     };
-    let urgent = harness
-        .sessions
+    let urgent = sessions
         .iter()
         .min_by_key(|row| status_rank(row.status.as_deref(), row.finished_unseen));
-    let mut content = Row::new(harness.label.clone())
-        .active(!harness.expanded && ctx.state.current().focused_pane == Some(harness.pane_id))
+    let mut content = Row::new(label)
+        .active(!expanded && state.current().focused_pane == Some(first.pane_id))
         .title_style(super::super::fg_only(&theme.primary));
     let mut tint = None;
     if let Some(urgent) = urgent {
         let (glyph, color, spinner) = row_glyph(&status(urgent), urgent.finished_unseen, theme);
         content = content.glyph(status_icon(glyph, color, spinner));
-        tint = (!harness.expanded).then_some(color);
+        tint = (!expanded).then_some(color);
     }
-    let workspace = super::workspace_badge(&ctx.state, harness.workspace_index);
+    let workspace = super::workspace_badge(state, first.workspace_index);
     let muted = super::super::fg_only(&theme.muted).dim();
-    if harness.expanded {
-        return (content.badge_text(workspace, muted), None);
+    let key = harness_key(first.pane_id);
+    let placed = |content: Row| {
+        let row = SidebarRow::item(content, RowTarget::Pane(first.pane_id))
+            .keyed(key.row.clone())
+            .collapsible(key.clone(), expanded);
+        match tint {
+            Some(tint) => row.arrow_style(Style::new().fg(tint)),
+            None => row,
+        }
+    };
+    if expanded {
+        return placed(content.badge_text(workspace, muted));
     }
     // Folded, its sessions are out of sight: count them by state, most urgent first, leaving idle
     // ones out as the remote session summaries do.
     let mut tally: Vec<(u8, String, Color, usize)> = Vec::new();
-    for row in &harness.sessions {
+    for row in sessions {
         let value = status(row);
         if normalized_status(&value) == pane_status::IDLE && !row.finished_unseen {
             continue;
@@ -956,17 +869,17 @@ fn harness_row(ctx: &Context<AppRoot>, harness: &Harness) -> (Row, Option<Color>
         .map(|(_, glyph, color, count)| (format!("{glyph}{count}"), Style::new().fg(color)))
         .collect();
     parts.push((workspace, muted));
-    (content.badge_parts(parts), tint)
+    placed(content.badge_parts(parts))
 }
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 ///
 /// Beneath a harness, which already names the program and its workspace, a session is titled by
 /// what it is working on, with its status on the detail line and no badge.
-fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
+fn agent_row(state: &State, row: &AgentRow, in_harness: bool) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
-    let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &ctx.state.theme);
-    let duration = row_duration(&row).map(|(text, _)| text);
+    let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &state.theme);
+    let duration = row_duration(row).map(|(text, _)| text);
     if in_harness {
         let title = row.activity.clone().unwrap_or_else(|| {
             let program = row.harness.as_deref().unwrap_or_default();
@@ -976,11 +889,11 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
         });
         let mut content = Row::new(title)
             .active(
-                ctx.state.current().focused_pane == Some(row.pane_id)
+                state.current().focused_pane == Some(row.pane_id)
                     && row.slot.as_ref().is_none_or(|slot| slot.active),
             )
             .glyph(status_icon(glyph, color, spinner))
-            .title_style(super::super::fg_only(&ctx.state.theme.primary))
+            .title_style(super::super::fg_only(&state.theme.primary))
             .detail(
                 row_status_label(status, row.finished_unseen),
                 Style::new().fg(color),
@@ -994,11 +907,11 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
         // For a published slot, being on screen in its own program decides this: a focused pane
         // shows exactly one of its slots, so marking them all active would say nothing.
         .active(
-            ctx.state.current().focused_pane == Some(row.pane_id)
+            state.current().focused_pane == Some(row.pane_id)
                 && row.slot.as_ref().is_none_or(|slot| slot.active),
         )
         .glyph(status_icon(glyph, color, spinner))
-        .title_style(super::super::fg_only(&ctx.state.theme.primary))
+        .title_style(super::super::fg_only(&state.theme.primary))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
         // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
         // that two rows cannot be watched side by side.
@@ -1008,12 +921,11 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
         // can no longer say it now that it names the project rather than the directory.
         .badge_text(
             {
-                let workspace = super::workspace_badge(&ctx.state, row.workspace_index);
+                let workspace = super::workspace_badge(state, row.workspace_index);
                 match row.subpath.as_deref() {
                     Some(subpath) => {
                         let budget = subpath_budget(
-                            ctx.state
-                                .sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
+                            state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
                             &row.title,
                             duration.as_deref(),
                             &workspace,
@@ -1029,7 +941,7 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
                     None => workspace,
                 }
             },
-            super::super::fg_only(&ctx.state.theme.muted).dim(),
+            super::super::fg_only(&state.theme.muted).dim(),
         );
 
     // The elapsed run rides beside the name, in the gap the badge left empty. It qualifies the
@@ -1046,13 +958,11 @@ fn agent_row(ctx: &Context<AppRoot>, row: AgentRow, in_harness: bool) -> Row {
         content = content.detail(label, Style::new().fg(color));
     }
     if let Some(activity) = row.activity.as_deref() {
-        let budget = activity_budget(
-            ctx.state
-                .sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
-        );
+        let budget =
+            activity_budget(state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")));
         content = content.detail(
             row::truncate(activity, budget),
-            super::super::fg_only(&ctx.state.theme.muted).dim(),
+            super::super::fg_only(&state.theme.muted).dim(),
         );
     }
     content
@@ -1162,7 +1072,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_item_projections(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::Activity)
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1262,7 +1172,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_item_projections(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::Activity)
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1368,7 +1278,7 @@ mod tests {
         // The Activity tab's item list agrees with the rows it renders.
         assert_eq!(
             state
-                .sidebar_item_projections(&crate::config::SidebarTab::Activity)
+                .sidebar_rows(&crate::config::SidebarTab::Activity)
                 .iter()
                 .filter(|item| !matches!(item.target, RowTarget::Inert))
                 .count(),
@@ -1445,7 +1355,7 @@ mod tests {
         assert_eq!(rows[0].activity.as_deref(), Some("approval"));
         assert_eq!(
             state
-                .sidebar_item_projections(&crate::config::SidebarTab::Activity)
+                .sidebar_rows(&crate::config::SidebarTab::Activity)
                 .into_iter()
                 .filter_map(|item| match item.target {
                     RowTarget::Pane(pane_id) => Some(pane_id),
@@ -2091,7 +2001,7 @@ mod tests {
 
         // Keyboard navigation walks the same groups in the same order the view draws.
         let targets = state
-            .sidebar_item_projections(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::Activity)
             .into_iter()
             .filter_map(|item| match item.target {
                 RowTarget::PublishedRow { row, .. } => Some(row.id),

@@ -73,7 +73,7 @@ PROFILE=api scene settings "$focus" 4000 "$open_settings"
 PROFILE=api scene settings-theme-preview "$focus" 4000 "$open_settings; key:enter; wait:500; type:tokyo; wait:800"
 PROFILE=api scene which-key "$focus" 4000 "key:ctrl+a; wait:800"
 PROFILE=api scene palette "$focus" 4000 "key:ctrl+a; type:p; wait:600"
-# Panes is the third tab of the default upper panel, after Agents and Activity.
+# Panes is the third tab of the default upper panel, after Activity and Agents.
 PROFILE=web scene sidebar "$wide" 4500 "key:ctrl+a; type:b; wait:600; key:ctrl+a; key:pagedown; wait:300; key:ctrl+a; key:pagedown; wait:600"
 # Projects is the last tab of the default lower panel: focus it, move down, and step back to it,
 # which skips Worktrees and the PR status lookup it would start.

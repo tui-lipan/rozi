@@ -70,6 +70,12 @@ impl GlobalAgentRow {
             .attention_rank(self.finished_unseen)
     }
 
+    /// Whether this agent wants the user: waiting on them, failed, or finished a run nobody has
+    /// looked at. The sidebar's Agents tab lists only these; the Agents view lists every agent.
+    pub fn needs_attention(&self) -> bool {
+        self.rank() <= crate::session::protocol::ActivityState::Done.attention_rank(true)
+    }
+
     pub fn is_here(&self) -> bool {
         matches!(self.location, AgentLocation::Here { .. })
     }

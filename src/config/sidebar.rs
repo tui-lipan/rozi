@@ -9,8 +9,8 @@ use super::schema::{
 };
 
 const BUILTIN_TABS: &[&str] = &[
-    "agents",
     "activity",
+    "agents",
     "panes",
     "sessions",
     "files",

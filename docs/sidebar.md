@@ -115,39 +115,37 @@ rozi ships definitions for common coding-agent CLIs. To add or override one, see
 
 ## Agents
 
-Agents lists every coding agent rozi knows about: in the session on screen, in your other running
-local sessions, and on every [connected host](remote.md#connected-host-monitoring). It orders them
-by what to look at next: agents waiting for you, then failed ones, then finished runs you have not
-looked at, then agents still working, then finished runs you have seen, then idle agents. It is the
-sidebar form of the [Agents view](sessions.md#go-to-an-agent) and lists the same agents in the same
-order.
+Agents lists the coding agents that need you, wherever they run: in the session on screen, in your
+other running local sessions, and on every [connected host](remote.md#connected-host-monitoring).
+An agent needs you when it is waiting for an answer, when it failed, or when it finished a run you
+have not looked at. Agents still working, idle agents, and finished runs you have seen are left
+out; Activity shows what is happening in the session on screen, and the
+[Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists every agent. With nothing
+needing you, the tab reads `No agents need attention`.
 
 ```text
 ▲ Fix SSH reconnect 3m20s      dev
   Claude Code  Permission required
+× Migrate the schema   backend@workbox
+  Codex               Thread failed
 ● Add filesystem watcher       dev
   Claude Code                 Done
-⠋ Review graphics PR   backend@workbox
-  Claude Code              Working
-⠋ Codex 1m05s                  dev
-  Working  tui-lipan (fix/cursor-blink)
 ```
 
-A row is titled by the agent's task when it names one, such as the title of a session that Claude
-Code, Codex, or OpenCode lists, and by the agent's name otherwise. The session it runs in is on the
-right, as `session@host` on a connected host. The second line names the agent and gives the reason
-for its state when it gave one, such as `Permission required`. A row without a task shows its state
-and the project and branch the agent works in instead.
+Agents waiting for you come first, then failed ones, then finished runs. A row is titled by the
+agent's task when it names one, such as the title of a session that Claude Code, Codex, or OpenCode
+lists, and by the agent's name otherwise; two rows that would read the same are numbered. The
+session it runs in is on the right, as `session@host` on a connected host. The second line names the
+agent and gives the reason for its state when it gave one, such as `Permission required`. A row
+without a task shows its state and the project and branch the agent works in instead.
 
-Agents in the session on screen also show a time: how long a working or blocked state has held, or
-how long a finished run took, which then stops. An idle agent shows no time. The
-[picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left margin shows the
-agent in the focused pane.
+Agents in the session on screen also show a time: how long a blocked state has held, or how long a
+finished run took. A marker in the left margin shows the agent in the focused pane.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
-one of several sessions in a pane, switch to that session. Looking at an agent anywhere counts
-everywhere, whichever session or host it runs in. Runs that finished before rozi attached to a
-session or connected to a host are not marked.
+one of several sessions in a pane, switch to that session. It then leaves the tab. Looking at an
+agent anywhere counts everywhere, whichever session or host it runs in. Runs that finished before
+rozi attached to a session or connected to a host are not listed.
 
 Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
@@ -323,8 +321,8 @@ Projects lists every Git checkout any of your sessions works in — on this mach
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
 works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
-most urgent agent below it, in the [Agents](#agents) tab's order: blocked, then failed, then a
-finished run you have not looked at, then working. A session row names its agent, counts
+most urgent agent below it: blocked, then failed, then a finished run you have not looked at,
+then working. A session row names its agent, counts
 several, or counts its panes when none runs an agent. When more than one machine has work, each
 machine gets a heading, `LOCAL` for this one.
 
@@ -384,9 +382,9 @@ are starting configurations, so later edits remain yours.
 ```toml
 [sidebar]
 startup = false
-tabs = ["agents", "activity", "panes", "sessions", "files", "git", "worktrees", "projects"]
+tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
 layout = { left = { width = 32, panel_count = 2, panels = [
-  { weight = 0.4, tabs = ["agents", "activity", "panes", "sessions"] },
+  { weight = 0.4, tabs = ["activity", "agents", "panes", "sessions"] },
   { weight = 0.6, tabs = ["files", "git", "worktrees", "projects"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false

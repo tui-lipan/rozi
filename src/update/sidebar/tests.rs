@@ -2460,7 +2460,7 @@ fn monitored_agent(
 /// The Agents tab lists every agent this client knows about with the one that wants an answer on
 /// top, wherever it runs, and Enter lands on an agent in the session on screen.
 #[test]
-fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() {
+fn the_agents_tab_lists_what_needs_attention_across_hosts_and_focuses_a_local_agent() {
     on_test_thread(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Agents]);
         let pane = {
@@ -2483,6 +2483,12 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
                 }
                 .into(),
             ];
+            // It finished a run nobody has looked at yet: what puts it in the inbox.
+            let reference = pane.agents[0].reference.clone();
+            pane.agents[0].completions = 1;
+            state
+                .agent_attention
+                .observe(&reference, 0, crate::state::FirstSighting::Baseline);
             state.config.sidebar.layout.left.panel_count = 1;
             state.sidebar.apply_configured_panels(&state.config.sidebar);
             state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
@@ -2522,6 +2528,14 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
         send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::NONE);
         send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);
         assert_eq!(backend.state().current().focused_pane, Some(pane));
+
+        // Looked at, the finish is no longer news, and the agent leaves the inbox.
+        crate::ops::focus::acknowledge_pane_input(backend.state_mut(), pane);
+        assert_eq!(
+            backend.state().sidebar_rows(&SidebarTab::Agents).len(),
+            1,
+            "only the blocked remote agent still needs attention"
+        );
     });
 }
 

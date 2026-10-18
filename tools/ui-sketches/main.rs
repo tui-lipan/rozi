@@ -88,7 +88,7 @@ const SCENARIOS: [(&str, &str, fn()); 18] = [
     ),
     (
         "sidebar-agents",
-        "the attention-ordered Agents tab: titled, untitled, unread, and remote agents",
+        "the Agents tab inbox: blocked, failed, and unread agents, working ones left out",
         sidebar_agents,
     ),
     (
@@ -1343,9 +1343,9 @@ fn sidebar_activity() {
     write_png(&mut backend, "sidebar-activity-folded");
 }
 
-/// The Agents tab as an inbox: a blocked session that named its work and said why, a finished run
-/// nobody has read, an agent still working on another host in a checkout its monitor reported,
-/// and an untitled agent that falls back to its name and where it works.
+/// The Agents tab as an inbox: a blocked session that named its work and said why, a failed run in
+/// another session, and a finished run nobody has read. The agents still working - one here, one in
+/// the other session - are Activity's and the Agents view's, so the tab leaves them out.
 fn sidebar_agents() {
     use rozi::session::protocol::{
         AgentIdentity, AgentRecord, AgentRef, AgentState, AgentSummary, DetectedAgent,
@@ -1439,17 +1439,30 @@ fn sidebar_agents() {
 
         state.local_agent_snapshot = Some(rozi::session::discovery::LocalAgentSnapshot {
             sessions: Vec::new(),
-            agents: vec![AgentSummary {
-                session: "backend".into(),
-                reference: reference(4, Some("review")),
-                agent: "claude".into(),
-                label: "Claude Code".into(),
-                state: AgentState::Working,
-                reason: None,
-                task: Some("Review graphics PR".into()),
-                completions: 0,
-                changed_at: 0,
-            }],
+            agents: vec![
+                AgentSummary {
+                    session: "backend".into(),
+                    reference: reference(4, Some("review")),
+                    agent: "claude".into(),
+                    label: "Claude Code".into(),
+                    state: AgentState::Working,
+                    reason: None,
+                    task: Some("Review graphics PR".into()),
+                    completions: 0,
+                    changed_at: 0,
+                },
+                AgentSummary {
+                    session: "backend".into(),
+                    reference: reference(5, Some("migrate")),
+                    agent: "codex".into(),
+                    label: "Codex".into(),
+                    state: AgentState::Error,
+                    reason: Some("Thread failed".into()),
+                    task: Some("Migrate the schema".into()),
+                    completions: 0,
+                    changed_at: 0,
+                },
+            ],
             projects: vec![ProjectSummary {
                 session: "backend".into(),
                 root: "/srv/api".into(),

@@ -309,7 +309,7 @@ reads learns that a run ended even if it never saw the agent working.
 `agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows
 about — the session on screen, your other local sessions, and every
 [connected host](remote.md#agents-on-a-machine-you-are-not-in) — most urgent first, the same list as
-the [Agents view](sessions.md#go-to-an-agent) and the sidebar's [Agents tab](sidebar.md#agents):
+the [Agents view](sessions.md#go-to-an-agent):
 
 ```bash
 rozi agents list --all

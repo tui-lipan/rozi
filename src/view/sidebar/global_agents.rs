@@ -1,9 +1,11 @@
 //! The Agents tab: every agent this client knows about, the ones that want attention first.
 //!
-//! The Activity tab answers "what is happening in this session"; this one answers "what should I
-//! look at next, wherever it is". So it stays flat and ordered by attention rather than grouped by
+//! The Activity tab answers "what is happening in this session"; this one answers "what needs me,
+//! wherever it is". So it lists only agents that do - waiting on the user, failed, or finished
+//! with a result nobody has read - and leaves agents still working, idle, or already read to
+//! Activity and the Agents view. It stays flat and ordered by attention rather than grouped by
 //! place: a blocked agent on another host belongs at the top, not under a heading that may be
-//! scrolled away, and a finished run nobody has read outranks one still working. Each row leads
+//! scrolled away. Each row leads
 //! with the work rather than the program, because twenty rows that all start with `Claude Code`
 //! say nothing at a glance. The rows are [`crate::view::agents::global_agent_rows`], the
 //! projection the Agents view lists, so the two surfaces can never disagree about what exists or
@@ -18,6 +20,7 @@ use crate::view::agents::GlobalAgentRow;
 pub(super) fn global_agents_rows(state: &State) -> Vec<SidebarRow> {
     crate::view::agents::global_agent_rows(state)
         .into_iter()
+        .filter(GlobalAgentRow::needs_attention)
         .map(|row| {
             let target = RowTarget::Agent(row.location.clone());
             let key = format!("agent:{:?}", row.location);

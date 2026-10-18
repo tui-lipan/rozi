@@ -864,8 +864,8 @@ mod docking_tests {
                 .map(|id| id.as_str())
                 .collect::<Vec<_>>(),
             [
-                "agents",
                 "activity",
+                "agents",
                 "sessions",
                 "files",
                 "git",

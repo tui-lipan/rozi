@@ -1563,11 +1563,23 @@ pub struct AgentLocationSpec {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct GlobalAgentInfo {
     pub location: AgentLocationSpec,
-    /// The agent's name, numbered per row where a pane runs several (`Codex`, `Claude #2`).
+    /// The agent's name (`Codex`, `Claude Code`). Several runs of one program share it.
     pub label: String,
+    /// What the agent works on, when it named its work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
     /// `working`, `blocked`, `done`, `idle`, or a publisher's own word. `done` covers a finished
     /// run the user has not looked at yet.
     pub state: String,
+    /// Why the agent is in its state, as it said (`Permission required`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The repository the agent works in, named after its primary checkout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// The branch checked out where the agent works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// In the session on screen.
     pub here: bool,
 }

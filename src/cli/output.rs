@@ -1163,6 +1163,7 @@ fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputSty
             };
             vec![
                 TableCell::plain(text(agent.get("label"))),
+                TableCell::plain(text(agent.get("task"))),
                 TableCell::plain(text(agent.get("state"))),
                 TableCell::plain(place),
                 TableCell::plain(
@@ -1174,7 +1175,11 @@ fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputSty
             ]
         })
         .collect::<Vec<_>>();
-    format_table(&["AGENT", "STATE", "SESSION", "PANE"], &rows, styles)
+    format_table(
+        &["AGENT", "TASK", "STATE", "SESSION", "PANE"],
+        &rows,
+        styles,
+    )
 }
 
 fn format_agent_wait_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {

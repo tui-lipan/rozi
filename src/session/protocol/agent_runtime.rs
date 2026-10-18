@@ -95,6 +95,24 @@ impl ActivityState {
         }
     }
 
+    /// How much an agent in this state wants the user, lowest first: the order the Agents tab and
+    /// view list agents in.
+    ///
+    /// Unlike [`Self::presentation_rank`], which orders what is happening in one place, this
+    /// orders what to look at next. An agent waiting on the user or failing comes first, then a
+    /// finished run nobody has looked at, and only then one still working - which needs nothing
+    /// from anyone yet. A finished run already seen and an idle agent trail.
+    pub const fn attention_rank(self, finished_unseen: bool) -> u8 {
+        match self {
+            Self::Blocked => 0,
+            Self::Error => 1,
+            Self::Idle | Self::Done if finished_unseen => 2,
+            Self::Working | Self::Custom => 3,
+            Self::Done => 4,
+            Self::Idle => 5,
+        }
+    }
+
     pub const fn rank(self) -> u8 {
         match self {
             Self::Blocked => 0,

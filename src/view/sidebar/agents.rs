@@ -36,8 +36,14 @@ pub(crate) struct AgentRow {
     /// Which published slot this row stands for, when its pane published any. `None` is the
     /// one-row-per-pane path every agent that publishes nothing keeps taking.
     pub slot: Option<SlotRef>,
-    /// Whether this row is an agent rather than an activity: only agents reach the Agents view.
-    pub agent: bool,
+    /// Who the agent is, for an agent row; `None` for an activity. Only agents reach the Agents
+    /// view, and rows of one agent identity cluster together.
+    pub identity: Option<crate::session::protocol::AgentIdentity>,
+    /// What the agent works on, when it named its work: its published row's title, never a
+    /// terminal title. See [`crate::session::protocol::AgentRuntime::task`].
+    pub task: Option<String>,
+    /// Why the occupant is in its state, as it said (`Permission required`).
+    pub reason: Option<String>,
     /// Position among its pane's occupants, so one pane's rows keep the projection's order.
     pub order: usize,
     /// For a published slot, the program publishing it (`Claude Code`): what several sessions in
@@ -158,6 +164,14 @@ fn strip_agent_title_prefix<'a>(title: &'a str, kind_label: &str) -> &'a str {
     } else {
         title
     }
+}
+
+/// A task as rows present it: without the status glyph or the agent's own label prefix an agent
+/// decorates its titles with, and `None` when nothing is left that the agent's name does not
+/// already say.
+pub(crate) fn task_title(task: &str, label: &str) -> Option<String> {
+    let title = strip_agent_title_prefix(strip_title_decoration(task), label);
+    (!title.is_empty() && !title.eq_ignore_ascii_case(label)).then(|| title.to_string())
 }
 
 /// Whether a terminal title is just the working directory. A shell sets its title to `$PWD`, so an
@@ -340,7 +354,15 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 subpath,
                                 finished_unseen,
                                 slot,
-                                agent: occupant.is_agent(),
+                                task: occupant.agent.as_ref().and_then(|identity| {
+                                    crate::session::protocol::occupant_task(
+                                        &pane.terminal.published_rows,
+                                        occupant.slot.as_ref(),
+                                        &identity.label,
+                                    )
+                                }),
+                                reason: occupant.reason.clone(),
+                                identity: occupant.agent.clone(),
                                 order,
                                 harness,
                             }
@@ -1284,7 +1306,13 @@ mod tests {
         let rows = agent_rows(&state);
         let listed: Vec<_> = rows
             .iter()
-            .map(|row| (row.title.as_str(), row.agent, row.status.as_deref()))
+            .map(|row| {
+                (
+                    row.title.as_str(),
+                    row.identity.is_some(),
+                    row.status.as_deref(),
+                )
+            })
             .collect();
         assert_eq!(
             listed,
@@ -1325,7 +1353,7 @@ mod tests {
         let rows = agent_rows(&state);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "cargo build");
-        assert!(!rows[0].agent);
+        assert!(rows[0].identity.is_none());
         assert!(crate::view::agents::global_agent_rows(&state).is_empty());
     }
 
@@ -2190,7 +2218,9 @@ mod tests {
             repository: None,
             finished_unseen,
             slot: None,
-            agent: true,
+            identity: Some(AgentIdentity::new("claude", "Claude Code")),
+            task: None,
+            reason: None,
             order: 0,
             harness: None,
         };
@@ -2258,7 +2288,9 @@ mod tests {
             repository: None,
             finished_unseen: false,
             slot: None,
-            agent: true,
+            identity: Some(AgentIdentity::new("claude", "Claude Code")),
+            task: None,
+            reason: None,
             order: 0,
             harness: None,
         };

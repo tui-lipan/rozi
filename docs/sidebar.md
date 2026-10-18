@@ -98,8 +98,9 @@ by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
 
 Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
-for you stands apart from work that failed. A finished run stays marked `Done` until you visit its
-pane. Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
+for you stands apart from work that failed. A finished run stays marked `Done` until you look at
+the agent: focus its pane or, for one of several sessions in a pane, switch to that session.
+Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
 attached client sees the same thing.
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
@@ -112,24 +113,38 @@ rozi ships definitions for common coding-agent CLIs. To add or override one, see
 ## Agents
 
 Agents lists every coding agent rozi knows about: in the session on screen, in your other running
-local sessions, and on every [connected host](remote.md#connected-host-monitoring). It is the
+local sessions, and on every [connected host](remote.md#connected-host-monitoring). It orders them
+by what to look at next: agents waiting for you, then failed ones, then finished runs you have not
+looked at, then agents still working, then finished runs you have seen, then idle agents. It is the
 sidebar form of the [Agents view](sessions.md#go-to-an-agent) and lists the same agents in the same
-order — blocked first, then working, then done, then idle — so the agent that needs an answer is
-at the top wherever it runs.
+order.
 
 ```text
-▲ Codex           workbox/backend
-  Blocked
-⠋ Claude Code 4m00s           dev
-  Working · rozi (fix-login)
+▲ Fix SSH reconnect 3m20s      dev
+  Claude Code  Permission required
+● Add filesystem watcher       dev
+  Claude Code                 Done
+⠋ Review graphics PR   backend@workbox
+  Claude Code              Working
+⠋ Codex 1m05s                  dev
+  Working  tui-lipan (fix/cursor-blink)
 ```
 
-Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
-The second line gives its status and, for the session on screen, what it is working on or the
-project and branch it works in. Agents in the session on screen also show a time: how long a
-working or blocked state has held, or how long a finished run took, which then stops. An idle agent
-shows no time. The [picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left
-margin shows the agent in the focused pane.
+A row is titled by the agent's task when it names one, such as the title of a session that Claude
+Code, Codex, or OpenCode lists, and by the agent's name otherwise. The session it runs in is on the
+right, as `session@host` on a connected host. The second line names the agent and gives the reason
+for its state when it gave one, such as `Permission required`. A row without a task shows its state
+and the project and branch the agent works in instead.
+
+Agents in the session on screen also show a time: how long a working or blocked state has held, or
+how long a finished run took, which then stops. An idle agent shows no time. The
+[picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left margin shows the
+agent in the focused pane.
+
+A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
+one of several sessions in a pane, switch to that session. Looking at an agent anywhere counts
+everywhere, whichever session or host it runs in. Runs that finished before rozi attached to a
+session or connected to a host are not marked.
 
 Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
@@ -365,9 +380,9 @@ are starting configurations, so later edits remain yours.
 ```toml
 [sidebar]
 startup = false
-tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
+tabs = ["agents", "activity", "panes", "sessions", "files", "git", "worktrees", "projects"]
 layout = { left = { width = 32, panel_count = 2, panels = [
-  { weight = 0.4, tabs = ["activity", "agents", "panes", "sessions"] },
+  { weight = 0.4, tabs = ["agents", "activity", "panes", "sessions"] },
   { weight = 0.6, tabs = ["files", "git", "worktrees", "projects"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
 background_follows_canvas = false

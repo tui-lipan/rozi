@@ -213,7 +213,11 @@ pub(crate) fn overview(state: &crate::state::State) -> Vec<crate::control::Globa
                     row: slot,
                 },
                 label: row.agent,
+                task: row.task,
                 state: state_word,
+                reason: row.reason,
+                project: row.project,
+                branch: row.branch,
                 here,
             }
         })

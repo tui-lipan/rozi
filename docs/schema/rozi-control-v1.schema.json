@@ -3895,20 +3895,48 @@
     "GlobalAgentInfo": {
       "description": "One agent anywhere this UI knows about.",
       "properties": {
+        "branch": {
+          "description": "The branch checked out where the agent works.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "here": {
           "description": "In the session on screen.",
           "type": "boolean"
         },
         "label": {
-          "description": "The agent's name, numbered per row where a pane runs several (`Codex`, `Claude #2`).",
+          "description": "The agent's name (`Codex`, `Claude Code`). Several runs of one program share it.",
           "type": "string"
         },
         "location": {
           "$ref": "#/$defs/AgentLocationSpec"
         },
+        "project": {
+          "description": "The repository the agent works in, named after its primary checkout.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the agent is in its state, as it said (`Permission required`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "state": {
           "description": "`working`, `blocked`, `done`, `idle`, or a publisher's own word. `done` covers a finished\nrun the user has not looked at yet.",
           "type": "string"
+        },
+        "task": {
+          "description": "What the agent works on, when it named its work.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

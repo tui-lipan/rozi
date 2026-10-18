@@ -838,7 +838,7 @@ mod tests {
                     .expect("cycle sidebar tab");
                 assert_eq!(
                     backend.state().sidebar.active_tab(),
-                    Some(&crate::config::SidebarTabId::new("agents"))
+                    Some(&crate::config::SidebarTabId::new("activity"))
                 );
                 backend
                     .dispatch(Msg::FlushLayoutCommit { epoch: 0 })

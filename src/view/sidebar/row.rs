@@ -451,7 +451,10 @@ fn joined_spans(parts: Vec<(String, Style)>) -> Vec<Span> {
 }
 
 fn labeled_item(label: Vec<Span>, description: Vec<Span>) -> ListItem {
-    let mut item = ListItem::from_spans(label).primary_truncate_description_first(true);
+    // The cell between the two keeps a truncated description from running into the label.
+    let mut item = ListItem::from_spans(label)
+        .primary_truncate_description_first(true)
+        .primary_description_gap(1);
     if !description.is_empty() {
         item = item.description_spans(description);
     }

@@ -86,7 +86,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let render_rows = Arc::new(rows);
     let name_style = fg_only(&theme.primary).bold();
     let detail_style = fg_only(&theme.muted);
-    let activity_style = fg_only(&theme.primary);
+    let agent_style = fg_only(&theme.muted);
     let status_colors = gutters
         .iter()
         .map(|(location, _, color, _)| (location.clone(), *color))
@@ -106,13 +106,14 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let (_, color) = status_colors
             .iter()
             .find(|(location, _)| location == &item.value)?;
-        let mut label = vec![Span::new(row.agent.clone()).style(name_style)];
-        if let Some(activity) = &row.activity {
-            label.push(Span::new(format!(": {activity}")).style(activity_style));
+        let mut label = vec![Span::new(row.title().to_string()).style(name_style)];
+        if row.task.is_some() {
+            label.push(Span::new(format!(" · {}", row.agent)).style(agent_style));
         }
-        let status =
-            crate::view::sidebar::agents::row_status_label(&row.status, row.finished_unseen);
-        let mut description = vec![Span::new(status).style(Style::new().fg(*color))];
+        let mut description = vec![Span::new(row.status_label()).style(Style::new().fg(*color))];
+        if let Some(reason) = &row.reason {
+            description.push(Span::new(format!(" · {reason}")).style(Style::new().fg(*color)));
+        }
         if let Some(elapsed) = row.elapsed {
             description.push(
                 Span::new(format!(
@@ -184,14 +185,14 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     overlay.render(ctx)
 }
 
-/// Session and checkout context stay together, leaving the agent's activity as the primary label.
+/// Session and checkout context stay together, leaving the agent's work as the primary label.
 fn row_context(row: &crate::view::agents::GlobalAgentRow, show_location: bool) -> String {
     if !show_location {
-        return row.place.clone().unwrap_or_default();
+        return row.place().unwrap_or_default();
     }
     crate::view::vocabulary::fields([
         crate::view::vocabulary::session_at(&row.session, row.host.as_deref()),
-        row.place.clone().unwrap_or_default(),
+        row.place().unwrap_or_default(),
     ])
 }
 
@@ -201,15 +202,16 @@ fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: boo
     let widest = rows
         .iter()
         .map(|row| {
-            let activity = row.activity.as_deref().map_or(0, |text| text.width() + 2);
-            let status =
-                crate::view::sidebar::agents::row_status_label(&row.status, row.finished_unseen);
+            let agent = row.task.as_ref().map_or(0, |_| row.agent.width() + 3);
+            let status = row.status_label();
+            let reason = row.reason.as_deref().map_or(0, |reason| reason.width() + 3);
             let elapsed = row.elapsed.map_or(0, |elapsed| {
                 crate::view::sidebar::agents::format_age(elapsed).width() + 3
             });
             let context = row_context(row, show_location);
-            row.agent.width()
-                + activity
+            row.title().width()
+                + agent
+                + reason
                 + if context.is_empty() {
                     0
                 } else {
@@ -230,26 +232,28 @@ mod tests {
     use crate::state::AgentLocation;
     use crate::view::agents::GlobalAgentRow;
 
-    fn row(activity: &str) -> GlobalAgentRow {
+    fn row(task: &str) -> GlobalAgentRow {
         GlobalAgentRow {
             location: AgentLocation::Here { pane: 1, row: None },
             agent: "Codex".into(),
+            task: Some(task.into()),
             host: Some("workbox".into()),
             session: "dev".into(),
             status: "working".into(),
+            reason: None,
             finished_unseen: false,
             elapsed: Some(std::time::Duration::from_secs(240)),
-            activity: Some(activity.into()),
-            place: Some("api (fix-login)".into()),
+            project: Some("api".into()),
+            branch: Some("fix-login".into()),
         }
     }
 
     #[test]
-    fn width_fits_context_and_activity_in_terminal_columns_within_bounds() {
+    fn width_fits_context_and_task_in_terminal_columns_within_bounds() {
         assert_eq!(picker_width(&[], true), 72);
         assert_eq!(picker_width(&[row("")], true), 72);
-        assert_eq!(picker_width(&[row(&"界".repeat(20))], true), 102);
-        assert_eq!(picker_width(&[row(&"界".repeat(20))], false), 88);
+        assert_eq!(picker_width(&[row(&"界".repeat(20))], true), 103);
+        assert_eq!(picker_width(&[row(&"界".repeat(20))], false), 89);
         assert_eq!(picker_width(&[row(&"x".repeat(400))], true), 160);
     }
 
@@ -261,7 +265,7 @@ mod tests {
         row.session = "eph-1234".into();
         row.host = None;
         assert_eq!(row_context(&row, true), "ephemeral · api (fix-login)");
-        row.place = None;
+        row.project = None;
         assert_eq!(row_context(&row, true), "ephemeral");
         assert_eq!(row_context(&row, false), "");
     }

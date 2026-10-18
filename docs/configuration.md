@@ -595,7 +595,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
+| `tabs` | array | `["agents", "activity", "panes", "sessions", "files", "git", "worktrees", "projects"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
 | `startup` | bool | `false` | Open the remembered dock combination at client launch. When false, start hidden and restore with `b` or `B`. Memory is saved on exit or detach; toggles stay client-local. |

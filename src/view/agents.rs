@@ -2,8 +2,9 @@
 //!
 //! Kept apart from the overlay that draws it because two sources feed it and the rule joining them
 //! is the interesting part: the session in front of the user publishes live pane state, while other
-//! local sessions and connected hosts contribute semantic summaries. The overlay renders
-//! whatever comes out; this is where the boundary between the two is decided.
+//! local sessions and connected hosts contribute semantic summaries, placed in their projects by
+//! the same monitors' project summaries. The overlay renders whatever comes out; this is where the
+//! boundary between the two is decided.
 
 use crate::session::protocol::pane_status;
 use crate::state::{AgentLocation, State};
@@ -12,16 +13,21 @@ use crate::state::{AgentLocation, State};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GlobalAgentRow {
     pub location: AgentLocation,
-    /// The agent's own name, already disambiguated per published row (`Codex`, `Claude #2`).
+    /// The agent's own name (`Codex`, `Claude Code`). Several runs of one program share it.
     pub agent: String,
+    /// What the agent works on, when it named its work (`Fix SSH reconnect`): what tells one run of
+    /// a program from another. Never a terminal title, which renames the row with every tool call.
+    pub task: Option<String>,
     /// The machine it is on, `None` for this one.
     pub host: Option<String>,
     pub session: String,
     /// The status exactly as reported. Rendered through the Agents tab's own vocabulary, so the two
     /// surfaces never spell the same state two ways.
     pub status: String,
-    /// The agent finished a run since its pane was last looked at. Live panes only: an unseen
-    /// finish is a fact about this client's attention, and nothing on another machine can know it.
+    /// Why the agent is in its state, as it said (`Permission required`).
+    pub reason: Option<String>,
+    /// The agent finished a run this client has not looked at. See
+    /// [`crate::state::AgentAttention`].
     pub finished_unseen: bool,
     /// The time the row shows, by the Agents tab's rule: how long a working or blocked state has
     /// held, what a finished run cost, and nothing for an idle agent. See
@@ -30,11 +36,11 @@ pub(crate) struct GlobalAgentRow {
     /// Live panes only. Local and remote summaries expose a change time, but the UI has no
     /// maintained elapsed timer for them; remote clocks may also differ from this client's.
     pub elapsed: Option<std::time::Duration>,
-    /// What the agent is working on, when it said (`fix login redirect`). Live panes only.
-    pub activity: Option<String>,
-    /// The project and branch it works in (`rozi (fix-login)`). Live panes only: this is what
-    /// tells apart several sessions of one program, each in its own worktree.
-    pub place: Option<String>,
+    /// The repository the agent works in, named after its primary checkout when the agent works in
+    /// a linked worktree.
+    pub project: Option<String>,
+    /// The branch checked out where the agent works.
+    pub branch: Option<String>,
 }
 
 impl GlobalAgentRow {
@@ -54,65 +60,120 @@ impl GlobalAgentRow {
         *tab == crate::state::AgentPickerTab::All || self.session_tab(state) == *tab
     }
 
-    /// How much this row wants attention, lowest first — the Agents tab's own ranking, so blocked
-    /// leads, idle trails, and a publisher's custom word sits with the states still in progress.
+    /// How much this row wants the user, lowest first. See
+    /// [`crate::session::protocol::ActivityState::attention_rank`].
     pub fn rank(&self) -> u8 {
-        crate::view::sidebar::agents::status_rank(Some(&self.status), self.finished_unseen)
+        crate::session::protocol::ActivityState::from_status(&self.status)
+            .attention_rank(self.finished_unseen)
     }
 
     pub fn is_here(&self) -> bool {
         matches!(self.location, AgentLocation::Here { .. })
     }
 
-    /// `Codex · backend@workbox` — who, then where, on one searchable line. The place belongs in
-    /// the label rather than the description because it is the half a user types.
-    pub fn label(&self) -> String {
-        let agent = match self.activity.as_deref() {
-            Some(activity) => format!("{}: {activity}", self.agent),
-            None => self.agent.clone(),
-        };
-        crate::view::vocabulary::fields([
-            agent,
-            crate::view::vocabulary::session_at(&self.session, self.host.as_deref()),
-        ])
+    /// What the row is called: its task when it named one, else the agent.
+    pub fn title(&self) -> &str {
+        self.task.as_deref().unwrap_or(&self.agent)
     }
 
+    /// `rozi (fix-login)`: the project and the branch checked out there.
+    pub fn place(&self) -> Option<String> {
+        let project = self.project.as_deref()?;
+        Some(match self.branch.as_deref() {
+            Some(branch) => format!("{project} ({branch})"),
+            None => project.to_string(),
+        })
+    }
+
+    /// The state word the row shows, `Done` for a finished run nobody has looked at.
+    pub fn status_label(&self) -> String {
+        crate::view::sidebar::agents::row_status_label(&self.status, self.finished_unseen)
+    }
+
+    /// `Fix SSH reconnect · Codex · backend@workbox` — what, who, then where, on one searchable
+    /// line. The place belongs in the label rather than the description because it is the half a
+    /// user types.
+    pub fn label(&self) -> String {
+        crate::view::vocabulary::fields(self.task.iter().cloned().chain([
+            self.agent.clone(),
+            crate::view::vocabulary::session_at(&self.session, self.host.as_deref()),
+        ]))
+    }
+
+    /// What else a search should find a row by: its host's spec, the project and branch it works
+    /// in, and why it is in its state.
     pub fn search_aliases(&self, state: &State) -> Vec<String> {
         let target = match &self.location {
             AgentLocation::Here { .. } => state.current().remote_target.as_ref(),
             AgentLocation::OtherSession { target, .. } => target.as_ref(),
         };
         target
-            .map(|target| vec![target.to_spec()])
-            .unwrap_or_default()
+            .map(|target| target.to_spec())
+            .into_iter()
+            .chain(self.place())
+            .chain(self.reason.clone())
+            .collect()
     }
 
+    /// `Blocked · Permission required · 4m00s · rozi (fix-login)`: the state, why, for how long,
+    /// and in which checkout.
     pub fn description(&self) -> String {
-        let mut parts = vec![crate::view::sidebar::agents::row_status_label(
-            &self.status,
-            self.finished_unseen,
-        )];
+        let mut parts = vec![self.status_label()];
+        parts.extend(self.reason.clone());
         parts.extend(self.elapsed.map(crate::view::sidebar::agents::format_age));
-        parts.extend(self.place.clone());
+        parts.extend(self.place());
         crate::view::vocabulary::fields(parts)
     }
 }
 
-/// `rozi (fix-login)`: the project an agent row works in, named after the repository when it is a
-/// linked worktree, with the branch it has checked out.
-fn row_place(row: &crate::view::sidebar::agents::AgentRow) -> Option<String> {
+/// The repository an Activity row works in, named after its primary checkout when it is a linked
+/// worktree, and the branch it has checked out.
+fn row_project(row: &crate::view::sidebar::agents::AgentRow) -> (Option<String>, Option<String>) {
     let path = row
         .repository
         .as_deref()
         .or(row.project_root.as_deref())
-        .or(row.cwd.as_deref())?;
-    let name = crate::platform::paths::path_segments(path)
+        .or(row.cwd.as_deref());
+    (path.map(project_name), row.branch.clone())
+}
+
+fn project_name(path: &str) -> String {
+    crate::platform::paths::path_segments(path)
         .last()
-        .map_or_else(|| path.to_string(), |name| (*name).to_string());
-    Some(match row.branch.as_deref() {
-        Some(branch) => format!("{name} ({branch})"),
-        None => name,
-    })
+        .map_or_else(|| path.to_string(), |name| (*name).to_string())
+}
+
+/// A summary's row: the agent another session reports, placed in the checkout its session's project
+/// summaries put it in.
+fn summary_row(
+    state: &State,
+    agent: &crate::session::protocol::AgentSummary,
+    target: Option<&crate::session::remote::RemoteTarget>,
+    projects: &[crate::session::protocol::ProjectSummary],
+) -> GlobalAgentRow {
+    let checkout =
+        crate::session::protocol::checkout_of(projects, &agent.session, agent.pane(), agent.row());
+    GlobalAgentRow {
+        location: AgentLocation::OtherSession {
+            target: target.cloned(),
+            session: agent.session.clone(),
+            pane: agent.pane(),
+            row: agent.row().cloned(),
+        },
+        agent: agent.label.clone(),
+        task: agent
+            .task
+            .as_deref()
+            .and_then(|task| crate::view::sidebar::agents::task_title(task, &agent.label)),
+        host: target.map(|target| state.remote_target_label(target)),
+        session: agent.session.clone(),
+        status: agent.state.as_str().to_string(),
+        reason: agent.reason.clone(),
+        finished_unseen: state.agent_attention.summary_finished_unseen(agent),
+        elapsed: None,
+        project: checkout.map(|checkout| project_name(checkout.repository_root())),
+        branch: checkout.and_then(|checkout| checkout.branch.clone()),
+    }
 }
 
 /// Every agent this client knows about, the ones most in need of attention first.
@@ -131,15 +192,11 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
     let mut rows = Vec::new();
     if let Some(session) = here_session.as_deref() {
         // The Activity tab's rows, minus its activities: only the agent projection is listed.
-        for row in crate::view::sidebar::agents::agent_rows(state)
-            .into_iter()
-            .filter(|row| row.agent)
-        {
-            let place = row_place(&row);
-            // A published row's activity is its title, the one thing naming which of a pane's
-            // sessions it is. A lone agent's is its live terminal title, which only adds churn
-            // to a label that is meant to be typed.
-            let activity = row.slot.as_ref().and(row.activity.clone());
+        for row in crate::view::sidebar::agents::agent_rows(state) {
+            let Some(identity) = row.identity.clone() else {
+                continue;
+            };
+            let (project, branch) = row_project(&row);
             let elapsed = crate::view::sidebar::agents::elapsed(
                 row.status.as_deref().unwrap_or(pane_status::IDLE),
                 row.finished_unseen,
@@ -148,18 +205,22 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             )
             .map(|(elapsed, _)| elapsed);
             rows.push(GlobalAgentRow {
-                activity,
-                place,
                 location: AgentLocation::Here {
                     pane: row.pane_id,
                     row: row.slot.as_ref().map(|slot| slot.key.clone()),
                 },
-                agent: row.title,
+                task: row.task.as_deref().and_then(|task| {
+                    crate::view::sidebar::agents::task_title(task, &identity.label)
+                }),
+                agent: identity.label,
                 host: here_host.clone(),
                 session: session.to_string(),
                 status: row.status.unwrap_or_default(),
+                reason: row.reason,
                 finished_unseen: row.finished_unseen,
                 elapsed,
+                project,
+                branch,
             });
         }
     }
@@ -168,26 +229,15 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             if here_target.is_none() && here_session.as_deref() == Some(&agent.session) {
                 continue;
             }
-            rows.push(GlobalAgentRow {
-                location: AgentLocation::OtherSession {
-                    target: None,
-                    session: agent.session.clone(),
-                    pane: agent.pane(),
-                    row: agent.row().cloned(),
-                },
-                agent: agent.label.clone(),
-                host: None,
-                session: agent.session.clone(),
-                status: agent.state.as_str().to_string(),
-                finished_unseen: state.agent_attention.summary_finished_unseen(agent),
-                elapsed: None,
-                activity: None,
-                place: None,
-            });
+            rows.push(summary_row(state, agent, None, &snapshot.projects));
         }
     }
     for (target, agents) in &state.remote.agents {
-        let host = state.remote_target_label(target);
+        let projects = state
+            .remote
+            .projects
+            .get(target)
+            .map_or(&[][..], Vec::as_slice);
         for agent in agents {
             // The session on screen is already listed from its live panes, which are fresher than a
             // snapshot taken between polls. Two answers for one agent, disagreeing by up to a poll
@@ -197,22 +247,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             {
                 continue;
             }
-            rows.push(GlobalAgentRow {
-                location: AgentLocation::OtherSession {
-                    target: Some(target.clone()),
-                    session: agent.session.clone(),
-                    pane: agent.pane(),
-                    row: agent.row().cloned(),
-                },
-                agent: agent.label.clone(),
-                host: Some(host.clone()),
-                session: agent.session.clone(),
-                status: agent.state.as_str().to_string(),
-                finished_unseen: state.agent_attention.summary_finished_unseen(agent),
-                elapsed: None,
-                activity: None,
-                place: None,
-            });
+            rows.push(summary_row(state, agent, Some(target), projects));
         }
     }
     rows.sort_by(|a, b| {
@@ -310,8 +345,8 @@ mod tests {
         assert_eq!(rows[0].description(), "Blocked");
     }
 
-    /// Several sessions of one program in one pane differ only by what each works on and where:
-    /// the title joins the searchable label, the project and branch the description.
+    /// Several sessions of one program differ only by what each works on and where: the task
+    /// leads the searchable label, and the reason, project, and branch fill the description.
     #[test]
     fn a_published_session_names_its_work_and_its_worktree() {
         let row = GlobalAgentRow {
@@ -319,23 +354,29 @@ mod tests {
                 pane: 1,
                 row: Some(crate::session::protocol::RowKey::new("sessions", "fix")),
             },
-            agent: "Claude Code #2".into(),
+            agent: "Claude Code".into(),
+            task: Some("fix login redirect".into()),
             host: None,
             session: "dev".into(),
-            status: "working".into(),
+            status: "blocked".into(),
+            reason: Some("Permission required".into()),
             finished_unseen: false,
             elapsed: Some(std::time::Duration::from_secs(240)),
-            activity: Some("fix login redirect".into()),
-            place: Some("rozi (worktree-fix)".into()),
+            project: Some("rozi".into()),
+            branch: Some("worktree-fix".into()),
         };
-        assert_eq!(row.label(), "Claude Code #2: fix login redirect · dev");
-        assert_eq!(row.description(), "Working · 4m00s · rozi (worktree-fix)");
+        assert_eq!(row.title(), "fix login redirect");
+        assert_eq!(row.label(), "fix login redirect · Claude Code · dev");
+        assert_eq!(
+            row.description(),
+            "Blocked · Permission required · 4m00s · rozi (worktree-fix)"
+        );
 
         let agent_row = crate::view::sidebar::agents::AgentRow {
             pane_id: 1,
             workspace_index: 0,
             pane_index: 0,
-            title: "Claude Code #2".into(),
+            title: "Claude Code".into(),
             status: None,
             activity: None,
             age: None,
@@ -348,13 +389,91 @@ mod tests {
             repository: Some("/x/rozi".into()),
             finished_unseen: false,
             slot: None,
-            agent: true,
+            identity: Some(crate::session::protocol::AgentIdentity::new(
+                "claude",
+                "Claude Code",
+            )),
+            task: None,
+            reason: None,
             order: 0,
             harness: None,
         };
         assert_eq!(
-            row_place(&agent_row).as_deref(),
-            Some("rozi (worktree-fix)")
+            row_project(&agent_row),
+            (Some("rozi".into()), Some("worktree-fix".into()))
+        );
+    }
+
+    /// The list is what to look at next: an agent waiting on the user, then a finished run nobody
+    /// has read, and only then one still working, which needs nothing from anyone yet.
+    #[test]
+    fn unread_finishes_outrank_agents_still_working() {
+        let mut finished = summary("api", 3, "idle");
+        finished.completions = 1;
+        let mut state = state_with_hosts(&[(
+            "workbox",
+            vec![
+                summary("api", 1, "working"),
+                summary("api", 2, "idle"),
+                finished.clone(),
+                summary("api", 4, "blocked"),
+                summary("api", 5, "done"),
+            ],
+        )]);
+        state.agent_attention.observe(
+            &finished.reference,
+            0,
+            crate::state::FirstSighting::Baseline,
+        );
+        for agent in &state.remote.agents[&RemoteTarget::Alias("workbox".into())] {
+            state.agent_attention.observe(
+                &agent.reference,
+                agent.completions,
+                crate::state::FirstSighting::Baseline,
+            );
+        }
+        let order: Vec<_> = global_agent_rows(&state)
+            .iter()
+            .map(|row| (row.location.pane(), row.status_label()))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (4, "Blocked".to_string()),
+                (3, "Done".to_string()),
+                (1, "Working".to_string()),
+                (5, "Done".to_string()),
+                (2, "Idle".to_string()),
+            ]
+        );
+    }
+
+    /// An agent in another session is placed in its project by the same monitor's project
+    /// summaries, so the view can say where it works without attaching.
+    #[test]
+    fn a_summary_is_placed_in_the_checkout_its_session_reports() {
+        let mut agent = summary("api", 4, "working");
+        agent.task = Some("✳ fix reconnect".into());
+        agent.reason = Some("Running tests".into());
+        let mut state = state_with_hosts(&[("workbox", vec![agent])]);
+        state.remote.projects.insert(
+            RemoteTarget::Alias("workbox".into()),
+            vec![crate::session::protocol::ProjectSummary {
+                session: "api".into(),
+                root: "/src/rozi/.worktrees/fix".into(),
+                repository: Some("/src/rozi".into()),
+                branch: Some("fix-ssh".into()),
+                panes: vec![4],
+                rows: Vec::new(),
+            }],
+        );
+        let rows = global_agent_rows(&state);
+        assert_eq!(rows[0].task.as_deref(), Some("fix reconnect"));
+        assert_eq!(rows[0].place().as_deref(), Some("rozi (fix-ssh)"));
+        assert!(
+            rows[0]
+                .search_aliases(&state)
+                .contains(&"rozi (fix-ssh)".to_string())
         );
     }
 

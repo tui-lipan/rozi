@@ -318,7 +318,9 @@ rozi agents go --location '{"host":"workbox","session":"backend","pane":4}'
 ```
 
 In JSON, each agent has a `location`: its host (absent for this machine), session, pane, and its
-published `row` when it is one of several in its pane. `agents go --location '<json>'` goes there
+published `row` when it is one of several in its pane. It also carries its `label`, `state`, and,
+when known, its `task`, the `reason` for its state, and the `project` and `branch` it works in.
+`state` reads `done` for a finished run you have not looked at. `agents go --location '<json>'` goes there
 the way activating the row does: it focuses the pane in the session on screen, and switches to or
 attaches the session first anywhere else. A location naming a session rozi does not know is refused.
 Both need a running rozi; a session server knows only its own agents.

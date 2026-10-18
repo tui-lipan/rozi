@@ -1992,8 +1992,8 @@ impl Default for SidebarDockLayout {
                     SidebarDockPanel {
                         weight: 0.4,
                         tabs: vec![
-                            "activity".into(),
                             "agents".into(),
+                            "activity".into(),
                             "panes".into(),
                             "sessions".into(),
                         ],
@@ -2173,12 +2173,13 @@ pub struct SidebarConfig {
 
 impl Default for SidebarConfig {
     fn default() -> Self {
-        // Two panels out of the box: the session's own state on top, the repository below. The
-        // trees cost nothing until their tab is the active one, so carrying them by default only
-        // spends sidebar rows, not work.
+        // Two panels out of the box: what needs the user and the session's own state on top, the
+        // repository below. Agents leads, because what wants an answer anywhere comes before
+        // what is happening here. The trees cost nothing until their tab is the active one, so
+        // carrying them by default only spends sidebar rows, not work.
         let tabs = vec![
-            SidebarTab::Activity,
             SidebarTab::Agents,
+            SidebarTab::Activity,
             SidebarTab::Panes,
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),

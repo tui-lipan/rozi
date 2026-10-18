@@ -33,13 +33,15 @@ pub(crate) fn ensure_tree_refresh_armed(ctx: &mut Context<AppRoot>) {
     );
 }
 
-/// Refresh directory entries and Git state, then reschedule only while a tree remains visible.
+/// Refresh Git state, then reschedule only while a tree remains visible.
+///
+/// Local directory entries follow the filesystem through the tree's own watcher, so the tick no
+/// longer rereads them. Git status still ticks: a change under a collapsed directory is not
+/// watched, and the remote tree and the Worktrees tab refresh on this token too.
 pub(crate) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if ctx.state.sidebar.tree_refresh_armed_epoch != Some(epoch) || !repository_tabs_active(ctx) {
         return Update::none();
     }
-    ctx.state.sidebar.tree_entry_refresh_token =
-        ctx.state.sidebar.tree_entry_refresh_token.wrapping_add(1);
     ctx.state.sidebar.git_refresh_token = ctx.state.sidebar.git_refresh_token.wrapping_add(1);
     Update::with_command(Command::after(
         TREE_REFRESH_INTERVAL,

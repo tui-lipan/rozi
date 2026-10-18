@@ -76,6 +76,7 @@ tui-lipan = { version = "0.27.2", features = [
   "terminal-serde",
   "clipboard-images",
   "theme-reload",
+  "file-tree-watch",
   "devtools",
   # `capture-pane --render png`.
   "ui-snapshot-png",

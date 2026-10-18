@@ -80,6 +80,8 @@ The marker before each name shows how the session stands with this client:
 | --- | --- |
 | `●` | The one you are in |
 | `◐` | Held by this client in the background |
+| spinner | Held by this client and reconnecting |
+| `×` | Held by this client, with its connection lost; `Enter` reconnects |
 | `○` | Running, with this client not attached |
 | `◌` | Saved; `Enter` restores it |
 | `·` | Remembered from a host, or not answering |

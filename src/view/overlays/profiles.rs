@@ -190,23 +190,16 @@ fn profile_session_status(
     picker: &ProfilePickerState,
     name: &str,
 ) -> Option<SessionPresence> {
-    if ctx.state.current().session_name.as_deref() == Some(name) {
-        Some(SessionPresence::Current)
-    } else if ctx
-        .state
-        .parked_attachment_id(name, None)
-        .and_then(|id| ctx.state.background.get(&id))
-        .is_some_and(|attachment| attachment.connection == crate::state::ConnectionState::Connected)
-    {
-        Some(SessionPresence::Background)
-    } else if matches!(
-        picker.running.get(name),
-        Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
-    ) {
-        Some(SessionPresence::Running)
-    } else {
-        None
+    // Profiles launch local sessions. A held one keeps its exact standing, reconnecting or lost
+    // included; otherwise discovery says what is there, the same as a Sessions picker row.
+    let presence = crate::view::vocabulary::session_presence_for(&ctx.state, name, None);
+    if presence.is_held() {
+        return Some(presence);
     }
+    picker
+        .running
+        .get(name)
+        .map(|status| presence.discovered(status))
 }
 
 fn profile_picker_empty_text(picker: &ProfilePickerState) -> String {

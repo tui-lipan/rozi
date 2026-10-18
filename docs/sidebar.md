@@ -246,13 +246,15 @@ markers as the [Sessions picker](sessions.md#use-the-session-picker):
 | --- | --- |
 | `●` | The one you are in |
 | `◐` | Held by this client in the background |
+| `↻` | Held by this client and reconnecting |
+| `×` | Held by this client, with its connection lost; activating reconnects |
 | `○` | Running on the host; activating attaches to it |
 | `◌` | Saved; activating restores it |
 
 A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
 `Stale lock`, or `Prunable` appears to its left when it applies; see
 [Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to
-what activating it does: `open`, `switch`, `attach`, `restore`, `choose`, or `new session`.
+what activating it does: `open`, `switch`, `connect`, `attach`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.

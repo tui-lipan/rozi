@@ -19,7 +19,8 @@
 - Join description fields with ` · `, status first. A session elsewhere is `session@host`.
 - `src/view/vocabulary.rs` is the one source for session, host, checkout, and PR status words,
   markers, verbs, counts, and separators. Add a word there rather than spelling it in a view, and
-  keep a surface's marker and word for a state the same as every other surface's.
+  keep a surface's marker and word for a state the same as every other surface's. A cramped
+  surface may hide part of a state, such as its word, but never maps it onto a different state.
 - Rozi has no checkbox glyph convention. Do not introduce one.
 - Pickers, prompts, and dialogs do not show `Esc` in footer hints. Keep its close, back, cancel,
   or other keyboard behavior; document it in help or keybinding docs instead of advertising it

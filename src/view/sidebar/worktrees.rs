@@ -56,9 +56,9 @@ pub(super) fn worktrees_rows(state: &State) -> Vec<SidebarRow> {
         .collect()
 }
 
-/// How one session using a checkout stands. Any connection this client holds reads as the
-/// background: the checkout's rail is a marker, and only the session's own row has room to say a
-/// held connection is reconnecting.
+/// How one session using a checkout stands: exactly what the Sessions picker would say of it. The
+/// rail has room for the marker alone, so it shows a held connection that is reconnecting or lost
+/// by its marker rather than passing it off as one in the background.
 fn presence(state: &State, session: &crate::session::protocol::WorktreeSession) -> SessionPresence {
     let target = state
         .sidebar
@@ -67,8 +67,7 @@ fn presence(state: &State, session: &crate::session::protocol::WorktreeSession) 
         .as_ref()
         .and_then(|(target, _)| target.as_ref());
     match vocabulary::session_presence_for(state, &session.name, target) {
-        SessionPresence::Current => SessionPresence::Current,
-        presence if presence.is_held() => SessionPresence::Background,
+        presence if presence.is_held() => presence,
         _ if session.running => SessionPresence::Running,
         _ => SessionPresence::Restorable,
     }

@@ -139,7 +139,7 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
         // What a checkout is and whether a session uses it share the right edge, word first.
         assert!(lines[master].contains("Primary ○"), "{text}");
 
-        // A running session is a filled marker, a restorable one a ring; names stay off the row.
+        // A running session is a ring, a restorable one a dotted ring; names stay off the row.
         let login = row("feat/login");
         assert!(lines[login].contains('○'), "{text}");
         assert!(!text.contains("wt-feat-login"), "{text}");
@@ -227,6 +227,40 @@ fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
         let hovered = render(true);
         assert!(hovered.contains('…'), "{hovered:?}");
         assert!(hovered.contains("…   attach"), "{hovered:?}");
+    });
+}
+
+/// A held session keeps its exact standing on the rail: one that is reconnecting or has lost its
+/// connection wears the marker the Sessions picker gives it, not the background's half dot, and the
+/// hover offers what Enter does for it.
+#[test]
+fn a_held_session_keeps_its_own_marker_on_the_rail() {
+    let render = |connection: rozi::state::ConnectionState, hovered: bool| {
+        let mut backend = seeded(100, 30);
+        let state = backend.state_mut();
+        let mut held = rozi::state::Attachment::new();
+        held.session_name = Some("dev".into());
+        held.connection = connection;
+        state.background.insert(1, held);
+        // Row 0 is the repository header; the primary checkout, used by `dev`, is first under it.
+        state.sidebar.panels[0].hovered_row = hovered.then_some(1);
+        sidebar_lines(&mut backend, 32)
+            .into_iter()
+            .find(|line| line.contains("master"))
+            .expect("the primary checkout row")
+    };
+    on_large_stack(move || {
+        use rozi::state::ConnectionState;
+        for (connection, marker, verb) in [
+            (ConnectionState::Connected, "Primary ◐", "switch"),
+            (ConnectionState::Reconnecting, "Primary ↻", "connect"),
+            (ConnectionState::Disconnected, "Primary ×", "connect"),
+        ] {
+            let resting = render(connection, false);
+            assert!(resting.contains(marker), "{connection:?}: {resting:?}");
+            let hovered = render(connection, true);
+            assert!(hovered.contains(verb), "{connection:?}: {hovered:?}");
+        }
     });
 }
 

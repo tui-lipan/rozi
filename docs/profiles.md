@@ -42,11 +42,12 @@ origin.
 
 Press `Ctrl+A`, then `o` to open **Profiles**.
 
-The left marker shows the same-name session's status with the markers
-[Sessions](sessions.md#use-the-session-picker) uses: `●` for the session you are in, `◐` for one
-held in the background, `○` for a running session this client is not attached to, and `·` when it
-is not running. The right side says `Default` for the default profile, then `Current`,
-`Background`, or `Running`.
+The left marker shows the same-name session's status with the
+[Sessions](sessions.md#use-the-session-picker) markers: `●` for the session you are in, `◐` for one
+held in the background, `○` for a running session this client is not attached to, `◌` for a saved
+session, and `·` when there is none. A session this client holds that is reconnecting or has lost
+its connection shows the Sessions marker for that too. The right side says `Default` for the
+default profile, then the session's state, such as `Current`, `Running`, or `Restorable`.
 
 | Key | Action |
 | --- | --- |

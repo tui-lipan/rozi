@@ -320,7 +320,8 @@ Projects lists every Git checkout any of your sessions works in — on this mach
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
 works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
-most urgent agent below it: blocked, then working, then done. A session row names its agent, counts
+most urgent agent below it, in the [Agents](#agents) tab's order: blocked, then failed, then a
+finished run you have not looked at, then working. A session row names its agent, counts
 several, or counts its panes when none runs an agent. When more than one machine has work, each
 machine gets a heading, `LOCAL` for this one.
 

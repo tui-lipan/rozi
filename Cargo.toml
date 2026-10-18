@@ -20,6 +20,8 @@ exclude = [
   # 7 MB of README decoration; crates.io renders it from the repository.
   "/assets/demo.gif",
   "/docs/.vitepress/",
+  # Website screenshots and motion clips, well past the crates.io upload cap on their own.
+  "/docs/assets/",
   "/docs/package.json",
   "/docs/package-lock.json",
   "/docs/wrangler.jsonc",

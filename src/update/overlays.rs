@@ -91,9 +91,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenAlerts
         | Action::OpenThemePicker
         | Action::OpenLayoutPicker
-        | Action::SidebarTabs
-        | Action::SidebarOtherDock
-        | Action::SidebarMoveToOtherDock => {}
+        | Action::SidebarTabs => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
         | Action::OpenWorktrees
@@ -1578,7 +1576,7 @@ mod tests {
                 .find(|line| line.contains("Search keybindings"))
                 .expect("help search row");
             assert!(placeholder.contains("│ Search keybindings…"));
-            assert!(placeholder.contains("56/56 │"), "{placeholder}");
+            assert!(placeholder.contains("54/54 │"), "{placeholder}");
 
             help_state(&mut backend).query = TextInput::new("here i am quite long");
             backend.render();

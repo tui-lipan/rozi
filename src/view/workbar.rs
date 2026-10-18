@@ -1057,11 +1057,16 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
     let prefix = input.prefix.label();
-    let mut leave_keys: Vec<_> = ["quit", "detach"]
-        .into_iter()
-        .filter_map(|id| crate::commands::command_prefix_chord(ctx, id))
+    // Prefer the prefix chords; a `quit` rebound to plain chords shows its first one instead.
+    let shortcuts = crate::commands::command_shortcut_labels(ctx, "quit");
+    let mut leave_keys: Vec<_> = shortcuts
+        .iter()
+        .filter(|label| label.starts_with(&prefix))
+        .cloned()
         .collect();
-    leave_keys.dedup();
+    if leave_keys.is_empty() {
+        leave_keys.extend(shortcuts.into_iter().take(1));
+    }
     let leave_keys = if leave_keys.is_empty() {
         "not set".to_string()
     } else {

@@ -101,12 +101,11 @@ Bare `n` renames the workspace; `N` renames the pane. See
 | Rename or name current session | `S` |
 | Take or request layout control | `g` |
 | Grant layout control | `e` |
-| Quit client | `q` |
-| Detach | `d` |
+| Quit client | `q` or `d` |
 | Toggle DevTools | `F12` |
 
-Quit and detach do the same thing. Named sessions keep running; temporary sessions follow the rules
-in [Sessions](sessions.md#leave-rozi).
+Named sessions keep running when you quit; temporary sessions follow the rules in
+[Sessions](sessions.md#leave-rozi).
 
 ### Sidebar
 
@@ -115,8 +114,6 @@ in [Sessions](sessions.md#leave-rozi).
 | Toggle sidebar | `b` |
 | Collapse or restore dock panels | `\` |
 | Focus sidebar | `B` |
-| Next sidebar tab | `PageDown` |
-| Previous sidebar tab | `PageUp` |
 
 Left and right sidebar toggles are available in the command palette and can be bound through
 `toggle-left-sidebar` and `toggle-right-sidebar`; neither has a default key. The global `b` command
@@ -369,7 +366,7 @@ An explicit chord replaces both the prefix and the held-modifier forms:
 ```toml
 [keys]
 spawn = "ctrl-b c"
-detach = "ctrl-a d"
+quit = "ctrl-a d"
 ```
 
 Use `add` to keep the defaults and add another binding:
@@ -389,7 +386,7 @@ the prefix or modifier:
 [keys]
 spawn = "prefix:enter"      # Ctrl+A Enter, and Ctrl+B Enter after a prefix change
 copy-mode = "mod:b"         # Alt+B, dormant while modifier_shortcuts is off
-detach = "ctrl-a d"         # always Ctrl+A D
+quit = "ctrl-a d"           # always Ctrl+A D
 ```
 
 See [Configuration](configuration.md#keys) for lists, `run`, `send`, and named commands.

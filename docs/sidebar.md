@@ -362,9 +362,6 @@ the default layout.
 Highlighting a preset leaves the workspace unchanged; Enter applies it and Escape cancels. Presets
 are starting configurations, so later edits remain yours.
 
-`sidebar-other-dock` and `sidebar-move-to-other-dock` move focus or the active tab to the other
-dock; bind them under `[keys]` if you use them often.
-
 ```toml
 [sidebar]
 startup = false

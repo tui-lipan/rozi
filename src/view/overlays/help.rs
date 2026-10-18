@@ -79,7 +79,6 @@ fn help_rows(ctx: &Context<AppRoot>) -> Vec<HelpRow> {
         .into_iter()
         .filter(|entry| {
             entry.id.as_str() != crate::commands::FORWARD_PREFIX_COMMAND_ID
-                && entry.id.as_str() != "detach"
                 && !entry.id.as_str().starts_with("app.")
                 && !entry.id.as_str().starts_with("workspace.")
         })
@@ -1533,12 +1532,10 @@ mod palette_alias_tests {
             aliases.iter().any(|alias| alias.as_ref() == "sidebar"),
             "toggle-sidebar must keep an exact sidebar alias for Hybrid ranking"
         );
-        for id in ["focus-sidebar", "sidebar-next-tab", "sidebar-prev-tab"] {
-            assert!(
-                command_palette_aliases(id).is_empty(),
-                "{id} needs no redundant sidebar alias"
-            );
-        }
+        assert!(
+            command_palette_aliases("focus-sidebar").is_empty(),
+            "focus-sidebar needs no redundant sidebar alias"
+        );
     }
 
     #[test]

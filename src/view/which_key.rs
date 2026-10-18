@@ -38,12 +38,11 @@ const HEIGHT_SHARE: usize = 5;
 const MIN_ROWS: usize = 2;
 
 /// Commands that are registered but never belong in the prefix strip as ordinary rows: framework
-/// commands rozi re-implements, the detach alias that duplicates quit, the digit families that
+/// commands rozi re-implements, the digit families that
 /// [`workspace_row`] and the keybindings overlay summarize instead, and the forward-prefix command,
 /// which is registered without a label and gets its own row from [`forward_prefix_row`].
 fn skipped(id: &str) -> bool {
     id.starts_with("app.")
-        || id == "detach"
         || id == crate::commands::FORWARD_PREFIX_COMMAND_ID
         || id.starts_with("workspace.move.")
         || id.starts_with("workspace.relocate.")

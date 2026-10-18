@@ -39,19 +39,15 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             true,
         ));
     } else {
-        let current = selected.is_some_and(|entry| {
-            ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
-        });
-        let running = selected.is_some_and(|entry| {
-            matches!(
-                picker.running.get(&entry.name),
-                Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
-            )
-        });
+        // Enter says what it does to the session the row describes, from the same presence the
+        // row draws: nothing for the one on screen, otherwise its verb, and `launch` when the
+        // profile has no session yet.
+        let presence = selected.and_then(|entry| profile_session_status(ctx, picker, &entry.name));
+        let current = presence == Some(SessionPresence::Current);
         actions.push(
             OverlayAction::new(
                 "enter",
-                if running { "attach" } else { "launch" },
+                presence.and_then(SessionPresence::verb).unwrap_or("launch"),
                 Msg::SelectProfile(picker.selected),
                 selected.is_some() && !current,
             )

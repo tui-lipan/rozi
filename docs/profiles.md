@@ -51,7 +51,7 @@ default profile, then the session's state, such as `Current`, `Running`, or `Res
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Attach to or launch the profile's same-name session |
+| `Enter` | Open the profile's same-name session — switch to it, reconnect it, attach, or restore it — or launch it when there is none |
 | `Ctrl+O` | Launch under another name, or as a temporary session with an empty name |
 | `Ctrl+N` | Capture the current session under a new profile name |
 | `Ctrl+R` twice | Replace the current session's panes with the selected profile |

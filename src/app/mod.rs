@@ -619,6 +619,8 @@ mod tests {
                         .iter()
                         .any(|line| line.contains("Default · Background"))
                 );
+                // Enter says what it does to the session the row describes.
+                assert!(lines.iter().any(|line| line.contains("switch Enter")));
 
                 backend
                     .state_mut()
@@ -632,6 +634,7 @@ mod tests {
                 // not as one this client does not hold.
                 assert!(lines.iter().any(|line| line.contains("× rust-dev")));
                 assert!(lines.iter().any(|line| line.contains("Default · Offline")));
+                assert!(lines.iter().any(|line| line.contains("connect Enter")));
 
                 backend.state_mut().background.clear();
                 backend
@@ -652,6 +655,7 @@ mod tests {
                         .iter()
                         .any(|line| line.contains("Default · Restorable"))
                 );
+                assert!(lines.iter().any(|line| line.contains("restore Enter")));
             })
             .expect("spawn test thread")
             .join()

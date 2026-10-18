@@ -163,34 +163,47 @@ fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Upd
     ))
 }
 
+/// The local sessions a profile's row can stand for: live ones and saved snapshots, the same rows
+/// the Sessions picker lists, plus the session on screen when it is local.
 fn profile_session_rows(
     ctx: &Context<AppRoot>,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
     let current = ctx.state.local_current_session_name();
     let mut rows =
-        crate::session::discovery::discover_sessions_excluding(current).unwrap_or_default();
-    rows.retain(|row| !row.ephemeral);
-    if let Some(name) = &ctx.state.current().session_name {
-        rows.push(crate::session::discovery::DiscoveredSession {
-            name: name.clone(),
-            origin: ctx.state.current().origin.clone(),
-            ephemeral: ctx.state.is_ephemeral_session(),
-            host: None,
-            remote_target: None,
-            status: crate::session::discovery::DiscoveredSessionStatus::Running {
-                panes: ctx
-                    .state
-                    .current()
-                    .workspaces
-                    .iter()
-                    .map(|workspace| workspace.panes.len())
-                    .sum(),
-                clients: ctx.state.attached_client_count(),
-                has_layout: true,
-            },
-        });
-    }
+        crate::session::discovery::discover_selectable_sessions(current).unwrap_or_default();
+    push_local_current_session(ctx, &mut rows);
     rows
+}
+
+/// Discovery skips the session on screen, so it is added from what this client knows. Profiles
+/// are local: a remote session on screen is not the session a same-name profile launches.
+fn push_local_current_session(
+    ctx: &Context<AppRoot>,
+    rows: &mut Vec<crate::session::discovery::DiscoveredSession>,
+) {
+    let Some(name) = ctx.state.local_current_session_name() else {
+        return;
+    };
+    let name = name.to_string();
+    rows.retain(|row| row.name != name);
+    rows.push(crate::session::discovery::DiscoveredSession {
+        name,
+        origin: ctx.state.current().origin.clone(),
+        ephemeral: ctx.state.is_ephemeral_session(),
+        host: None,
+        remote_target: None,
+        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            panes: ctx
+                .state
+                .current()
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.panes.len())
+                .sum(),
+            clients: ctx.state.attached_client_count(),
+            has_layout: true,
+        },
+    });
 }
 
 fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command {
@@ -199,10 +212,9 @@ fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command
     Command::after(
         std::time::Duration::from_millis(1500),
         move |link: CommandLink<crate::Msg>| {
-            if let Ok(mut rows) =
-                crate::session::discovery::discover_sessions_excluding(current.as_deref())
+            if let Ok(rows) =
+                crate::session::discovery::discover_selectable_sessions(current.as_deref())
             {
-                rows.retain(|row| !row.ephemeral);
                 link.send(crate::Msg::ProfileSessionsDiscovered { epoch, rows });
             }
         },
@@ -217,27 +229,7 @@ pub(crate) fn apply_profile_sessions(
     if !ctx.state.show_profile_picker || epoch != ctx.state.profile_picker_epoch {
         return Update::none();
     }
-    if let Some(name) = &ctx.state.current().session_name {
-        rows.retain(|row| row.name != *name);
-        rows.push(crate::session::discovery::DiscoveredSession {
-            name: name.clone(),
-            origin: ctx.state.current().origin.clone(),
-            ephemeral: ctx.state.is_ephemeral_session(),
-            host: None,
-            remote_target: None,
-            status: crate::session::discovery::DiscoveredSessionStatus::Running {
-                panes: ctx
-                    .state
-                    .current()
-                    .workspaces
-                    .iter()
-                    .map(|workspace| workspace.panes.len())
-                    .sum(),
-                clients: ctx.state.attached_client_count(),
-                has_layout: true,
-            },
-        });
-    }
+    push_local_current_session(ctx, &mut rows);
     if let Some(picker) = ctx.state.profile_picker.as_mut() {
         picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
     }
@@ -995,6 +987,97 @@ mod tests {
             );
 
             std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    /// A profile whose session this client holds opens that session, even when its server is gone
+    /// and the attachment is offline: the retained attachment comes forward and reconnects, rather
+    /// than a fresh profile seed starting a second attachment under the same name.
+    #[test]
+    fn selecting_a_profile_whose_session_is_held_offline_reconnects_it() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &Profile::default()).expect("write profile");
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            let mut held = crate::state::Attachment::new();
+            held.session_name = Some("empty".into());
+            held.connection = crate::state::ConnectionState::Disconnected;
+            backend.state_mut().background.insert(1, held);
+            backend.state_mut().profile_picker =
+                Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
+            backend.state_mut().show_profile_picker = true;
+            backend.state_mut().current_mut().pending_session_attach = None;
+
+            // `update_level`, not `dispatch`: the assertion is about where selecting lands and what
+            // it queues, not the reconnect that follows, which fails at once with no server here.
+            backend
+                .update_level(Msg::SelectProfile(0))
+                .expect("dispatch profile select");
+
+            let state = backend.state();
+            assert_eq!(state.current().session_name.as_deref(), Some("empty"));
+            assert!(
+                !state
+                    .background
+                    .values()
+                    .any(|attachment| attachment.session_name.as_deref() == Some("empty")),
+                "the held attachment came forward instead of staying parked beside a new one"
+            );
+            assert!(
+                !state
+                    .current()
+                    .pending_session_attach
+                    .as_ref()
+                    .is_some_and(|pending| matches!(
+                        pending.intent,
+                        crate::state::AttachIntent::ProfileSeed { .. }
+                    )),
+                "no fresh profile seed replaces the held session"
+            );
+
+            std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    /// Profiles are local. A remote session on screen that shares a profile's name is not that
+    /// profile's session, so it must not mark the profile as running; a local one does.
+    #[test]
+    fn only_a_local_session_on_screen_stands_for_a_profile() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().current_mut().session_name = Some("dev".into());
+            backend.state_mut().current_mut().remote_target = Some(
+                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+            );
+            backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![entry(
+                "dev",
+                temp_profile_path(),
+            )]));
+            backend.state_mut().show_profile_picker = true;
+            let epoch = backend.state().profile_picker_epoch;
+            let discovered = |backend: &mut TestBackend<AppRoot>| {
+                backend
+                    .update_level(Msg::ProfileSessionsDiscovered {
+                        epoch,
+                        rows: Vec::new(),
+                    })
+                    .expect("apply discovered sessions");
+                backend
+                    .state()
+                    .profile_picker
+                    .as_ref()
+                    .unwrap()
+                    .running
+                    .contains_key("dev")
+            };
+            assert!(
+                !discovered(&mut backend),
+                "a remote `dev` is not the local profile's"
+            );
+
+            backend.state_mut().current_mut().remote_target = None;
+            assert!(discovered(&mut backend), "a local `dev` is");
         });
     }
 

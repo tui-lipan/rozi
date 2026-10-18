@@ -36,6 +36,9 @@ pub(super) fn apply(
         );
     }
     if ctx.state.local_agent_snapshot == snapshot {
+        // Each sweep also collects what other paths left behind - an attachment closed, a pane
+        // gone - so nothing keeps an agent's attention alive once no source reports it.
+        ctx.state.prune_agent_attention();
         return Update::none();
     }
     let previous = std::mem::replace(&mut ctx.state.local_agent_snapshot, snapshot);

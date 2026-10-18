@@ -61,8 +61,20 @@ pub(crate) fn open_named_target(
     let remote_host = remote
         .as_ref()
         .map(crate::session::remote::RemoteTarget::display_label);
-    if !explicit_create && exists {
+    // A session this client already holds is that session, even when its server is gone: going to
+    // it reconnects the retained attachment rather than starting a second one under the same name.
+    let held = ctx
+        .state
+        .parked_attachment_id(&name, remote.as_ref())
+        .is_some();
+    if !explicit_create && (exists || held) {
         return crate::ops::session::attach_session_by_name(ctx, name, remote_host, remote, false);
+    }
+    // A saved snapshot is the session too, waiting to be restored: start its server so
+    // resurrection brings it back, as the Sessions picker does. A same-name profile is never read
+    // for it — a broken or missing profile must not stand between a session and its restore.
+    if !explicit_create && remote.is_none() && crate::session::server::has_snapshot(&name) {
+        return crate::ops::session::attach_session_by_name(ctx, name, None, None, true);
     }
     if ctx.state.is_attached_to(&name, remote.as_ref()) {
         return Update::none();

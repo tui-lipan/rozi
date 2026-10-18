@@ -619,6 +619,8 @@ mod tests {
                         .iter()
                         .any(|line| line.contains("Default · Background"))
                 );
+                // Enter says what it does to the session the row describes.
+                assert!(lines.iter().any(|line| line.contains("switch Enter")));
 
                 backend
                     .state_mut()
@@ -628,8 +630,32 @@ mod tests {
                     .connection = crate::state::ConnectionState::Disconnected;
                 backend.render();
                 let lines = backend.capture_frame().to_fixed_grid_lines();
-                assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
-                assert!(lines.iter().any(|line| line.contains("Default · Running")));
+                // A held session that lost its connection reads as the Sessions picker reads it,
+                // not as one this client does not hold.
+                assert!(lines.iter().any(|line| line.contains("× rust-dev")));
+                assert!(lines.iter().any(|line| line.contains("Default · Offline")));
+                assert!(lines.iter().any(|line| line.contains("connect Enter")));
+
+                backend.state_mut().background.clear();
+                backend
+                    .state_mut()
+                    .profile_picker
+                    .as_mut()
+                    .unwrap()
+                    .running
+                    .insert(
+                        "rust-dev".to_string(),
+                        crate::session::discovery::DiscoveredSessionStatus::Restorable,
+                    );
+                backend.render();
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                assert!(lines.iter().any(|line| line.contains("◌ rust-dev")));
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("Default · Restorable"))
+                );
+                assert!(lines.iter().any(|line| line.contains("restore Enter")));
             })
             .expect("spawn test thread")
             .join()

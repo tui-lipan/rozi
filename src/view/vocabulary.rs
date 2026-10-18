@@ -27,6 +27,10 @@
 //! thing everywhere: a filled dot is something of this client's connected and on screen, a half dot
 //! is connected but in the background, a hollow ring is nothing of this client's connected, and a
 //! dotted ring is nothing running yet to connect to.
+//!
+//! A surface with little room may hide part of a state — its word, say, keeping only the marker —
+//! but never changes which state it is. A view takes the exact [`SessionPresence`] and decides how
+//! much of it to draw; it does not map one presence onto another.
 
 use tui_lipan::prelude::*;
 

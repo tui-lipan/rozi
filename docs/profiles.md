@@ -42,15 +42,16 @@ origin.
 
 Press `Ctrl+A`, then `o` to open **Profiles**.
 
-The left marker shows the same-name session's status with the markers
-[Sessions](sessions.md#use-the-session-picker) uses: `●` for the session you are in, `◐` for one
-held in the background, `○` for a running session this client is not attached to, and `·` when it
-is not running. The right side says `Default` for the default profile, then `Current`,
-`Background`, or `Running`.
+The left marker shows the same-name session's status with the
+[Sessions](sessions.md#use-the-session-picker) markers: `●` for the session you are in, `◐` for one
+held in the background, `○` for a running session this client is not attached to, `◌` for a saved
+session, and `·` when there is none. A session this client holds that is reconnecting or has lost
+its connection shows the Sessions marker for that too. The right side says `Default` for the
+default profile, then the session's state, such as `Current`, `Running`, or `Restorable`.
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Attach to or launch the profile's same-name session |
+| `Enter` | Open the profile's same-name session — switch to it, reconnect it, attach, or restore it — or launch it when there is none |
 | `Ctrl+O` | Launch under another name, or as a temporary session with an empty name |
 | `Ctrl+N` | Capture the current session under a new profile name |
 | `Ctrl+R` twice | Replace the current session's panes with the selected profile |

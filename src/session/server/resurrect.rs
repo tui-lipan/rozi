@@ -1110,6 +1110,37 @@ pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
     snapshots
 }
 
+/// Whether `name` has a snapshot discovery would list as restorable.
+pub(crate) fn has_snapshot(name: &str) -> bool {
+    list_snapshot_summaries_by_recency()
+        .iter()
+        .any(|snapshot| snapshot.session == name)
+}
+
+/// Publish an empty snapshot for `name` that discovery lists as restorable, for tests elsewhere in
+/// the crate that need one without running a server. Remove it with [`delete_snapshot_for`].
+#[cfg(test)]
+pub(crate) fn write_empty_snapshot_for_test(name: &str) {
+    let dir = default_snapshot_dir()
+        .expect("isolated state directory")
+        .join(name);
+    fs::create_dir_all(&dir).expect("create snapshot directory");
+    let meta = SnapshotMeta {
+        version: SNAPSHOT_VERSION,
+        session: name.to_string(),
+        saved_at: 0,
+        layout_rev: 0,
+        origin: Default::default(),
+        created_from_profile: None,
+        panes: Vec::new(),
+    };
+    fs::write(
+        dir.join("meta.json"),
+        serde_json::to_vec(&meta).expect("serialize snapshot"),
+    )
+    .expect("write snapshot");
+}
+
 pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
     list_snapshot_summaries_by_recency()
         .into_iter()

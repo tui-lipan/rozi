@@ -39,8 +39,10 @@ mod project_summary;
 mod recordings;
 mod resurrect;
 pub use pane_log::PaneLog;
-pub(crate) use resurrect::list_snapshot_names_by_recency;
+#[cfg(test)]
+pub(crate) use resurrect::write_empty_snapshot_for_test;
 pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
+pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
 mod runtime;
 mod shutdown;
 mod waits;

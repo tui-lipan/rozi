@@ -129,50 +129,6 @@ pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
     update
 }
 
-/// Store the number of selectable rows currently visible in a composed row list. The event is
-/// keyed by tab because switching tabs can queue the old list's final viewport event alongside the
-/// new one.
-pub(crate) fn viewport_changed(
-    ctx: &mut Context<AppRoot>,
-    panel: usize,
-    tab_id: crate::config::SidebarTabId,
-    event: ScrollViewportEvent,
-) -> Update {
-    if ctx.state.sidebar.active_tab_in(panel) != Some(&tab_id) {
-        return Update::none();
-    }
-    let Some(first) = event.first_visible_index else {
-        return Update::none();
-    };
-    let last = event.last_visible_index.unwrap_or(first).max(first);
-    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
-        return Update::none();
-    };
-    let items = ctx.state.sidebar_item_projections(&tab);
-    let page_rows = items
-        .iter()
-        .enumerate()
-        .filter(|(index, item)| *index >= first && *index <= last && item.selectable())
-        .count()
-        .max(1);
-    let Some(panel_state) = ctx.state.sidebar.panels.get_mut(panel) else {
-        return Update::none();
-    };
-    panel_state.page_rows = page_rows;
-    Update::none()
-}
-
-/// Move by the number of selectable rows that fit in the active row list's viewport.
-pub(crate) fn move_cursor_page(ctx: &mut Context<AppRoot>, down: bool) -> Update {
-    let page_rows = ctx
-        .state
-        .sidebar
-        .active_panel()
-        .map(|panel| panel.page_rows.max(1) as isize)
-        .unwrap_or(1);
-    move_cursor(ctx, if down { page_rows } else { -page_rows })
-}
-
 pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     let current = ctx.state.sidebar.active_panel_index();
     let Some(panel) = ctx.state.sidebar.panels.get(current) else {
@@ -276,45 +232,6 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -
     let update = visibility_changed(ctx);
     refocus_body(ctx);
     update
-}
-
-/// Move the keyboard cursor by `delta` selectable rows, stopping at the ends rather than wrapping —
-/// the row list is a panel, not a carousel, and wrapping past the last agent back to the first reads
-/// as a glitch. Headers and spacers are stepped over rather than landed on.
-pub(crate) fn move_cursor(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
-    let panel = ctx.state.sidebar.active_panel_index();
-    let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
-        return Update::none();
-    };
-    let items = ctx.state.sidebar_item_projections(&tab);
-    let selectable: Vec<usize> = items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.selectable())
-        .map(|(index, _)| index)
-        .collect();
-    if selectable.is_empty() {
-        return Update::none();
-    }
-    let current = crate::state::SidebarItemProjection::resolve_cursor(
-        ctx.state.sidebar.panels[panel].cursor,
-        &items,
-    );
-    let position = current
-        .and_then(|current| selectable.iter().position(|index| *index == current))
-        .unwrap_or(0);
-    let next = position
-        .saturating_add_signed(delta)
-        .min(selectable.len() - 1);
-    let cursor = selectable[next];
-    if ctx.state.sidebar.panels[panel].cursor == cursor {
-        return Update::none();
-    }
-    // Moving off a row disarms any pending confirmation.
-    ctx.state.sidebar.pending_row_close = None;
-    ctx.state.sidebar.panels[panel].cursor = cursor;
-    ctx.state.sidebar.panels[panel].suppress_row_hover = true;
-    Update::full()
 }
 
 /// A real pointer move ends keyboard modality and lets row hover follow the pointer again.

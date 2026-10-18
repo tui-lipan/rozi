@@ -355,6 +355,7 @@ mod tests {
             slot: None,
             agent: true,
             order: 0,
+            harness: None,
         };
         assert_eq!(
             row_place(&agent_row).as_deref(),

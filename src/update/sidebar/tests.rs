@@ -147,14 +147,14 @@ fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
         );
         // While the pane has not moved, the cache is the answer.
         assert!(backend.state().fresh_command_output(&id).is_some());
-        assert_eq!(backend.state().sidebar_item_projections(&tab).len(), 1);
+        assert_eq!(backend.state().sidebar_rows(&tab).len(), 1);
 
         backend.state_mut().sidebar.command_cwd = Some("/somewhere/else".to_string());
         // The rows are still cached - a poll may yet return the same ones - but nothing renders
         // them, so the tab shows its placeholder instead of the last project's tasks.
         assert!(backend.state().sidebar.command_output.contains_key(&id));
         assert!(backend.state().fresh_command_output(&id).is_none());
-        assert!(backend.state().sidebar_item_projections(&tab).is_empty());
+        assert!(backend.state().sidebar_rows(&tab).is_empty());
     });
 }
 
@@ -905,11 +905,11 @@ fn host_connect_and_two_click_disconnect() {
 
         // `row_activate` rebuilds the rows from the current state before the post-update sweep
         // repopulates local sessions, so clearing them here makes the layout deterministic:
-        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer
-        //   4 WINVM (one line) · 5 spacer · 6 "Connect a host…"
+        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 WINVM (one line)
+        //   4 "Connect a host…"
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 3 })
             .expect("connect through host row");
         assert_eq!(
             backend.state().remote.hosts.get(&target).unwrap().probe,
@@ -928,7 +928,7 @@ fn host_connect_and_two_click_disconnect() {
             .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("arm disconnect");
         assert_eq!(
             backend.state().sidebar.pending_row_close,
@@ -952,7 +952,7 @@ fn host_connect_and_two_click_disconnect() {
             .probe = crate::state::HostProbe::Reached;
         backend.state_mut().sidebar.sessions.clear();
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("confirm disconnect");
         assert_eq!(
             backend.state().remote.hosts.get(&target).unwrap().probe,
@@ -997,16 +997,14 @@ fn cached_rows_do_not_mark_an_idle_host_reached() {
                     remote_target: Some(target.clone()),
                 });
         }
-        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer · 4 WINVM
-        let items = backend
-            .state()
-            .sidebar_item_projections(&SidebarTab::Sessions);
+        //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 WINVM
+        let items = backend.state().sidebar_rows(&SidebarTab::Sessions);
         assert_eq!(
-            items[4].target,
+            items[3].target,
             crate::state::RowTarget::HostConnect(target.clone()),
             "the offline host row connects"
         );
-        assert!(items[4].close.is_none(), "and offers no disconnect ✕");
+        assert!(items[3].close.is_none(), "and offers no disconnect ✕");
     });
 }
 
@@ -1103,7 +1101,7 @@ fn new_pane_row_spawns_on_the_named_workspace() {
             .count();
         let index = backend
             .state()
-            .sidebar_item_projections(&SidebarTab::Panes)
+            .sidebar_rows(&SidebarTab::Panes)
             .iter()
             .position(|item| {
                 matches!(
@@ -1155,7 +1153,7 @@ fn a_sidebar_spawn_ends_a_split_drag_first() {
         }
         let index = backend
             .state()
-            .sidebar_item_projections(&SidebarTab::Panes)
+            .sidebar_rows(&SidebarTab::Panes)
             .iter()
             .position(|item| matches!(item.target, crate::state::RowTarget::NewPane { .. }))
             .expect("a new-pane row");
@@ -1182,7 +1180,7 @@ fn a_sidebar_close_ends_a_split_drag_first() {
         }
         let index = backend
             .state()
-            .sidebar_item_projections(&SidebarTab::Panes)
+            .sidebar_rows(&SidebarTab::Panes)
             .iter()
             .position(|item| matches!(item.close, Some(crate::state::SidebarClose::Pane(_))))
             .expect("a closable pane row");
@@ -1395,9 +1393,9 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
             state.sidebar.sessions.clear();
         }
 
-        // Row 4 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
+        // Row 3 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
         backend
-            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 4 })
+            .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 3 })
             .expect("confirm disconnect");
 
         let state = backend.state();
@@ -1778,7 +1776,7 @@ fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
     });
 }
 
-/// Headers and their spacers are extra rows the click path never saw before: the projection has to
+/// Headers are extra rows the click path never saw before: the rows have to
 /// keep every entry index pointing at the entry the row actually shows, or a click under one header
 /// runs an action from another section.
 #[test]
@@ -1804,17 +1802,17 @@ fn grouped_launcher_rows_stay_inert_at_headers_and_keep_entry_indices_aligned() 
         };
         let indices: Vec<Option<usize>> = backend
             .state()
-            .sidebar_item_projections(&tab)
+            .sidebar_rows(&tab)
             .into_iter()
             .map(|item| match item.target {
                 crate::state::RowTarget::Launcher { entry_index, .. } => Some(entry_index),
                 _ => None,
             })
             .collect();
-        // Ungrouped entry, then spacer + header ahead of each section's first entry.
+        // Ungrouped entry, then a header ahead of each section's first entry.
         assert_eq!(
             indices,
-            vec![Some(0), None, None, Some(1), Some(2), None, None, Some(3)]
+            vec![Some(0), None, Some(1), Some(2), None, Some(3)]
         );
     });
 }
@@ -1872,12 +1870,12 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
         );
         let selectable: Vec<bool> = backend
             .state()
-            .sidebar_item_projections(&tab)
+            .sidebar_rows(&tab)
             .iter()
-            .map(crate::state::SidebarItemProjection::selectable)
+            .map(crate::view::sidebar::SidebarRow::selectable)
             .collect();
-        // Header, spacer + header, and the two output rows between them.
-        assert_eq!(selectable, vec![false, true, false, false, true]);
+        // A header over each of the two output rows.
+        assert_eq!(selectable, vec![false, true, false, true]);
     });
 }
 
@@ -2502,7 +2500,7 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
 
         let targets: Vec<_> = backend
             .state()
-            .sidebar_item_projections(&SidebarTab::Agents)
+            .sidebar_rows(&SidebarTab::Agents)
             .into_iter()
             .map(|item| item.target)
             .collect();
@@ -3139,14 +3137,16 @@ fn a_json_tab_row_runs_on_click_with_its_id() {
                         disabled: None,
                         expandable: false,
                         expanded: None,
+                        heading: false,
                         actions: None,
+                        meta: None,
                     }]),
                     cwd: state.sidebar.command_cwd.clone(),
                     rows: Vec::new(),
                 },
             );
         }
-        let items = backend.state().sidebar_item_projections(&tab);
+        let items = backend.state().sidebar_rows(&tab);
         assert_eq!(
             items[0].target,
             crate::state::RowTarget::CommandTreeRow {

@@ -400,10 +400,9 @@ fn host_rows(
                                 None => label.to_string(),
                             }
                         }),
-                        detail: None,
                         tone,
                         active,
-                        disabled: None,
+                        ..RowContent::default()
                     },
                     target,
                     close: None,

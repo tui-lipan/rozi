@@ -269,7 +269,9 @@ fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
             path: STALE.into(),
             force: false,
         });
-        let lines = sidebar_lines(&mut backend, 32);
+        // Wide enough for the whole confirmation beside the tree guide.
+        backend.state_mut().config.sidebar.layout.left.width = 34;
+        let lines = sidebar_lines(&mut backend, 34);
         let text = lines.join("\n");
         let row = lines
             .iter()

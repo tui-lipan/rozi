@@ -1,13 +1,12 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, RowTarget, SidebarRow};
-use crate::AppRoot;
+use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
-use crate::state::{HostEntry, HostStatus};
+use crate::state::{HostEntry, HostStatus, State};
 
-fn session_detail(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> String {
+fn session_detail(state: &State, entry: &DiscoveredSession) -> String {
     let mut detail = session_status_detail(entry);
-    if let Some(agents) = crate::view::session_status::host_agent_label(&ctx.state, entry) {
+    if let Some(agents) = crate::view::session_status::host_agent_label(state, entry) {
         detail.push_str(&format!(" · {agents}"));
     }
     detail
@@ -71,16 +70,15 @@ fn session_badge(
 }
 
 /// One live session row: name, current/background/reconnecting state, panes, and origin.
-fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow {
+fn session_row(state: &State, entry: &DiscoveredSession) -> SidebarRow {
     let status = crate::view::session_status::session_status_for(
-        &ctx.state,
+        state,
         &entry.name,
         entry.remote_target.as_ref(),
     );
     let current = status == crate::view::session_status::SessionConnectionStatus::Current;
     let we_hold = current
-        || ctx
-            .state
+        || state
             .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
             .is_some();
     let label = if entry.ephemeral {
@@ -88,16 +86,16 @@ fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow 
     } else {
         entry.name.clone()
     };
-    let muted = super::super::fg_only(&ctx.state.theme.muted);
-    let badge = session_badge(&ctx.state, entry, status, we_hold);
+    let muted = super::super::fg_only(&state.theme.muted);
+    let badge = session_badge(state, entry, status, we_hold);
     let mut row = Row::new(label)
         .priority(Priority::Balanced)
         .active(current)
-        .title_style(super::super::fg_only(&ctx.state.theme.primary));
+        .title_style(super::super::fg_only(&state.theme.primary));
     if !badge.is_empty() {
         row = row.badge_text(badge, muted);
     }
-    let detail = session_detail(ctx, entry);
+    let detail = session_detail(state, entry);
     if !detail.is_empty() {
         row = row.detail(detail, muted);
     }
@@ -117,7 +115,7 @@ fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow 
 /// Deliberately has no ✕: there is no live server to kill. The session picker forgets this cache
 /// entry with Ctrl+K; a later probe that still sees the session lists it again.
 fn cached_session_row(
-    ctx: &Context<AppRoot>,
+    state: &State,
     host: &HostEntry,
     cached: &crate::session::CachedHostSession,
 ) -> SidebarRow {
@@ -131,7 +129,7 @@ fn cached_session_row(
             panes: cached.panes,
         },
     };
-    let muted = super::super::fg_only(&ctx.state.theme.muted);
+    let muted = super::super::fg_only(&state.theme.muted);
     // A cached row is a memory of a session on a host nothing can reach, so there is no monitor
     // snapshot to draw an agent token from — `session_status_detail` alone is the whole line.
     let detail = session_status_detail(&entry);
@@ -153,15 +151,9 @@ fn cached_session_row(
 ///   the badge's slot rather than growing the row to three lines;
 /// - an offline host with nothing to explain has that line free, and a standing "Click to connect"
 ///   is plainer than one the pointer has to go looking for.
-fn header_row(
-    ctx: &Context<AppRoot>,
-    label: &str,
-    host: Option<(&HostEntry, HostStatus)>,
-) -> SidebarRow {
-    let theme = &ctx.state.theme;
-    let mut row = Row::new(label.to_string())
-        .group_level()
-        .title_style(super::super::rozi_fg(theme).bold());
+fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>) -> SidebarRow {
+    let theme = &state.theme;
+    let mut row = Row::new(label.to_string()).title_style(super::super::rozi_fg(theme).bold());
     let Some((host, status)) = host else {
         return SidebarRow::item(row, RowTarget::Inert);
     };
@@ -202,62 +194,50 @@ fn header_row(
 }
 
 /// The muted "nothing here" line for a group with no sessions to list.
-fn empty_row(ctx: &Context<AppRoot>, text: &str) -> SidebarRow {
+fn empty_row(state: &State, text: &str) -> SidebarRow {
     SidebarRow::item(
-        Row::new(text).title_style(super::super::fg_only(&ctx.state.theme.muted)),
+        Row::new(text).title_style(super::super::fg_only(&state.theme.muted)),
         RowTarget::Inert,
     )
 }
 
-/// A child-level "＋ …" action row within a session group.
-fn session_action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&ctx.state.theme.accent);
-    SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
-}
-
-/// A group-level "＋ …" action row (connect a host).
-fn action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
-    let style = super::super::fg_only(&ctx.state.theme.accent);
-    SidebarRow::item(
-        Row::new(label)
-            .glyph(Text::new("+").style(style))
-            .title_style(style),
-        target,
-    )
-}
-
-pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
+/// The Sessions tab as a tree: each host is a heading, with its sessions and the way to start
+/// another beneath it.
+pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
 
     // Local group: always present, always available.
-    rows.push(header_row(ctx, "LOCAL", None));
+    rows.push(
+        header_row(state, "LOCAL", None)
+            .shape(Shape::Heading)
+            .keyed("host:local"),
+    );
     let mut any_local = false;
-    for entry in ctx
-        .state
-        .sidebar
-        .sessions
-        .iter()
-        .filter(|e| e.host.is_none())
-    {
-        rows.push(session_row(ctx, entry));
+    for entry in state.sidebar.sessions.iter().filter(|e| e.host.is_none()) {
+        rows.push(
+            session_row(state, entry)
+                .at(1)
+                .keyed(format!("session:local:{}", entry.name)),
+        );
         any_local = true;
     }
     if !any_local {
-        rows.push(empty_row(ctx, "No local sessions"));
+        rows.push(
+            empty_row(state, "No local sessions")
+                .at(1)
+                .keyed("empty:local"),
+        );
     }
-    rows.push(session_action_row(
-        ctx,
-        "New session",
-        RowTarget::NewSession(None),
-    ));
+    rows.push(
+        SidebarRow::action(state, "New session", RowTarget::NewSession(None)).keyed("new:local"),
+    );
 
     // One group per known remote host — configured, recently used, or currently attached — so a
     // host stays listed even while offline. Connecting a host lists its sessions; disconnecting
     // returns it to offline.
-    for host in ctx.state.remote.hosts.iter() {
-        rows.push(SidebarRow::spacer());
-        let sessions: Vec<&DiscoveredSession> = ctx
-            .state
+    for host in state.remote.hosts.iter() {
+        let id = &host.alias;
+        let sessions: Vec<&DiscoveredSession> = state
             .sidebar
             .sessions
             .iter()
@@ -266,42 +246,58 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
         // Only a live row is evidence the host answered. The list also carries the host's cached
         // last-seen rows, and a memory must not talk an idle host into "reached".
         let status = crate::view::session_status::host_connection_status(
-            &ctx.state,
+            state,
             &host.target,
             sessions
                 .iter()
                 .any(|entry| !crate::ops::session::session_row_is_last_seen(entry)),
         );
-        rows.push(header_row(
-            ctx,
-            &host.alias.to_uppercase(),
-            Some((host, status)),
-        ));
+        rows.push(
+            header_row(state, &host.alias.to_uppercase(), Some((host, status)))
+                .shape(Shape::Heading)
+                .apart()
+                .keyed(format!("host:{id}")),
+        );
 
         match status {
             HostStatus::Connecting | HostStatus::Installing => {}
             HostStatus::Connected | HostStatus::Reachable => {
                 // Online: live sessions follow the host row, then the way to start another.
                 if sessions.is_empty() {
-                    rows.push(empty_row(ctx, "No sessions here yet"));
+                    rows.push(
+                        empty_row(state, "No sessions here yet")
+                            .at(1)
+                            .keyed(format!("empty:{id}")),
+                    );
                 } else {
                     for entry in sessions {
-                        rows.push(session_row(ctx, entry));
+                        rows.push(
+                            session_row(state, entry)
+                                .at(1)
+                                .keyed(format!("session:{id}:{}", entry.name)),
+                        );
                     }
                 }
-                rows.push(session_action_row(
-                    ctx,
-                    "New session",
-                    RowTarget::NewSession(Some(host.target.clone())),
-                ));
+                rows.push(
+                    SidebarRow::action(
+                        state,
+                        "New session",
+                        RowTarget::NewSession(Some(host.target.clone())),
+                    )
+                    .keyed(format!("new:{id}")),
+                );
             }
             HostStatus::Disconnected | HostStatus::Unreachable => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
                 if let Some(cached) =
-                    crate::session::host_sessions_for(&ctx.state.remote.session_cache, &host.target)
+                    crate::session::host_sessions_for(&state.remote.session_cache, &host.target)
                 {
                     for entry in cached.iter().filter(|s| !s.ephemeral) {
-                        rows.push(cached_session_row(ctx, host, entry));
+                        rows.push(
+                            cached_session_row(state, host, entry)
+                                .at(1)
+                                .keyed(format!("cached:{id}:{}", entry.name)),
+                        );
                     }
                 }
             }
@@ -310,8 +306,11 @@ pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
 
     // A discoverable path to the connect-remote-host prompt, so a host that is not yet configured or
     // recent can still be reached without knowing the Ctrl+R binding.
-    rows.push(SidebarRow::spacer());
-    rows.push(action_row(ctx, "Connect a host…", RowTarget::ConnectHost));
+    rows.push(
+        SidebarRow::action(state, "Connect a host…", RowTarget::ConnectHost)
+            .apart()
+            .keyed("connect"),
+    );
 
     rows
 }

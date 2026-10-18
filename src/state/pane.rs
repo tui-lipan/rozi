@@ -171,20 +171,6 @@ pub(crate) struct AgentPlace {
     pub branch: Option<String>,
 }
 
-impl AgentPlace {
-    /// What the agent groups under: the project root, else the bare cwd.
-    pub fn group_path(&self) -> Option<&str> {
-        self.project_root.as_deref().or(self.cwd.as_deref())
-    }
-
-    /// The path a group is named after. A linked worktree takes its repository's name, so
-    /// `.claude/worktrees/fix-login` reads as `rozi` beside the branch it has checked out rather
-    /// than as an unrelated project called `fix-login`.
-    pub fn label_path(&self) -> Option<&str> {
-        self.repository.as_deref().or(self.group_path())
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PaneActivity {
     pub last_activity: Option<Instant>,

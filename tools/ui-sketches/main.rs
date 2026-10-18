@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 15] = [
+const SCENARIOS: [(&str, &str, fn()); 17] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -80,6 +80,16 @@ const SCENARIOS: [(&str, &str, fn()); 15] = [
         "sidebar-sessions",
         "current, background, running, and restorable session labels",
         sidebar_sessions,
+    ),
+    (
+        "sidebar-activity",
+        "project headings, two-line agents, and a harness of published sessions, open and folded",
+        sidebar_activity,
+    ),
+    (
+        "sidebar-panes",
+        "workspace headings with their panes, programs, and locations",
+        sidebar_panes,
     ),
     (
         "sidebar-custom-trees",
@@ -1131,10 +1141,13 @@ fn session_picker_no_results() {
 fn sidebar_custom_trees() {
     let snapshot: rozi::state::SidebarSnapshot = serde_json::from_str(r#"{
         "rows": [
-            {"id":"root","label":"Build pipeline","expanded":true},
-            {"id":"api","parent":"root","label":"api-integration-and-contract-tests","description":"Running · 42 tests","tone":"working"},
+            {"id":"root","label":"Build pipeline","heading":true,"description":"main"},
+            {"id":"api","parent":"root","label":"api-integration-and-contract-tests","description":"Running · 42 tests","tone":"working","meta":"3m12s"},
             {"id":"review","parent":"root","label":"review","description":"Waiting for approval","tone":"blocked"},
-            {"id":"ui","parent":"root","label":"frontend-production-build","description":"Passed","tone":"success"}
+            {"id":"ui","parent":"root","label":"frontend-production-build","description":"Passed","tone":"success"},
+            {"id":"deploys","label":"Deploys","expanded":false},
+            {"id":"eu","parent":"deploys","label":"eu-west-1","description":"Failed","tone":"error"},
+            {"id":"us","parent":"deploys","label":"us-east-1","description":"Live","tone":"success"}
         ]
     }"#).unwrap();
     for stream in [false, true] {
@@ -1209,6 +1222,140 @@ fn sidebar_custom_trees() {
                 ),
             );
         }
+    }
+}
+
+/// One project with Claude Code publishing four sessions beside a Codex pane, and a second project
+/// with one agent: a harness open, then folded with its tally and tinted arrow.
+fn sidebar_activity() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
+        PublishedRow, PublisherKind, RowKey, SessionInstanceId,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let agent_ref = |pane_id: u32, slot: Option<&str>, incarnation: u64| AgentRef {
+        pane: PaneRef {
+            session_instance: SessionInstanceId::generate(),
+            pane_id,
+            generation: 0,
+        },
+        slot: slot.map(|id| RowKey::new("sessions", id)),
+        incarnation,
+    };
+    let agent_pane = |id: u32, label: &str, status: &str, cwd: &str| {
+        let mut pane = live_pane(id);
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new(label.to_lowercase(), label).into(),
+            state: DetectedAgentState::Idle,
+        });
+        pane.terminal.reported_status = Some(PaneStatus {
+            value: status.to_string(),
+            reason: None,
+            set_at: now.saturating_sub(180),
+        });
+        pane.agent_refs = vec![agent_ref(id, None, 1)];
+        pane.terminal.cwd = Some(cwd.to_string());
+        pane
+    };
+    let session = |id: &str, title: &str, status: &str, active: bool| PublishedRow {
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: id.to_string(),
+        title: title.to_string(),
+        status: status.to_string(),
+        reason: None,
+        active,
+        work_started_at: Some(now.saturating_sub(120)),
+        cwd: None,
+        project: None,
+        native_session: None,
+    };
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        let mut claude = agent_pane(10, "Claude Code", "idle", "/home/me/src/rozi");
+        claude.terminal.published_rows = vec![
+            session("a", "fix login redirect", "blocked", false),
+            session("b", "github issue review", "working", true),
+            session("c", "sidebar audit", "done", false),
+            session("d", "notes", "idle", false),
+        ];
+        claude.agent_refs = ["a", "b", "c", "d"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| agent_ref(10, Some(slot), index as u64 + 1))
+            .collect();
+        let codex = agent_pane(11, "Codex", "working", "/home/me/src/rozi");
+        let opencode = agent_pane(12, "OpenCode", "error", "/home/me/src/tui-lipan");
+        let workspaces = &mut state.current_mut().workspaces;
+        workspaces[0].panes = vec![claude, codex];
+        workspaces[1].panes = vec![opencode];
+        workspaces[0].focused_pane = Some(10);
+        state.current_mut().focused_pane = Some(10);
+    }
+    for width in [28, 36, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 22));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-activity-{width}"));
+    }
+    backend
+        .dispatch(Msg::SidebarRowExpanded {
+            panel: 0,
+            index: 1,
+            expanded: false,
+        })
+        .expect("fold the harness");
+    backend.state_mut().config.sidebar.layout.left.width = 36;
+    backend.render();
+    write_png(&mut backend, "sidebar-activity-folded");
+}
+
+/// Two workspaces: the focused one with an editor, an agent, and a build, and a second with one
+/// shell, so headings, nesting, and the focused-pane marker all show.
+fn sidebar_panes() {
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Panes];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+        let pane = |id: u32, title: &str, program: &str, cwd: &str| {
+            let mut pane = live_pane(id);
+            pane.set_custom_title(title);
+            pane.terminal.foreground_program = Some(program.to_string());
+            pane.terminal.cwd = Some(cwd.to_string());
+            pane
+        };
+        let workspaces = &mut state.current_mut().workspaces;
+        workspaces[0].panes = vec![
+            pane(10, "editor", "nvim", "/home/me/src/rozi/src/view"),
+            pane(11, "claude", "claude", "/home/me/src/rozi"),
+            pane(12, "tests", "cargo", "/home/me/src/rozi"),
+        ];
+        workspaces[0].focused_pane = Some(10);
+        workspaces[1].panes = vec![pane(13, "docs", "zsh", "/home/me/src/tui-lipan/docs")];
+        state.current_mut().focused_pane = Some(10);
+    }
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 20));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-panes-{width}"));
     }
 }
 

@@ -10,6 +10,7 @@ use rozi::config::{
     UserCommandAction,
 };
 use rozi::input::Action;
+use rozi::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
@@ -87,6 +88,33 @@ fn backend_with_panes() -> TestBackend<AppRoot> {
         state.current_mut().workspaces[0].panes = vec![pane(1), pane(2)];
         state.current_mut().workspaces[1].panes = vec![pane(3)];
         state.current_mut().focused_pane = Some(1);
+    }
+    backend.render();
+    backend
+}
+
+/// The Sessions tab with the session on screen listed: its row is two lines, its name over its
+/// pane count.
+fn backend_with_sessions() -> TestBackend<AppRoot> {
+    let mut backend = sidebar_backend();
+    {
+        let state = backend.state_mut();
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+        state.current_mut().session_name = Some("dev".into());
+        state.sidebar.sessions = vec![DiscoveredSession {
+            name: "dev".into(),
+            origin: Default::default(),
+            status: DiscoveredSessionStatus::Running {
+                panes: 2,
+                clients: 0,
+                has_layout: true,
+            },
+            ephemeral: false,
+            host: None,
+            remote_target: None,
+        }];
     }
     backend.render();
     backend
@@ -699,35 +727,39 @@ fn page_navigation_uses_the_visible_row_count() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().current_mut().workspaces[0].panes =
-                (1..=12).map(pane).collect();
-            backend.state_mut().current_mut().workspaces[1].panes.clear();
-
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 10,
-            });
-            backend.render();
-            settle(&mut backend);
-            let short_page = backend.state().sidebar.panels[0].page_rows;
-
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            backend.render();
-            settle(&mut backend);
-            let tall_page = backend.state().sidebar.panels[0].page_rows;
+            // How far one PageDown moves the cursor, from the first row, in a sidebar this tall.
+            let page = |height: u16| {
+                let mut backend = backend_with_panes();
+                backend.state_mut().current_mut().workspaces[0].panes =
+                    (1..=12).map(pane).collect();
+                backend.state_mut().current_mut().workspaces[1]
+                    .panes
+                    .clear();
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: height,
+                });
+                backend.render();
+                backend
+                    .dispatch(Msg::RunAction(Action::FocusSidebar))
+                    .unwrap();
+                settle(&mut backend);
+                let _ = backend.send_key(key(KeyCode::Home));
+                settle(&mut backend);
+                let start = backend.state().sidebar.panels[0].cursor;
+                let _ = backend.send_key(key(KeyCode::PageDown));
+                settle(&mut backend);
+                backend.state().sidebar.panels[0].cursor - start
+            };
+            let short_page = page(10);
+            let tall_page = page(30);
 
             assert!(short_page > 0);
             assert!(
                 tall_page > short_page,
-                "a taller sidebar should page across more selectable rows: {short_page} -> {tall_page}"
+                "a taller sidebar should page across more rows: {short_page} -> {tall_page}"
             );
         })
         .expect("spawn page navigation thread")
@@ -742,7 +774,7 @@ fn the_active_row_marker_spans_every_line_of_the_row() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = backend_with_panes();
+            let mut backend = backend_with_sessions();
             settle(&mut backend);
 
             let lines = backend.capture_frame().to_fixed_grid_lines();
@@ -755,7 +787,7 @@ fn the_active_row_marker_spans_every_line_of_the_row() {
             assert_eq!(
                 marked.len(),
                 2,
-                "the focused pane's two-line row carries the marker on both lines: {marked:?}"
+                "the current session's two-line row carries the marker on both lines: {marked:?}"
             );
             assert_eq!(
                 marked[1],
@@ -774,7 +806,7 @@ fn the_cursor_highlight_covers_both_lines_of_a_row() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = backend_with_panes();
+            let mut backend = backend_with_sessions();
             // The hover lift tinted toward the active border: close enough to hover to mean "about
             // to act on this", distinct enough to find in SIDEBAR mode without a pointer.
             let theme = &backend.state().theme;
@@ -1109,11 +1141,13 @@ fn sidebar_width_drag_preserves_pane_focus() {
                     if !is_shown {
                         continue;
                     }
+                    // Find the divider on the tab bar: rows below it draw tree guides with the
+                    // same glyph.
                     let frame = backend.capture_frame();
                     let x = if side == 0 {
-                        (0..50).find(|x| frame.cell(*x, 3).symbol == "│")
+                        (0..50).find(|x| frame.cell(*x, 0).symbol == "│")
                     } else {
-                        (50..100).rev().find(|x| frame.cell(*x, 3).symbol == "│")
+                        (50..100).rev().find(|x| frame.cell(*x, 0).symbol == "│")
                     }
                     .expect("outer sidebar divider");
                     let target = if side == 0 { x + 3 } else { x - 3 };

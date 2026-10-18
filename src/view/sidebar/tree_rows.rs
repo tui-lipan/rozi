@@ -1,45 +1,78 @@
-//! Rendering for the hierarchical row tabs: Projects, JSON command tabs, and extension streams.
+//! Rendering for the sidebar's row tabs through the framework Tree.
 //!
-//! The generic framework Tree owns hierarchy layout and interaction. Rozi supplies ordinary
-//! [`Row`] content with its marker gutter, status, badge, and detail line. Producers describe
-//! meaning through [`SidebarTone`]; this module maps that meaning to themed row content.
+//! The Tree owns hierarchy layout and interaction. Rozi supplies ordinary [`Row`] content with its
+//! marker gutter, status, badge, and detail line, and places each row with a depth and a
+//! [`Shape`]. The hierarchical tabs (Projects, JSON command tabs, and extension streams) derive
+//! rows from a semantic projection, whose producers describe meaning through [`SidebarTone`].
 
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, SidebarRow};
+use super::row::{Priority, Row, Shape, SidebarRow};
 use crate::AppRoot;
-use crate::state::{SidebarTone, TreeItem, TreeLine};
+use crate::state::{SidebarTone, State, TreeItem, TreeLine};
 
-pub(super) fn tree_rows(ctx: &Context<AppRoot>, items: Vec<TreeItem>) -> Vec<SidebarRow> {
-    items
-        .into_iter()
-        .map(|item| {
-            let target = item.target();
-            let close = item.close();
-            match item {
-                TreeItem::Spacer => SidebarRow::spacer(),
-                TreeItem::Header(header) => {
-                    SidebarRow::header(super::row::header(ctx, header, false))
-                }
-                TreeItem::Loading(_) => SidebarRow::item(
-                    Row::new("Loading…").title_style(super::super::fg_only(&ctx.state.theme.muted)),
-                    target,
-                ),
-                TreeItem::Row(line) => {
-                    let row = tree_row(ctx, *line);
-                    let mut row = SidebarRow::item(row, target);
-                    if let Some(close) = close {
-                        row = row.closable(close);
-                    }
-                    row
-                }
+pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> {
+    let mut rows = Vec::with_capacity(items.len());
+    // A break between sections is the next row's gap, not a row of its own.
+    let mut apart = false;
+    for item in items {
+        let target = item.target();
+        let close = item.close();
+        let row = match item {
+            TreeItem::Spacer => {
+                apart = true;
+                continue;
             }
-        })
-        .collect()
+            TreeItem::Header(header) => {
+                SidebarRow::header(super::row::header(state, header, false))
+            }
+            TreeItem::Loading(branch) => SidebarRow::item(
+                Row::new("Loading…").title_style(super::super::fg_only(&state.theme.muted)),
+                target,
+            )
+            .at(branch.depth()),
+            TreeItem::Row(line) if line.heading => {
+                let key = format!("{:?}", line.key);
+                let content = line.row.content;
+                let heading = match content.description {
+                    Some(note) => {
+                        super::row::header_with_note(state, content.label, note, Priority::Label)
+                    }
+                    None => super::row::header(state, content.label, false),
+                };
+                SidebarRow::header(heading).shape(Shape::Heading).keyed(key)
+            }
+            TreeItem::Row(line) => {
+                let depth = line.branch.depth();
+                let key = format!("{:?}", line.key);
+                let expansion = line.expandable.then(|| (line.key.clone(), line.expanded));
+                // A folded row's arrow takes the color of the most urgent row it hides.
+                let tint = line.hidden_tone.and_then(|tone| tone_color(state, tone));
+                let row = tree_row(state, *line);
+                let mut row = SidebarRow::item(row, target).at(depth).keyed(key);
+                if let Some((key, expanded)) = expansion {
+                    row = row.collapsible(key, expanded);
+                }
+                if let Some(tint) = tint {
+                    row = row.arrow_style(Style::new().fg(tint));
+                }
+                if let Some(close) = close {
+                    row = row.closable(close);
+                }
+                row
+            }
+        };
+        rows.push(if std::mem::take(&mut apart) {
+            row.apart()
+        } else {
+            row
+        });
+    }
+    rows
 }
 
-fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
-    let theme = &ctx.state.theme;
+fn tree_row(state: &State, line: TreeLine) -> Row {
+    let theme = &state.theme;
     let content = line.row.content;
     let muted = super::super::fg_only(&theme.muted);
     let disabled = content.disabled.is_some();
@@ -49,7 +82,7 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
         super::super::fg_only(&theme.primary)
     };
     let (glyph, color) = tone_glyph(
-        ctx,
+        state,
         if disabled {
             SidebarTone::Muted
         } else {
@@ -67,14 +100,17 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
             .priority(Priority::Balanced)
             .badge_text(description, muted.dim());
     }
+    if let Some(meta) = content.meta {
+        row = row.meta(meta, color.map_or(muted, |color| Style::new().fg(color)));
+    }
     // A keyed action waiting for its second press says so on the row it will act on. The ✕'s own
     // arming is drawn by the ✕.
     if let crate::state::RowTarget::StreamRow(reference) = &line.row.target
         && let Some(crate::state::SidebarClose::StreamAction { row: armed, action }) =
-            &ctx.state.sidebar.pending_row_close
+            &state.sidebar.pending_row_close
         && armed == reference
-        && line.row.close.as_ref() != ctx.state.sidebar.pending_row_close.as_ref()
-        && let Some(label) = ctx.state.stream_row(reference).and_then(|(producer, _)| {
+        && line.row.close.as_ref() != state.sidebar.pending_row_close.as_ref()
+        && let Some(label) = state.stream_row(reference).and_then(|(producer, _)| {
             producer
                 .actions
                 .iter()
@@ -98,72 +134,74 @@ fn tree_row(ctx: &Context<AppRoot>, line: TreeLine) -> Row {
     row
 }
 
-/// The glyph and color a tone shows. `None` color for tones that draw nothing.
-pub(super) fn tone_glyph(
-    ctx: &Context<AppRoot>,
-    tone: SidebarTone,
-) -> (Option<Element>, Option<Color>) {
-    let status = &ctx.state.theme.status;
-    let (glyph, color) = match tone {
-        SidebarTone::Normal | SidebarTone::Muted => return (None, None),
-        SidebarTone::Working => {
-            return (
-                Some(
-                    Spinner::new()
-                        .style(Style::new().fg(status.info))
-                        .height(Length::Px(1))
-                        .into(),
-                ),
-                Some(status.info),
-            );
-        }
-        SidebarTone::Info => ("•", status.info),
-        SidebarTone::Success => ("✓", status.success),
-        SidebarTone::Warning => ("!", status.warning),
-        SidebarTone::Blocked => ("▲", status.warning),
-        SidebarTone::Error => ("×", status.error),
-    };
-    (
-        Some(
-            Text::new(glyph)
-                .style(Style::new().fg(color))
-                .height(Length::Px(1))
-                .into(),
-        ),
-        Some(color),
-    )
+/// The color a tone shows. `None` for tones that draw nothing.
+fn tone_color(state: &State, tone: SidebarTone) -> Option<Color> {
+    let status = &state.theme.status;
+    match tone {
+        SidebarTone::Normal | SidebarTone::Muted => None,
+        SidebarTone::Working | SidebarTone::Info => Some(status.info),
+        SidebarTone::Success => Some(status.success),
+        SidebarTone::Warning | SidebarTone::Blocked => Some(status.warning),
+        SidebarTone::Error => Some(status.error),
+    }
 }
 
-/// Convert the semantic projection into Tree nodes. Rozi supplies content and actions; the widget
-/// supplies tree chrome, expansion hit targets, scrolling, and navigation.
+/// The glyph and color a tone shows. `None` color for tones that draw nothing.
+fn tone_glyph(state: &State, tone: SidebarTone) -> (Option<Element>, Option<Color>) {
+    let Some(color) = tone_color(state, tone) else {
+        return (None, None);
+    };
+    let glyph = match tone {
+        SidebarTone::Working => Spinner::new()
+            .style(Style::new().fg(color))
+            .height(Length::Px(1))
+            .into(),
+        _ => Text::new(match tone {
+            SidebarTone::Success => "✓",
+            SidebarTone::Warning => "!",
+            SidebarTone::Blocked => "▲",
+            SidebarTone::Error => "×",
+            _ => "•",
+        })
+        .style(Style::new().fg(color))
+        .height(Length::Px(1))
+        .into(),
+    };
+    (Some(glyph), Some(color))
+}
+
+/// A tab's placed rows as a Tree. Rozi supplies content and actions; the widget supplies tree
+/// chrome, expansion hit targets, scrolling, and navigation.
 pub(super) fn tab(
     ctx: &Context<AppRoot>,
     panel: usize,
     tab: &crate::config::SidebarTab,
-    items: Vec<TreeItem>,
 ) -> Element {
-    let rows = super::body_rows(ctx, tab);
+    let rows = super::rows(&ctx.state, tab);
     if rows.is_empty() {
         return super::empty_body(ctx, panel, Some(super::empty_text(ctx, tab)));
     }
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
-    let cursor = super::cursor_index(ctx, panel, tab);
-    let nodes = items
+    let cursor = super::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows);
+    let nodes = rows
         .into_iter()
-        .zip(rows)
         .enumerate()
-        .map(|(index, (item, row))| {
+        .map(|(index, row)| {
             node(
                 ctx,
                 panel,
                 cursor.filter(|_| focused) == Some(index),
                 index,
-                item,
                 row,
             )
         })
         .collect::<Vec<_>>();
-    let mut tree = Tree::forest(nested_nodes(&nodes, &mut 0, 0))
+    let folding: Vec<usize> = nodes
+        .iter()
+        .filter(|(_, shape, _)| matches!(shape, Shape::Collapsible { .. }))
+        .map(|(depth, _, _)| *depth)
+        .collect();
+    let mut tree = Tree::forest(nested_nodes(&nodes, &mut 0, 0, &folding))
         .controlled_expansion(true)
         .toggle_on_activate(false)
         .indent_style(IndentStyle::Branch)
@@ -222,14 +260,6 @@ pub(super) fn tab(
         .on_pointer_move(super::callback(ctx, move |_| {
             crate::Msg::SidebarPointerMoved(panel)
         }));
-    let tab_id = tab.id();
-    tree = tree.on_viewport_change(super::callback(ctx, move |event| {
-        crate::Msg::SidebarViewportChanged {
-            panel,
-            tab_id: tab_id.clone(),
-            event,
-        }
-    }));
     if let Some(index) = cursor {
         tree = tree.selected(index);
     }
@@ -241,25 +271,21 @@ fn node(
     panel: usize,
     selected: bool,
     index: usize,
-    item: TreeItem,
     row: SidebarRow,
-) -> (usize, TreeNode) {
-    let depth = match &item {
-        TreeItem::Row(line) => line.branch.depth(),
-        TreeItem::Loading(branch) => branch.depth(),
-        _ => 0,
-    };
+) -> (usize, Shape, TreeNode) {
+    let depth = row.depth;
+    let shape = row.shape;
+    let arrow_style = row.arrow_style;
+    let gap_before = row.gap_before;
+    let key = row
+        .key
+        .clone()
+        .unwrap_or_else(|| format!("structure-{index}"));
     let selectable = row.selectable();
     let close = super::close_affordance(ctx, panel, &row, index, selected);
     let hovered = ctx.state.sidebar.panels[panel].hovered_row == Some(index)
         && !ctx.state.sidebar.panels[panel].suppress_row_hover;
-    let label = match &item {
-        TreeItem::Row(line) => line.row.content.label.clone(),
-        TreeItem::Header(header) => header.clone(),
-        TreeItem::Loading(_) => "Loading…".to_string(),
-        TreeItem::Spacer => String::new(),
-    };
-    let metadata = ListItem::new(label).role(if selectable {
+    let metadata = ListItem::new(row.label().to_string()).role(if selectable {
         ListItemRole::Normal
     } else {
         ListItemRole::Header
@@ -274,40 +300,49 @@ fn node(
                 .content_height(parts.height)
                 .row_style(parts.style)
         }
-        super::row::RowKind::Header(element) => node
-            .content(*element)
-            .show_arrow(matches!(item, TreeItem::Loading(_))),
-        super::row::RowKind::Spacer => node
-            .content(Text::new(" ").height(Length::Px(1)))
-            .show_arrow(false),
+        super::row::RowKind::Header(element) => node.content(*element),
     };
-    if let TreeItem::Row(line) = item {
-        node = node
-            .expansion_mode(if line.expandable {
-                TreeExpansionMode::Collapsible
-            } else {
-                TreeExpansionMode::Auto
-            })
-            .expanded(line.expanded)
-            .key(format!("{:?}", line.key));
-    } else {
-        node = node.key(format!("structure-{index}"));
+    node = match shape {
+        Shape::Leaf => node,
+        Shape::Flush => node.show_arrow(false),
+        Shape::Heading => node
+            .expansion_mode(TreeExpansionMode::AlwaysOpen)
+            .show_arrow(false),
+        Shape::Collapsible { expanded } => node
+            .expansion_mode(TreeExpansionMode::Collapsible)
+            .expanded(expanded),
+    };
+    if let Some(style) = arrow_style {
+        node = node.arrow_style(style);
     }
-    (depth, node)
+    (depth, shape, node.gap_before(gap_before).key(key))
 }
 
 /// The model projects only visible rows. Retain its order and depth; controlled expansion keeps
 /// the widget synchronized with the identity-keyed expansion choices held by the application.
-fn nested_nodes(nodes: &[(usize, TreeNode)], index: &mut usize, depth: usize) -> Vec<TreeNode> {
+///
+/// Leaves keep the arrow column only at a depth where some row folds, so every label at that depth
+/// lines up across groups too, or just beneath one, so its children read a level deeper than its
+/// label. Elsewhere the branch meets the label directly: `├ editor`, not `├─ editor`.
+fn nested_nodes(
+    nodes: &[(usize, Shape, TreeNode)],
+    index: &mut usize,
+    depth: usize,
+    folding: &[usize],
+) -> Vec<TreeNode> {
     let mut siblings = Vec::new();
-    while let Some((node_depth, node)) = nodes.get(*index) {
+    while let Some((node_depth, shape, node)) = nodes.get(*index) {
         if *node_depth < depth {
             break;
         }
         let mut node = node.clone();
         *index += 1;
-        if nodes.get(*index).is_some_and(|(next, _)| *next > depth) {
-            node = node.children(nested_nodes(nodes, index, depth + 1));
+        if nodes.get(*index).is_some_and(|(next, _, _)| *next > depth) {
+            node = node.children(nested_nodes(nodes, index, depth + 1, folding));
+        }
+        let beneath_fold = depth > 0 && folding.contains(&(depth - 1));
+        if *shape == Shape::Leaf && !folding.contains(&depth) && !beneath_fold {
+            node = node.show_arrow(false);
         }
         siblings.push(node);
     }

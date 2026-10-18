@@ -1,44 +1,56 @@
 use tui_lipan::prelude::*;
 
-use super::row::{Priority, Row, RowTarget, SidebarRow};
-use crate::AppRoot;
-use crate::state::{WorktreeTabItem, WorktreeTabRow};
+use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
+use crate::state::{State, WorktreeTabItem, WorktreeTabRow};
 
-/// The Worktrees tab: the focused pane's repository, then one row per checkout.
+/// The Worktrees tab: the focused pane's repository as a heading, with one row per checkout
+/// beneath it.
 ///
 /// Each checkout reads like a session row. The branch is the title, PR/CI is the detail, and
 /// the right edge says what the checkout is to Rozi: the session using it, or `primary`/`locked`/
 /// `stale lock`.
 /// The gutter bar marks the checkout the focused pane is in. Enter opens it, and the ✕ removes it
 /// behind the same two-step confirmation every destructive sidebar row uses.
-pub(super) fn worktrees_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
-    let theme = &ctx.state.theme;
+pub(super) fn worktrees_rows(state: &State) -> Vec<SidebarRow> {
+    let theme = &state.theme;
     let muted = super::super::fg_only(&theme.muted);
     let accent = super::super::fg_only(&theme.accent);
-    ctx.state
+    state
         .worktree_tab_items()
         .into_iter()
-        .map(|item| match item {
+        .enumerate()
+        .map(|(index, item)| match item {
             // The host is short and says which machine every row below lives on; the repository
             // name is the one that can afford to clip.
             WorktreeTabItem::Header { repository, host } => SidebarRow::header(
-                super::row::header_with_note(ctx, repository, host, Priority::Description),
-            ),
-            WorktreeTabItem::Checkout(row) => checkout_row(ctx, row),
-            WorktreeTabItem::Creating { branch } => SidebarRow::item(
-                Row::new(branch)
-                    .title_style(muted)
-                    .priority(Priority::Description)
-                    .badge_text("creating…", accent),
-                RowTarget::Inert,
-            ),
+                super::row::header_with_note(state, repository, host, Priority::Description),
+            )
+            .shape(Shape::Heading)
+            .keyed("repository"),
+            WorktreeTabItem::Checkout(row) => {
+                let key = format!("checkout:{}", row.tree.path);
+                checkout_row(state, row).at(1).keyed(key)
+            }
+            WorktreeTabItem::Creating { branch } => {
+                let key = format!("creating:{branch}");
+                SidebarRow::item(
+                    Row::new(branch)
+                        .title_style(muted)
+                        .priority(Priority::Description)
+                        .badge_text("creating…", accent),
+                    RowTarget::Inert,
+                )
+                .at(1)
+                .keyed(key)
+            }
             WorktreeTabItem::Message(text) => {
                 SidebarRow::item(Row::new(text).title_style(muted), RowTarget::Inert)
+                    .at(1)
+                    .keyed(format!("message:{index}"))
             }
-            WorktreeTabItem::New => SidebarRow::item(
-                Row::new("+ New worktree").title_style(accent),
-                RowTarget::NewWorktree,
-            ),
+            WorktreeTabItem::New => {
+                SidebarRow::action(state, "New worktree", RowTarget::NewWorktree).keyed("new")
+            }
         })
         .collect()
 }
@@ -75,24 +87,19 @@ impl SessionPresence {
     }
 }
 
-fn presence(
-    ctx: &Context<AppRoot>,
-    session: &crate::session::protocol::WorktreeSession,
-) -> SessionPresence {
-    let target = ctx
-        .state
+fn presence(state: &State, session: &crate::session::protocol::WorktreeSession) -> SessionPresence {
+    let target = state
         .sidebar
         .worktrees
         .source
         .as_ref()
         .and_then(|(target, _)| target.as_ref());
-    let current = ctx.state.current();
+    let current = state.current();
     if current.session_name.as_deref() == Some(session.name.as_str())
         && current.remote_target.as_ref() == target
     {
         SessionPresence::Current
-    } else if ctx
-        .state
+    } else if state
         .attachment_by_identity(&session.name, target)
         .is_some()
     {
@@ -104,8 +111,8 @@ fn presence(
     }
 }
 
-fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
-    let theme = &ctx.state.theme;
+fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
+    let theme = &state.theme;
     let muted = super::super::fg_only(&theme.muted);
     let tree = &row.tree;
     let branch = match (&tree.branch, tree.bare) {
@@ -129,10 +136,10 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
     let strongest = row
         .sessions
         .iter()
-        .map(|session| presence(ctx, session))
+        .map(|session| presence(state, session))
         .max();
     // The right edge is one status rail: what the checkout is, then whether a session uses it.
-    let state = if !tree.linked {
+    let kind = if !tree.linked {
         Some(("primary", muted))
     } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
         Some(("stale lock", Style::new().fg(theme.status.warning)))
@@ -157,15 +164,15 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
         };
         (text, style)
     });
-    item = match (row.removing, state, marker) {
+    item = match (row.removing, kind, marker) {
         (true, _, _) => {
             item.badge(crate::view::session_status::picker_circle_spinner(muted).label("removing…"))
         }
-        (false, Some((state, state_style)), Some((marker, marker_style))) => {
-            item.badge_parts([(state.to_string(), state_style), (marker, marker_style)])
+        (false, Some((kind, kind_style)), Some((marker, marker_style))) => {
+            item.badge_parts([(kind.to_string(), kind_style), (marker, marker_style)])
         }
         (false, None, Some((marker, style))) => item.badge_text(marker, style),
-        (false, Some((state, style)), None) => item.badge_text(state, style),
+        (false, Some((kind, style)), None) => item.badge_text(kind, style),
         (false, None, None) => item,
     };
     // Under the pointer the rail says what Enter does. A closable row's hover is its ✕ instead.
@@ -175,11 +182,10 @@ fn checkout_row(ctx: &Context<AppRoot>, row: WorktreeTabRow) -> SidebarRow {
         item = item.hover_badge_text("new session", muted);
     }
 
-    let statuses = &ctx.state.sidebar.worktrees.statuses;
+    let statuses = &state.sidebar.worktrees.statuses;
     let detail_dim = 0.4;
     #[cfg(feature = "ui-snapshot")]
-    let detail_dim = ctx
-        .state
+    let detail_dim = state
         .sidebar
         .worktrees
         .detail_dim_preview

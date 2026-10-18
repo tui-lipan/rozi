@@ -17,7 +17,7 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let mut items = ctx.state.sidebar_item_projections(&tab);
+    let mut items = ctx.state.sidebar_rows(&tab);
     if index >= items.len() {
         return Update::none();
     }
@@ -53,11 +53,6 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     }
 }
 
-/// Enter: run whatever the row under the cursor does — the same path a click on it takes.
-pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
-    with_cursor_row(ctx, row_activate)
-}
-
 /// `x`: destroy whatever the row under the cursor's ✕ would — the same path a click on that ✕ takes.
 pub(crate) fn close_cursor(ctx: &mut Context<AppRoot>) -> Update {
     with_cursor_row(ctx, row_close)
@@ -71,11 +66,8 @@ fn with_cursor_row(
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let items = ctx.state.sidebar_item_projections(&tab);
-    match crate::state::SidebarItemProjection::resolve_cursor(
-        ctx.state.sidebar.panels[panel].cursor,
-        &items,
-    ) {
+    let items = ctx.state.sidebar_rows(&tab);
+    match crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &items) {
         Some(index) => then(ctx, panel, index),
         None => Update::none(),
     }
@@ -88,7 +80,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
-    let mut items = ctx.state.sidebar_item_projections(&tab);
+    let mut items = ctx.state.sidebar_rows(&tab);
     if index >= items.len() {
         return Update::none();
     }

@@ -246,7 +246,9 @@ fn the_keyboard_cursor_reveals_the_close_affordance_while_focused() {
 /// cannot fit.
 #[test]
 fn pane_row_description_shares_leftover_width_with_the_label() {
-    const PROGRAM: &str = "abcdefghijklmn-long-bin";
+    // Longer than half the row's text width, and short enough to fit beside the label and the
+    // tree guide in front of it.
+    const PROGRAM: &str = "abcdefghijkl-long-bin";
     let lines = panes_sidebar_lines(|state| {
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.set_custom_title("zsh");

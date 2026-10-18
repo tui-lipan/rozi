@@ -233,9 +233,8 @@ pub(super) fn apply_sidebar_config(
     }
 }
 
-/// Cluster launcher entries under their groups so the stored order is already display order: the
-/// view and the click projection then only have to notice where the group changes, and an entry
-/// index means the same thing to both. Section order is first appearance, entry order within a
+/// Cluster launcher entries under their groups so the stored order is already display order, and
+/// the rows only have to notice where the group changes. Section order is first appearance, entry order within a
 /// section is config order, and ungrouped entries lead because they are the run that sits above the
 /// first header.
 fn cluster_by_group(mut entries: Vec<SidebarLauncherEntry>) -> Vec<SidebarLauncherEntry> {

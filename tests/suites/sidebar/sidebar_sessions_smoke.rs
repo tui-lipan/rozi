@@ -145,15 +145,16 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                     .unwrap_or_else(|| panic!("{needle:?} should be visible: {lines:#?}"))
             };
 
+            // Each host is a heading, and its sessions hang from it.
             assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
-            assert!(lines[row("▍ dev")].starts_with("▍ dev"));
-            assert!(lines[row("▍ dev")].contains("󰍺 2"));
-            assert!(lines[row("▍ dev")].contains("Current"));
-            assert!(lines[row("2 panes")].starts_with("▍ 2 panes"));
+            assert!(lines[row("▍├ dev")].starts_with("▍├ dev"));
+            assert!(lines[row("▍├ dev")].contains("󰍺 2"));
+            assert!(lines[row("▍├ dev")].contains("Current"));
+            assert!(lines[row("2 panes")].starts_with("▍│ 2 panes"));
             assert!(!lines[row("2 panes")].contains("shared"));
-            assert!(lines[row("test")].starts_with("  test"));
+            assert!(lines[row("test")].starts_with(" └ test"));
             assert!(lines[row("test")].contains("Running"));
-            assert!(lines[row("3 panes")].starts_with("  3 panes"));
+            assert!(lines[row("3 panes")].starts_with("   3 panes"));
 
             let new_session_rows: Vec<_> = lines
                 .iter()
@@ -163,7 +164,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert!(
                 new_session_rows
                     .iter()
-                    .all(|line| line.starts_with("  + New session"))
+                    .all(|line| line.starts_with(" + New session"))
             );
 
             // A connected host is one line: the badge says it is connected, and disconnecting is
@@ -175,16 +176,16 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                 "no second line under a connected host: {:?}",
                 lines[linvm + 1]
             );
-            assert!(lines[linvm + 1].starts_with("  dev"));
-            assert!(lines[linvm + 2].starts_with("  4 panes"));
+            assert!(lines[linvm + 1].starts_with(" └ dev"));
+            assert!(lines[linvm + 2].starts_with("   4 panes"));
 
             // An offline host with nothing to explain spends its free second line on the standing
             // invitation, rather than hiding it under the pointer.
             let winvm = row("WINVM");
             assert!(lines[winvm].starts_with(" WINVM"));
             assert!(lines[winvm + 1].starts_with(" Click to connect"));
-            assert!(lines[winvm + 2].starts_with("  dev"));
-            assert!(lines[winvm + 3].starts_with("  2 panes · last seen"));
+            assert!(lines[winvm + 2].starts_with(" └ dev"));
+            assert!(lines[winvm + 3].starts_with("   2 panes · last seen"));
             assert!(lines[row("+ Connect a host")].starts_with(" + Connect a host"));
 
             let accent = backend
@@ -205,8 +206,10 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             // The cached session under an offline host, and its detail: both muted, so a memory of
             // a session never reads like a live one.
             assert_eq!(frame.cell(1, (winvm + 1) as u16).fg, muted);
-            assert_eq!(frame.cell(2, (winvm + 2) as u16).fg, muted);
-            assert_eq!(frame.cell(2, (winvm + 3) as u16).fg, muted);
+            assert_eq!(frame.cell(3, (winvm + 2) as u16).fg, muted);
+            assert_eq!(frame.cell(3, (winvm + 3) as u16).fg, muted);
+            // Actions close their group in the heading column and accent.
+            assert_eq!(frame.cell(1, row("+ Connect a host") as u16).fg, accent);
         })
         .expect("spawn Sessions sidebar smoke thread")
         .join()
@@ -248,7 +251,7 @@ fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
                 .collect();
             let row = lines
                 .iter()
-                .position(|line| line.contains("▍ dev"))
+                .position(|line| line.contains("▍└ dev"))
                 .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
             assert!(
                 lines[row].contains("⋈ 2"),

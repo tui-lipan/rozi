@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::config::{SidebarConfig, SidebarTab, SidebarTabId};
 use crate::session::protocol::PaneCommandPhase;
-use crate::state::{HostStatus, State};
+use crate::state::State;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidebarCommandRow {
@@ -113,36 +113,6 @@ pub enum SidebarClose {
     },
 }
 
-/// A lightweight semantic projection of a sidebar item without framework Element trees.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SidebarItemProjection {
-    pub target: RowTarget,
-    pub close: Option<SidebarClose>,
-}
-
-impl SidebarItemProjection {
-    pub fn selectable(&self) -> bool {
-        !matches!(self.target, RowTarget::Inert)
-    }
-
-    /// Where the cursor actually sits: the stored index if it still points at a selectable item,
-    /// otherwise the nearest one.
-    pub fn resolve_cursor(cursor: usize, items: &[SidebarItemProjection]) -> Option<usize> {
-        if items.get(cursor).is_some_and(Self::selectable) {
-            return Some(cursor);
-        }
-        items.iter().position(Self::selectable).map(|first| {
-            items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.selectable())
-                .map(|(index, _)| index)
-                .min_by_key(|index| index.abs_diff(cursor))
-                .unwrap_or(first)
-        })
-    }
-}
-
 impl State {
     /// Cached output for a command tab, as long as it still describes where the focused pane is.
     ///
@@ -162,7 +132,8 @@ impl State {
         self.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
     }
 
-    /// The sections a hierarchical tab lists. `None` for a flat tab.
+    /// The sections a tab built from a semantic projection lists: Projects, JSON command tabs, and
+    /// extension streams. `None` for a tab whose rows the view builds.
     pub fn tree_sections(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeSection>> {
         match tab {
             SidebarTab::Projects => Some(self.project_sections()),
@@ -203,7 +174,7 @@ impl State {
         }
     }
 
-    /// The visible lines of a hierarchical tab, in display order. `None` for a flat tab.
+    /// The visible lines of a tab built from tree sections, in display order. `None` otherwise.
     pub fn tree_items(&self, tab: &SidebarTab) -> Option<Vec<crate::state::TreeItem>> {
         let sections = self.tree_sections(tab)?;
         Some(crate::state::flatten(
@@ -213,437 +184,17 @@ impl State {
         ))
     }
 
-    pub fn sidebar_item_projections(&self, tab: &SidebarTab) -> Vec<SidebarItemProjection> {
-        if let Some(items) = self.tree_items(tab) {
-            return items
-                .iter()
-                .map(|item| SidebarItemProjection {
-                    target: item.target(),
-                    close: item.close(),
-                })
-                .collect();
-        }
-        match tab {
-            SidebarTab::Panes => {
-                let mut items = Vec::new();
-                let active = self.current().active_workspace;
-                for (workspace_index, workspace) in self.current().workspaces.iter().enumerate() {
-                    let mut ordered_ids = Vec::new();
-                    for id in workspace.tiled_ids() {
-                        if workspace
-                            .panes
-                            .iter()
-                            .any(|p| p.id == id && !p.floating && !p.closing)
-                        {
-                            ordered_ids.push(id);
-                        }
-                    }
-                    for pane in &workspace.panes {
-                        if pane.floating && !pane.closing && !ordered_ids.contains(&pane.id) {
-                            ordered_ids.push(pane.id);
-                        }
-                    }
-                    if ordered_ids.is_empty() && workspace_index != active {
-                        continue;
-                    }
-                    if !items.is_empty() {
-                        items.push(SidebarItemProjection {
-                            target: RowTarget::Inert,
-                            close: None,
-                        });
-                    }
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::Inert,
-                        close: None,
-                    });
-                    for id in ordered_ids {
-                        items.push(SidebarItemProjection {
-                            target: RowTarget::Pane(id),
-                            close: Some(SidebarClose::Pane(id)),
-                        });
-                    }
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::NewPane {
-                            workspace: workspace_index,
-                        },
-                        close: None,
-                    });
-                }
-                items
-            }
-            // Hierarchical, and projected above.
-            SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
-            SidebarTab::Activity => self.activity_item_projections(),
-            // The same projection the view draws from, so a row index means one agent to both.
-            SidebarTab::Agents => crate::view::agents::global_agent_rows(self)
-                .into_iter()
-                .map(|row| SidebarItemProjection {
-                    target: RowTarget::Agent(row.location),
-                    close: None,
-                })
-                .collect(),
-            SidebarTab::Worktrees => self
-                .worktree_tab_items()
-                .into_iter()
-                .map(|item| match item {
-                    WorktreeTabItem::Checkout(row) => SidebarItemProjection {
-                        close: row.closable.then(|| SidebarClose::Worktree {
-                            path: row.tree.path.clone(),
-                            force: row.force,
-                        }),
-                        target: RowTarget::Worktree(row.tree.path),
-                    },
-                    WorktreeTabItem::New => SidebarItemProjection {
-                        target: RowTarget::NewWorktree,
-                        close: None,
-                    },
-                    WorktreeTabItem::Header { .. }
-                    | WorktreeTabItem::Creating { .. }
-                    | WorktreeTabItem::Message(_) => SidebarItemProjection {
-                        target: RowTarget::Inert,
-                        close: None,
-                    },
-                })
-                .collect(),
-            SidebarTab::Sessions => {
-                let mut items = Vec::new();
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-                let mut any_local = false;
-                for entry in self.sidebar.sessions.iter().filter(|s| s.host.is_none()) {
-                    let close = Some(SidebarClose::Session {
-                        name: entry.name.clone(),
-                        remote_target: entry.remote_target.clone(),
-                    });
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::Session(Box::new(entry.clone())),
-                        close,
-                    });
-                    any_local = true;
-                }
-                if !any_local {
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::Inert,
-                        close: None,
-                    });
-                }
-                items.push(SidebarItemProjection {
-                    target: RowTarget::NewSession(None),
-                    close: None,
-                });
-
-                for host in self.remote.hosts.iter() {
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::Inert,
-                        close: None,
-                    });
-                    let live: Vec<_> = self
-                        .sidebar
-                        .sessions
-                        .iter()
-                        .filter(|s| s.remote_target.as_ref() == Some(&host.target))
-                        .cloned()
-                        .collect();
-                    let conns: Vec<_> = std::iter::once(self.current())
-                        .chain(self.background.values())
-                        .filter(|a| a.remote_target.as_ref() == Some(&host.target))
-                        .map(|a| a.connection)
-                        .collect();
-                    // Must match the view: cached last-seen rows are not evidence the host answered.
-                    let has_live = live
-                        .iter()
-                        .any(|entry| !crate::ops::session::session_row_is_last_seen(entry));
-                    let status = self
-                        .remote
-                        .hosts
-                        .status_for(&host.target, conns.iter(), has_live);
-                    // A connected host offers no activation: disconnecting is the hover ✕, the same
-                    // affordance (and the same confirmation) every other closable row uses.
-                    let (header_target, header_close) = match status {
-                        HostStatus::Connected | HostStatus::Reachable => (
-                            RowTarget::Inert,
-                            Some(SidebarClose::Host {
-                                target: host.target.clone(),
-                            }),
-                        ),
-                        HostStatus::Disconnected | HostStatus::Unreachable => {
-                            (RowTarget::HostConnect(host.target.clone()), None)
-                        }
-                        HostStatus::Connecting | HostStatus::Installing => (RowTarget::Inert, None),
-                    };
-                    items.push(SidebarItemProjection {
-                        target: header_target,
-                        close: header_close,
-                    });
-
-                    match status {
-                        HostStatus::Connecting | HostStatus::Installing => {}
-                        HostStatus::Connected | HostStatus::Reachable => {
-                            if live.is_empty() {
-                                items.push(SidebarItemProjection {
-                                    target: RowTarget::Inert,
-                                    close: None,
-                                });
-                            } else {
-                                for entry in live {
-                                    let close = Some(SidebarClose::Session {
-                                        name: entry.name.clone(),
-                                        remote_target: entry.remote_target.clone(),
-                                    });
-                                    items.push(SidebarItemProjection {
-                                        target: RowTarget::Session(Box::new(entry)),
-                                        close,
-                                    });
-                                }
-                            }
-                            items.push(SidebarItemProjection {
-                                target: RowTarget::NewSession(Some(host.target.clone())),
-                                close: None,
-                            });
-                        }
-                        HostStatus::Disconnected | HostStatus::Unreachable => {
-                            if let Some(cached) = crate::session::host_sessions_for(
-                                &self.remote.session_cache,
-                                &host.target,
-                            ) {
-                                for cached_entry in cached.iter().filter(|s| !s.ephemeral) {
-                                    let entry = crate::session::discovery::DiscoveredSession {
-                                        name: cached_entry.name.clone(),
-                                        origin: Default::default(),
-                                        ephemeral: false,
-                                        host: Some(host.alias.clone()),
-                                        remote_target: Some(host.target.clone()),
-                                        status:
-                                            crate::session::discovery::DiscoveredSessionStatus::Running {
-                                                panes: cached_entry.panes,
-                                                clients: 0,
-                                                has_layout: false,
-                                            },
-                                    };
-                                    items.push(SidebarItemProjection {
-                                        target: RowTarget::Session(Box::new(entry)),
-                                        close: None,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-                items.push(SidebarItemProjection {
-                    target: RowTarget::ConnectHost,
-                    close: None,
-                });
-                items
-            }
-            // Mirrors `view::sidebar::user_tabs::launcher_rows`: a group change inserts a spacer
-            // (except at the top) and a header ahead of the entry that opened the section.
-            SidebarTab::Launcher { name, entries, .. } => {
-                let mut items = Vec::new();
-                let mut current: Option<&String> = None;
-                for (entry_index, entry) in entries.iter().enumerate() {
-                    if let Some(group) =
-                        entry.group.as_ref().filter(|group| Some(*group) != current)
-                    {
-                        if !items.is_empty() {
-                            items.push(SidebarItemProjection {
-                                target: RowTarget::Inert,
-                                close: None,
-                            });
-                        }
-                        items.push(SidebarItemProjection {
-                            target: RowTarget::Inert,
-                            close: None,
-                        });
-                        current = Some(group);
-                    }
-                    items.push(SidebarItemProjection {
-                        target: RowTarget::Launcher {
-                            config_epoch: self.sidebar.config_epoch,
-                            tab_id: name.clone(),
-                            entry_index,
-                        },
-                        close: None,
-                    });
-                }
-                items
-            }
-            SidebarTab::Command { name, on_click, .. } => {
-                let Some(output) = self.fresh_command_output(name) else {
-                    return Vec::new();
-                };
-                // Mirrors `view::sidebar::user_tabs::command_rows`: a header line becomes a
-                // header preceded by a spacer, except at the top of the list.
-                let mut items = Vec::new();
-                for row in &output.rows {
-                    if row.header {
-                        if !items.is_empty() {
-                            items.push(SidebarItemProjection {
-                                target: RowTarget::Inert,
-                                close: None,
-                            });
-                        }
-                        items.push(SidebarItemProjection {
-                            target: RowTarget::Inert,
-                            close: None,
-                        });
-                        continue;
-                    }
-                    let target = if on_click.is_some() && !row.error {
-                        RowTarget::CommandRow {
-                            config_epoch: self.sidebar.config_epoch,
-                            tab_id: name.clone(),
-                            output_epoch: output.epoch,
-                            line: row.raw.clone(),
-                        }
-                    } else {
-                        RowTarget::Inert
-                    };
-                    items.push(SidebarItemProjection {
-                        target,
-                        close: None,
-                    });
-                }
-                items
-            }
-            SidebarTab::Tree { .. } => Vec::new(),
-        }
+    /// A row tab's rows, in display order: what the view draws and what an index resolves to.
+    pub(crate) fn sidebar_rows(&self, tab: &SidebarTab) -> Vec<crate::view::sidebar::SidebarRow> {
+        crate::view::sidebar::rows(self, tab)
     }
 
-    pub(crate) fn activity_item_projections(&self) -> Vec<SidebarItemProjection> {
-        struct ActivityItem {
-            target: RowTarget,
-            host: Option<String>,
-            path: Option<String>,
-            /// What the group is named after; see [`crate::state::AgentPlace::label_path`].
-            label_path: Option<String>,
-            rank: u8,
-            workspace: usize,
-            pane: usize,
-            slot: usize,
-        }
-
-        fn group_label(path: Option<&str>, host: Option<&str>) -> String {
-            let label = path
-                .and_then(|path| {
-                    crate::platform::paths::path_segments(path)
-                        .last()
-                        .map(|segment| (*segment).to_string())
-                })
-                .unwrap_or_else(|| "Unknown".to_string());
-            match host.filter(|host| !host.is_empty()) {
-                Some(host) => format!("{label}@{host}"),
-                None => label,
-            }
-        }
-
-        let mut rows = Vec::new();
-        for (workspace, workspace_state) in self.current().workspaces.iter().enumerate() {
-            for (pane_index, pane) in workspace_state.panes.iter().enumerate() {
-                let occupants = pane.occupants();
-                if pane.id == crate::state::POPUP_PANE_ID || pane.closing || occupants.is_empty() {
-                    continue;
-                }
-                for (slot, occupant) in occupants.into_iter().enumerate() {
-                    let place = pane.agent_place(occupant.slot.as_ref());
-                    let path = place.group_path().map(str::to_string);
-                    let label_path = place.label_path().map(str::to_string);
-                    let host = place.host;
-                    let finished = if occupant.program_status.is_some() {
-                        pane.terminal.program_status_attention
-                    } else {
-                        occupant
-                            .slot
-                            .as_ref()
-                            .map_or(pane.terminal.finished_unseen, |key| {
-                                pane.terminal
-                                    .published_row_ui
-                                    .get(key)
-                                    .is_some_and(|ui| ui.finished_unseen)
-                            })
-                    };
-                    let state = occupant.state;
-                    let target = match occupant.slot {
-                        Some(row) => RowTarget::PublishedRow {
-                            pane_id: pane.id,
-                            row,
-                        },
-                        None => RowTarget::Pane(pane.id),
-                    };
-                    rows.push(ActivityItem {
-                        target,
-                        host,
-                        path,
-                        label_path,
-                        rank: state.presentation_rank(finished),
-                        workspace,
-                        pane: pane_index,
-                        slot,
-                    });
-                }
-            }
-        }
-        rows.sort_by_key(|row| (row.rank, row.workspace, row.pane, row.slot));
-
-        let mut groups: Vec<(Option<String>, Option<String>, Vec<ActivityItem>)> = Vec::new();
-        for row in rows {
-            let existing = groups.iter_mut().find(|(host, path, _)| {
-                *host == row.host
-                    && match (path.as_deref(), row.path.as_deref()) {
-                        (Some(left), Some(right)) => {
-                            crate::platform::paths::paths_equal(left, right)
-                        }
-                        (None, None) => true,
-                        _ => false,
-                    }
-            });
-            if let Some((_, _, items)) = existing {
-                items.push(row);
-            } else {
-                groups.push((row.host.clone(), row.path.clone(), vec![row]));
-            }
-        }
-        // Every row of a group shares its root, and so the repository it is named after.
-        let label = |host: &Option<String>, items: &[ActivityItem]| {
-            let path = items.first().and_then(|item| item.label_path.as_deref());
-            group_label(path, host.as_deref()).to_lowercase()
-        };
-        groups.sort_by(|(host_a, path_a, items_a), (host_b, path_b, items_b)| {
-            path_a
-                .is_none()
-                .cmp(&path_b.is_none())
-                .then_with(|| label(host_a, items_a).cmp(&label(host_b, items_b)))
-                .then_with(|| path_a.cmp(path_b))
-        });
-
-        let show_headers =
-            groups.len() > 1 || groups.first().is_some_and(|(_, path, _)| path.is_some());
-        let mut items = Vec::new();
-        for (index, (_, _, group)) in groups.into_iter().enumerate() {
-            if index > 0 {
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-            }
-            if show_headers {
-                items.push(SidebarItemProjection {
-                    target: RowTarget::Inert,
-                    close: None,
-                });
-            }
-            items.extend(group.into_iter().map(|row| SidebarItemProjection {
-                target: row.target,
-                close: None,
-            }));
-        }
-        items
+    /// What activating each of a row tab's rows does, in display order.
+    pub fn sidebar_targets(&self, tab: &SidebarTab) -> Vec<RowTarget> {
+        self.sidebar_rows(tab)
+            .into_iter()
+            .map(|row| row.target)
+            .collect()
     }
 }
 
@@ -654,8 +205,6 @@ pub struct SidebarPanelState {
     pub tabs: Vec<SidebarTabId>,
     pub active_tab: Option<SidebarTabId>,
     pub cursor: usize,
-    /// Number of selectable rows visible in the active row list, used by PageUp/PageDown.
-    pub page_rows: usize,
     pub suppress_row_hover: bool,
     pub hovered_row: Option<usize>,
 }
@@ -668,7 +217,6 @@ impl Default for SidebarPanelState {
             tabs: Vec::new(),
             active_tab: None,
             cursor: 0,
-            page_rows: 5,
             suppress_row_hover: false,
             hovered_row: None,
         }
@@ -687,8 +235,7 @@ impl SidebarPanelState {
     }
 }
 
-/// One line of the Worktrees tab. The view draws these and the semantic projection maps them, so
-/// the two cannot disagree about which row an index names.
+/// One line of the Worktrees tab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorktreeTabItem {
     /// The repository's name and the host it is on.
@@ -1085,7 +632,6 @@ impl SidebarState {
                         && old.active_tab == panel.active_tab
                 }) {
                     panel.cursor = old.cursor;
-                    panel.page_rows = old.page_rows;
                     panel.suppress_row_hover = old.suppress_row_hover;
                 }
                 panel.reconcile_active();

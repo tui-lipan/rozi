@@ -1068,12 +1068,14 @@ After `{"ok":true}`, the producer writes complete snapshots of its rows, one JSO
 | `label` | string | required | The row's text. |
 | `parent` | string or null | null | The `id` of the row this one sits under. A parent missing from the snapshot makes it a top-level row; rows in a parent cycle are not shown. |
 | `description` | string or null | null | Right-aligned on the label's line. |
+| `meta` | string or null | null | A short value beside the label, such as how long something has run, in the colour of the row's `tone`. |
 | `detail` | string or null | null | A second line under the label. |
 | `tone` | string | `"normal"` | `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. rozi picks the marker and colour. |
 | `active` | bool | `false` | The current one of its kind. |
 | `disabled` | string or null | null | Shows the row dimmed with this reason as its second line; it cannot be activated and takes no actions. |
 | `expandable` | bool | `false` | The row has children, even before any are listed. Expanding it writes an `expand` event. |
 | `expanded` | bool or null | null | Initial expansion. A row with listed children starts expanded, one with none starts collapsed. The user's own choice wins once made. |
+| `heading` | bool | `false` | Shows a top-level row as a section heading. Its children are always shown, it never writes `activate`, and its `description` sits at the right edge. Ignored on a row with a parent. |
 | `actions` | string array or null | null | IDs of this producer's actions that apply to the row. Absent means all of them. |
 
 | Action field | Type | Default | Meaning |
@@ -1088,7 +1090,7 @@ After `{"ok":true}`, the producer writes complete snapshots of its rows, one JSO
   actions when present and keeps them when absent, so a producer can declare them once.
 - rozi keeps the first 500 rows and 16 actions, drops rows with an empty or repeated `id` or an
   empty `label`, strips control sequences, and shortens labels to 160 characters, descriptions to
-  80, and details to 160. A line that is not a snapshot is ignored and the last good one stays.
+  80, `meta` to 24, and details to 160. A line that is not a snapshot is ignored and the last good one stays.
 - End of input or any stream failure withdraws the producer's rows. So does removing the tab from
   the configuration, and, for an extension's process, the extension's generation retiring.
 

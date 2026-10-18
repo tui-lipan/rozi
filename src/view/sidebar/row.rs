@@ -1,5 +1,6 @@
 use tui_lipan::prelude::*;
 
+use crate::state::State;
 use crate::{AppRoot, Msg};
 
 pub(crate) use crate::state::RowTarget;
@@ -7,12 +8,25 @@ pub(crate) use crate::state::RowTarget;
 /// What a row renders as. Items are kept unbuilt so the list can hand each one its selection state
 /// at build time; headers carry their own glyphs and are finished elements already.
 pub(crate) enum RowKind {
-    /// Blank separator between groups.
-    Spacer,
     /// Boxed alongside `Item` because `Element` is large; an unboxed variant would make every row
     /// in the vector pay for the biggest one.
     Header(Box<Element>),
     Item(Box<Row>),
+}
+
+/// How a row takes part in its tab's tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// A row with nothing beneath it. It keeps the arrow column only at or just below a depth
+    /// where some row folds, so it lines up with that row or reads as nested in it.
+    #[default]
+    Leaf,
+    /// A top-level row outside any group, such as an action: no arrow column.
+    Flush,
+    /// A section title: no arrow column, and the rows beneath it always show.
+    Heading,
+    /// A parent the user expands and collapses. Its open state lives in the row's `expansion`.
+    Collapsible { expanded: bool },
 }
 
 /// One row: how it renders, what activating it does, and what its ✕ destroys if it has one.
@@ -20,30 +34,96 @@ pub(crate) struct SidebarRow {
     pub kind: RowKind,
     pub target: RowTarget,
     pub close: Option<crate::state::SidebarClose>,
+    /// Levels beneath the tab's top-level rows.
+    pub depth: usize,
+    pub shape: Shape,
+    /// Identity that follows the row across updates, for its rendered content and expansion.
+    pub key: Option<String>,
+    /// Style for the row's arrow, such as a folded row tinted with what it hides.
+    pub arrow_style: Option<Style>,
+    /// Blank lines setting the row's group apart from the rows above it.
+    pub gap_before: u16,
+    /// Where a collapsible row's open state is kept.
+    pub expansion: Option<crate::state::TreeExpansionKey>,
 }
 
 impl SidebarRow {
-    pub(super) fn header(element: impl Into<Element>) -> Self {
+    fn new(kind: RowKind, target: RowTarget) -> Self {
         Self {
-            kind: RowKind::Header(Box::new(element.into())),
-            target: RowTarget::Inert,
+            kind,
+            target,
             close: None,
+            depth: 0,
+            shape: Shape::Leaf,
+            key: None,
+            arrow_style: None,
+            gap_before: 0,
+            expansion: None,
         }
     }
 
-    pub(super) fn spacer() -> Self {
-        Self {
-            kind: RowKind::Spacer,
-            target: RowTarget::Inert,
-            close: None,
-        }
+    /// A way to add something: a pane, a session, a host. It closes its group in the heading's
+    /// column and accent, a footer for the group rather than one of its rows; unlike the heading
+    /// it is not bold.
+    pub(super) fn action(state: &State, label: &str, target: RowTarget) -> Self {
+        let row =
+            Row::new(format!("+ {label}")).title_style(super::super::fg_only(&state.theme.accent));
+        Self::item(row, target).shape(Shape::Flush)
+    }
+
+    /// A top-level row outside any group, with no arrow column.
+    pub(super) fn header(element: impl Into<Element>) -> Self {
+        Self::new(RowKind::Header(Box::new(element.into())), RowTarget::Inert).shape(Shape::Flush)
+    }
+
+    /// Set the row's group apart from the rows above it with a blank line that is not a row: it
+    /// takes no hover or index. The tree ignores it on its first row and below the top level.
+    pub(super) fn apart(mut self) -> Self {
+        self.gap_before = 1;
+        self
     }
 
     pub(super) fn item(row: Row, target: RowTarget) -> Self {
-        Self {
-            kind: RowKind::Item(Box::new(row)),
-            target,
-            close: None,
+        Self::new(RowKind::Item(Box::new(row)), target)
+    }
+
+    /// Place the row `depth` levels beneath the tab's top-level rows.
+    pub(super) fn at(mut self, depth: usize) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    pub(super) fn shape(mut self, shape: Shape) -> Self {
+        self.shape = shape;
+        self
+    }
+
+    /// Make the row a parent the user folds, its open state kept under `key`.
+    pub(super) fn collapsible(
+        mut self,
+        key: crate::state::TreeExpansionKey,
+        expanded: bool,
+    ) -> Self {
+        self.shape = Shape::Collapsible { expanded };
+        self.expansion = Some(key);
+        self
+    }
+
+    pub(super) fn keyed(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    pub(super) fn arrow_style(mut self, style: Style) -> Self {
+        self.arrow_style = Some(style);
+        self
+    }
+
+    /// The row's text, for the tree's accessible label.
+    pub(super) fn label(&self) -> &str {
+        match &self.kind {
+            RowKind::Item(row) => &row.title,
+            RowKind::Header(_) => "",
         }
     }
 
@@ -52,6 +132,14 @@ impl SidebarRow {
     pub(super) fn closable(mut self, close: crate::state::SidebarClose) -> Self {
         self.close = Some(close);
         self
+    }
+
+    /// Whether a collapsible row is open. `None` for rows that do not fold.
+    pub(crate) fn expanded(&self) -> Option<bool> {
+        match self.shape {
+            Shape::Collapsible { expanded } => Some(expanded),
+            _ => None,
+        }
     }
 
     /// Rows the keyboard cursor is allowed to land on.
@@ -108,7 +196,6 @@ const DESCRIPTION_GAP: u16 = 3;
 /// independent: the marker bar and the cursor highlight can both be on the same row.
 pub(crate) struct Row {
     active: bool,
-    group_level: bool,
     glyph: Option<Element>,
     title: String,
     title_style: Style,
@@ -127,7 +214,6 @@ impl Row {
     pub(super) fn new(title: impl Into<String>) -> Self {
         Self {
             active: false,
-            group_level: false,
             glyph: None,
             title: title.into(),
             title_style: Style::default(),
@@ -160,12 +246,6 @@ impl Row {
     /// Fills the gutter marker: the row is the focused pane, the current session, and so on.
     pub(super) fn active(mut self, active: bool) -> Self {
         self.active = active;
-        self
-    }
-
-    /// Align this row with a section heading rather than its children.
-    pub(super) fn group_level(mut self) -> Self {
-        self.group_level = true;
         self
     }
 
@@ -227,28 +307,6 @@ impl Row {
     pub(super) fn detail(mut self, text: impl Into<String>, style: Style) -> Self {
         self.detail.push((text.into(), style));
         self
-    }
-
-    pub(super) fn build(
-        self,
-        ctx: &Context<AppRoot>,
-        selected: bool,
-        hovered: bool,
-        close: Option<CloseAffordance>,
-    ) -> Element {
-        let gap = if self.group_level {
-            0
-        } else {
-            u16::from(self.glyph.is_none())
-        };
-        let parts = self.parts(ctx, selected, hovered, close);
-        HStack::new()
-            .gap(gap)
-            .height(Length::Px(parts.height))
-            .style(parts.style)
-            .child(parts.leading)
-            .child(parts.content)
-            .into()
     }
 
     pub(super) fn parts(
@@ -476,11 +534,11 @@ pub(super) fn close_hover_key(panel: usize, index: usize) -> String {
 }
 
 /// One-line section header, aligned with the glyph column so headed rows read as a tree.
-pub(super) fn header(ctx: &Context<AppRoot>, label: impl Into<String>, muted: bool) -> Element {
+pub(super) fn header(state: &State, label: impl Into<String>, muted: bool) -> Element {
     let style = if muted {
-        super::super::fg_only(&ctx.state.theme.muted).bold()
+        super::super::fg_only(&state.theme.muted).bold()
     } else {
-        super::super::rozi_fg(&ctx.state.theme).bold()
+        super::super::rozi_fg(&state.theme).bold()
     };
     Text::new(format!(" {}", label.into()))
         .style(style)
@@ -495,14 +553,13 @@ pub(super) fn header(ctx: &Context<AppRoot>, label: impl Into<String>, muted: bo
 /// A note that has to shorten keeps its tail: `feat/pricing-v2` and `feat/pricing-v3` differ only
 /// there.
 pub(super) fn header_with_note(
-    ctx: &Context<AppRoot>,
+    state: &State,
     label: impl Into<String>,
     note: impl Into<String>,
     priority: Priority,
 ) -> Element {
-    let label = vec![Span::new(label.into()).style(super::super::rozi_fg(&ctx.state.theme).bold())];
-    let note =
-        vec![Span::new(note.into()).style(super::super::fg_only(&ctx.state.theme.muted).dim())];
+    let label = vec![Span::new(label.into()).style(super::super::rozi_fg(&state.theme).bold())];
+    let note = vec![Span::new(note.into()).style(super::super::fg_only(&state.theme.muted).dim())];
     // The leading cell aligns the label with the plain header's leading space.
     HStack::new()
         .height(Length::Px(1))

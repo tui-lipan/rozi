@@ -469,20 +469,6 @@ fn execute_action_inner(
         }
         Action::CycleSidebarTabStyle => crate::ops::preferences::cycle_sidebar_tab_style(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
-        Action::SidebarNextTab => {
-            if ctx.state.sidebar_shown() {
-                crate::update::sidebar::cycle_tab(ctx, true)
-            } else {
-                Update::none()
-            }
-        }
-        Action::SidebarPrevTab => {
-            if ctx.state.sidebar_shown() {
-                crate::update::sidebar::cycle_tab(ctx, false)
-            } else {
-                Update::none()
-            }
-        }
         Action::ToggleAnimations => crate::ops::preferences::toggle_animations(ctx),
         Action::ToggleNerdIcons => crate::ops::preferences::toggle_nerd_icons(ctx),
         Action::ToggleFocusOnHover => crate::ops::preferences::toggle_focus_on_hover(ctx),
@@ -850,7 +836,7 @@ mod tests {
                     68.0
                 );
                 backend
-                    .dispatch(Msg::RunAction(Action::SidebarNextTab))
+                    .dispatch(Msg::SidebarCycleTab(true))
                     .expect("cycle sidebar tab");
                 assert_eq!(
                     backend.state().sidebar.active_tab(),

@@ -102,8 +102,6 @@ pub enum Action {
     /// Move keyboard focus into the sidebar's row list. The sidebar is outside the Tab ring and
     /// click-to-focus, so this is the only way in.
     FocusSidebar,
-    SidebarNextTab,
-    SidebarPrevTab,
     ToggleAnimations,
     ToggleNerdIcons,
     ToggleFocusOnHover,
@@ -244,8 +242,6 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ToggleSidebarBackgroundFollowsCanvas,
     Action::CycleSidebarTabStyle,
     Action::FocusSidebar,
-    Action::SidebarNextTab,
-    Action::SidebarPrevTab,
     Action::ToggleAnimations,
     Action::ToggleNerdIcons,
     Action::ToggleFocusOnHover,
@@ -381,8 +377,6 @@ impl Action {
             }
             Action::CycleSidebarTabStyle => "cycle-sidebar-tab-style",
             Action::FocusSidebar => "focus-sidebar",
-            Action::SidebarNextTab => "sidebar-next-tab",
-            Action::SidebarPrevTab => "sidebar-prev-tab",
             Action::ToggleAnimations => "toggle-animations",
             Action::ToggleNerdIcons => "toggle-nerd-icons",
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",

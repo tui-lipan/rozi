@@ -983,32 +983,6 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_defaults_use_spatial_navigation_keys() {
-        let config = Config::default();
-        let has = |id: &str, event: KeyEvent| {
-            default_shortcuts_for_action(&config.input, id)
-                .expect("builtin sidebar action")
-                .iter()
-                .any(|binding| binding.matches_sequence(std::slice::from_ref(&event)))
-        };
-
-        assert!(has(
-            "sidebar-next-tab",
-            KeyEvent {
-                code: KeyCode::PageDown,
-                mods: KeyMods::ALT,
-            }
-        ));
-        assert!(has(
-            "sidebar-prev-tab",
-            KeyEvent {
-                code: KeyCode::PageUp,
-                mods: KeyMods::ALT,
-            }
-        ));
-    }
-
-    #[test]
     fn modifier_shortcuts_toggle_controls_the_alt_mirror() {
         let has_alt = |shortcuts: &[KeyBinding], code: KeyCode| {
             shortcuts.iter().any(|binding| {

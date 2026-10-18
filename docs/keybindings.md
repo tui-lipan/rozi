@@ -115,8 +115,6 @@ in [Sessions](sessions.md#leave-rozi).
 | Toggle sidebar | `b` |
 | Collapse or restore dock panels | `\` |
 | Focus sidebar | `B` |
-| Next sidebar tab | `PageDown` |
-| Previous sidebar tab | `PageUp` |
 
 Left and right sidebar toggles are available in the command palette and can be bound through
 `toggle-left-sidebar` and `toggle-right-sidebar`; neither has a default key. The global `b` command

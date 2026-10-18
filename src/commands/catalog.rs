@@ -731,20 +731,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
-        action: Action::SidebarNextTab,
-        label: "Next sidebar tab",
-        category: "Sidebar",
-        default_keys: &["page-down"],
-        palette: false,
-    },
-    BuiltinCommand {
-        action: Action::SidebarPrevTab,
-        label: "Previous sidebar tab",
-        category: "Sidebar",
-        default_keys: &["page-up"],
-        palette: false,
-    },
-    BuiltinCommand {
         action: Action::ToggleAnimations,
         label: "Animations",
         category: "Settings",

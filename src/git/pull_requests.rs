@@ -70,7 +70,7 @@ impl StatusCache {
         fetch: impl FnOnce(
             &Path,
             &[worktrees::WorktreeInfo],
-            &BTreeMap<&str, &str>,
+            &BTreeMap<&str, Head<'_>>,
         ) -> Result<WorktreeStatuses, String>,
     ) -> Result<WorktreeStatuses, String> {
         let trees = worktrees::list(cwd)?;
@@ -82,7 +82,7 @@ impl StatusCache {
             cwd,
             &[
                 "for-each-ref".into(),
-                "--format=%(refname:strip=2)%00%(objectname)".into(),
+                "--format=%(refname:strip=2)%00%(objectname)%00%(upstream:remoteref)".into(),
                 "refs/heads/".into(),
             ],
             command::WORKTREE_LIST_TIMEOUT,
@@ -105,10 +105,7 @@ impl StatusCache {
             }
         }
         let refs = String::from_utf8_lossy(&refs);
-        let heads = refs
-            .lines()
-            .filter_map(|line| line.split_once('\0'))
-            .collect();
+        let heads = parse_heads(&refs);
         let value = fetch(cwd, &trees, &heads).unwrap_or_else(|error| {
             let mut value = previous
                 .map(|entry| entry.value.clone())
@@ -159,12 +156,38 @@ pub(crate) fn transient_error(error: &str) -> bool {
     .any(|word| error.contains(word))
 }
 
-fn query(branches: &[&str], heads: &BTreeMap<&str, &str>) -> String {
+/// A local branch's commit and the branch name its PR uses on the remote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Head<'a> {
+    oid: &'a str,
+    pr_branch: &'a str,
+}
+
+/// Parses `for-each-ref` lines of local branch, commit, and upstream ref. A branch pushed under
+/// another name is matched to PRs by its upstream branch, the way `git push` and `gh` resolve it.
+fn parse_heads(refs: &str) -> BTreeMap<&str, Head<'_>> {
+    refs.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\0');
+            let branch = fields.next()?;
+            let oid = fields.next()?;
+            let pr_branch = fields
+                .next()
+                .and_then(|upstream| upstream.strip_prefix("refs/heads/"))
+                .filter(|upstream| !upstream.is_empty())
+                .unwrap_or(branch);
+            Some((branch, Head { oid, pr_branch }))
+        })
+        .collect()
+}
+
+fn query(branches: &[&str], heads: &BTreeMap<&str, Head<'_>>) -> String {
     let mut query =
         String::from("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){");
     for (index, branch) in branches.iter().enumerate() {
+        let head = heads.get(branch).map(|head| head.oid);
+        let branch = heads.get(branch).map_or(*branch, |head| head.pr_branch);
         // JSON string escaping is also GraphQL string escaping; branch names are never query code.
-        let head = heads.get(branch).copied();
         let branch = serde_json::to_string(branch).expect("serialize branch");
         query.push_str(&format!(
             "b{index}:pullRequests(headRefName:{branch},first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number state isDraft isCrossRepository headRefOid}}}}"
@@ -183,7 +206,7 @@ fn query(branches: &[&str], heads: &BTreeMap<&str, &str>) -> String {
 fn fetch(
     cwd: &Path,
     trees: &[worktrees::WorktreeInfo],
-    heads: &BTreeMap<&str, &str>,
+    heads: &BTreeMap<&str, Head<'_>>,
 ) -> Result<WorktreeStatuses, String> {
     if !crate::platform::command::program_exists("gh") {
         return Err("Install gh on the session host to read PR status".into());
@@ -245,7 +268,7 @@ fn fetch(
                 .ok_or("invalid GitHub status")?;
             let Some(status) = find_status(
                 nodes,
-                heads.get(branch).copied(),
+                heads.get(branch).map(|head| head.oid),
                 repository[format!("c{index}")]["statusCheckRollup"]["state"].as_str(),
             ) else {
                 continue;
@@ -371,6 +394,21 @@ mod tests {
     #[test]
     fn branch_names_are_graphql_strings() {
         assert!(query(&["fix/a\"b"], &BTreeMap::new()).contains("headRefName:\"fix/a\\\"b\""));
+    }
+
+    #[test]
+    fn branches_pushed_under_another_name_query_their_upstream_branch() {
+        let heads = parse_heads(
+            "file-tree-polish\0abc\0refs/heads/feat/file-tree-dim-and-fold\n\
+             feat/watch\0def\0refs/heads/feat/watch\n\
+             local-only\0fed\0\n",
+        );
+        let query = query(&["file-tree-polish", "feat/watch", "local-only"], &heads);
+        assert!(query.contains("b0:pullRequests(headRefName:\"feat/file-tree-dim-and-fold\""));
+        assert!(query.contains("c0:object(oid:\"abc\")"));
+        assert!(query.contains("b1:pullRequests(headRefName:\"feat/watch\""));
+        assert!(query.contains("b2:pullRequests(headRefName:\"local-only\""));
+        assert!(!query.contains("headRefName:\"file-tree-polish\""));
     }
 
     #[test]
@@ -526,7 +564,7 @@ mod tests {
     fn query_fetches_checks_once_per_local_head_outside_pr_candidates() {
         let query = query(
             &["feat/a", "feat/b"],
-            &[("feat/a", "abc"), ("feat/b", "def")].into(),
+            &parse_heads("feat/a\0abc\0\nfeat/b\0def\0\n"),
         );
         assert_eq!(query.matches("statusCheckRollup").count(), 2);
         assert!(!query.contains("commits(last:"));

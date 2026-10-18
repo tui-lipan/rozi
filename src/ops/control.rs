@@ -1530,7 +1530,7 @@ fn run_action(
     // Leaving is interactive: it can raise the prompt that asks whether to keep a temporary
     // session, and there is nobody on this socket to answer it. A scripted exit takes the
     // preserving path instead, so automation can never be what closes a session.
-    if matches!(action, Action::Quit | Action::Detach) {
+    if action == Action::Quit {
         let update = crate::ops::exit::leave_client_unattended(ctx);
         let _ = reply.send(ControlResponse::empty());
         return update;

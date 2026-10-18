@@ -531,24 +531,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         default_keys: &[],
         palette: true,
     },
-    // `detach` runs the same thing `quit` does — one way out of the client. It keeps its own entry
-    // so `prefix d` (the key every tmux user reaches for), `[keys] detach`, and `run-action detach`
-    // all keep working, but stays out of the palette: two rows that do the same thing only invite
-    // the question of how they differ. The help overlay folds its live binding into the canonical
-    // Quit client row.
-    BuiltinCommand {
-        action: Action::Detach,
-        label: "Detach",
-        category: "Session",
-        default_keys: &["d"],
-        palette: false,
-    },
     BuiltinCommand {
         action: Action::Quit,
         label: "Quit client",
         category: "Session",
-        // `q` yields the leader chord `<prefix> q` and the WM-modifier chord `<mod>-q` (Alt+q).
-        default_keys: &["q"],
+        // `q` yields the leader chord `<prefix> q` and the WM-modifier chord `<mod>-q` (Alt+q). `d`
+        // is the key every tmux user reaches for to leave.
+        default_keys: &["q", "d"],
         palette: true,
     },
     BuiltinCommand {
@@ -681,20 +670,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::SidebarOtherDock,
-        label: "Focus other sidebar dock",
-        category: "Sidebar",
-        default_keys: &[],
-        palette: false,
-    },
-    BuiltinCommand {
-        action: Action::SidebarMoveToOtherDock,
-        label: "Move sidebar tab to other dock",
-        category: "Sidebar",
-        default_keys: &[],
-        palette: false,
-    },
-    BuiltinCommand {
         action: Action::ToggleSidebarGap,
         label: "Sidebar gap",
         category: "Settings",
@@ -729,20 +704,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         // Shifted sibling of the toggle: same key, "and put me in it".
         default_keys: &["shift-b"],
         palette: true,
-    },
-    BuiltinCommand {
-        action: Action::SidebarNextTab,
-        label: "Next sidebar tab",
-        category: "Sidebar",
-        default_keys: &["page-down"],
-        palette: false,
-    },
-    BuiltinCommand {
-        action: Action::SidebarPrevTab,
-        label: "Previous sidebar tab",
-        category: "Sidebar",
-        default_keys: &["page-up"],
-        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleAnimations,

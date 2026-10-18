@@ -343,6 +343,7 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) show_hidden: Option<bool>,
     pub(super) explorer: Option<bool>,
     pub(super) diff_stats: Option<bool>,
+    pub(super) compact_dirs: Option<bool>,
     pub(super) max_entries: Option<usize>,
 }
 

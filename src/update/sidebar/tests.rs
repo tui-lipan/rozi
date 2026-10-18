@@ -214,7 +214,7 @@ fn show_files_tab(backend: &mut TestBackend<AppRoot>) {
 }
 
 #[test]
-fn visible_tree_refresh_ticks_both_sources_and_reject_stale_chains() {
+fn visible_tree_refresh_ticks_git_and_rejects_stale_chains() {
     on_test_thread(|| {
         let mut backend = settled_backend();
         show_files_tab(&mut backend);
@@ -231,7 +231,11 @@ fn visible_tree_refresh_ticks_both_sources_and_reject_stale_chains() {
         backend
             .dispatch(crate::Msg::SidebarTreeRefresh { epoch: 7 })
             .expect("current tick dispatches");
-        assert_eq!(backend.state().sidebar.tree_entry_refresh_token, 4);
+        assert_eq!(
+            backend.state().sidebar.tree_entry_refresh_token,
+            3,
+            "entries follow the tree's watcher, not the tick"
+        );
         assert_eq!(backend.state().sidebar.git_refresh_token, 6);
         assert_eq!(backend.state().sidebar.tree_refresh_armed_epoch, Some(7));
     });

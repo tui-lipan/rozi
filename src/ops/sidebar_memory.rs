@@ -115,17 +115,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn quit_detach_and_hangup_save_visible_or_restored_docks_without_toggle_writes() {
+    fn quit_and_hangup_save_visible_or_restored_docks_without_toggle_writes() {
         std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let _persist = crate::test_support::lock_persisted_state();
                 let file = MemoryFile::new();
-                for exit in [
-                    Msg::RunAction(Action::Quit),
-                    Msg::RunAction(Action::Detach),
-                    Msg::Hangup,
-                ] {
+                for exit in [Msg::RunAction(Action::Quit), Msg::Hangup] {
                     for hidden in [false, true] {
                         for remembered in [[true, false], [false, true], [true, true]] {
                             let mut backend = TestBackend::new(AppRoot::default());

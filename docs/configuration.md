@@ -634,6 +634,7 @@ command's output, or a stream tab that programs publish rows to.
 | `show_hidden` | bool | `true` | Tree tabs only. |
 | `explorer` | bool | `false` | Tree tabs only. |
 | `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
+| `compact_dirs` | bool | `true` | Git only. Shows a directory whose changes are all in one subdirectory on that subdirectory's row, as in `src/view/sidebar`. |
 | `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |
 
 A launcher entry takes a `label`, exactly one of `run`, `send`, or `popup`, an optional `keep_open`

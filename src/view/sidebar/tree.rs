@@ -69,6 +69,9 @@ pub(super) fn tree_tab(
         })
         .git_status_padding_right(if nerd_icons { 1 } else { 0 })
         .git_status_cache(ctx.state.sidebar.tree_git_status_cache.clone())
+        // Local entries follow the filesystem as it changes; a remote tree's provided entries
+        // ignore the policy and refresh with the session server instead.
+        .refresh_policy(FileTreeRefreshPolicy::Watch)
         .entry_refresh_token(ctx.state.sidebar.tree_entry_refresh_token)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
         // Focusable so the selected row can be a real keyboard cursor, but never a tab stop: the

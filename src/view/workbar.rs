@@ -1045,8 +1045,8 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// competing for it; the ordinary `spawn` binding is listed beside it, since that is what works
 /// everywhere else. Spawn and session-picker rows spell their default binding the prefix way:
 /// `scheme_shortcuts` generates one table entry per key as both `<prefix> <key>` and
-/// `<modifier>-<key>`. The leave row reads the first live shortcut for both stable action ids, so
-/// overrides and unbinding remain truthful without repeating every modifier mirror.
+/// `<modifier>-<key>`. The leave row reads the live `quit` shortcuts, keeping only the prefix
+/// chords, so overrides and unbinding remain truthful without repeating every modifier mirror.
 ///
 /// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x9, and a
 /// prose spelling of the shortcuts does not survive the wrap. The key column is measured rather than

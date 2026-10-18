@@ -75,9 +75,10 @@ The picker and the sidebar show the same status:
 Merged, closed, and draft states take precedence over CI. Passing or failing checks on an older
 pushed commit are not shown for a newer local branch commit. PR status does not describe uncommitted
 changes or imply a checkout is safe to remove. A branch without an associated PR has no work status.
-A branch that tracks a differently named remote branch is matched by that remote branch name.
-For same-named branches, rozi uses the newest matching PR; a PR from a fork is matched only when
-its head commit matches the local branch. Merged and closed PRs also require a matching head commit,
+A branch is matched to PRs by where `git push` publishes it: its upstream branch when it pushes to
+the remote it tracks, even under a different name, and otherwise its own name on its push remote.
+For same-named branches, rozi uses the newest matching PR; a PR from a repository other than the
+push remote is matched only when its head commit matches the local branch. Merged and closed PRs also require a matching head commit,
 so reusing a branch for new commits clears its old terminal status. Open and draft PRs stay
 associated when the local branch is ahead, but CI waits for a matching commit.
 Other hosting providers currently have no PR integration.

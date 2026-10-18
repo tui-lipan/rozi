@@ -82,13 +82,26 @@ impl StatusCache {
             cwd,
             &[
                 "for-each-ref".into(),
-                "--format=%(refname:strip=2)%00%(objectname)%00%(upstream:remoteref)".into(),
+                "--format=%(refname:strip=2)%00%(objectname)%00%(push:remotename)%00%(upstream:remotename)%00%(upstream:remoteref)".into(),
                 "refs/heads/".into(),
             ],
             command::WORKTREE_LIST_TIMEOUT,
         )?;
+        // Exits 1 when nothing matches, which leaves no remote URLs and the default push mode.
+        let config = command::run(
+            cwd,
+            &[
+                "config".into(),
+                "-z".into(),
+                "--get-regexp".into(),
+                r"^(remote\..*\.url|push\.default)$".into(),
+            ],
+            command::WORKTREE_LIST_TIMEOUT,
+        )?
+        .stdout;
         let mut local = serde_json::to_vec(&trees).map_err(|e| e.to_string())?;
         local.extend_from_slice(&refs);
+        local.extend_from_slice(&config);
         let previous = self
             .entries
             .iter()
@@ -105,7 +118,8 @@ impl StatusCache {
             }
         }
         let refs = String::from_utf8_lossy(&refs);
-        let heads = parse_heads(&refs);
+        let config = String::from_utf8_lossy(&config);
+        let heads = parse_heads(&refs, &config);
         let value = fetch(cwd, &trees, &heads).unwrap_or_else(|error| {
             let mut value = previous
                 .map(|entry| entry.value.clone())
@@ -156,29 +170,80 @@ pub(crate) fn transient_error(error: &str) -> bool {
     .any(|word| error.contains(word))
 }
 
-/// A local branch's commit and the branch name its PR uses on the remote.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A local branch's commit and where `git push` publishes it: the PR head branch and, when the
+/// push remote's URL names one, the owner of the PR head repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Head<'a> {
     oid: &'a str,
     pr_branch: &'a str,
+    owner: Option<&'a str>,
 }
 
-/// Parses `for-each-ref` lines of local branch, commit, and upstream ref. A branch pushed under
-/// another name is matched to PRs by its upstream branch, the way `git push` and `gh` resolve it.
-fn parse_heads(refs: &str) -> BTreeMap<&str, Head<'_>> {
+/// Parses `for-each-ref` lines of branch, commit, push remote, upstream remote, and upstream ref,
+/// with `git config -z` output for remote URLs and `push.default`.
+///
+/// A branch that pushes to the remote it tracks publishes to its upstream branch, which may be
+/// named differently after `git push -u origin local:remote`. A triangular branch that pulls from
+/// one remote and pushes to another publishes under its own name, as `push.default=current` and
+/// `matching` always do.
+fn parse_heads<'a>(refs: &'a str, config: &'a str) -> BTreeMap<&'a str, Head<'a>> {
+    let mut push_default = None;
+    let mut urls = BTreeMap::new();
+    for entry in config.split_terminator('\0') {
+        let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
+        if key == "push.default" {
+            push_default = Some(value);
+        } else if let Some(remote) = key
+            .strip_prefix("remote.")
+            .and_then(|key| key.strip_suffix(".url"))
+        {
+            urls.insert(remote, value);
+        }
+    }
+    let renames = !matches!(push_default, Some("current" | "matching"));
     refs.lines()
         .filter_map(|line| {
             let mut fields = line.split('\0');
             let branch = fields.next()?;
             let oid = fields.next()?;
-            let pr_branch = fields
+            let push_remote = fields.next().unwrap_or("");
+            let upstream_remote = fields.next().unwrap_or("");
+            let upstream = fields
                 .next()
                 .and_then(|upstream| upstream.strip_prefix("refs/heads/"))
-                .filter(|upstream| !upstream.is_empty())
+                .filter(|upstream| !upstream.is_empty());
+            let pr_branch = upstream
+                .filter(|_| renames && push_remote == upstream_remote)
                 .unwrap_or(branch);
-            Some((branch, Head { oid, pr_branch }))
+            let owner = urls.get(push_remote).and_then(|url| url_owner(url));
+            Some((
+                branch,
+                Head {
+                    oid,
+                    pr_branch,
+                    owner,
+                },
+            ))
         })
         .collect()
+}
+
+/// The owner segment of a hosted remote URL, `owner` in `https://host/owner/repo.git` or
+/// `git@host:owner/repo.git`. Local paths name no host and so no owner.
+fn url_owner(url: &str) -> Option<&str> {
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/')?.1,
+        None => {
+            let (host, path) = url.split_once(':')?;
+            if host.contains('/') {
+                return None;
+            }
+            path
+        }
+    };
+    let mut segments = path.trim_end_matches('/').rsplit('/');
+    segments.next().filter(|repo| !repo.is_empty())?;
+    segments.next().filter(|owner| !owner.is_empty())
 }
 
 fn query(branches: &[&str], heads: &BTreeMap<&str, Head<'_>>) -> String {
@@ -190,7 +255,7 @@ fn query(branches: &[&str], heads: &BTreeMap<&str, Head<'_>>) -> String {
         // JSON string escaping is also GraphQL string escaping; branch names are never query code.
         let branch = serde_json::to_string(branch).expect("serialize branch");
         query.push_str(&format!(
-            "b{index}:pullRequests(headRefName:{branch},first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number state isDraft isCrossRepository headRefOid}}}}"
+            "b{index}:pullRequests(headRefName:{branch},first:10,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number state isDraft isCrossRepository headRefOid headRepositoryOwner{{login}}}}}}"
         ));
         if let Some(head) = head {
             let head = serde_json::to_string(head).expect("serialize commit");
@@ -266,9 +331,11 @@ fn fetch(
             let nodes = repository[format!("b{index}")]["nodes"]
                 .as_array()
                 .ok_or("invalid GitHub status")?;
+            let head = heads.get(branch);
             let Some(status) = find_status(
                 nodes,
-                heads.get(branch).map(|head| head.oid),
+                head.map(|head| head.oid),
+                head.and_then(|head| head.owner),
                 repository[format!("c{index}")]["statusCheckRollup"]["state"].as_str(),
             ) else {
                 continue;
@@ -284,16 +351,24 @@ fn fetch(
     Ok(result)
 }
 
+/// `owner` is the push remote's owner. Without one, only same-repository PRs count as pushed from
+/// this checkout.
 fn find_status(
     nodes: &[serde_json::Value],
     local_head: Option<&str>,
+    owner: Option<&str>,
     checks: Option<&str>,
 ) -> Option<PullRequestStatus> {
     nodes.iter().find_map(|pr| {
-        // Fork branches and terminal PRs must identify the current work by commit.
-        if pr["isCrossRepository"] != false
-            && (local_head.is_none() || local_head != pr["headRefOid"].as_str())
-        {
+        let pushed_here = match owner {
+            Some(owner) => pr["headRepositoryOwner"]["login"]
+                .as_str()
+                .is_some_and(|login| login.eq_ignore_ascii_case(owner)),
+            None => pr["isCrossRepository"] == false,
+        };
+        // PRs from another head repository and terminal PRs must identify the current work by
+        // commit.
+        if !pushed_here && (local_head.is_none() || local_head != pr["headRefOid"].as_str()) {
             return None;
         }
         parse_status(pr, local_head, checks)
@@ -353,7 +428,7 @@ mod tests {
             .and_then(|pr| {
                 pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"].as_str()
             });
-        super::find_status(nodes, head, checks)
+        super::find_status(nodes, head, None, checks)
     }
 
     fn pr(state: &str, draft: bool, ci: Option<&str>) -> serde_json::Value {
@@ -396,19 +471,86 @@ mod tests {
         assert!(query(&["fix/a\"b"], &BTreeMap::new()).contains("headRefName:\"fix/a\\\"b\""));
     }
 
+    const REFS: &str = "renamed\0abc\0origin\0origin\0refs/heads/feat/renamed\n\
+                        same\0def\0origin\0origin\0refs/heads/same\n\
+                        triangular\0fed\0myfork\0origin\0refs/heads/main\n\
+                        local-only\0cab\0\0\0\n";
+    const URLS: &str = "remote.origin.url\nhttps://github.com/tui-lipan/rozi.git\0\
+                        remote.myfork.url\ngit@github.com:adam/rozi.git\0";
+
+    fn pr_branch<'a>(heads: &BTreeMap<&str, Head<'a>>, branch: &str) -> &'a str {
+        heads[branch].pr_branch
+    }
+
     #[test]
-    fn branches_pushed_under_another_name_query_their_upstream_branch() {
-        let heads = parse_heads(
-            "file-tree-polish\0abc\0refs/heads/feat/file-tree-dim-and-fold\n\
-             feat/watch\0def\0refs/heads/feat/watch\n\
-             local-only\0fed\0\n",
-        );
-        let query = query(&["file-tree-polish", "feat/watch", "local-only"], &heads);
-        assert!(query.contains("b0:pullRequests(headRefName:\"feat/file-tree-dim-and-fold\""));
+    fn a_branch_renamed_on_its_push_remote_queries_its_upstream_branch() {
+        let heads = parse_heads(REFS, URLS);
+        assert_eq!(pr_branch(&heads, "renamed"), "feat/renamed");
+        assert_eq!(pr_branch(&heads, "same"), "same");
+        assert_eq!(pr_branch(&heads, "local-only"), "local-only");
+        let query = query(&["renamed", "local-only"], &heads);
+        assert!(query.contains("b0:pullRequests(headRefName:\"feat/renamed\""));
         assert!(query.contains("c0:object(oid:\"abc\")"));
-        assert!(query.contains("b1:pullRequests(headRefName:\"feat/watch\""));
-        assert!(query.contains("b2:pullRequests(headRefName:\"local-only\""));
-        assert!(!query.contains("headRefName:\"file-tree-polish\""));
+        assert!(query.contains("b1:pullRequests(headRefName:\"local-only\""));
+    }
+
+    #[test]
+    fn a_triangular_branch_queries_its_own_name_on_the_push_remote() {
+        let heads = parse_heads(REFS, URLS);
+        assert_eq!(pr_branch(&heads, "triangular"), "triangular");
+        assert_eq!(heads["triangular"].owner, Some("adam"));
+        assert_eq!(heads["renamed"].owner, Some("tui-lipan"));
+        assert_eq!(heads["local-only"].owner, None);
+    }
+
+    #[test]
+    fn current_and_matching_push_modes_publish_under_the_local_name() {
+        for mode in ["current", "matching"] {
+            let config = format!("{URLS}push.default\n{mode}\0");
+            assert_eq!(pr_branch(&parse_heads(REFS, &config), "renamed"), "renamed");
+        }
+        let config = format!("{URLS}push.default\nupstream\0");
+        assert_eq!(
+            pr_branch(&parse_heads(REFS, &config), "renamed"),
+            "feat/renamed"
+        );
+    }
+
+    #[test]
+    fn only_hosted_remote_urls_name_an_owner() {
+        for (url, owner) in [
+            ("https://github.com/tui-lipan/rozi.git", Some("tui-lipan")),
+            ("https://github.com/tui-lipan/rozi/", Some("tui-lipan")),
+            ("ssh://git@github.com/adam/rozi", Some("adam")),
+            ("git@github.com:adam/rozi.git", Some("adam")),
+            ("github.com:adam/rozi", Some("adam")),
+            ("../fork.git", None),
+            ("/srv/git/owner/rozi.git", None),
+            ("https://github.com/rozi", None),
+        ] {
+            assert_eq!(url_owner(url), owner, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_known_push_owner_selects_its_own_pr_over_a_same_named_one() {
+        let mut upstream = pr("OPEN", false, None);
+        upstream["number"] = 120.into();
+        upstream["headRefOid"] = "other".into();
+        upstream["headRepositoryOwner"] = serde_json::json!({"login": "tui-lipan"});
+        let mut fork = pr("OPEN", false, None);
+        fork["number"] = 119.into();
+        fork["headRefOid"] = "older".into();
+        fork["isCrossRepository"] = true.into();
+        fork["headRepositoryOwner"] = serde_json::json!({"login": "Adam"});
+        let nodes = [upstream, fork];
+        let status = super::find_status(&nodes, Some("new"), Some("adam"), None).unwrap();
+        assert_eq!(status.number, 119);
+        let status = super::find_status(&nodes, Some("new"), Some("tui-lipan"), None).unwrap();
+        assert_eq!(status.number, 120);
+        let status = super::find_status(&nodes, Some("older"), Some("tui-lipan"), None).unwrap();
+        assert_eq!(status.number, 120, "newest PR wins once the commit matches");
+        assert!(super::find_status(&nodes[..1], Some("new"), Some("adam"), None).is_none());
     }
 
     #[test]
@@ -564,7 +706,7 @@ mod tests {
     fn query_fetches_checks_once_per_local_head_outside_pr_candidates() {
         let query = query(
             &["feat/a", "feat/b"],
-            &parse_heads("feat/a\0abc\0\nfeat/b\0def\0\n"),
+            &parse_heads("feat/a\0abc\0\0\0\nfeat/b\0def\0\0\0\n", ""),
         );
         assert_eq!(query.matches("statusCheckRollup").count(), 2);
         assert!(!query.contains("commits(last:"));

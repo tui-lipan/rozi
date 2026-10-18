@@ -425,7 +425,7 @@ pub(crate) fn schedule_theme_tick() -> Command {
 /// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
 /// segment is present, so an idle app with the default workbar never wakes for this.
 pub(crate) fn schedule_workbar_tick() -> Command {
-    Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
+    Command::after(until_next_second(), move |link: CommandLink<Msg>| {
         link.send(Msg::WorkbarTick);
     })
 }
@@ -434,9 +434,31 @@ pub(crate) fn schedule_workbar_tick() -> Command {
 /// while that column is actually on screen, so a hidden sidebar or a screen of idle agents never
 /// wakes the app for this.
 pub(crate) fn schedule_agent_tick() -> Command {
-    Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
+    Command::after(until_next_second(), move |link: CommandLink<Msg>| {
         link.send(Msg::AgentTick);
     })
+}
+
+/// How long past the boundary a once-a-second tick lands, so a timer that fires a hair early still
+/// reads the new second.
+const SECOND_TICK_MARGIN: Duration = Duration::from_millis(5);
+
+/// The delay from now to just past the next wall-clock second.
+///
+/// A fixed one-second re-arm drifts by the handling latency every lap, so a seconds display would
+/// lag the real second by a wandering fraction and then skip one when the phase wraps. Aiming each
+/// lap at the boundary keeps every tick on the second, and every surface that counts seconds steps
+/// together.
+fn until_next_second() -> Duration {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    delay_to_next_second(now.subsec_nanos())
+}
+
+fn delay_to_next_second(subsec_nanos: u32) -> Duration {
+    Duration::from_secs(1).saturating_sub(Duration::from_nanos(subsec_nanos.into()))
+        + SECOND_TICK_MARGIN
 }
 
 pub(crate) fn check_for_update_and_reschedule(interval: Duration) -> Command {
@@ -454,6 +476,22 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    #[test]
+    fn second_ticks_land_just_past_the_next_wall_clock_second() {
+        assert_eq!(
+            delay_to_next_second(0),
+            Duration::from_secs(1) + SECOND_TICK_MARGIN
+        );
+        assert_eq!(
+            delay_to_next_second(700_000_000),
+            Duration::from_millis(300) + SECOND_TICK_MARGIN
+        );
+        assert_eq!(
+            delay_to_next_second(999_999_999),
+            Duration::from_nanos(1) + SECOND_TICK_MARGIN
+        );
+    }
 
     #[test]
     fn client_startup_reads_dock_memory_once_and_startup_only_controls_showing_it() {

@@ -395,6 +395,16 @@ fn row_run_age(started_at: Option<u64>) -> Option<std::time::Duration> {
     ))
 }
 
+/// How many wall-clock second boundaries fell within the last `elapsed`, given how far the current
+/// second has run. A local `Instant` would otherwise step at its own sub-second offset, out of
+/// phase with the Unix-second ages above and with the workbar clock.
+fn wall_seconds_crossed(elapsed: std::time::Duration, subsec_nanos: u32) -> std::time::Duration {
+    let since_boundary = std::time::Duration::from_nanos(subsec_nanos.into());
+    let before = elapsed.saturating_sub(since_boundary);
+    let partial = u64::from(before.subsec_nanos() > 0);
+    std::time::Duration::from_secs(before.as_secs() + partial)
+}
+
 fn previous_started(
     rows: &[crate::session::protocol::PublishedRow],
     key: &crate::session::protocol::RowKey,
@@ -1089,7 +1099,12 @@ impl TerminalPane {
                 now.saturating_sub(status.set_at),
             ));
         }
-        self.status_since.map(|since| since.elapsed())
+        self.status_since.map(|since| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            wall_seconds_crossed(since.elapsed(), now.subsec_nanos())
+        })
     }
 
     pub fn status_text(&self) -> String {
@@ -1636,6 +1651,22 @@ mod tests {
         assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
         pane.reported_status.as_mut().unwrap().value = "working".into();
         assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
+    }
+
+    #[test]
+    fn local_status_age_counts_wall_clock_seconds_crossed() {
+        let ms = std::time::Duration::from_millis;
+        // Started 0.4s into a second, read 0.3s into the next: one boundary crossed.
+        assert_eq!(super::wall_seconds_crossed(ms(900), 300_000_000), ms(1000));
+        // Started and read within the same second.
+        assert_eq!(super::wall_seconds_crossed(ms(200), 300_000_000), ms(0));
+        // Exactly on a boundary at both ends.
+        assert_eq!(super::wall_seconds_crossed(ms(2000), 0), ms(2000));
+        // A whole-second age read mid-second keeps its value.
+        assert_eq!(
+            super::wall_seconds_crossed(ms(90_000), 500_000_000),
+            ms(90_000)
+        );
     }
 
     #[test]

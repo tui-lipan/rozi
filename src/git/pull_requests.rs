@@ -87,21 +87,18 @@ impl StatusCache {
             ],
             command::WORKTREE_LIST_TIMEOUT,
         )?;
-        // Exits 1 when nothing matches, which leaves no remote URLs and the default push mode.
-        let config = command::run(
+        // Exits 1 when unset, which leaves Git's default push mode.
+        let push_default = command::run(
             cwd,
-            &[
-                "config".into(),
-                "-z".into(),
-                "--get-regexp".into(),
-                r"^(remote\..*\.url|push\.default)$".into(),
-            ],
+            &["config".into(), "--get".into(), "push.default".into()],
             command::WORKTREE_LIST_TIMEOUT,
         )?
         .stdout;
-        let mut local = serde_json::to_vec(&trees).map_err(|e| e.to_string())?;
-        local.extend_from_slice(&refs);
-        local.extend_from_slice(&config);
+        let push_default = String::from_utf8_lossy(&push_default).trim().to_string();
+        let refs = String::from_utf8_lossy(&refs).into_owned();
+        let push_urls = push_urls(cwd, &refs)?;
+        let local = serde_json::to_vec(&(&trees, &refs, &push_default, &push_urls))
+            .map_err(|e| e.to_string())?;
         let previous = self
             .entries
             .iter()
@@ -117,9 +114,7 @@ impl StatusCache {
                 return Ok(entry.value.clone());
             }
         }
-        let refs = String::from_utf8_lossy(&refs);
-        let config = String::from_utf8_lossy(&config);
-        let heads = parse_heads(&refs, &config);
+        let heads = parse_heads(&refs, &push_default, &push_urls);
         let value = fetch(cwd, &trees, &heads).unwrap_or_else(|error| {
             let mut value = previous
                 .map(|entry| entry.value.clone())
@@ -179,28 +174,46 @@ pub(crate) struct Head<'a> {
     owner: Option<&'a str>,
 }
 
-/// Parses `for-each-ref` lines of branch, commit, push remote, upstream remote, and upstream ref,
-/// with `git config -z` output for remote URLs and `push.default`.
+/// The URL `git push` uses for each push remote named in `for-each-ref` output, honoring
+/// `pushurl` and URL rewriting. A remote Git cannot resolve has no entry.
+fn push_urls(cwd: &Path, refs: &str) -> Result<BTreeMap<String, String>, String> {
+    let remotes: std::collections::BTreeSet<&str> = refs
+        .lines()
+        .filter_map(|line| line.split('\0').nth(2))
+        .filter(|remote| !remote.is_empty())
+        .collect();
+    let mut urls = BTreeMap::new();
+    for remote in remotes {
+        let output = command::run(
+            cwd,
+            &[
+                "remote".into(),
+                "get-url".into(),
+                "--push".into(),
+                remote.into(),
+            ],
+            command::WORKTREE_LIST_TIMEOUT,
+        )?;
+        let url = String::from_utf8_lossy(&output.stdout);
+        if let Some(url) = url.lines().next().filter(|_| output.status == Some(0)) {
+            urls.insert(remote.to_string(), url.trim().to_string());
+        }
+    }
+    Ok(urls)
+}
+
+/// Parses `for-each-ref` lines of branch, commit, push remote, upstream remote, and upstream ref.
 ///
 /// A branch that pushes to the remote it tracks publishes to its upstream branch, which may be
 /// named differently after `git push -u origin local:remote`. A triangular branch that pulls from
 /// one remote and pushes to another publishes under its own name, as `push.default=current` and
 /// `matching` always do.
-fn parse_heads<'a>(refs: &'a str, config: &'a str) -> BTreeMap<&'a str, Head<'a>> {
-    let mut push_default = None;
-    let mut urls = BTreeMap::new();
-    for entry in config.split_terminator('\0') {
-        let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
-        if key == "push.default" {
-            push_default = Some(value);
-        } else if let Some(remote) = key
-            .strip_prefix("remote.")
-            .and_then(|key| key.strip_suffix(".url"))
-        {
-            urls.insert(remote, value);
-        }
-    }
-    let renames = !matches!(push_default, Some("current" | "matching"));
+fn parse_heads<'a>(
+    refs: &'a str,
+    push_default: &str,
+    push_urls: &'a BTreeMap<String, String>,
+) -> BTreeMap<&'a str, Head<'a>> {
+    let renames = !matches!(push_default, "current" | "matching");
     refs.lines()
         .filter_map(|line| {
             let mut fields = line.split('\0');
@@ -215,7 +228,7 @@ fn parse_heads<'a>(refs: &'a str, config: &'a str) -> BTreeMap<&'a str, Head<'a>
             let pr_branch = upstream
                 .filter(|_| renames && push_remote == upstream_remote)
                 .unwrap_or(branch);
-            let owner = urls.get(push_remote).and_then(|url| url_owner(url));
+            let owner = push_urls.get(push_remote).and_then(|url| url_owner(url));
             Some((
                 branch,
                 Head {
@@ -475,8 +488,15 @@ mod tests {
                         same\0def\0origin\0origin\0refs/heads/same\n\
                         triangular\0fed\0myfork\0origin\0refs/heads/main\n\
                         local-only\0cab\0\0\0\n";
-    const URLS: &str = "remote.origin.url\nhttps://github.com/tui-lipan/rozi.git\0\
-                        remote.myfork.url\ngit@github.com:adam/rozi.git\0";
+
+    fn urls() -> BTreeMap<String, String> {
+        [
+            ("origin", "https://github.com/tui-lipan/rozi.git"),
+            ("myfork", "git@github.com:adam/rozi.git"),
+        ]
+        .map(|(remote, url)| (remote.to_string(), url.to_string()))
+        .into()
+    }
 
     fn pr_branch<'a>(heads: &BTreeMap<&str, Head<'a>>, branch: &str) -> &'a str {
         heads[branch].pr_branch
@@ -484,7 +504,8 @@ mod tests {
 
     #[test]
     fn a_branch_renamed_on_its_push_remote_queries_its_upstream_branch() {
-        let heads = parse_heads(REFS, URLS);
+        let urls = urls();
+        let heads = parse_heads(REFS, "", &urls);
         assert_eq!(pr_branch(&heads, "renamed"), "feat/renamed");
         assert_eq!(pr_branch(&heads, "same"), "same");
         assert_eq!(pr_branch(&heads, "local-only"), "local-only");
@@ -496,7 +517,8 @@ mod tests {
 
     #[test]
     fn a_triangular_branch_queries_its_own_name_on_the_push_remote() {
-        let heads = parse_heads(REFS, URLS);
+        let urls = urls();
+        let heads = parse_heads(REFS, "", &urls);
         assert_eq!(pr_branch(&heads, "triangular"), "triangular");
         assert_eq!(heads["triangular"].owner, Some("adam"));
         assert_eq!(heads["renamed"].owner, Some("tui-lipan"));
@@ -505,15 +527,50 @@ mod tests {
 
     #[test]
     fn current_and_matching_push_modes_publish_under_the_local_name() {
+        let urls = urls();
         for mode in ["current", "matching"] {
-            let config = format!("{URLS}push.default\n{mode}\0");
-            assert_eq!(pr_branch(&parse_heads(REFS, &config), "renamed"), "renamed");
+            assert_eq!(
+                pr_branch(&parse_heads(REFS, mode, &urls), "renamed"),
+                "renamed"
+            );
         }
-        let config = format!("{URLS}push.default\nupstream\0");
-        assert_eq!(
-            pr_branch(&parse_heads(REFS, &config), "renamed"),
-            "feat/renamed"
-        );
+        for mode in ["simple", "upstream"] {
+            assert_eq!(
+                pr_branch(&parse_heads(REFS, mode, &urls), "renamed"),
+                "feat/renamed"
+            );
+        }
+    }
+
+    #[test]
+    fn the_head_owner_comes_from_the_remote_push_url() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let repo = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let args: Vec<_> = args.iter().map(Into::into).collect();
+            command::checked(repo.path(), &args, command::WORKTREE_LIST_TIMEOUT).unwrap();
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/tui-lipan/rozi.git",
+        ]);
+        git(&[
+            "config",
+            "remote.origin.pushurl",
+            "git@github.com:adam/rozi.git",
+        ]);
+        let refs = "feature\0abc\0origin\0origin\0refs/heads/main\n\
+                    gone\0def\0missing\0\0\n";
+        let urls = push_urls(repo.path(), refs).unwrap();
+        assert_eq!(urls.keys().collect::<Vec<_>>(), ["origin"]);
+        let heads = parse_heads(refs, "", &urls);
+        assert_eq!(heads["feature"].owner, Some("adam"));
+        assert_eq!(heads["gone"].owner, None);
     }
 
     #[test]
@@ -706,7 +763,11 @@ mod tests {
     fn query_fetches_checks_once_per_local_head_outside_pr_candidates() {
         let query = query(
             &["feat/a", "feat/b"],
-            &parse_heads("feat/a\0abc\0\0\0\nfeat/b\0def\0\0\0\n", ""),
+            &parse_heads(
+                "feat/a\0abc\0\0\0\nfeat/b\0def\0\0\0\n",
+                "",
+                &BTreeMap::new(),
+            ),
         );
         assert_eq!(query.matches("statusCheckRollup").count(), 2);
         assert!(!query.contains("commits(last:"));

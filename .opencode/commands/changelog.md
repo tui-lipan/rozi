@@ -67,4 +67,6 @@ Inclusion rules:
 Do not choose or alter the release version, tags, session protocol or extension API version,
 signing information, artifact names, release targets, checksums, or security policy.
 
+If no candidate commit is user-facing, leave `release-notes.md` empty. Do not write a placeholder.
+
 Write the final Markdown to `release-notes.md`. Do not modify any other file.

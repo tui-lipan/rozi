@@ -118,6 +118,36 @@ jobs:
       - name: Test the OpenCode plugins
         run: node --test plugins/opencode/*.test.mjs
 
+  # crates.io is the last release step and the only one that cannot be retried from the same tag,
+  # so a crate it would refuse has to fail here, before anything is tagged. Release tags require a
+  # successful master run of this workflow on the exact commit. 0.0.30 shipped to GitHub but not
+  # crates.io after docs clips pushed the package past the upload cap.
+  crate-package:
+    name: crates.io package
+    runs-on: ubuntu-latest
+    env:
+      # crates.io rejects larger uploads with 413 Payload Too Large.
+      CRATES_IO_MAX_BYTES: "10485760"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
+        with:
+          toolchain: "1.96"
+      # `--no-verify`: the test matrix already builds this source; only the archive is in question.
+      - name: Check the packaged crate fits the crates.io upload cap
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo package --locked --no-verify
+          crate="$(ls target/package/rozi-*.crate)"
+          size="$(stat -c %s "$crate")"
+          echo "$crate is $size bytes (cap $CRATES_IO_MAX_BYTES)"
+          test "$size" -le "$CRATES_IO_MAX_BYTES" || {
+            echo "::error::$crate exceeds the crates.io upload cap; add the large files to package.exclude"
+            cargo package --locked --list | xargs -d '\n' du -b 2>/dev/null | sort -rn | head -15
+            exit 1
+          }
+
   licenses:
     name: licenses and advisories
     runs-on: ubuntu-latest

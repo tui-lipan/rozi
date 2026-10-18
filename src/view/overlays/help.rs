@@ -79,7 +79,6 @@ fn help_rows(ctx: &Context<AppRoot>) -> Vec<HelpRow> {
         .into_iter()
         .filter(|entry| {
             entry.id.as_str() != crate::commands::FORWARD_PREFIX_COMMAND_ID
-                && entry.id.as_str() != "detach"
                 && !entry.id.as_str().starts_with("app.")
                 && !entry.id.as_str().starts_with("workspace.")
         })

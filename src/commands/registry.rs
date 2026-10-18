@@ -384,6 +384,16 @@ pub(crate) fn command_prefix_chord(ctx: &Context<AppRoot>, id: &str) -> Option<S
         .map(KeyBinding::label)
 }
 
+/// Every live shortcut of a command, as labels in binding order.
+pub(crate) fn command_shortcut_labels(ctx: &Context<AppRoot>, id: &str) -> Vec<String> {
+    ctx.command_registry()
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id.as_str() == id)
+        .map(|entry| entry.shortcuts.iter().map(KeyBinding::label).collect())
+        .unwrap_or_default()
+}
+
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
 /// explicit empty override that unbinds it) if configured, otherwise the leader-prefix chord and
 /// WM-modifier chord mirrored from its default key steps. Paste also accepts plain `Ctrl+V`, which
@@ -408,19 +418,7 @@ fn resolve_shortcuts(config: &Config, id: &str, defaults: &[&str]) -> KeyBinding
 }
 
 fn builtin_keybinding_hint(config: &Config, id: &str, defaults: &[&str]) -> Option<Arc<str>> {
-    let mut hints = builtin_keybinding_hint_parts(config, id, defaults);
-    if id == "quit"
-        && let Some(detach) = BUILTIN_COMMANDS
-            .iter()
-            .find(|command| command.action == Action::Detach)
-    {
-        hints.extend(builtin_keybinding_hint_parts(
-            config,
-            "detach",
-            detach.default_keys,
-        ));
-    }
-
+    let hints = builtin_keybinding_hint_parts(config, id, defaults);
     let mut unique = Vec::with_capacity(hints.len());
     for hint in hints {
         if !unique.contains(&hint) {
@@ -438,17 +436,6 @@ fn builtin_default_keybinding_hint(config: &Config, id: &str) -> String {
         return String::new();
     };
     let mut hints = builtin_default_keybinding_hint_parts(config, id, command.default_keys);
-    if id == "quit"
-        && let Some(detach) = BUILTIN_COMMANDS
-            .iter()
-            .find(|command| command.action == Action::Detach)
-    {
-        hints.extend(builtin_default_keybinding_hint_parts(
-            config,
-            "detach",
-            detach.default_keys,
-        ));
-    }
     hints.dedup();
     hints.join(" / ")
 }
@@ -1247,20 +1234,16 @@ mod tests {
         assert!(is_palette_eligible("save-profile"));
     }
 
-    /// `detach` and `quit` run the same thing. Both keys stay bound and both ids stay valid for
-    /// `[keys]` and the control socket, but the palette offers one of them: listing two rows that
-    /// do the same thing only asks the reader to work out how they differ.
+    /// Leaving the client is one action reached by both `q` and the tmux `d`.
     #[test]
-    fn leaving_the_client_is_one_palette_entry_with_both_keys_bound() {
+    fn leaving_the_client_is_one_action_with_both_keys_bound() {
         assert!(is_palette_eligible("quit"));
-        assert!(!is_palette_eligible("detach"));
-        let detach = BUILTIN_COMMANDS
+        let quit = BUILTIN_COMMANDS
             .iter()
-            .find(|command| command.action == Action::Detach)
-            .expect("detach stays registered so its key and id keep working");
-        assert!(detach.default_keys.contains(&"d"));
-        assert_eq!(Action::from_id("detach"), Some(Action::Detach));
-        assert_eq!(Action::from_id("quit"), Some(Action::Quit));
+            .find(|command| command.action == Action::Quit)
+            .expect("quit is registered");
+        assert_eq!(quit.default_keys, &["q", "d"]);
+        assert_eq!(Action::from_id("detach"), None);
     }
 
     #[test]
@@ -1487,10 +1470,10 @@ mod tests {
     }
 
     #[test]
-    fn quit_hint_combines_live_quit_and_detach_bindings() {
+    fn quit_hint_lists_both_default_keys_and_follows_an_override() {
         let config = Config::default();
         assert_eq!(
-            builtin_keybinding_hint(&config, "quit", &["q"]),
+            builtin_keybinding_hint(&config, "quit", &["q", "d"]),
             Some(Arc::<str>::from("q / d"))
         );
 
@@ -1499,13 +1482,9 @@ mod tests {
             "quit".to_string(),
             vec![KeyBinding::from_str("ctrl-q").unwrap()],
         );
-        overridden.key_overrides.insert(
-            "detach".to_string(),
-            vec![KeyBinding::from_str("alt-d").unwrap()],
-        );
         assert_eq!(
-            builtin_keybinding_hint(&overridden, "quit", &["q"]),
-            Some(Arc::<str>::from("Ctrl+Q / Alt+D"))
+            builtin_keybinding_hint(&overridden, "quit", &["q", "d"]),
+            Some(Arc::<str>::from("Ctrl+Q"))
         );
     }
 

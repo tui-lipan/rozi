@@ -91,9 +91,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenAlerts
         | Action::OpenThemePicker
         | Action::OpenLayoutPicker
-        | Action::SidebarTabs
-        | Action::SidebarOtherDock
-        | Action::SidebarMoveToOtherDock => {}
+        | Action::SidebarTabs => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
         | Action::OpenWorktrees

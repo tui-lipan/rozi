@@ -513,7 +513,7 @@ mod tests {
             backend.render();
 
             backend
-                .dispatch(Msg::RunAction(Action::Detach))
+                .dispatch(Msg::RunAction(Action::Quit))
                 .expect("dispatch detach");
 
             let sent: Vec<_> = outbound.try_iter().collect();
@@ -612,7 +612,7 @@ mod tests {
             }
 
             backend
-                .dispatch(Msg::RunAction(Action::Detach))
+                .dispatch(Msg::RunAction(Action::Quit))
                 .expect("dispatch detach with retained ephemeral");
 
             assert!(backend.state().is_ephemeral_session());

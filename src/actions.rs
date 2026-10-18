@@ -395,7 +395,7 @@ fn execute_action_inner(
         // One way out. `detach` and `quit` differed only in what they did to sessions as a side
         // effect, which stopped being a property of *how* you leave once a client could hold
         // several sessions: it is decided per session now, by `leave_client`.
-        Action::Detach | Action::Quit => crate::ops::exit::leave_client(ctx),
+        Action::Quit => crate::ops::exit::leave_client(ctx),
         Action::KillWorkspace => {
             crate::ops::exit::kill_workspace_with_confirmation(ctx, confirmations_enabled)
         }
@@ -460,8 +460,6 @@ fn execute_action_inner(
             crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Right)
         }
         Action::SidebarTabs => crate::update::sidebar::open_manager(ctx),
-        Action::SidebarOtherDock => crate::update::sidebar::other_dock(ctx, false),
-        Action::SidebarMoveToOtherDock => crate::update::sidebar::other_dock(ctx, true),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsCanvas => {
@@ -636,7 +634,7 @@ mod tests {
             Action::KillSession,
             Action::ToggleScratchpad,
             Action::TogglePalette,
-            Action::Detach,
+            Action::Quit,
             Action::KillSession,
         ] {
             assert!(

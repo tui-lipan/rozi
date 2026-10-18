@@ -454,7 +454,7 @@ fn an_accepted_install_shows_the_host_as_installing() {
             })
             .unwrap();
         let frame = rendered_lines(&mut backend);
-        assert!(frame.contains("installing…"), "{frame}");
+        assert!(frame.contains("Installing…"), "{frame}");
         backend
             .dispatch(rozi::Msg::RemoteInstallProgress {
                 target,
@@ -462,7 +462,7 @@ fn an_accepted_install_shows_the_host_as_installing() {
             })
             .unwrap();
         let frame = rendered_lines(&mut backend);
-        assert!(!frame.contains("installing…"), "{frame}");
+        assert!(!frame.contains("Installing…"), "{frame}");
     });
 }
 

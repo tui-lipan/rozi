@@ -603,7 +603,7 @@ mod tests {
                 assert!(lines.iter().any(|line| line.contains("default Ctrl+F")));
                 assert!(lines.iter().any(|line| line.contains("replace Ctrl+R")));
                 assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
-                assert!(lines.iter().any(|line| line.contains("default · running")));
+                assert!(lines.iter().any(|line| line.contains("Default · Running")));
                 assert!(lines.iter().any(|line| line.contains("new Ctrl+N")));
 
                 let mut background = crate::state::Attachment::new();
@@ -617,7 +617,7 @@ mod tests {
                 assert!(
                     lines
                         .iter()
-                        .any(|line| line.contains("default · background"))
+                        .any(|line| line.contains("Default · Background"))
                 );
 
                 backend
@@ -629,7 +629,7 @@ mod tests {
                 backend.render();
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 assert!(lines.iter().any(|line| line.contains("○ rust-dev")));
-                assert!(lines.iter().any(|line| line.contains("default · running")));
+                assert!(lines.iter().any(|line| line.contains("Default · Running")));
             })
             .expect("spawn test thread")
             .join()

@@ -98,7 +98,7 @@ fn remembered_rows_are_listed_in_all_only_for_hosts_that_have_a_tab() {
         backend.update_level(Msg::SessionPickerTab(2)).unwrap();
         let all = screen(&mut backend);
         assert!(
-            all.contains("backend@laptop") && all.contains("last seen"),
+            all.contains("backend@laptop") && all.contains("Last seen"),
             "{all}"
         );
         let picker = backend.state_mut().session_picker.as_mut().unwrap();
@@ -156,7 +156,7 @@ fn a_remembered_session_says_so_instead_of_reading_as_live() {
             "the session is listed by name; its tab already names the host:\n{rendered}"
         );
         assert!(
-            rendered.contains("last seen"),
+            rendered.contains("Last seen"),
             "a remembered row is dated, not presented as live:\n{rendered}"
         );
     });
@@ -190,14 +190,14 @@ fn a_host_query_keeps_its_rows() {
             "the query reached the picker"
         );
         assert!(
-            rendered.contains("last seen"),
+            rendered.contains("Last seen"),
             "the host's row survives the query:\n{rendered}"
         );
     });
 }
 
-/// Once one row carries a connection marker, the rows this client holds nothing on get a muted dot
-/// in that column instead of a blank.
+/// A remembered row has nothing to connect to yet, so it gets the quiet dot beside the session on
+/// screen rather than a blank or a live marker.
 #[test]
 fn unheld_rows_get_a_dot_beside_a_marked_row() {
     on_a_big_stack(|| {
@@ -235,7 +235,7 @@ fn the_remote_tab_names_the_hosts_state() {
             "the tab names its host:\n{rendered}"
         );
         assert!(
-            rendered.contains("disconnected"),
+            rendered.contains("Disconnected"),
             "an unreached host says so in the header:\n{rendered}"
         );
     });
@@ -297,7 +297,7 @@ fn a_live_remote_row_keeps_its_actions() {
             "a live session is still restartable and killable:\n{rendered}"
         );
         assert!(
-            !rendered.contains("last seen"),
+            !rendered.contains("Last seen"),
             "and it is not dated:\n{rendered}"
         );
     });

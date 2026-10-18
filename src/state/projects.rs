@@ -378,28 +378,22 @@ fn host_rows(
                     }),
                     None => RowTarget::Inert,
                 };
-                let label = if crate::state::is_ephemeral_session_name(&summary.session) {
-                    "ephemeral".to_string()
-                } else {
-                    summary.session.clone()
-                };
+                let label = crate::view::vocabulary::session_name(&summary.session).to_string();
                 rows.push(TreeRow {
                     id: format!("session:{root}:{}", summary.session),
                     parent: Some(checkout_id.clone()),
                     content: RowContent {
                         label,
-                        description: Some({
-                            let status = crate::view::session_status::session_status_for(
+                        description: Some(crate::view::vocabulary::fields([
+                            crate::view::vocabulary::session_presence_for(
                                 state,
                                 &summary.session,
                                 host,
-                            );
-                            let label = crate::view::session_status::session_status_label(status);
-                            match session_description(&session_agents, summary) {
-                                Some(detail) => format!("{label} · {detail}"),
-                                None => label.to_string(),
-                            }
-                        }),
+                            )
+                            .label()
+                            .to_string(),
+                            session_description(&session_agents, summary).unwrap_or_default(),
+                        ])),
                         tone,
                         active,
                         ..RowContent::default()
@@ -425,10 +419,10 @@ fn session_description(agents: &[&GlobalAgentRow], summary: &ProjectSummary) -> 
     match agents {
         [] => {
             let panes = summary.panes.len();
-            (panes > 0).then(|| format!("{panes} pane{}", if panes == 1 { "" } else { "s" }))
+            (panes > 0).then(|| crate::view::vocabulary::count(panes, "pane"))
         }
         [agent] => Some(agent.agent.clone()),
-        several => Some(format!("{} agents", several.len())),
+        several => Some(crate::view::vocabulary::count(several.len(), "agent")),
     }
 }
 

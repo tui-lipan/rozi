@@ -12,6 +12,14 @@
 - Prefer compact status tokens such as `ctrl`, `follow`, and `ro` when the layout supplies context.
   Put explanations in documentation.
 - Boolean rows use `Enabled` and `Disabled`. Grey unavailable rows through `disabled_reason`.
+- Status words Rozi owns are capitalized everywhere, sidebar and pickers alike: `Running`,
+  `Stale lock`, `Passed`, `Connecting…`. Actions are lowercase verbs: hover replacements, footer
+  hints, and `again to …` cues. Counts and provenance are lowercase phrases (`2 panes`,
+  `from web`). Names, paths, custom statuses, and extension text keep their own spelling.
+- Join description fields with ` · `, status first. A session elsewhere is `session@host`.
+- `src/view/vocabulary.rs` is the one source for session, host, checkout, and PR status words,
+  markers, verbs, counts, and separators. Add a word there rather than spelling it in a view, and
+  keep a surface's marker and word for a state the same as every other surface's.
 - Rozi has no checkbox glyph convention. Do not introduce one.
 - Pickers, prompts, and dialogs do not show `Esc` in footer hints. Keep its close, back, cancel,
   or other keyboard behavior; document it in help or keybinding docs instead of advertising it

@@ -142,12 +142,15 @@ jobs:
           set -euo pipefail
           test -n "$OPENAI_API_KEY"
           opencode run --variant low --command changelog
-          test -s release-notes.md
+          # Empty is a valid answer: a release of packaging or tooling fixes has nothing to tell
+          # users, and the validate step below publishes a fixed note for it instead.
+          test -f release-notes.md
 
       - name: Validate and freeze generated Markdown
         run: |
           python3 scripts/release_notes.py validate \
             --input release-notes.md \
+            --metadata release-notes-range.json \
             --output release-notes.md
 
       - name: Upload immutable release-note input and result

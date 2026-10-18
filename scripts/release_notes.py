@@ -371,6 +371,13 @@ def validate_notes(raw: str) -> str:
     return notes + "\n"
 
 
+def release_body(raw: str, from_tag: str) -> str:
+    """Return the published body, with a fixed note when no commit was user-facing."""
+    if not raw.strip():
+        return f"No user-facing changes since {from_tag}.\n"
+    return validate_notes(raw)
+
+
 def prepare(arguments: argparse.Namespace) -> None:
     releases = github_releases(arguments.repository)
     from_tag = select_previous_release(releases, arguments.to_tag)
@@ -428,7 +435,9 @@ def prepare(arguments: argparse.Namespace) -> None:
 
 def validate(arguments: argparse.Namespace) -> None:
     raw = Path(arguments.input).read_text(encoding="utf-8")
-    Path(arguments.output).write_text(validate_notes(raw), encoding="utf-8")
+    metadata = json.loads(Path(arguments.metadata).read_text(encoding="utf-8"))
+    body = release_body(raw, metadata["from_tag"])
+    Path(arguments.output).write_text(body, encoding="utf-8")
     print(f"validated release notes in {arguments.output}")
 
 
@@ -447,6 +456,7 @@ def parser() -> argparse.ArgumentParser:
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("--input", required=True)
     validate_parser.add_argument("--output", required=True)
+    validate_parser.add_argument("--metadata", required=True)
     validate_parser.set_defaults(function=validate)
     return root
 

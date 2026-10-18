@@ -560,14 +560,14 @@ mod tests {
             backend.render();
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                frame.lines().any(
-                    |line| line.contains("Codex") && line.contains("Blocked · backend@workbox")
-                ),
+                frame
+                    .lines()
+                    .any(|line| line.contains("Codex") && line.contains("backend@workbox")),
                 "the row names who and where:\n{frame}"
             );
             assert!(
                 frame.contains("Blocked"),
-                "and what it is waiting on:\n{frame}"
+                "and the highlighted row's detail says what it is waiting on:\n{frame}"
             );
         });
     }
@@ -602,7 +602,7 @@ mod tests {
             assert!(
                 frame
                     .lines()
-                    .any(|line| line.contains("Codex") && line.contains("Blocked · backend")),
+                    .any(|line| line.contains("Codex") && line.contains("backend")),
                 "{frame}"
             );
             assert!(frame.contains("Blocked"), "{frame}");
@@ -962,7 +962,7 @@ mod tests {
             .capture_frame()
             .to_fixed_grid_lines()
             .into_iter()
-            .filter(|line| line.contains("Idle"))
+            .filter(|line| line.contains("Codex"))
             .collect()
     }
 
@@ -986,28 +986,28 @@ mod tests {
 
             let short = rendered_rows(&[("Codex", "dev")]).remove(0);
             assert!(
-                column(&short, "Idle") - column(&short, "Codex") > 40,
+                column(&short, "dev") - column(&short, "Codex") > 40,
                 "a short description stays at the right edge: {short}"
             );
 
             let long = rendered_rows(&[("Codex", &long_session)]).remove(0);
-            assert!(long.contains("Codex  Idle · sss"), "{long}");
+            assert!(long.contains("Codex  sss"), "{long}");
             assert!(long.contains("s… │"), "truncated at the end: {long}");
 
             // The label keeps a third of what the row draws between its borders.
             let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
-            assert!(both.contains("…  Idle · sss"), "{both}");
+            assert!(both.contains("…  sss"), "{both}");
             let row_width = column(&both, " │") - column(&both, "│ ");
-            let label_width = column(&both, "…  Idle") + 1 - column(&both, "Codex");
+            let label_width = column(&both, "…  sss") + 1 - column(&both, "Codex");
             assert!(
                 (row_width * 30 / 100..=row_width * 36 / 100).contains(&label_width),
                 "{label_width} of {row_width}: {both}"
             );
 
             let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
-            assert!(label.contains("…  Idle · dev │"), "{label}");
+            assert!(label.contains("…  dev │"), "{label}");
             assert!(
-                column(&label, "…  Idle") + 1 - column(&label, "Codex") > row_width * 36 / 100,
+                column(&label, "…  dev") + 1 - column(&label, "Codex") > row_width * 36 / 100,
                 "{label}"
             );
         });

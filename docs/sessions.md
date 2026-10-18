@@ -146,38 +146,45 @@ When you switch sessions, a portal opens onto the incoming one. To use a fade in
 Press `Ctrl+A`, then `a` to open **Agents**. It lists agents, not every Activity row: detected
 coding agents, agents that report their own state, and rows from a publisher that declared itself
 an agent. It covers the current session, other running named local sessions, and every
-[connected host](remote.md#connected-host-monitoring), in the order of the sidebar's
-[Agents tab](sidebar.md#agents): agents waiting for you first, then failed ones, then finished runs
-you have not looked at, then agents still working.
+[connected host](remote.md#connected-host-monitoring), with the ones that need you first: agents
+waiting for you, then failed ones, then finished runs you have not looked at, then agents still
+working, then finished runs you have seen, then idle agents.
 
 ```text
 Agents
  api   dev   backend@workbox   All
- ▲  fix login · Claude Code   Blocked · Permission required · dev · api (fix-login)
- ●  Codex                                  Done · backend@workbox · api (main)
- ⠋  review PR · Claude Code              Working · 4m00s · dev · api (review)
+ ▲  fix login · Claude Code          Permission required · dev
+ ×  Codex                              Thread failed · backend@workbox
+ ●  add filesystem watcher · Claude Code                 dev
+ ⠋  review PR · Claude Code                              dev
+
+ Blocked · 2m10s · Permission required · api (fix-login)
 ```
 
 The picker opens on **All**. Each session with agents also gets its own tab; switch tabs with
 `Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter.
 
-Each row leads with the agent's task when it names one, followed by the agent's name. The right
-side gives its state, the reason for it, and, on **All**, where it runs: the session name for local
-agents and `session@host` for remote agents, then the project and branch the agent works in.
-Search matches the task, the agent, the session, the host, the project and branch, and the reason,
-so typing a host name narrows the list to that machine.
+Each row leads with the agent's task when it names one, followed by the agent's name; two rows that
+would read the same are numbered. The glyph shows the agent's state. The right side adds the reason
+an agent gave for waiting or failing, and, on **All**, where it runs: the session name for local
+agents and `session@host` for remote agents. The line below the list describes the highlighted
+agent in full: its state, how long it has held or what its run took, the reason, and the project
+and branch it works in.
+
+Search matches all of it — the task, the agent, the session, the host, the project and branch, and
+the reason — so typing a branch or a host name narrows the list to the agents there.
 
 `Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane.
 Anywhere else, rozi attaches to that session first and then focuses the pane — and, for a program
 running several agents, the agent's own row inside it. The host and session do not have to be open
 already. A session already in the background switches in immediately.
 
-Only agents in the session on screen show an age. Rows from other sessions show their state, task,
-reason, project, and branch, but no running clock. What an agent's terminal shows, as the
+Only agents in the session on screen have a time. What an agent's terminal shows, as the
 [Activity tab](sidebar.md#activity) reads it, needs an attached session; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
-To keep the same list on screen while you work, show the sidebar's [Agents tab](sidebar.md#agents).
+To keep the agents that need you on screen while you work, show the sidebar's
+[Agents tab](sidebar.md#agents).
 
 ## Name or rename a session
 

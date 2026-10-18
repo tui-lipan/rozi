@@ -5,6 +5,7 @@ from scripts.release_notes import (
     commit_summary,
     exclusion_reason,
     pull_request_url,
+    release_body,
     select_previous_release,
     validate_notes,
 )
@@ -199,6 +200,19 @@ class ValidationTests(unittest.TestCase):
             validate_notes("## Fixed\n\n- Rozi reconnects — without replacing the session.\n")
         with self.assertRaises(ReleaseNotesError):
             validate_notes('## Changed\n\n- Rozi calls this mode “offline”.\n')
+
+
+class ReleaseBodyTests(unittest.TestCase):
+    def test_a_release_without_user_facing_changes_gets_a_fixed_note(self):
+        self.assertEqual(
+            release_body("\n  \n", "v0.0.30"),
+            "No user-facing changes since v0.0.30.\n",
+        )
+
+    def test_generated_notes_are_still_validated(self):
+        self.assertEqual(release_body("## Fixed\n\n- One.\n", "v0.0.30"), "## Fixed\n\n- One.\n")
+        with self.assertRaises(ReleaseNotesError):
+            release_body("Release notes\n", "v0.0.30")
 
 
 if __name__ == "__main__":

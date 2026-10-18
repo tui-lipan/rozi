@@ -390,23 +390,19 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     }
 }
 
-/// Generic activity failures do not change the pane's agent state.
+/// Whether anything in the pane failed: its agent, one of its published rows, or its own status.
 fn activity_failed(pane: &Pane) -> bool {
     let terminal = &pane.terminal;
+    let failed = |status: &str| {
+        status
+            .trim()
+            .eq_ignore_ascii_case(crate::session::protocol::pane_status::ERROR)
+    };
     terminal
-        .published_rows
+        .effective_rows()
         .iter()
-        .any(|row| !row.is_agent() && row.status.trim().eq_ignore_ascii_case("error"))
-        || (terminal.detected_agent.is_none()
-            && terminal.agent_integration.is_none()
-            && !terminal
-                .published_rows
-                .iter()
-                .any(crate::session::protocol::PublishedRow::is_agent)
-            && terminal
-                .reported_status
-                .as_ref()
-                .is_some_and(|status| status.value.trim().eq_ignore_ascii_case("error")))
+        .any(|row| failed(&row.status))
+        || terminal.agent_status().as_deref().is_some_and(failed)
 }
 
 /// The configured attention state this pane currently draws. Configured-off states deliberately
@@ -2472,7 +2468,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_error_has_an_independent_urgent_alert_without_changing_agents() {
+    fn a_failed_activity_or_agent_has_an_independent_urgent_alert() {
         let mut pane = alert_test_pane();
         let mut config = PaneConfig::default();
         pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -2498,6 +2494,12 @@ mod tests {
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
+        // The pane's agent reported the failure itself: the same alert.
+        assert_eq!(
+            pane_alert(&pane, false, &config, &Default::default()),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+        pane.terminal.reported_status = None;
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         let row = serde_json::from_value(serde_json::json!({
             "id": "build", "title": "Build", "status": "error", "kind": "activity"

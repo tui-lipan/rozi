@@ -9,17 +9,8 @@ use crate::session::protocol::PaneRuntimeState;
 use crate::state::PaneId;
 use crate::update::session::control_replies::{flush_attachment_replay_input, flush_replay_input};
 
-pub(crate) fn status_is(value: Option<&str>, needle: &str) -> bool {
-    value.is_some_and(|value| value.trim().eq_ignore_ascii_case(needle))
-}
-
-pub(crate) fn status_is_quiescent(value: Option<&str>) -> bool {
-    status_is(value, crate::session::protocol::pane_status::IDLE)
-        || status_is(value, crate::session::protocol::pane_status::DONE)
-}
-
 pub(crate) fn status_is_active_run(value: Option<&str>) -> bool {
-    value.is_some() && !status_is_quiescent(value)
+    value.is_some() && !crate::session::protocol::status_ends_run(value)
 }
 
 /// The two alertable transitions a pane or a summary can report: its agent started waiting on the
@@ -78,7 +69,7 @@ pub(crate) fn update_agent_status_edge(
             previous_activity.is_some_and(|state| !state.is_terminal())
                 && current_activity.is_some_and(ActivityState::is_terminal)
         } else {
-            status_is_active_run(previous) && status_is_quiescent(current)
+            status_is_active_run(previous) && crate::session::protocol::status_ends_run(current)
         };
         if ended {
             pane.last_run = previous_age;

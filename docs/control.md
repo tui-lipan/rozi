@@ -811,8 +811,8 @@ To save a PNG by hand instead, use the **Screenshot pane** and **Screenshot UI**
 
 Destructive actions honor `[confirm]`.
 
-`status` reports a short free-form value for a pane. `working`, `blocked`, `done`, and `idle` have
-built-in presentation. A status is a generic activity: it appears in Activity, but does not make
+`status` reports a short free-form value for a pane. `working`, `blocked`, `done`, `error`, and
+`idle` have built-in presentation. A status is a generic activity: it appears in Activity, but does not make
 the pane an agent. In a pane where rozi detects an agent, it sets that agent's state. An agent
 integration reports through [`agents report`](agents.md#report-state-from-agent-hooks) instead. Values are limited to 64 characters and reasons to 256, after display-text
 sanitization. `--target` may come before or after the value, and is the only way to name a pane

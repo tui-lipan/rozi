@@ -1,7 +1,7 @@
 # Agent definitions
 
 rozi recognizes coding-agent CLIs running in panes and shows whether each one is working, blocked,
-done, or idle. This page covers adding or overriding an agent definition, the full rule reference,
+done, failed, or idle. This page covers adding or overriding an agent definition, the full rule reference,
 and the `rozi agents` commands for scripts.
 
 ## What agent detection shows
@@ -334,9 +334,10 @@ screen, or to the session a `--ref` names.
 
 `--timeout` is required for `agents wait`, and for `agents prompt` with `--wait`.
 
-Wait states are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`. An agent
-that finishes a turn is `done` until you look at its pane, so wait for `quiescent` to catch the end of
-a turn; `idle` alone may never come. A timeout names the state the agent was left in.
+Wait states are `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done, or error),
+and `gone`. An agent that finishes a turn is `done` until you look at its pane, so wait for
+`quiescent` to catch the end of a turn; `idle` alone may never come, and a failed turn ends in
+`error`. The answer names the state the agent reached, and a timeout names the state it was left in.
 
 Waiting on a pane whose agent has not been detected yet, such as one you just opened with `split`,
 waits for the agent to appear. `gone` answers at once for a pane with no agent. Errors distinguish a

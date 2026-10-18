@@ -362,15 +362,9 @@ pub struct TerminalSearchHighlight {
     pub end_col: usize,
 }
 
-fn status_is_quiescent(value: &str) -> bool {
-    let value = value.trim();
-    value.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
-        || value.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
-}
-
 fn activity_is_terminal(value: &str, agent: bool) -> bool {
     if agent {
-        status_is_quiescent(value)
+        crate::session::protocol::status_ends_run(Some(value))
     } else {
         crate::session::protocol::ActivityState::from_status(value).is_terminal()
     }

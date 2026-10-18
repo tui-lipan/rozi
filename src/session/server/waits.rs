@@ -423,7 +423,10 @@ fn condition_matches(until: AgentWaitCondition, state: protocol::AgentState) -> 
         AgentWaitCondition::Blocked => state == protocol::AgentState::Blocked,
         AgentWaitCondition::Idle => state == protocol::AgentState::Idle,
         AgentWaitCondition::Done => state == protocol::AgentState::Done,
-        AgentWaitCondition::Quiescent => state.is_quiescent(),
+        AgentWaitCondition::Error => state == protocol::AgentState::Error,
+        // Stopped for any reason: a script waiting for the end of a turn must not hang on a
+        // turn that failed. The answer carries the state, so it can tell which.
+        AgentWaitCondition::Quiescent => state.is_stopped(),
         AgentWaitCondition::Gone => false,
     }
 }
@@ -446,6 +449,7 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
         AgentWaitCondition::Blocked => "blocked",
         AgentWaitCondition::Idle => "idle",
         AgentWaitCondition::Done => "done",
+        AgentWaitCondition::Error => "error",
         AgentWaitCondition::Quiescent => "quiescent",
         AgentWaitCondition::Gone => "gone",
     }
@@ -454,6 +458,19 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A script waiting for the end of a turn must not hang on a turn that failed, and can wait
+    /// for a failure on its own.
+    #[test]
+    fn a_failed_agent_has_stopped_and_can_be_waited_for() {
+        use protocol::AgentState::{Done, Error, Idle, Working};
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Error));
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Done));
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Idle));
+        assert!(!condition_matches(AgentWaitCondition::Quiescent, Working));
+        assert!(condition_matches(AgentWaitCondition::Error, Error));
+        assert!(!condition_matches(AgentWaitCondition::Done, Error));
+    }
 
     fn server_with_agent(state: protocol::DetectedAgentState) -> SessionServer {
         let mut server = SessionServer::new_named("dev");

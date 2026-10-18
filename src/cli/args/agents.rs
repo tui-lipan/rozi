@@ -261,6 +261,7 @@ fn parse_report_state(
         "blocked" => Ok(crate::session::protocol::AgentState::Blocked),
         "idle" => Ok(crate::session::protocol::AgentState::Idle),
         "done" => Ok(crate::session::protocol::AgentState::Done),
+        "error" => Ok(crate::session::protocol::AgentState::Error),
         _ => Err(format!("unknown agent state `{value}`")),
     }
 }

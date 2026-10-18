@@ -836,6 +836,7 @@ pub enum AgentWaitCondition {
     Blocked,
     Idle,
     Done,
+    Error,
     Quiescent,
     Gone,
 }

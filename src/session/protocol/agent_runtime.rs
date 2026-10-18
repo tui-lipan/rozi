@@ -13,6 +13,8 @@ pub enum AgentState {
     Blocked,
     Idle,
     Done,
+    /// The run failed. It ended, but not with a result worth reading as done.
+    Error,
 }
 
 impl AgentState {
@@ -24,6 +26,8 @@ impl AgentState {
             Self::Idle
         } else if status.eq_ignore_ascii_case(pane_status::DONE) {
             Self::Done
+        } else if status.eq_ignore_ascii_case(pane_status::ERROR) {
+            Self::Error
         } else {
             Self::Working
         }
@@ -35,16 +39,22 @@ impl AgentState {
             Self::Blocked => pane_status::BLOCKED,
             Self::Idle => pane_status::IDLE,
             Self::Done => pane_status::DONE,
+            Self::Error => pane_status::ERROR,
         }
     }
 
+    /// Stopped with nothing wrong: what a finished run ends in.
     pub const fn is_quiescent(self) -> bool {
         matches!(self, Self::Idle | Self::Done)
     }
+
+    /// Stopped at all, successfully or not: no run is going.
+    pub const fn is_stopped(self) -> bool {
+        matches!(self, Self::Idle | Self::Done | Self::Error)
+    }
 }
 
-/// Presentation semantics for activities. Custom values remain active; agent APIs retain
-/// their existing four-state interpretation, including treating `error` as working.
+/// Presentation semantics for activities. Custom values remain active, as they do for agents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityState {
     Working,
@@ -678,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_error_keeps_agent_api_compatibility() {
+    fn error_is_a_stopped_state_for_activities_and_agents_alike() {
         let runtime = PaneRuntimeState {
             status: Some(PaneStatus {
                 value: "error".into(),
@@ -688,8 +698,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(pane_occupants(&runtime)[0].state, ActivityState::Error);
-        assert_eq!(AgentState::from_status("error"), AgentState::Working);
-        assert!(!AgentState::from_status("error").is_quiescent());
+        assert_eq!(AgentState::from_status("error"), AgentState::Error);
+        assert!(
+            !AgentState::Error.is_quiescent(),
+            "a failure is not a finished run"
+        );
+        assert!(AgentState::Error.is_stopped());
         assert_eq!(ActivityState::from_status("custom"), ActivityState::Custom);
         assert!(!ActivityState::Custom.is_terminal());
     }

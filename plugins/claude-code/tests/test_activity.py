@@ -67,6 +67,13 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.calls[-1][0][1:3], ["agents", "release"])
         self.assertNotIn("--native-session", self.calls[-1][0])
 
+    def test_a_failed_turn_reports_an_error_with_its_reason(self):
+        self.hook("SessionStart")
+        self.hook("UserPromptSubmit")
+        self.hook("StopFailure")
+        self.assertEqual(self.field("--state"), "error")
+        self.assertEqual(self.field("--reason"), "Turn ended with an API error")
+
     def test_exit_tombstone_ignores_late_hooks(self):
         self.hook("SessionStart")
         self.hook("SessionEnd")

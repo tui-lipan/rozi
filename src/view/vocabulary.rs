@@ -472,19 +472,20 @@ pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Opti
     // agent outranks any number of working ones, and any working one outranks the finished. Idle
     // is deliberately absent — a state that prompts no action is not news, and spending the line
     // on it would push a blocked agent in the *next* session off the visible part of the row.
-    let mut counts = [0_usize; 3];
-    let mut named: [Option<&str>; 3] = [None; 3];
+    let mut counts = [0_usize; 4];
+    let mut named: [Option<&str>; 4] = [None; 4];
     for agent in mine {
         let bucket = match agent.state {
             AgentState::Blocked => 0,
-            AgentState::Working => 1,
-            AgentState::Done => 2,
+            AgentState::Error => 1,
+            AgentState::Working => 2,
+            AgentState::Done => 3,
             AgentState::Idle => continue,
         };
         counts[bucket] += 1;
         named[bucket] = named[bucket].or(Some(agent.label.as_str()));
     }
-    let (bucket, word) = [(0, "blocked"), (1, "working"), (2, "done")]
+    let (bucket, word) = [(0, "blocked"), (1, "error"), (2, "working"), (3, "done")]
         .into_iter()
         .find(|(bucket, _)| counts[*bucket] > 0)?;
     match (counts[bucket], named[bucket]) {

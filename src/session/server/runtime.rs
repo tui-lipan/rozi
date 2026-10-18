@@ -1932,19 +1932,19 @@ fn next_work_started_at(
 
 /// The run start for one subject - a pane or one of its slots - given where it was and where it is.
 ///
-/// Quiescent ends the run; anything else continues an existing one rather than restarting it, so a
-/// block and later resume read as one run. Pure in `now` so per-slot behavior is testable.
+/// Stopping, successfully or not, ends the run; anything else continues an existing one rather
+/// than restarting it, so a block and later resume read as one run. Pure in `now` so per-slot
+/// behavior is testable.
 fn next_run_start(
     previous_status: Option<&str>,
     previous_started_at: Option<u64>,
     next_status: Option<&str>,
     now: u64,
 ) -> Option<u64> {
-    if next_status.is_none() || crate::session::protocol::status_is_quiescent(next_status) {
+    if next_status.is_none() || crate::session::protocol::status_ends_run(next_status) {
         return None;
     }
-    if previous_started_at.is_some()
-        && !crate::session::protocol::status_is_quiescent(previous_status)
+    if previous_started_at.is_some() && !crate::session::protocol::status_ends_run(previous_status)
     {
         return previous_started_at;
     }
@@ -2705,6 +2705,39 @@ mod tests {
         step(&mut scratch, runtime("claude", Working));
         let records = step(&mut scratch, runtime("codex", Idle));
         assert_eq!(records[0].completions, 0, "a new agent starts from zero");
+    }
+
+    /// A run that fails has ended - its clock stops - but it did not finish: the failure is its
+    /// own state to look at, not a result waiting to be read.
+    #[test]
+    fn a_failed_run_ends_without_counting_as_finished() {
+        assert_eq!(
+            next_run_start(Some("working"), Some(10), Some("error"), 20),
+            None
+        );
+        let report = |state| PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: protocol::AgentState::as_str(state).into(),
+                reason: None,
+                set_at: 1,
+            }),
+            detected_agent: Some(DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+                state: protocol::DetectedAgentState::Idle,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let mut scratch = AgentScratch::default();
+        let working = report(protocol::AgentState::Working);
+        scratch.observe(Vec::new(), &working);
+        let failed = report(protocol::AgentState::Error);
+        scratch.observe(scratch.agent_states(&working), &failed);
+        assert_eq!(scratch.records(pane_ref)[0].completions, 0);
     }
 
     /// Several agents in one pane finish separately: each published row counts its own runs, and

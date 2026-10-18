@@ -5849,7 +5849,7 @@ fn program_status_is_authoritative_without_clients_and_coalesces_progress() {
 }
 
 #[test]
-fn generic_error_stops_server_run_clock_without_changing_agent_state() {
+fn an_error_stops_the_server_run_clock() {
     let mut server = SessionServer::new_named("activity-error");
     let (client, _stream) = attach_client(&mut server);
     server.panes.insert(1, status_test_pane(1, None));
@@ -5864,10 +5864,6 @@ fn generic_error_stops_server_run_clock_without_changing_agent_state() {
     assert!(server.panes[&1].runtime.work_started_at.is_some());
     server.handle_message(client, set("error"));
     assert!(server.panes[&1].runtime.work_started_at.is_none());
-    assert_eq!(
-        protocol::AgentState::from_status("error"),
-        protocol::AgentState::Working
-    );
 }
 
 #[test]

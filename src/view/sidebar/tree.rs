@@ -83,6 +83,11 @@ pub(super) fn tree_tab(
         .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
         .directory_label_style(super::super::rozi_fg(theme))
         .file_label_style(super::super::fg_only(&theme.primary))
+        // Dotfiles are shown by default, so they recede rather than vanish.
+        .hidden_style(Style::new().dim())
+        // A change deep in one subtree reads as a single `src/view/sidebar` row, not three levels
+        // of directories that hold nothing else. Browsing keeps the real hierarchy.
+        .compact_directories(changed_only)
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty
         // styles — it never reads `theme.git_status` itself — so without this every marker and diff
         // stat renders in the plain row color. These cover the `M`/`A`/`D`/`R`/`?`/`!` markers and

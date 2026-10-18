@@ -2776,6 +2776,61 @@ mod tests {
         assert_eq!(scratch.records(pane_ref)[0].completions, 1);
     }
 
+    /// Hooks reporting on one published row finish that row's run, even while the publisher
+    /// still calls it idle.
+    #[test]
+    fn a_hook_report_finishes_the_row_it_speaks_for() {
+        let row = protocol::PublishedRow {
+            publisher: "7/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
+            id: "quiet".into(),
+            title: "quiet".into(),
+            status: "idle".into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("native-quiet".into()),
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let reported = |state| PaneRuntimeState {
+            rows: vec![row.clone()],
+            integration: Some(Box::new(protocol::AgentIntegrationReport {
+                integration: "hook-a".into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: protocol::AgentRef {
+                    pane: pane_ref.clone(),
+                    slot: None,
+                    incarnation: 40,
+                },
+                state,
+                reason: None,
+                native_session: Some("native-quiet".into()),
+                seq: 1,
+                reported_at_unix_ms: 42,
+            })),
+            ..PaneRuntimeState::default()
+        };
+        let mut scratch = AgentScratch::default();
+        let working = reported(protocol::AgentState::Working);
+        scratch.observe(Vec::new(), &working);
+        let done = reported(protocol::AgentState::Done);
+        scratch.observe(scratch.agent_states(&working), &done);
+        let row_record = scratch
+            .records(pane_ref)
+            .into_iter()
+            .find(|record| record.reference.slot.is_some())
+            .unwrap();
+        assert_eq!(row_record.completions, 1);
+    }
+
     #[test]
     fn integration_claim_restores_its_bound_reference_after_detection_reset() {
         let pane_ref = protocol::PaneRef {
@@ -4589,14 +4644,23 @@ mod tests {
         });
         pane.agent.detected_at = Some(Instant::now());
         pane.agent.foreground_job = Some(job.clone());
+        let before = pane.agent.agent_states(&pane.runtime);
         pane.runtime = compute_runtime_state(
             pane,
             &StubInspector,
             Some(&catalog()),
             &mut LazyProcessScan::default(),
         );
-        pane.agent.sync_references(&pane.runtime);
+        pane.agent.observe(before, &pane.runtime);
         pane.runtime.clone()
+    }
+
+    fn records(pane: &ServerPane) -> Vec<protocol::AgentRecord> {
+        pane.agent.records(protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 1,
+            generation: 1,
+        })
     }
 
     /// End to end, server poll to client edge. A supervised agent dies mid-turn and comes straight
@@ -4624,7 +4688,18 @@ mod tests {
             generation: 1,
         };
         let old_refs = server.agent.references(pane_ref.clone());
-        apply_pane_runtime_state(&mut client, working);
+        let mut attention = crate::state::AgentAttention::default();
+        let mut deliver = |client: &mut crate::state::Pane, server: &ServerPane, runtime| {
+            let records = records(server);
+            attention.observe_records(&records, crate::state::FirstSighting::New);
+            let applied = apply_pane_runtime_state(client, records, runtime);
+            let unseen = client
+                .agent_runtimes()
+                .iter()
+                .any(|runtime| attention.runtime_finished_unseen(runtime));
+            (applied, unseen)
+        };
+        deliver(&mut client, &server, working);
         assert!(client.terminal.is_working());
 
         let new = agent_job(100, &[(100, "sv"), (102, "pi")]);
@@ -4634,25 +4709,24 @@ mod tests {
         let restarted = publish(&mut server, &new);
         assert_eq!(state(&restarted), Some(DetectedAgentState::Idle));
         assert_ne!(server.agent.references(pane_ref), old_refs);
-        let applied = apply_pane_runtime_state(&mut client, restarted);
+        let (applied, unseen) = deliver(&mut client, &server, restarted);
         assert!(
             !applied.edges.finished,
             "no finish edge for a run that died"
         );
-        assert!(
-            !client.terminal.finished_unseen,
-            "and no unseen-finish pulse"
-        );
+        assert!(!unseen, "and no unseen finish");
 
         // The new process's own run is an ordinary lifecycle again.
         server.agent.startup = None;
         server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
-        apply_pane_runtime_state(&mut client, publish(&mut server, &new));
+        let working = publish(&mut server, &new);
+        deliver(&mut client, &server, working);
         server.agent.settled = None;
         server.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
-        let applied = apply_pane_runtime_state(&mut client, publish(&mut server, &new));
+        let finished = publish(&mut server, &new);
+        let (applied, unseen) = deliver(&mut client, &server, finished);
         assert!(applied.edges.finished, "the new process's run does finish");
-        assert!(client.terminal.finished_unseen);
+        assert!(unseen);
     }
 
     /// The hint rides the job's first process - here a wrapper that stays alive beside the agent

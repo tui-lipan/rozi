@@ -277,7 +277,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                         row_activity(published_row, kind_label),
                                         pane.terminal.row_age(published_row),
                                         ui.and_then(|ui| ui.last_run),
-                                        ui.is_some_and(|ui| ui.finished_unseen),
+                                        pane.row_finished_unseen(&key, &state.agent_attention),
                                         Some(SlotRef {
                                             key,
                                             index,
@@ -301,7 +301,16 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                         ),
                                         pane.terminal.status_age(),
                                         pane.terminal.last_run,
-                                        pane.terminal.finished_unseen,
+                                        if occupant.is_agent() {
+                                            pane.agent_runtimes().iter().any(|runtime| {
+                                                runtime.reference.slot.is_none()
+                                                    && state
+                                                        .agent_attention
+                                                        .runtime_finished_unseen(runtime)
+                                            })
+                                        } else {
+                                            pane.terminal.finished_unseen
+                                        },
                                         None,
                                     )
                                 };
@@ -1018,6 +1027,16 @@ mod tests {
         ];
     }
 
+    /// Give each of `pane`'s agents one finished run this client has not looked at.
+    fn finish_unseen(state: &mut State, pane: &mut Pane) {
+        state
+            .agent_attention
+            .observe_records(&pane.agents, crate::state::FirstSighting::Baseline);
+        for record in &mut pane.agents {
+            record.completions += 1;
+        }
+    }
+
     fn sync_published_refs(pane: &mut Pane) {
         pane.agents = pane
             .terminal
@@ -1590,15 +1609,7 @@ mod tests {
         publisher.terminal.published_rows =
             vec![row("shown", "idle", true), row("hidden", "idle", false)];
         sync_published_refs(&mut publisher);
-        for id in ["shown", "hidden"] {
-            publisher.terminal.published_row_ui.insert(
-                crate::session::protocol::RowKey::new("sessions", id),
-                crate::pane::PublishedRowUiState {
-                    finished_unseen: true,
-                    last_run: None,
-                },
-            );
-        }
+        finish_unseen(&mut state, &mut publisher);
         state.current_mut().workspaces[0].panes = vec![publisher];
         state.window_focused = true;
         state.current_mut().focused_pane = Some(1);
@@ -1641,7 +1652,7 @@ mod tests {
     fn finished_unseen_rows_sort_as_done_not_idle() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut finished = pane(2, Some("idle"), false);
-        finished.terminal.finished_unseen = true;
+        finish_unseen(&mut state, &mut finished);
         state.current_mut().workspaces[0].panes = vec![pane(1, Some("idle"), false), finished];
 
         assert_eq!(
@@ -1935,13 +1946,14 @@ mod tests {
     }
 
     /// A run the hooks report finishing, on a row the publisher never called working, still banks
-    /// its length and raises the finish pulse.
+    /// its length. The finish itself is the server's count, so the client reports none of its own.
     #[test]
-    fn a_hook_reported_finish_raises_the_rows_finish_edge() {
+    fn a_hook_reported_finish_banks_the_rows_run() {
         use crate::session::protocol::AgentState;
         let mut terminal = crate::pane::TerminalPane::new(100);
         let mut quiet = row("quiet", "idle", false);
         quiet.native_session = Some("native-quiet".into());
+        quiet.work_started_at = Some(1);
         assert!(
             terminal
                 .apply_rows(
@@ -1955,10 +1967,9 @@ mod tests {
             Some(hook_report("native-quiet", AgentState::Done)),
         );
         let quiet_key = crate::session::protocol::RowKey::new("sessions", "quiet");
-        assert_eq!(finished, vec![quiet_key.clone()]);
-        assert!(terminal.published_row_ui[&quiet_key].finished_unseen);
-        // Releasing the claim with the publisher still saying idle is not a second finish.
-        assert!(terminal.apply_rows(vec![quiet], None).is_empty());
+        assert!(finished.is_empty());
+        assert!(terminal.published_row_ui[&quiet_key].last_run.is_some());
+        assert!(!terminal.published_row_ui[&quiet_key].finished_unseen);
     }
 
     #[test]

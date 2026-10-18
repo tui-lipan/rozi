@@ -79,6 +79,9 @@ pub(super) fn bind_attached_pane_backends(
         if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, meta.pane_id, false) {
             apply_pane_meta(pane, &meta);
         }
+        ctx.state
+            .agent_attention
+            .observe_records(&meta.agents, crate::state::FirstSighting::Baseline);
         // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
         // would pin next_pane_id at MAX and collide every later spawn with the popup slot.
         if meta.pane_id != crate::state::POPUP_PANE_ID {
@@ -127,6 +130,9 @@ pub(super) fn apply_attached_panes(
         if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, attached.pane_id, false) {
             apply_pane_meta(pane, &attached);
         }
+        ctx.state
+            .agent_attention
+            .observe_records(&attached.agents, crate::state::FirstSighting::Baseline);
         if attached.pane_id != crate::state::POPUP_PANE_ID {
             let next = ctx
                 .state
@@ -312,6 +318,13 @@ mod tests {
     };
     use crate::update::session::status::apply_pane_runtime_state;
 
+    fn record(completions: u64) -> crate::session::protocol::AgentRecord {
+        crate::session::protocol::AgentRecord {
+            reference: crate::session::protocol::AgentRef::for_test(1, 7, None),
+            completions,
+        }
+    }
+
     #[test]
     fn attaching_to_a_working_agent_preserves_its_first_completion() {
         let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
@@ -329,7 +342,7 @@ mod tests {
             &PaneMeta {
                 pane_id: 1,
                 generation: 7,
-                agents: Vec::new(),
+                agents: vec![record(0)],
                 cols: 80,
                 rows: 24,
                 pid: Some(101),
@@ -344,9 +357,11 @@ mod tests {
         assert!(pane.terminal.is_working());
         runtime.sequence += 1;
         runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
-        let applied = apply_pane_runtime_state(&mut pane, runtime);
+        let mut attention = crate::state::AgentAttention::default();
+        attention.observe_records(&pane.agents, crate::state::FirstSighting::Baseline);
+        let applied = apply_pane_runtime_state(&mut pane, vec![record(1)], runtime);
         assert!(applied.edges.finished);
         assert!(!applied.edges.became_blocked);
-        assert!(pane.terminal.finished_unseen);
+        assert!(pane.finished_unseen(&attention));
     }
 }

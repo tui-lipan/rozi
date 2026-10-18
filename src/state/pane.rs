@@ -244,6 +244,55 @@ impl Pane {
         crate::session::protocol::effective_agent_runtimes(&self.semantic_runtime(), &self.agents)
     }
 
+    /// The agents this pane shows: its own, and of its published rows the ones on screen. Focusing
+    /// the pane looks at these and only these - a conversation behind another tab of the same
+    /// program has not been seen.
+    pub fn agents_on_screen(&self) -> Vec<crate::session::protocol::AgentRuntime> {
+        let rows = &self.terminal.published_rows;
+        self.agent_runtimes()
+            .into_iter()
+            .filter(|runtime| {
+                runtime
+                    .reference
+                    .slot
+                    .as_ref()
+                    .is_none_or(|slot| rows.iter().any(|row| row.has_key(slot) && row.active))
+            })
+            .collect()
+    }
+
+    /// Whether this pane finished something nobody has looked at: an agent it shows, by
+    /// `attention`, or its own activity status. Drives the pane's finished border and its
+    /// workspace's marker.
+    pub fn finished_unseen(&self, attention: &crate::state::AgentAttention) -> bool {
+        self.terminal.finished_unseen
+            || self
+                .agents_on_screen()
+                .iter()
+                .any(|runtime| attention.runtime_finished_unseen(runtime))
+    }
+
+    /// Whether one published row finished something nobody has looked at: by `attention` for an
+    /// agent row, by the pane's own record of it for an activity row.
+    pub fn row_finished_unseen(
+        &self,
+        key: &crate::session::protocol::RowKey,
+        attention: &crate::state::AgentAttention,
+    ) -> bool {
+        match self
+            .agent_runtimes()
+            .into_iter()
+            .find(|runtime| runtime.reference.slot.as_ref() == Some(key))
+        {
+            Some(runtime) => attention.runtime_finished_unseen(&runtime),
+            None => self
+                .terminal
+                .published_row_ui
+                .get(key)
+                .is_some_and(|ui| ui.finished_unseen),
+        }
+    }
+
     /// The activity projection: everything happening in this pane, agents and activities alike,
     /// for the Activity sidebar.
     pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {

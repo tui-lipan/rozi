@@ -39,6 +39,17 @@ pub(super) fn apply(
         return Update::none();
     }
     let previous = std::mem::replace(&mut ctx.state.local_agent_snapshot, snapshot);
+    if let Some(current) = &ctx.state.local_agent_snapshot {
+        let sighting = if previous.is_some() {
+            crate::state::FirstSighting::New
+        } else {
+            crate::state::FirstSighting::Baseline
+        };
+        ctx.state
+            .agent_attention
+            .observe_summaries(&current.agents, sighting);
+    }
+    ctx.state.prune_agent_attention();
     let (Some(previous), Some(current)) = (previous, ctx.state.local_agent_snapshot.as_ref())
     else {
         return Update::full();

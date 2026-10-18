@@ -738,7 +738,11 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .map(|idx| {
             let count = state.current().workspaces[idx].visible_count();
             let workspace = &state.current().workspaces[idx];
-            let marker = workspace_marker(workspace, &state.config.workbar.alert);
+            let marker = workspace_marker(
+                workspace,
+                &state.config.workbar.alert,
+                &state.agent_attention,
+            );
             let label =
                 workspace_tab_label(state.current().workspaces[idx].name.as_deref(), idx, count);
             let label = if workspace_tab_shows_recording(state, idx) {
@@ -932,6 +936,7 @@ fn live_pane(pane: &Pane) -> bool {
 pub(crate) fn workspace_marker(
     workspace: &Workspace,
     alert: &WorkbarAlertConfig,
+    attention: &crate::state::AgentAttention,
 ) -> Option<WorkspaceMarker> {
     if alert.mode == AlertMode::Off {
         return None;
@@ -942,7 +947,7 @@ pub(crate) fn workspace_marker(
     {
         return Some(WorkspaceMarker::Attention);
     }
-    if alert.finished && panes.clone().any(|pane| pane.terminal.finished_unseen) {
+    if alert.finished && panes.clone().any(|pane| pane.finished_unseen(attention)) {
         return Some(WorkspaceMarker::Finished);
     }
     if alert.working && panes.clone().any(|pane| pane.terminal.is_working()) {
@@ -975,7 +980,12 @@ pub(crate) fn has_inactive_marked_workspace(state: &crate::state::State) -> bool
         .enumerate()
         .any(|(index, workspace)| {
             index != state.current().active_workspace
-                && workspace_marker(workspace, &state.config.workbar.alert).is_some()
+                && workspace_marker(
+                    workspace,
+                    &state.config.workbar.alert,
+                    &state.agent_attention,
+                )
+                .is_some()
         })
 }
 
@@ -1303,17 +1313,20 @@ mod tests {
         workspace.panes.push(pane);
         let alert = WorkbarAlertConfig::default();
         assert_eq!(
-            workspace_marker(&workspace, &alert),
+            workspace_marker(&workspace, &alert, &Default::default()),
             Some(WorkspaceMarker::Attention)
         );
 
         workspace.panes[0].activity.bell = false;
         assert_eq!(
-            workspace_marker(&workspace, &alert),
+            workspace_marker(&workspace, &alert, &Default::default()),
             Some(WorkspaceMarker::Finished)
         );
         workspace.panes[0].closing = true;
-        assert_eq!(workspace_marker(&workspace, &alert), None);
+        assert_eq!(
+            workspace_marker(&workspace, &alert, &Default::default()),
+            None
+        );
         // `off` is the one switch that silences the whole surface: no glyph, so no color and
         // nothing for the pulse to arm on either.
         workspace.panes[0].closing = false;
@@ -1321,14 +1334,18 @@ mod tests {
             mode: AlertMode::Off,
             ..alert
         };
-        assert_eq!(workspace_marker(&workspace, &off), None);
+        assert_eq!(
+            workspace_marker(&workspace, &off, &Default::default()),
+            None
+        );
         assert_eq!(
             workspace_marker(
                 &workspace,
                 &WorkbarAlertConfig {
                     mode: AlertMode::Static,
                     ..alert
-                }
+                },
+                &Default::default(),
             ),
             Some(WorkspaceMarker::Finished),
             "static still marks; it only stops the tab from breathing"
@@ -1356,7 +1373,11 @@ mod tests {
         let mut workspace = Workspace::new(1);
         workspace.panes.push(pane);
         assert_eq!(
-            workspace_marker(&workspace, &WorkbarAlertConfig::default()),
+            workspace_marker(
+                &workspace,
+                &WorkbarAlertConfig::default(),
+                &Default::default()
+            ),
             Some(WorkspaceMarker::Attention)
         );
     }

@@ -214,6 +214,14 @@ fn apply_agents(
         .remote
         .agents
         .insert(target.clone(), agents.clone());
+    let sighting = if previous.is_some() {
+        crate::state::FirstSighting::New
+    } else {
+        crate::state::FirstSighting::Baseline
+    };
+    ctx.state
+        .agent_attention
+        .observe_summaries(&agents, sighting);
     let Some(previous) = previous else {
         return;
     };

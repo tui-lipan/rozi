@@ -22,43 +22,11 @@ pub(crate) fn status_is_active_run(value: Option<&str>) -> bool {
     value.is_some() && !status_is_quiescent(value)
 }
 
-/// React to an agent-status transition. `previous_age` is how long the outgoing status had held,
-/// sampled before it was overwritten.
-///
-/// Stamps the local fallback, banks the length of an active run as it ends so a finished run can
-/// report what it cost, and updates the "unseen finish" pulse: armed on an active -> quiescent edge
-/// (the run finished while you were looking elsewhere), disarmed the moment the agent resumes
-/// working, so a spinning agent never wears a completed-dot. A `blocked` outcome is deliberately
-/// left un-armed: it already has its own loud glyph, and the server-owned run timestamp keeps the
-/// same timer ready for a later resume. A separate focus chokepoint clears the flag once the pane is
-/// actually looked at.
+/// The two alertable transitions a pane or a summary can report: its agent started waiting on the
+/// user, or a run ended.
 pub(crate) struct AgentEdges {
     pub(crate) became_blocked: bool,
     pub(crate) finished: bool,
-}
-
-/// The two alertable transitions between one agent status and the next, computed from the status
-/// strings alone.
-///
-/// This is the rule for any agent whose state arrives as a value rather than as a pane: a host
-/// monitor's summary of a session nothing here is attached to, for instance. A pane knows more
-/// about itself than its reported status says — a detected blocking prompt can outrank a stale
-/// `idle` — so [`update_agent_status_edge`] keeps its own richer blocked test and takes only
-/// `finished` from here.
-///
-/// `finished` is an *ended run*, not merely a quiescent agent: it fires on `working -> anything
-/// but working or blocked`, so an agent that was already idle when it was first seen never
-/// reports having just finished.
-pub(crate) fn agent_status_edges(previous: Option<&str>, current: Option<&str>) -> AgentEdges {
-    use crate::session::protocol::pane_status;
-    AgentEdges {
-        became_blocked: !status_is(previous, pane_status::BLOCKED)
-            && status_is(current, pane_status::BLOCKED),
-        finished: status_is(previous, pane_status::WORKING)
-            && current.is_some()
-            && !status_is(current, pane_status::WORKING)
-            && !status_is(current, pane_status::BLOCKED),
-    }
 }
 
 /// The alertable transitions between two summaries of one agent, for a monitor that only ever
@@ -80,11 +48,22 @@ pub(crate) fn summary_edges(
     }
 }
 
+/// React to a pane's status transition. `previous_age` is how long the outgoing status had held,
+/// sampled before it was overwritten. `agent_finished` says whether the pane's own agent finished a
+/// run in this update, by the server's count (see [`finished_records`]).
+///
+/// Stamps the local fallback and banks the length of an active run as it ends, so a finished run
+/// can report what it cost. Whether an agent's finish has been seen is not kept here: that is
+/// [`crate::state::AgentAttention`]'s, for every agent alike. A pane whose status names no agent - a
+/// `rozi status` activity - keeps its own "unseen finish" flag: armed when an active status ends
+/// successfully, disarmed when it becomes active or fails again, and cleared when the pane is
+/// looked at.
 pub(crate) fn update_agent_status_edge(
     pane: &mut crate::pane::TerminalPane,
     previous: Option<&str>,
     previous_age: Option<std::time::Duration>,
     previous_blocked: bool,
+    agent_finished: bool,
 ) -> AgentEdges {
     let current = pane.agent_status();
     let current = current.as_deref();
@@ -107,25 +86,40 @@ pub(crate) fn update_agent_status_edge(
         pane.status_since = Some(std::time::Instant::now());
     }
     let finished = if generic {
-        previous_activity.is_some_and(|state| !state.is_terminal())
-            && current_activity.is_some_and(ActivityState::is_successful_terminal)
+        let finished = previous_activity.is_some_and(|state| !state.is_terminal())
+            && current_activity.is_some_and(ActivityState::is_successful_terminal);
+        if current_activity.is_some_and(|state| !state.is_successful_terminal()) {
+            pane.finished_unseen = false;
+        } else if finished {
+            pane.finished_unseen = true;
+        }
+        finished
     } else {
-        agent_status_edges(previous, current).finished
-    };
-    let clear_finish = if generic {
-        current_activity.is_some_and(|state| !state.is_successful_terminal())
-    } else {
-        status_is(current, crate::session::protocol::pane_status::WORKING)
-    };
-    if clear_finish {
         pane.finished_unseen = false;
-    } else if finished {
-        pane.finished_unseen = true;
-    }
+        agent_finished
+    };
     AgentEdges {
         became_blocked: !previous_blocked && pane.is_blocked(),
         finished,
     }
+}
+
+/// Which of a pane's agents finished a run between two sets of its records: the pane's own agent
+/// (`None`) and each published row by key. Read from the server's completion counts, so a finish
+/// is a finish whether or not this client saw the agent working first.
+pub(crate) fn finished_records(
+    previous: &[crate::session::protocol::AgentRecord],
+    current: &[crate::session::protocol::AgentRecord],
+) -> Vec<Option<crate::session::protocol::RowKey>> {
+    current
+        .iter()
+        .filter(|record| {
+            previous.iter().any(|earlier| {
+                earlier.reference == record.reference && record.completions > earlier.completions
+            })
+        })
+        .map(|record| record.reference.slot.clone())
+        .collect()
 }
 
 pub(crate) struct AppliedPaneRuntime {
@@ -137,8 +131,11 @@ pub(crate) struct AppliedPaneRuntime {
 
 pub(crate) fn apply_pane_runtime_state(
     pane: &mut crate::state::Pane,
+    agents: Vec<crate::session::protocol::AgentRecord>,
     state: PaneRuntimeState,
 ) -> AppliedPaneRuntime {
+    let finished = finished_records(&pane.agents, &agents);
+    pane.agents = agents;
     let previous_status = pane.terminal.reported_status.clone();
     let previous_agent_status = pane.terminal.agent_status();
     // Sampled before the incoming runtime state overwrites the status it dates.
@@ -172,12 +169,14 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.recording = state.recording;
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
-    let finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
+    let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
+    finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,
         previous_agent_status.as_deref(),
         previous_age,
         previous_blocked,
+        finished.contains(&None),
     );
     if relaunched {
         edges.finished = false;
@@ -214,13 +213,15 @@ pub(crate) fn pane_runtime_changed(
                 && pane.pty_generation == generation
                 && state.sequence > pane.terminal.runtime_sequence
             {
-                pane.agents.clone_from(&agents);
-                apply_pane_runtime_state(pane, state);
+                apply_pane_runtime_state(pane, agents.clone(), state);
             }
             if at_prompt {
                 flush_attachment_replay_input(attachment, pane_id, generation);
             }
         }
+        ctx.state
+            .agent_attention
+            .observe_records(&agents, crate::state::FirstSighting::New);
         return Update::none();
     }
     let at_prompt = matches!(
@@ -239,11 +240,10 @@ pub(crate) fn pane_runtime_changed(
         && state.sequence > pane.terminal.runtime_sequence
     {
         title = Some(pane.display_title(None));
-        pane.agents = agents;
         if pane.terminal.recording != state.recording {
             recording_changed = Some(state.recording);
         }
-        let applied = apply_pane_runtime_state(pane, state);
+        let applied = apply_pane_runtime_state(pane, agents.clone(), state);
         reported_status = applied.current_status.clone();
         finished_rows = applied.finished_rows;
         edges = Some(applied.edges);
@@ -255,6 +255,9 @@ pub(crate) fn pane_runtime_changed(
             ));
         }
     }
+    ctx.state
+        .agent_attention
+        .observe_records(&agents, crate::state::FirstSighting::New);
     if let Some(recording) = recording_changed {
         crate::ops::recording::runtime_recording_changed(&mut ctx.state, epoch, pane_id, recording);
         // Start/Stop pane recording reads as the focused pane's flag, and Mark needs it set.
@@ -738,7 +741,7 @@ mod tests {
                 // An old completion must not survive a new failure.
                 pane.finished_unseen = true;
                 let age = Some(std::time::Duration::from_secs(12));
-                let edges = update_agent_status_edge(&mut pane, Some(previous), age, false);
+                let edges = update_agent_status_edge(&mut pane, Some(previous), age, false, false);
                 assert_eq!(pane.last_run, age, "{previous} -> {current}");
                 assert_eq!(
                     edges.finished,
@@ -746,12 +749,11 @@ mod tests {
                     "{previous} -> {current}"
                 );
                 assert_eq!(pane.finished_unseen, current != "error");
-                let repeated = update_agent_status_edge(&mut pane, Some(current), age, false);
+                let repeated =
+                    update_agent_status_edge(&mut pane, Some(current), age, false, false);
                 assert!(!repeated.finished);
             }
         }
-        assert!(agent_status_edges(Some("working"), Some("error")).finished);
-        assert!(!agent_status_edges(Some("compacting"), Some("done")).finished);
     }
 
     #[test]
@@ -767,11 +769,11 @@ mod tests {
             }),
             ..PaneRuntimeState::default()
         };
-        let applied = apply_pane_runtime_state(&mut pane, runtime.clone());
+        let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime.clone());
         assert!(applied.edges.became_blocked);
         assert!(!applied.edges.finished);
         assert!(!pane.terminal.finished_unseen);
-        let applied = apply_pane_runtime_state(&mut pane, runtime);
+        let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
         assert!(!applied.edges.became_blocked);
         assert!(!applied.edges.finished);
     }
@@ -797,14 +799,14 @@ mod tests {
                 }),
                 ..PaneRuntimeState::default()
             };
-            let applied = apply_pane_runtime_state(&mut pane, runtime.clone());
+            let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime.clone());
             assert!(!applied.edges.finished);
             assert!(!applied.edges.became_blocked);
             assert!(!pane.terminal.finished_unseen);
             runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
-            apply_pane_runtime_state(&mut pane, runtime.clone());
+            apply_pane_runtime_state(&mut pane, Vec::new(), runtime.clone());
             runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Blocked;
-            let applied = apply_pane_runtime_state(&mut pane, runtime);
+            let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
             assert!(applied.edges.became_blocked);
             assert!(!applied.edges.finished);
         }

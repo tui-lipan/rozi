@@ -165,8 +165,8 @@ pub(crate) fn transient_error(error: &str) -> bool {
     .any(|word| error.contains(word))
 }
 
-/// A local branch's commit and where `git push` publishes it: the PR head branch and, when the
-/// push remote's URL names one, the owner of the PR head repository.
+/// A local branch's commit and the remote branch most likely to hold its PR: the head branch and,
+/// when the push remote's URL names one, the owner of the head repository.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Head<'a> {
     oid: &'a str,
@@ -204,10 +204,11 @@ fn push_urls(cwd: &Path, refs: &str) -> Result<BTreeMap<String, String>, String>
 
 /// Parses `for-each-ref` lines of branch, commit, push remote, upstream remote, and upstream ref.
 ///
-/// A branch that pushes to the remote it tracks publishes to its upstream branch, which may be
-/// named differently after `git push -u origin local:remote`. A triangular branch that pulls from
-/// one remote and pushes to another publishes under its own name, as `push.default=current` and
-/// `matching` always do.
+/// This infers the PR branch rather than resolving `@{push}`, which `push.default=simple` leaves
+/// unset for a branch renamed with `git push -u origin local:remote`. A branch that pushes to the
+/// remote it tracks is matched by its upstream branch unless `push.default` is `current` or
+/// `matching`. A triangular branch that pulls from one remote and pushes to another is matched by
+/// its own name.
 fn parse_heads<'a>(
     refs: &'a str,
     push_default: &str,

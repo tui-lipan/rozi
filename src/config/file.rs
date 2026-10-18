@@ -517,7 +517,6 @@ pub(super) struct PaneFileConfig {
     highlight_focused_titlebar: Option<bool>,
     focus_on_hover: Option<bool>,
     focus_on_hover_pause_modifier: Option<String>,
-    scroll_multiplier: Option<u16>,
     show_workbar: Option<bool>,
     workbar_gap: Option<bool>,
     workbar_background: Option<bool>,
@@ -604,6 +603,7 @@ struct InputFileConfig {
     prefix: Option<String>,
     modifier_shortcuts: Option<bool>,
     which_key: Option<String>,
+    scroll_multiplier: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -929,6 +929,7 @@ fn load_config_from_text_with_extensions(
         parsed.input.prefix,
         parsed.input.modifier_shortcuts,
         parsed.input.which_key,
+        parsed.input.scroll_multiplier,
         &mut warnings,
     );
     config.input = input;
@@ -1084,15 +1085,6 @@ fn load_config_from_text_with_extensions(
                 "Ignored unknown pane.focus_on_hover_pause_modifier `{modifier}` (expected `none`, `shift`, `ctrl`, or `alt`)"
             )),
         }
-    }
-    if let Some(multiplier) = parsed.pane.scroll_multiplier {
-        let clamped = multiplier.clamp(PANE_MIN_SCROLL_MULTIPLIER, PANE_MAX_SCROLL_MULTIPLIER);
-        if clamped != multiplier {
-            warnings.push(format!(
-                "pane.scroll_multiplier {multiplier} out of range; clamped to {clamped}"
-            ));
-        }
-        config.pane.scroll_multiplier = clamped;
     }
     if let Some(show_workbar) = parsed.pane.show_workbar {
         config.pane.show_workbar = show_workbar;
@@ -2062,7 +2054,6 @@ mod file_tests {
             highlight_focused_titlebar = false
             focus_on_hover = false
             focus_on_hover_pause_modifier = "ctrl"
-            scroll_multiplier = 5
             show_workbar = false
             workbar_gap = false
             workbar_background = false
@@ -2089,7 +2080,6 @@ mod file_tests {
             parsed.pane.focus_on_hover_pause_modifier.as_deref(),
             Some("ctrl")
         );
-        assert_eq!(parsed.pane.scroll_multiplier, Some(5));
         assert_eq!(parsed.pane.show_workbar, Some(false));
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_background, Some(false));
@@ -2138,28 +2128,28 @@ mod file_tests {
     }
 
     #[test]
-    fn pane_scroll_multiplier_defaults_to_three_and_clamps_out_of_range_values() {
-        assert_eq!(Config::default().pane.scroll_multiplier, 3);
+    fn input_scroll_multiplier_defaults_to_three_and_clamps_out_of_range_values() {
+        assert_eq!(Config::default().input.scroll_multiplier, 3);
 
         let loaded =
-            load_config_from_text("[pane]\nscroll_multiplier = 7", Path::new("config.toml"));
-        assert_eq!(loaded.config.pane.scroll_multiplier, 7);
+            load_config_from_text("[input]\nscroll_multiplier = 7", Path::new("config.toml"));
+        assert_eq!(loaded.config.input.scroll_multiplier, 7);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 
         for (multiplier, expected) in [
-            (0, PANE_MIN_SCROLL_MULTIPLIER),
-            (500, PANE_MAX_SCROLL_MULTIPLIER),
+            (0, INPUT_MIN_SCROLL_MULTIPLIER),
+            (500, INPUT_MAX_SCROLL_MULTIPLIER),
         ] {
             let loaded = load_config_from_text(
-                &format!("[pane]\nscroll_multiplier = {multiplier}"),
+                &format!("[input]\nscroll_multiplier = {multiplier}"),
                 Path::new("config.toml"),
             );
-            assert_eq!(loaded.config.pane.scroll_multiplier, expected);
+            assert_eq!(loaded.config.input.scroll_multiplier, expected);
             assert!(
                 loaded
                     .warnings
                     .iter()
-                    .any(|warning| warning.contains("scroll_multiplier")),
+                    .any(|warning| warning.contains("input.scroll_multiplier")),
                 "{:?}",
                 loaded.warnings
             );

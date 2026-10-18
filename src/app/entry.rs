@@ -336,6 +336,7 @@ pub fn run() -> Result<()> {
         // reload cannot move it. Detaching and reattaching picks up a new value.
         .frame_rate(plan.config.frame_rate)
         .mouse(true)
+        .scroll_wheel_multiplier(plan.config.input.scroll_multiplier)
         // Every border, icon, and badge is non-ASCII. A terminal that draws UTF-8 as separate bytes,
         // such as a BSD console, turns the whole UI into noise in which nothing can be found -
         // including the way out. Refused before the terminal is touched, see below.

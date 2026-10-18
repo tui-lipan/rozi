@@ -1248,7 +1248,7 @@ fn sidebar_activity() {
     let agent_pane = |id: u32, label: &str, status: &str, cwd: &str| {
         let mut pane = live_pane(id);
         pane.terminal.detected_agent = Some(DetectedAgent {
-            agent: AgentIdentity::new(&label.to_lowercase(), label).into(),
+            agent: AgentIdentity::new(label.to_lowercase(), label).into(),
             state: DetectedAgentState::Idle,
         });
         pane.terminal.reported_status = Some(PaneStatus {

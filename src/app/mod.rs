@@ -332,6 +332,7 @@ impl Component for AppRoot {
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
+        ctx.set_scroll_wheel_multiplier(ctx.state.config.input.scroll_multiplier);
         ctx.state.terminal_presentation_subscription =
             Some(ctx.observe_terminal_presentations(ctx.link().callback(Msg::TerminalPresented)));
         commands::sync(ctx);

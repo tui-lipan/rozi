@@ -157,6 +157,9 @@ pub fn nearest_resize_corner_from_local(
         .unwrap_or(ResizeCorner::LowerRight)
 }
 
+/// Resize a floating rect by dragging one corner. The pane stays where it is: one already partly
+/// outside `bounds` is not pulled back in. A dragged edge may reach the bounds edge, or stay as far
+/// past it as it already was, and the pane keeps the visible margin a move would keep.
 pub fn resize_float_rect_from_corner(
     rect: FloatRect,
     corner: ResizeCorner,
@@ -164,49 +167,42 @@ pub fn resize_float_rect_from_corner(
     dy: f32,
     bounds: FloatRect,
 ) -> FloatRect {
-    let rect = clamp_float_rect(rect, bounds);
+    let rect = clamp_floating_rect(rect, bounds);
     let max_w = bounds.w.max(1.0);
     let max_h = bounds.h.max(1.0);
     let min_w = max_w.min(18.0);
     let min_h = max_h.min(6.0);
+    let margin_x = OFFSCREEN_MIN_VISIBLE.min(min_w);
+    let margin_y = OFFSCREEN_MIN_VISIBLE.min(min_h);
+    let bounds_right = bounds.x + bounds.w;
+    let bounds_bottom = bounds.y + bounds.h;
     let mut left = rect.x;
     let mut right = rect.x + rect.w;
     let mut top = rect.y;
     let mut bottom = rect.y + rect.h;
 
     match corner {
-        ResizeCorner::UpperLeft => {
-            left += dx;
-            top += dy;
-        }
-        ResizeCorner::UpperRight => {
-            right += dx;
-            top += dy;
-        }
-        ResizeCorner::LowerLeft => {
-            left += dx;
-            bottom += dy;
-        }
-        ResizeCorner::LowerRight => {
-            right += dx;
-            bottom += dy;
-        }
-    }
-
-    match corner {
         ResizeCorner::UpperLeft | ResizeCorner::LowerLeft => {
-            left = left.clamp(bounds.x, right - min_w);
+            let outer = bounds.x.min(left).max(right - max_w);
+            let inner = (right - min_w).min(bounds_right - margin_x);
+            left = (left + dx).clamp(outer.min(inner), inner);
         }
         ResizeCorner::UpperRight | ResizeCorner::LowerRight => {
-            right = right.clamp(left + min_w, bounds.x + bounds.w);
+            let outer = bounds_right.max(right).min(left + max_w);
+            let inner = (left + min_w).max(bounds.x + margin_x);
+            right = (right + dx).clamp(inner, outer.max(inner));
         }
     }
     match corner {
         ResizeCorner::UpperLeft | ResizeCorner::UpperRight => {
-            top = top.clamp(bounds.y, bottom - min_h);
+            let outer = bounds.y.min(top).max(bottom - max_h);
+            let inner = (bottom - min_h).min(bounds_bottom - margin_y);
+            top = (top + dy).clamp(outer.min(inner), inner);
         }
         ResizeCorner::LowerLeft | ResizeCorner::LowerRight => {
-            bottom = bottom.clamp(top + min_h, bounds.y + bounds.h);
+            let outer = bounds_bottom.max(bottom).min(top + max_h);
+            let inner = (top + min_h).max(bounds.y + margin_y);
+            bottom = (bottom + dy).clamp(inner, outer.max(inner));
         }
     }
 
@@ -518,6 +514,67 @@ mod tests {
         );
         assert_eq!(rect.x, OFFSCREEN_MIN_VISIBLE - rect.w);
         assert_eq!(rect.y, OFFSCREEN_MIN_VISIBLE - rect.h);
+    }
+
+    #[test]
+    fn resizing_a_partly_offscreen_float_keeps_its_position() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 30.0,
+        };
+        let rect = FloatRect {
+            x: 80.0,
+            y: 20.0,
+            w: 40.0,
+            h: 20.0,
+        };
+
+        let shrunk = resize_float_rect_from_corner(rect, ResizeCorner::UpperLeft, 2.0, 1.0, bounds);
+        assert_eq!(
+            shrunk,
+            FloatRect {
+                x: 82.0,
+                y: 21.0,
+                w: 38.0,
+                h: 19.0,
+            }
+        );
+
+        // The offscreen edges may not travel further out.
+        let grown = resize_float_rect_from_corner(rect, ResizeCorner::LowerRight, 5.0, 5.0, bounds);
+        assert_eq!(grown, rect);
+
+        // Shrinking from the visible side stops at the visible margin.
+        let narrowed =
+            resize_float_rect_from_corner(rect, ResizeCorner::UpperLeft, 50.0, 0.0, bounds);
+        assert_eq!(narrowed.x, bounds.w - OFFSCREEN_MIN_VISIBLE);
+        assert_eq!(narrowed.x + narrowed.w, rect.x + rect.w);
+    }
+
+    #[test]
+    fn resizing_an_onscreen_float_stays_within_bounds() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 30.0,
+        };
+        let rect = FloatRect {
+            x: 10.0,
+            y: 5.0,
+            w: 40.0,
+            h: 20.0,
+        };
+
+        let grown =
+            resize_float_rect_from_corner(rect, ResizeCorner::LowerRight, 200.0, 200.0, bounds);
+        assert_eq!(grown.x + grown.w, bounds.w);
+        assert_eq!(grown.y + grown.h, bounds.h);
+        let grown =
+            resize_float_rect_from_corner(rect, ResizeCorner::UpperLeft, -50.0, -50.0, bounds);
+        assert_eq!((grown.x, grown.y), (0.0, 0.0));
     }
 
     #[test]

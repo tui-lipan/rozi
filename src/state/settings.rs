@@ -1018,7 +1018,7 @@ impl SettingsNumberEditor {
         match action {
             SettingsAction::EditPadding => Some(Self::padding(config.pane.padding)),
             SettingsAction::EditScrollMultiplier => {
-                Some(Self::scroll_multiplier(config.pane.scroll_multiplier))
+                Some(Self::scroll_multiplier(config.input.scroll_multiplier))
             }
             _ => None,
         }
@@ -1049,8 +1049,8 @@ impl SettingsNumberEditor {
             fields: vec![SettingsNumberField::new(
                 "Multiplier",
                 Some(multiplier),
-                crate::config::PANE_MIN_SCROLL_MULTIPLIER,
-                crate::config::PANE_MAX_SCROLL_MULTIPLIER,
+                crate::config::INPUT_MIN_SCROLL_MULTIPLIER,
+                crate::config::INPUT_MAX_SCROLL_MULTIPLIER,
             )],
             focus: 0,
             note: None,

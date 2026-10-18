@@ -1038,9 +1038,10 @@ fn apply_settings_number(
             }
         }
         (EditScrollMultiplier, &[multiplier]) => {
-            ctx.state.config.pane.scroll_multiplier = multiplier;
+            ctx.state.config.input.scroll_multiplier = multiplier;
+            ctx.set_scroll_wheel_multiplier(multiplier);
             if let Err(err) = crate::config::persist_section_values(
-                "pane",
+                "input",
                 &[("scroll_multiplier", &multiplier.to_string())],
             ) {
                 preference_error(ctx, err);
@@ -2011,6 +2012,8 @@ mod tests {
     #[test]
     fn settings_scroll_multiplier_applies_and_saves_a_typed_value() {
         on_large_stack(|| {
+            use tui_lipan::core::event::{KeyMods, MouseEvent, MouseKind};
+
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -2018,6 +2021,44 @@ mod tests {
                 w: 96,
                 h: 40,
             });
+            let tab_id = crate::config::SidebarTabId::new("launcher");
+            {
+                let state = backend.state_mut();
+                state.sidebar.shown = [true, false];
+                state.config.animations.sidebar = false;
+                state.config.sidebar.layout.left.panel_count = 1;
+                state.config.sidebar.tabs = vec![crate::config::SidebarTab::Launcher {
+                    name: tab_id.clone(),
+                    label: "Launch".to_string(),
+                    entries: (0..40)
+                        .map(|i| crate::config::SidebarLauncherEntry {
+                            label: format!("entry-{i:02}"),
+                            group: None,
+                            action: crate::config::UserCommandAction::Send(format!("{i}")),
+                        })
+                        .collect(),
+                    env: Vec::new(),
+                }];
+                state.sidebar.panels[0].tabs = vec![tab_id.clone()];
+                state.sidebar.panels[0].active_tab = Some(tab_id);
+            }
+            backend.render();
+
+            let wheel_down = MouseEvent {
+                x: 4,
+                y: 4,
+                kind: MouseKind::ScrollDown,
+                mods: KeyMods::NONE,
+            };
+            assert!(backend.send_mouse(wheel_down).unwrap());
+            let after_default = backend.capture_frame().to_fixed_grid();
+            // Each launcher entry is 2 lines tall, so offset 3 scrolls past entry-00 and the
+            // title line of entry-01, leaving entry-02 as the first full entry in view.
+            assert!(
+                !after_default.contains("entry-01") && after_default.contains("entry-02"),
+                "default multiplier 3 should advance sidebar by 3 lines:\n{after_default}"
+            );
+
             backend.state_mut().show_settings = true;
             backend
                 .dispatch(Msg::SettingsActivate(
@@ -2057,17 +2098,26 @@ mod tests {
                 backend.state().settings_number_editor.is_some(),
                 "below the minimum keeps the editor open"
             );
-            assert_eq!(backend.state().config.pane.scroll_multiplier, 3);
+            assert_eq!(backend.state().config.input.scroll_multiplier, 3);
 
             press(&mut backend, KeyCode::Backspace);
             backend.send_paste("7").unwrap();
             press(&mut backend, KeyCode::Enter);
             assert!(backend.state().settings_number_editor.is_none());
-            assert_eq!(backend.state().config.pane.scroll_multiplier, 7);
+            assert_eq!(backend.state().config.input.scroll_multiplier, 7);
             assert!(backend.state().show_settings, "Settings stays open");
 
             let saved = std::fs::read_to_string(crate::config::config_path()).unwrap();
-            assert!(saved.contains("scroll_multiplier = 7"), "{saved}");
+            assert!(saved.contains("[input]\nscroll_multiplier = 7"), "{saved}");
+
+            backend.state_mut().show_settings = false;
+            backend.render();
+            assert!(backend.send_mouse(wheel_down).unwrap());
+            let after_updated = backend.capture_frame().to_fixed_grid();
+            assert!(
+                !after_updated.contains("entry-04") && after_updated.contains("entry-05"),
+                "updated multiplier 7 should advance sidebar from line 3 to line 10 (entry-05):\n{after_updated}"
+            );
         });
     }
 

@@ -209,6 +209,7 @@ const SIDEBAR_TAB_KEYS: &[&str] = &[
     "show_hidden",
     "explorer",
     "diff_stats",
+    "compact_dirs",
     "max_entries",
 ];
 

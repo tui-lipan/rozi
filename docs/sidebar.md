@@ -212,7 +212,8 @@ directory has a linked-folder icon and a link to a file has a linked-file icon. 
 does not expand.
 
 Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Set `show_hidden =
-false` on the tab to leave them out.
+false` on the tab to leave them out. Entries that Git ignores, such as a `target/` build directory
+and everything in it, are dimmed too.
 
 In a remote session, the listing comes from the remote host, and search covers only directories you
 have already expanded.
@@ -225,7 +226,8 @@ when the pane is in a subdirectory.
 
 When all of a directory's changes are inside one subdirectory, the two share a row, as in
 `src/view/sidebar`. Expanding or collapsing that row acts on the innermost directory. While
-you search the tab, every directory gets its own row again.
+you search the tab, every directory gets its own row again. Set `compact_dirs = false` on the
+`git` tab to always give each directory its own row.
 
 In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`, so the
 markers line up at the right edge. Nerd Font status symbols have a one-cell right margin to keep

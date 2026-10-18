@@ -34,6 +34,10 @@ pub(super) fn tree_tab(
 
     // The same highlight the composed row lists use, so the cursor means one thing across every tab.
     let selection = super::cursor_highlight(theme, fill);
+    // Hidden and ignored rows fade toward the panel by color rather than taking the terminal's dim
+    // attribute, which some terminals draw faintly or not at all. The tree lifts the fade on the
+    // cursor row.
+    let receded = Style::new().transform_fg(ColorTransform::opacity_toward(0.5, fill));
 
     let mut tree = FileTree::new(root.clone())
         .show_hidden(config.show_hidden)
@@ -83,11 +87,13 @@ pub(super) fn tree_tab(
         .scroll_keys(ScrollKeymap::DEFAULT | ScrollKeymap::VIM_JUMP)
         .directory_label_style(super::super::rozi_fg(theme))
         .file_label_style(super::super::fg_only(&theme.primary))
-        // Dotfiles are shown by default, so they recede rather than vanish.
-        .hidden_style(Style::new().dim())
+        // Dotfiles are shown by default, and ignored build output sits in the middle of the
+        // project, so both recede rather than vanish.
+        .hidden_style(receded)
+        .ignored_style(receded)
         // A change deep in one subtree reads as a single `src/view/sidebar` row, not three levels
         // of directories that hold nothing else. Browsing keeps the real hierarchy.
-        .compact_directories(changed_only)
+        .compact_directories(changed_only && config.compact_dirs)
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty
         // styles — it never reads `theme.git_status` itself — so without this every marker and diff
         // stat renders in the plain row color. These cover the `M`/`A`/`D`/`R`/`?`/`!` markers and

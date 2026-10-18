@@ -64,6 +64,9 @@ fn build_tree_tab(
     if let Some(diff_stats) = table.diff_stats {
         config.diff_stats = diff_stats;
     }
+    if let Some(compact_dirs) = table.compact_dirs {
+        config.compact_dirs = compact_dirs;
+    }
     if let Some(max_entries) = table.max_entries {
         let clamped = max_entries.clamp(1, SIDEBAR_TREE_MAX_ENTRIES_LIMIT);
         if clamped != max_entries {
@@ -708,6 +711,7 @@ mod tests {
         assert_eq!(git.root, SidebarTreeRoot::Repo);
         assert!(git.show_hidden);
         assert!(git.diff_stats);
+        assert!(git.compact_dirs);
         // Both default to typing the activated path at the prompt.
         assert_eq!(
             files.on_click,
@@ -725,7 +729,7 @@ mod tests {
     fn file_tree_table_form_overrides_options() {
         let (config, warnings) = parse(
             r#"
-            tabs = [{ name = "files", label = "", show_hidden = false, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
+            tabs = [{ name = "files", label = "", show_hidden = false, explorer = true, diff_stats = true, compact_dirs = false, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
             "#,
         );
         assert!(
@@ -736,6 +740,7 @@ mod tests {
         assert_eq!(files.root, SidebarTreeRoot::Repo);
         assert!(!files.show_hidden);
         assert!(files.explorer && files.diff_stats);
+        assert!(!files.compact_dirs);
         assert_eq!(files.max_entries, 50);
         assert_eq!(
             files.on_click,

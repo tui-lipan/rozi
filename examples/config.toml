@@ -389,7 +389,8 @@
 # An entry's `group` files it under a section header; a command tab's `group_prefix` turns
 # every output line starting with it into one. A `format = "json"` command prints a tree of rows,
 # and programs publish a stream tab's rows with `rozi sidebar publish --tab <name>`.
-# For the files/git trees: root, show_hidden, explorer, diff_stats, max_entries.
+# For the files/git trees: root, show_hidden, explorer, diff_stats, compact_dirs (git only),
+# max_entries.
 # A table cannot live in this file's `tabs` line without displacing the default above -
 # examples/sidebar.toml is a working two-panel setup using every form.
 # Paint the sidebar with the canvas backdrop instead of the elevated panel fill.

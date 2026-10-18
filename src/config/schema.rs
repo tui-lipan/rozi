@@ -1763,6 +1763,9 @@ pub struct SidebarTreeConfig {
     pub explorer: bool,
     /// Show `+N -M` diff stats beside change markers.
     pub diff_stats: bool,
+    /// In the changes view, fold directories that hold only one changed subdirectory into a single
+    /// `a/b/c` row.
+    pub compact_dirs: bool,
     pub max_entries: usize,
     /// What activating a row does. `{path}` is replaced with the activated path.
     pub on_click: Option<UserCommandAction>,
@@ -1780,6 +1783,7 @@ impl SidebarTreeConfig {
             show_hidden: true,
             explorer: false,
             diff_stats: view == SidebarTreeView::Changes,
+            compact_dirs: true,
             max_entries: 2_000,
             on_click: Some(UserCommandAction::Send("{path}".to_string())),
         }

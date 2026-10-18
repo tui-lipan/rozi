@@ -207,7 +207,13 @@ collapse directories. Ordinary directory clicks still expand or collapse them. T
 available in both Files and Git.
 
 A symlink shows its target, as in `guide-link.md → AGENTS.md`. The target is the link's own text,
-not a resolved path, and clicking the row acts on the link itself.
+not a resolved path, and clicking the row acts on the link itself. With Nerd Font icons, a link to a
+directory has a linked-folder icon and a link to a file has a linked-file icon. A linked directory
+does not expand.
+
+Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Set `show_hidden =
+false` on the tab to leave them out. Entries that Git ignores, such as a `target/` build directory
+and everything in it, are dimmed too.
 
 In a remote session, the listing comes from the remote host, and search covers only directories you
 have already expanded.
@@ -217,6 +223,11 @@ have already expanded.
 Git shows changed files for the repository that contains the focused pane's working directory, with
 status markers and line-change counts when available. It always shows the whole repository, even
 when the pane is in a subdirectory.
+
+When all of a directory's changes are inside one subdirectory, the two share a row, as in
+`src/view/sidebar`. Expanding or collapsing that row acts on the innermost directory. While
+you search the tab, every directory gets its own row again. Set `compact_dirs = false` on the
+`git` tab to always give each directory its own row.
 
 In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`, so the
 markers line up at the right edge. Nerd Font status symbols have a one-cell right margin to keep

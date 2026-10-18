@@ -7,7 +7,10 @@ use super::file::{KeyBindingSpec, UserCommandTableSpec};
 #[cfg(test)]
 use super::keymap::resolve_key_overrides;
 use super::keymap::{BindingExpr, BindingExprError, KeyOverrideSpec, OverrideMode};
-use super::schema::{InputConfig, UserCommand, UserCommandAction, WhichKey, WmModifier};
+use super::schema::{
+    INPUT_MAX_SCROLL_MULTIPLIER, INPUT_MIN_SCROLL_MULTIPLIER, InputConfig, UserCommand,
+    UserCommandAction, WhichKey, WmModifier,
+};
 
 pub(super) fn apply_input_config(
     input: &mut InputConfig,
@@ -15,6 +18,7 @@ pub(super) fn apply_input_config(
     prefix: Option<String>,
     modifier_shortcuts: Option<bool>,
     which_key: Option<String>,
+    scroll_multiplier: Option<u16>,
     warnings: &mut Vec<String>,
 ) {
     if let Some(modifier_shortcuts) = modifier_shortcuts {
@@ -27,6 +31,15 @@ pub(super) fn apply_input_config(
                 "Unknown which_key `{which_key}`; expected `off`, `instant`, `short`, or `long`"
             )),
         }
+    }
+    if let Some(multiplier) = scroll_multiplier {
+        let clamped = multiplier.clamp(INPUT_MIN_SCROLL_MULTIPLIER, INPUT_MAX_SCROLL_MULTIPLIER);
+        if clamped != multiplier {
+            warnings.push(format!(
+                "input.scroll_multiplier {multiplier} out of range; clamped to {clamped}"
+            ));
+        }
+        input.scroll_multiplier = clamped;
     }
     if let Some(modifier) = modifier {
         match parse_modifier(&modifier) {

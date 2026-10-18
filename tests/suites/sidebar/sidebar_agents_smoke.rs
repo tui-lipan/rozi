@@ -174,9 +174,9 @@ fn agents_tab_renders_project_groups() {
             }
             let targets: Vec<_> = backend
                 .state()
-                .sidebar_item_projections(&SidebarTab::Activity)
+                .sidebar_targets(&SidebarTab::Activity)
                 .into_iter()
-                .filter_map(|item| match item.target {
+                .filter_map(|target| match target {
                     rozi::state::RowTarget::Pane(id) => Some(id),
                     _ => None,
                 })
@@ -199,7 +199,7 @@ fn agents_tab_renders_project_groups() {
             let api = line_index("api");
             let rozi_group = line_index("rozi");
             let tools = line_index("tools");
-            let elsewhere = line_index("elsewhere");
+            let elsewhere = line_index("Elsewhere");
             assert!(api < rozi_group && rozi_group < tools && tools < elsewhere);
             assert!(api < line_index("Codex"));
             assert!(rozi_group < line_index("Claude Code"));
@@ -406,13 +406,30 @@ fn published_slots_render_one_numbered_row_each() {
                 println!("{line}");
             }
 
-            // The name column keeps the agent and adds the slot's position.
-            for name in ["OpenCode #1", "OpenCode #2", "OpenCode #3"] {
-                assert!(
-                    sidebar.iter().any(|line| line.contains(name)),
-                    "sidebar shows {name:?}"
-                );
-            }
+            // One harness row names the program, and its sessions are listed beneath it.
+            assert_eq!(
+                sidebar
+                    .iter()
+                    .filter(|line| line.contains("OpenCode"))
+                    .count(),
+                1,
+                "the program is named once: {sidebar:#?}"
+            );
+            let harness = sidebar
+                .iter()
+                .position(|line| line.contains("OpenCode"))
+                .unwrap();
+            let program = sidebar[harness].find("OpenCode").unwrap();
+            let session = sidebar
+                .iter()
+                .find(|line| line.contains("audit the widget"))
+                .unwrap();
+            assert!(
+                session.find("audit").unwrap() > program,
+                "sessions sit deeper than their harness: {sidebar:#?}"
+            );
+            // A session titled after the program itself is told apart by its number.
+            assert!(sidebar.iter().any(|line| line.contains("#4")));
             // A slot's own title is its activity, and it outranks a reason: the name column
             // cannot say which tab this is, so a prompt must not hide the one thing that can.
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
@@ -483,4 +500,88 @@ fn osc_status_snapshot_rejects_old_generations_and_revisions_and_renders() {
         assert!(text.contains('×'), "{text}");
         assert!(text.contains("Failed"), "{text}");
     }).unwrap().join().unwrap();
+}
+
+/// A pane publishing several sessions folds them under one harness row, which then counts them by
+/// state, and opens again on the same arrow.
+#[test]
+fn a_harness_folds_its_sessions_and_counts_them() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                let mut publisher = agent_pane(
+                    1,
+                    agent("opencode", "OpenCode"),
+                    None,
+                    Some("/home/x/work/rozi"),
+                );
+                publisher.terminal.published_rows = vec![
+                    published_row("ses_a", "audit the widget layer", "working", None, true),
+                    published_row("ses_b", "fix the flaky test", "blocked", None, false),
+                    published_row("ses_c", "update the changelog", "idle", None, false),
+                ];
+                publisher.agent_refs = ["ses_a", "ses_b", "ses_c"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .collect();
+                state.current_mut().workspaces[0].panes = vec![publisher];
+            }
+            let sidebar = |backend: &mut TestBackend<AppRoot>| -> Vec<String> {
+                backend.render();
+                backend
+                    .capture_frame()
+                    .to_fixed_grid_lines()
+                    .iter()
+                    .map(|line| line.chars().take(32).collect())
+                    .collect()
+            };
+            let open = sidebar(&mut backend);
+            let harness = open
+                .iter()
+                .position(|line| line.contains("OpenCode"))
+                .unwrap_or_else(|| panic!("harness row: {open:#?}"));
+            assert!(open.iter().any(|line| line.contains("fix the flaky")));
+
+            // Folding is the tree's expansion message, keyed by row index like a click on the
+            // arrow. The project heading is the first row of the tab body; the harness follows.
+            let fold = |backend: &mut TestBackend<AppRoot>, expanded: bool| {
+                backend
+                    .dispatch(rozi::Msg::SidebarRowExpanded {
+                        panel: 0,
+                        index: 1,
+                        expanded,
+                    })
+                    .unwrap();
+            };
+            fold(&mut backend, false);
+            let folded = sidebar(&mut backend);
+            assert!(
+                !folded.iter().any(|line| line.contains("fix the flaky")),
+                "folding hides the sessions: {folded:#?}"
+            );
+            let row = &folded[harness];
+            assert!(
+                row.contains("▲1"),
+                "a folded harness counts what it hides: {folded:#?}"
+            );
+            assert!(!row.contains('○'), "idle sessions are not counted: {row}");
+
+            fold(&mut backend, true);
+            let reopened = sidebar(&mut backend);
+            assert!(reopened.iter().any(|line| line.contains("fix the flaky")));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

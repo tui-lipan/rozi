@@ -64,22 +64,17 @@ impl GlobalAgentRow {
         matches!(self.location, AgentLocation::Here { .. })
     }
 
-    /// `Codex · workbox/backend` — who, then where, on one searchable line. The place belongs in
+    /// `Codex · backend@workbox` — who, then where, on one searchable line. The place belongs in
     /// the label rather than the description because it is the half a user types.
     pub fn label(&self) -> String {
-        let session = if crate::state::is_ephemeral_session_name(&self.session) {
-            "ephemeral"
-        } else {
-            self.session.as_str()
-        };
         let agent = match self.activity.as_deref() {
             Some(activity) => format!("{}: {activity}", self.agent),
             None => self.agent.clone(),
         };
-        match self.host.as_deref() {
-            Some(host) => format!("{agent} · {host}/{session}"),
-            None => format!("{agent} · {session}"),
-        }
+        crate::view::vocabulary::fields([
+            agent,
+            crate::view::vocabulary::session_at(&self.session, self.host.as_deref()),
+        ])
     }
 
     pub fn search_aliases(&self, state: &State) -> Vec<String> {
@@ -99,7 +94,7 @@ impl GlobalAgentRow {
         )];
         parts.extend(self.elapsed.map(crate::view::sidebar::agents::format_age));
         parts.extend(self.place.clone());
-        parts.join(" · ")
+        crate::view::vocabulary::fields(parts)
     }
 }
 
@@ -311,7 +306,7 @@ mod tests {
     fn a_remote_row_names_its_host_and_session() {
         let state = state_with_hosts(&[("workbox", vec![summary("backend", 1, "blocked")])]);
         let rows = global_agent_rows(&state);
-        assert_eq!(rows[0].label(), "Codex · workbox/backend");
+        assert_eq!(rows[0].label(), "Codex · backend@workbox");
         assert_eq!(rows[0].description(), "Blocked");
     }
 
@@ -355,6 +350,7 @@ mod tests {
             slot: None,
             agent: true,
             order: 0,
+            harness: None,
         };
         assert_eq!(
             row_place(&agent_row).as_deref(),
@@ -421,7 +417,7 @@ mod tests {
                 row: None,
             }
         );
-        assert_eq!(rows[1].label(), "Codex · workbox/dev");
+        assert_eq!(rows[1].label(), "Codex · dev@workbox");
         assert_eq!(rows[0].elapsed, None);
     }
 }

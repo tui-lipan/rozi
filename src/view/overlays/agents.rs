@@ -149,9 +149,9 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
                 .find(|(location, ..)| location == &item.value)?;
             let style = Style::new().fg(*color);
             Some(if *working {
-                crate::view::session_status::picker_circle_spinner_gutter(style)
+                crate::view::vocabulary::picker_circle_spinner_gutter(style)
             } else {
-                crate::view::session_status::picker_marker_gutter(glyph, style)
+                crate::view::vocabulary::picker_marker_gutter(glyph, style)
             })
         },
     ))
@@ -189,19 +189,10 @@ fn row_context(row: &crate::view::agents::GlobalAgentRow, show_location: bool) -
     if !show_location {
         return row.place.clone().unwrap_or_default();
     }
-    let session = if crate::state::is_ephemeral_session_name(&row.session) {
-        "ephemeral"
-    } else {
-        row.session.as_str()
-    };
-    let location = match &row.host {
-        Some(host) => format!("{host}/{session}"),
-        None => session.to_string(),
-    };
-    match &row.place {
-        Some(place) => format!("{location} · {place}"),
-        None => location,
-    }
+    crate::view::vocabulary::fields([
+        crate::view::vocabulary::session_at(&row.session, row.host.as_deref()),
+        row.place.clone().unwrap_or_default(),
+    ])
 }
 
 /// Size from all rows so filtering does not make the palette jump horizontally.
@@ -265,7 +256,7 @@ mod tests {
     #[test]
     fn context_groups_host_session_and_checkout_and_hides_generated_session_names() {
         let mut row = row("fix login");
-        assert_eq!(row_context(&row, true), "workbox/dev · api (fix-login)");
+        assert_eq!(row_context(&row, true), "dev@workbox · api (fix-login)");
         assert_eq!(row_context(&row, false), "api (fix-login)");
         row.session = "eph-1234".into();
         row.host = None;

@@ -7,9 +7,7 @@
 //! built-in tabs around it.
 //!
 //! Rows arrive flat, each naming its parent, grouped in sections (one per producer, or one host per
-//! section in Projects). [`flatten`] turns them into the visible list, in display order, for both
-//! the view and the click/keyboard projection: the two can never disagree about which row an index
-//! means. Expansion is client-local view state, keyed by tab, section, and row id, and a producer's
+//! section in Projects). [`flatten`] turns them into the visible list, in display order. Expansion is client-local view state, keyed by tab, section, and row id, and a producer's
 //! own `expanded` hint applies only until the user chooses otherwise.
 
 use std::collections::HashMap;
@@ -117,6 +115,9 @@ pub struct SidebarRowSpec {
     /// Right-aligned on the label's line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// A short value beside the label in the row's tone, such as how long it has run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<String>,
     /// A second line under the label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -134,6 +135,10 @@ pub struct SidebarRowSpec {
     /// Initial expansion. The user's own choice wins once made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expanded: Option<bool>,
+    /// A top-level row that titles the rows beneath it: drawn as a section heading, always open,
+    /// and never activated.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub heading: bool,
     /// Stream tabs: which of the producer's actions apply to this row, by id. Absent means all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
@@ -226,12 +231,14 @@ pub fn sanitize_rows(rows: Vec<SidebarRowSpec>) -> Vec<SidebarRowSpec> {
                 parent: clean_optional(row.parent, 256),
                 label,
                 description: clean_optional(row.description, 80),
+                meta: clean_optional(row.meta, 24),
                 detail: clean_optional(row.detail, 160),
                 tone: row.tone,
                 active: row.active,
                 disabled: clean_optional(row.disabled, 80),
                 expandable: row.expandable,
                 expanded: row.expanded,
+                heading: row.heading,
                 actions: row.actions.map(|actions| {
                     actions
                         .into_iter()
@@ -257,10 +264,12 @@ impl TreeRow {
             content: RowContent {
                 label: spec.label.clone(),
                 description: spec.description.clone(),
+                meta: spec.meta.clone(),
                 detail: spec.detail.clone(),
                 tone: spec.tone,
                 active: spec.active,
                 disabled: spec.disabled.clone(),
+                heading: spec.heading,
             },
             target,
             close,
@@ -276,6 +285,8 @@ pub struct RowContent {
     pub label: String,
     /// Right-aligned on the label's line.
     pub description: Option<String>,
+    /// Beside the label, in the row's tone.
+    pub meta: Option<String>,
     /// The row's second line.
     pub detail: Option<String>,
     pub tone: SidebarTone,
@@ -283,6 +294,8 @@ pub struct RowContent {
     pub active: bool,
     /// Shown but not selectable, with this reason as its second line.
     pub disabled: Option<String>,
+    /// Titles the rows beneath it. Honored on top-level rows only.
+    pub heading: bool,
 }
 
 /// One row of a hierarchical tab, before flattening.
@@ -344,13 +357,19 @@ pub struct TreeLine {
     /// Has, or may have, children.
     pub expandable: bool,
     pub expanded: bool,
+    /// A section heading: always open, never activated.
+    pub heading: bool,
+    /// Folded: the most urgent tone among the rows it hides.
+    pub hidden_tone: Option<SidebarTone>,
 }
 
 impl TreeItem {
     /// What activating this line does. A structural row with children toggles them.
     pub fn target(&self) -> RowTarget {
         match self {
-            Self::Row(line) if line.row.content.disabled.is_some() => RowTarget::Inert,
+            Self::Row(line) if line.heading || line.row.content.disabled.is_some() => {
+                RowTarget::Inert
+            }
             Self::Row(line) => match &line.row.target {
                 RowTarget::Inert if line.expandable => RowTarget::TreeToggle(line.key.clone()),
                 target => target.clone(),
@@ -437,24 +456,30 @@ fn push_row(
         .get(row.id.as_str())
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    let expandable = row.expandable || !kids.is_empty();
+    let depth = branch.depth();
+    let heading = row.content.heading && depth == 0;
+    let expandable = !heading && (row.expandable || !kids.is_empty());
     let key = TreeExpansionKey {
         tab: tab.clone(),
         section: section.key.clone(),
         row: row.id.clone(),
     };
-    let expanded = expandable
-        && expansion
-            .get(&key)
-            .copied()
-            .unwrap_or_else(|| row.expanded.unwrap_or(!kids.is_empty()));
-    let depth = branch.depth();
+    let expanded = heading
+        || expandable
+            && expansion
+                .get(&key)
+                .copied()
+                .unwrap_or_else(|| row.expanded.unwrap_or(!kids.is_empty()));
+    let hidden_tone = (expandable && !expanded && !kids.is_empty())
+        .then(|| SidebarTone::most_urgent(descendants(children, kids).map(|row| row.content.tone)));
     items.push(TreeItem::Row(Box::new(TreeLine {
         row: row.clone(),
         key,
         branch: branch.clone(),
         expandable,
         expanded,
+        heading,
+        hidden_tone,
     })));
     if !expanded || depth >= MAX_DEPTH {
         return;
@@ -477,6 +502,20 @@ fn push_row(
             items,
         );
     }
+}
+
+/// Every row beneath `kids`, at any depth.
+fn descendants<'a>(
+    children: &'a HashMap<&str, Vec<&'a TreeRow>>,
+    kids: &'a [&'a TreeRow],
+) -> Box<dyn Iterator<Item = &'a TreeRow> + 'a> {
+    Box::new(kids.iter().flat_map(move |row| {
+        let below = children
+            .get(row.id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        std::iter::once(*row).chain(descendants(children, below))
+    }))
 }
 
 #[cfg(test)]
@@ -586,6 +625,70 @@ mod tests {
         assert_eq!(labels(&items), ["#WORKBOX", "a", "remote", "  …"]);
     }
 
+    /// A top-level heading keeps its rows in view whatever the stored expansion says, and does
+    /// nothing when activated. Deeper down, `heading` is ignored.
+    #[test]
+    fn a_heading_is_always_open_and_inert_and_only_at_the_top() {
+        let mut heading = row("group", None);
+        heading.content.heading = true;
+        heading.target = RowTarget::NewSession(None);
+        let mut nested = row("nested", Some("group"));
+        nested.content.heading = true;
+        let section = TreeSection {
+            key: "s".into(),
+            rows: vec![heading, nested, row("leaf", Some("nested"))],
+            ..TreeSection::default()
+        };
+        let mut expansion = TreeExpansion::new();
+        for id in ["group", "nested"] {
+            expansion.insert(
+                TreeExpansionKey {
+                    tab: tab(),
+                    section: "s".into(),
+                    row: id.into(),
+                },
+                false,
+            );
+        }
+        let items = flatten(&tab(), &[section], &expansion);
+        assert_eq!(labels(&items), ["group", "  nested"]);
+        let line = items[0].line().expect("heading line");
+        assert!(line.heading && line.expanded && !line.expandable);
+        assert_eq!(items[0].target(), RowTarget::Inert);
+        let nested = items[1].line().expect("nested line");
+        assert!(!nested.heading && nested.expandable && !nested.expanded);
+    }
+
+    /// A folded row carries the most urgent tone of everything it hides, at any depth, so its
+    /// arrow can say a problem is under it. An open one carries none: its rows say it themselves.
+    #[test]
+    fn a_folded_row_reports_the_most_urgent_tone_it_hides() {
+        let mut deep = row("deep", Some("child"));
+        deep.content.tone = SidebarTone::Error;
+        let mut child = row("child", Some("parent"));
+        child.content.tone = SidebarTone::Working;
+        let section = TreeSection {
+            key: "s".into(),
+            rows: vec![row("parent", None), child, deep],
+            ..TreeSection::default()
+        };
+        let mut expansion = TreeExpansion::new();
+        let key = TreeExpansionKey {
+            tab: tab(),
+            section: "s".into(),
+            row: "parent".into(),
+        };
+        let open = flatten(&tab(), std::slice::from_ref(&section), &expansion);
+        assert_eq!(open[0].line().and_then(|line| line.hidden_tone), None);
+
+        expansion.insert(key, false);
+        let folded = flatten(&tab(), &[section], &expansion);
+        assert_eq!(
+            folded[0].line().and_then(|line| line.hidden_tone),
+            Some(SidebarTone::Error)
+        );
+    }
+
     /// Sections are separated, and a structural row with children toggles them when activated.
     #[test]
     fn sections_are_spaced_and_structural_rows_toggle() {
@@ -621,7 +724,9 @@ mod tests {
             disabled: None,
             expandable: false,
             expanded: None,
+            heading: false,
             actions: None,
+            meta: Some(format!("\u{1b}[1m{}", "9".repeat(40))),
         };
         let rows = sanitize_rows(vec![
             spec("a", "first"),
@@ -635,6 +740,8 @@ mod tests {
         assert_eq!(rows[0].description.as_deref(), Some("red"));
         assert_eq!(rows[0].detail, None);
         assert_eq!(rows[1].label.chars().count(), 160);
+        let meta = rows[0].meta.as_deref().expect("meta kept");
+        assert!(!meta.contains('\u{1b}') && meta.chars().count() == 24);
     }
 
     /// The wire form a producer writes: tones by name, absent fields defaulted, unknown ones
@@ -642,11 +749,14 @@ mod tests {
     #[test]
     fn snapshots_parse_from_the_documented_wire_form() {
         let snapshot: SidebarSnapshot = serde_json::from_str(
-            r#"{"rows":[{"id":"r","label":"main","tone":"blocked","parent":"p","future":1}],
+            r#"{"rows":[{"id":"r","label":"main","tone":"blocked","parent":"p","future":1,
+                          "meta":"2m","heading":true}],
                "actions":[{"id":"rm","key":"d","label":"remove","close":true}]}"#,
         )
         .expect("parses");
         assert_eq!(snapshot.rows[0].tone, SidebarTone::Blocked);
+        assert_eq!(snapshot.rows[0].meta.as_deref(), Some("2m"));
+        assert!(snapshot.rows[0].heading);
         assert_eq!(snapshot.rows[0].parent.as_deref(), Some("p"));
         assert!(snapshot.actions.unwrap()[0].close);
         assert_eq!(

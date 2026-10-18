@@ -57,45 +57,9 @@ impl WorktreePickerState {
     /// The same searchable fields for palette ranking and action selection validation.
     pub(crate) fn search_item(&self, index: usize) -> Option<SearchItem<usize>> {
         let tree = self.entries.get(index)?;
-        let branch = match (&tree.branch, tree.bare) {
-            (_, true) => "(bare)",
-            (Some(branch), false) => branch,
-            (None, false) => "(detached)",
-        };
-        let state = if !tree.linked {
-            "primary"
-        } else if tree.lock.as_ref().is_some_and(|lock| lock.stale) {
-            "stale lock"
-        } else if tree.lock.is_some() {
-            "locked"
-        } else if tree.prunable {
-            "prunable"
-        } else {
-            ""
-        };
-        let work_status = match self.statuses.checkouts.get(&tree.path) {
-            Some(pr) => format!(
-                "#{} {}{}",
-                pr.number,
-                pr.status.picker_label(),
-                if self.statuses.unavailable {
-                    " · stale"
-                } else {
-                    ""
-                }
-            ),
-            None if tree.linked && tree.branch.is_some() && self.statuses.unavailable => {
-                "PR unavailable".into()
-            }
-            None => String::new(),
-        };
-        let description = [work_status.as_str(), state]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let description = crate::view::vocabulary::checkout_description(tree, &self.statuses);
         Some(
-            SearchItem::new(branch, index)
+            SearchItem::new(crate::view::vocabulary::checkout_branch(tree), index)
                 .aliases([tree.path.clone()])
                 .description(ItemDescription::new().right(format!("  {description}"))),
         )
@@ -534,15 +498,10 @@ impl AgentPickerTab {
         match self {
             Self::All => "All".into(),
             Self::Session { target, session } => {
-                let name = if super::is_ephemeral_session_name(session) {
-                    "ephemeral"
-                } else {
-                    session.as_str()
-                };
-                target.as_ref().map_or_else(
-                    || name.to_string(),
-                    |target| format!("{}/{name}", state.remote_target_label(target)),
-                )
+                let host = target
+                    .as_ref()
+                    .map(|target| state.remote_target_label(target));
+                crate::view::vocabulary::session_at(session, host.as_deref())
             }
         }
     }

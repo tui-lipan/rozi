@@ -208,8 +208,8 @@ calls a clipboard tool directly uses the remote host's clipboard. See
 ### Remote connection keeps reconnecting
 
 When an SSH connection drops or stops answering, rozi shows a reconnecting overlay and retries for
-up to two minutes. After that the session shows **offline**; if the remote session is gone, it shows
-**session lost**. Background reconnects to a connected host never prompt, so a host that needs a
+up to two minutes. After that the session shows **Offline**; if the remote session is gone, it shows
+**Session lost**. Background reconnects to a connected host never prompt, so a host that needs a
 password or host-key answer keeps failing until you reconnect it yourself.
 
 1. Test with `ssh <HOST>`, or run `rozi --remote <HOST>` in a shell to see the SSH error.

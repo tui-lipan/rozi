@@ -6,8 +6,8 @@ mod overlays;
 mod pane;
 pub(crate) mod pane_particles;
 mod pane_reveal;
-pub(crate) mod session_status;
 pub(crate) mod sidebar;
+pub(crate) mod vocabulary;
 mod which_key;
 mod widget_keys;
 mod workbar;
@@ -58,20 +58,6 @@ use overlays::{
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
 /// Consistent work-status colours in the picker and sidebar.
-pub(crate) fn worktree_status_style(
-    theme: &Theme,
-    status: crate::git::pull_requests::WorkStatus,
-) -> Style {
-    use crate::git::pull_requests::WorkStatus;
-    match status {
-        WorkStatus::Passed => Style::new().fg(theme.status.success),
-        WorkStatus::Failed => Style::new().fg(theme.status.error),
-        WorkStatus::Running => Style::new().fg(theme.status.warning),
-        WorkStatus::Merged => fg_only(&theme.accent),
-        WorkStatus::Open | WorkStatus::Draft | WorkStatus::Closed => fg_only(&theme.muted),
-    }
-}
-
 /// How far a surface lifts under the pointer or the keyboard cursor. One constant across the
 /// sidebar and the workbar so the two never drift to different hover weights.
 pub(crate) const HOVER_LIFT: f32 = 0.08;
@@ -795,7 +781,7 @@ mod grouped_search_tests {
 
                 let frame = backend.capture_frame().to_fixed_grid();
                 assert!(frame.contains("Session · dev"));
-                assert!(frame.contains("reconnecting"));
+                assert!(frame.contains("Reconnecting…"));
                 assert!(
                     frame.contains("sessions"),
                     "reconnecting overlay must advertise Esc → Sessions, got:\n{frame}"
@@ -816,10 +802,10 @@ mod grouped_search_tests {
                 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
                 for (connection, lost, label) in [
-                    (ConnectionState::Unreachable, true, "session lost"),
-                    (ConnectionState::Unreachable, false, "offline"),
-                    (ConnectionState::Reconnecting, false, "reconnecting"),
-                    (ConnectionState::Reconnecting, true, "recreating"),
+                    (ConnectionState::Unreachable, true, "Session lost"),
+                    (ConnectionState::Unreachable, false, "Offline"),
+                    (ConnectionState::Reconnecting, false, "Reconnecting…"),
+                    (ConnectionState::Reconnecting, true, "Recreating…"),
                 ] {
                     for (w, h) in [(42, 12), (100, 30)] {
                         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());

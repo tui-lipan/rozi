@@ -137,13 +137,13 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
             "the focused pane's checkout is marked:\n{text}"
         );
         // What a checkout is and whether a session uses it share the right edge, word first.
-        assert!(lines[master].contains("primary ●"), "{text}");
+        assert!(lines[master].contains("Primary ○"), "{text}");
 
         // A running session is a filled marker, a restorable one a ring; names stay off the row.
         let login = row("feat/login");
-        assert!(lines[login].contains('●'), "{text}");
+        assert!(lines[login].contains('○'), "{text}");
         assert!(!text.contains("wt-feat-login"), "{text}");
-        assert!(lines[row("release/0.1")].contains("locked ○"), "{text}");
+        assert!(lines[row("release/0.1")].contains("Locked ◌"), "{text}");
 
         // Checkouts without PR metadata occupy one line, regardless of folder names.
         assert_eq!(row("worktree-extensions-spinner"), login + 1, "{text}");
@@ -178,10 +178,10 @@ fn work_status_uses_the_detail_line_and_keeps_session_state_on_the_rail() {
         let lines = sidebar_lines(&mut backend, 32);
         let text = lines.join("\n");
         for (branch, status) in [
-            ("feat/login", "#114 · passed"),
-            ("worktree-extensions-spinner", "#113 · failed"),
-            ("fix/config-test-race", "#112 · merged"),
-            ("release/0.1", "#115 · running"),
+            ("feat/login", "#114 · Passed"),
+            ("worktree-extensions-spinner", "#113 · Failed"),
+            ("fix/config-test-race", "#112 · Merged"),
+            ("release/0.1", "#115 · Running"),
         ] {
             let row = lines.iter().position(|line| line.contains(branch)).unwrap();
             assert!(lines[row + 1].contains(status), "{text}");
@@ -189,13 +189,13 @@ fn work_status_uses_the_detail_line_and_keeps_session_state_on_the_rail() {
         assert!(
             lines
                 .iter()
-                .any(|line| line.contains("feat/login") && line.contains('●')),
+                .any(|line| line.contains("feat/login") && line.contains('○')),
             "{text}"
         );
         assert!(
             lines
                 .iter()
-                .any(|line| line.contains("release/0.1") && line.contains("locked ○")),
+                .any(|line| line.contains("release/0.1") && line.contains("Locked ◌")),
             "{text}"
         );
         assert!(!text.contains("session-fade-duration"), "{text}");
@@ -222,7 +222,7 @@ fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
     on_large_stack(move || {
         let resting = render(false);
         assert!(resting.contains('…'), "{resting:?}");
-        assert!(resting.contains("…   primary ●"), "{resting:?}");
+        assert!(resting.contains("…   Primary ○"), "{resting:?}");
 
         let hovered = render(true);
         assert!(hovered.contains('…'), "{hovered:?}");
@@ -269,7 +269,9 @@ fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
             path: STALE.into(),
             force: false,
         });
-        let lines = sidebar_lines(&mut backend, 32);
+        // Wide enough for the whole confirmation beside the tree guide.
+        backend.state_mut().config.sidebar.layout.left.width = 34;
+        let lines = sidebar_lines(&mut backend, 34);
         let text = lines.join("\n");
         let row = lines
             .iter()

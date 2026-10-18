@@ -8,38 +8,34 @@
 
 use tui_lipan::prelude::*;
 
-use super::row::{Row, RowTarget, SidebarRow};
-use crate::AppRoot;
+use super::row::{Row, RowTarget, Shape, SidebarRow};
+use crate::state::State;
 use crate::view::agents::GlobalAgentRow;
 
-pub(super) fn global_agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
-    crate::view::agents::global_agent_rows(&ctx.state)
+pub(super) fn global_agents_rows(state: &State) -> Vec<SidebarRow> {
+    crate::view::agents::global_agent_rows(state)
         .into_iter()
         .map(|row| {
             let target = RowTarget::Agent(row.location.clone());
-            SidebarRow::item(agent_row(ctx, row), target)
+            let key = format!("agent:{:?}", row.location);
+            // Ordered by attention, not grouped by place: every row is top-level.
+            SidebarRow::item(agent_row(state, row), target)
+                .shape(Shape::Flush)
+                .keyed(key)
         })
         .collect()
 }
 
-/// Where a row's agent runs, as the badge says it: the session, prefixed by the host when it is
-/// not this machine. The session on screen is named too — on this tab every row is somewhere, and
-/// "here" is only a fact about the current moment.
+/// Where a row's agent runs, as the badge says it: the session, `@host` when it is not this
+/// machine. The session on screen is named too — on this tab every row is somewhere, and "here" is
+/// only a fact about the current moment.
 fn place_badge(row: &GlobalAgentRow) -> String {
-    let session = if crate::state::is_ephemeral_session_name(&row.session) {
-        "ephemeral"
-    } else {
-        row.session.as_str()
-    };
-    match row.host.as_deref() {
-        Some(host) => format!("{host}/{session}"),
-        None => session.to_string(),
-    }
+    crate::view::vocabulary::session_at(&row.session, row.host.as_deref())
 }
 
 /// A two-line row: status glyph, agent and where it runs, then the status with what it works on.
-fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
-    let theme = &ctx.state.theme;
+fn agent_row(state: &State, row: GlobalAgentRow) -> Row {
+    let theme = &state.theme;
     let (glyph, color, spinner) = super::agents::row_glyph(&row.status, row.finished_unseen, theme);
     let glyph: Element = if spinner {
         Spinner::new()
@@ -54,10 +50,10 @@ fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
     };
     let active = match &row.location {
         crate::state::AgentLocation::Here { pane, row: slot } => {
-            ctx.state.current().focused_pane == Some(*pane)
+            state.current().focused_pane == Some(*pane)
                 && slot
                     .as_ref()
-                    .is_none_or(|key| published_row_active(ctx, *pane, key))
+                    .is_none_or(|key| published_row_active(state, *pane, key))
         }
         crate::state::AgentLocation::OtherSession { .. } => false,
     };
@@ -77,8 +73,7 @@ fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
     );
     if let Some(what) = row.activity.as_deref().or(row.place.as_deref()) {
         let budget = super::agents::activity_budget(
-            ctx.state
-                .sidebar_tab_width(&crate::config::SidebarTabId::new("agents")),
+            state.sidebar_tab_width(&crate::config::SidebarTabId::new("agents")),
         );
         content = content.detail(
             super::row::truncate(what, budget),
@@ -91,11 +86,11 @@ fn agent_row(ctx: &Context<AppRoot>, row: GlobalAgentRow) -> Row {
 /// Whether the program in `pane` currently shows the published row `key`. Focusing a pane reveals
 /// only the row its program has on screen, so only that one reads as the active agent.
 fn published_row_active(
-    ctx: &Context<AppRoot>,
+    state: &State,
     pane: crate::state::PaneId,
     key: &crate::session::protocol::RowKey,
 ) -> bool {
-    ctx.state
+    state
         .current()
         .workspaces
         .iter()
@@ -138,7 +133,7 @@ mod tests {
     fn the_badge_names_host_and_session() {
         assert_eq!(
             place_badge(&row(Some("workbox"), "backend")),
-            "workbox/backend"
+            "backend@workbox"
         );
         assert_eq!(place_badge(&row(None, "dev")), "dev");
     }

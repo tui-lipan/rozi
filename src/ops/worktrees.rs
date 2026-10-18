@@ -2193,7 +2193,7 @@ mod tests {
             assert_eq!(requests(&outbound).len(), 1);
             backend.render();
             let frame = backend.capture_frame().plain_text();
-            assert!(frame.contains("removing…"), "{frame}");
+            assert!(frame.contains("Removing…"), "{frame}");
             assert!(!frame.contains("again to remove"), "{frame}");
             let operation = backend.state().worktree_operation.as_ref().unwrap();
             let (epoch, request_id) = (operation.epoch, operation.request_id);

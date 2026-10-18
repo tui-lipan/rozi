@@ -67,7 +67,7 @@ pub(crate) fn sidebar_manager_overlay(ctx: &Context<AppRoot>) -> Element {
     .placeholder("Search tabs…")
     .item_gutter(Arc::new(move |item, _| {
         let &(enabled, available) = gutter_statuses.get(&item.value)?;
-        Some(crate::view::session_status::picker_marker_gutter(
+        Some(crate::view::vocabulary::picker_marker_gutter(
             if !available {
                 "–"
             } else if enabled {

@@ -91,9 +91,14 @@ repository's name, and the branch beside it tells the checkouts apart.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
-Each row shows `blocked`, `working`, `done`, `error`, or `idle` in its configured status colour.
+When one pane runs several sessions of an agent, such as Claude Code with background sessions,
+they are listed beneath one row for the agent, titled by what each session is working on. That
+row shows the most urgent session's state and can be collapsed; collapsed, it counts its sessions
+by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
+
+Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
-for you stands apart from work that failed. A finished run stays marked `done` until you visit its
+for you stands apart from work that failed. A finished run stays marked `Done` until you visit its
 pane. Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
 attached client sees the same thing.
 
@@ -132,9 +137,11 @@ activities such as `rozi status` reports or published activity rows.
 
 ## Panes
 
-Panes lists live panes grouped by workspace. Each row shows the pane title, foreground program, and
-working directory. Activating a row switches to that workspace and focuses the pane. Each group ends
-with **+ New pane**, which opens a pane on that workspace.
+Panes lists live panes grouped by workspace. Each workspace is a heading that shows the directory
+its panes share, with one row per pane beneath it. A row shows the pane title and its foreground
+program. A pane in another directory also shows where it is, relative to the heading's directory
+when it is inside it. Activating a row switches to that workspace and focuses the pane. Each group
+ends with **+ New pane**, which opens a pane on that workspace.
 
 To close a pane, hover its row and click `x` twice, or select the row in a focused sidebar and press
 `x` twice. This confirmation always applies, whatever your `[confirm]` settings.
@@ -144,13 +151,15 @@ Pane titles follow the order described in
 
 ## Sessions
 
-Sessions lists local sessions and known remote hosts. Activating a live session attaches or
+Sessions lists local sessions and known remote hosts. `LOCAL` and each host are headings, with
+their sessions and a row to start a new one beneath them. Activating a live session attaches or
 switches to it. Restorable sessions, and cached rows for offline hosts, stay listed when available.
 
 Session rows show `Current`, `Background` for a connection held by this client, or `Running`
 for a live session this client is not attached to. `Reconnecting` and `Offline` describe retained
 connections that are unavailable. Stopped sessions with saved snapshots show `Restorable`;
-offline hosts' cached sessions show `last seen`. Agent activity is shown separately.
+offline hosts' cached sessions show `Last seen`. When other clients share a session, their
+number follows its state, such as `Current · 󰍺 1`. Agent activity is shown separately.
 
 Session names belong to their host, so a local `dev` session and a remote `dev` session are
 separate rows.
@@ -223,31 +232,32 @@ switch every visible panel to other tabs.
 ## Worktrees
 
 Worktrees lists the Git worktrees of the focused pane's repository, on the host running that pane's
-session. A heading names the repository and host. Each checkout is listed by branch, with PR/CI
-status underneath, such as `#114 · passed` or `#112 · merged`. Paths stay hidden; open the
+session. A heading names the repository and host, with the checkouts beneath it. Each checkout is
+listed by branch, with PR/CI
+status underneath, such as `#114 · Passed` or `#112 · Merged`. Paths stay hidden; open the
 **Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in the left margin marks
 the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
 GitHub setup and status meanings.
 
 The marker on the right shows whether a session was started from that checkout, using the same
-markers as the Sessions tab:
+markers as the [Sessions picker](sessions.md#use-the-session-picker):
 
 | Marker | Session |
 | --- | --- |
-| `●` green | The one you are in |
+| `●` | The one you are in |
 | `◐` | Held by this client in the background |
-| `●` | Running on the host; activating attaches to it |
-| `○` | Saved; activating restores it |
+| `○` | Running on the host; activating attaches to it |
+| `◌` | Saved; activating restores it |
 
-A number after the marker counts the sessions using the checkout. `primary`, `locked`,
-`stale lock`, or `prunable` appears to its left when it applies; see
-[Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to what activating
-it does: `attach`, `switch`, `restore`, `choose`, or `new session`.
+A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
+`Stale lock`, or `Prunable` appears to its left when it applies; see
+[Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover the row, the marker changes to
+what activating it does: `open`, `switch`, `attach`, `restore`, `choose`, or `new session`.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.
 
-**+ New worktree** opens the new-worktree form. The checkout appears as `creating…`, and its session
+**+ New worktree** opens the new-worktree form. The checkout appears as `Creating…`, and its session
 opens when Git finishes.
 
 To remove a linked checkout, hover it and click `x` twice, or select it in a focused sidebar and
@@ -374,9 +384,9 @@ Extensions can add tabs of every kind; see [Extension sidebar tabs](#extension-s
 
 ### Launcher tabs
 
-An entry's `group` puts it under a section header like the ones in Activity, Panes, and Sessions.
+An entry's `group` puts it beneath a heading like the ones in Activity, Panes, and Sessions.
 Groups appear in the order they first occur, and entries without a group come first, without a
-header. For example, a tab that starts an agent in a project, grouped by agent:
+heading. For example, a tab that starts an agent in a project, grouped by agent:
 
 ```toml
 { name = "launch", label = "Launch", entries = [
@@ -400,8 +410,8 @@ rozi strips terminal control sequences from the output. A command that fails to 
 writes to standard error, or exits non-zero shows non-clickable error rows.
 
 To group the output, set `group_prefix`. Each output line that starts with the prefix becomes a
-section header showing the rest of the line. A line that is only the prefix is dropped. Headers
-cannot be selected. `group_prefix` applies only to command tabs; launcher tabs use `group`.
+heading showing the rest of the line, with the lines after it beneath it. A line that is only the
+prefix is dropped. Headings cannot be selected. `group_prefix` applies only to command tabs; launcher tabs use `group`.
 
 A command tab runs in the focused pane's working directory, so it describes the project you are
 working in and runs again when you `cd`. If the tab was off screen while you changed directory, it
@@ -430,13 +440,16 @@ of one row per line. Rows can nest, carry a state, and say more than a line of t
 | `label` | Required. The row's text. |
 | `parent` | The `id` of the row it sits under. A missing parent makes it a top-level row. |
 | `description` | Right-aligned text on the label's line. |
+| `meta` | A short value beside the label, such as how long something has run, in the row's state colour. |
 | `detail` | A second line under the label. |
 | `tone` | The row's state, which picks its marker and colour: `normal`, `muted`, `info`, `working`, `success`, `warning`, `blocked`, or `error`. |
 | `active` | Marks the current one of its kind. |
 | `disabled` | Shows the row dimmed with this reason as its second line, and makes it inert. |
 | `expanded` | Whether the row starts expanded. Your own choice wins once you make one. |
+| `heading` | Shows a top-level row as a section heading, with its rows always open beneath it. A heading cannot be activated, and its `description` sits at the right edge. |
 
-A row with children starts expanded unless it says otherwise. Activating a row runs the tab's
+A row with children starts expanded unless it says otherwise. A collapsed row tints its arrow with
+the most urgent state among the rows it hides. Activating a row runs the tab's
 `on_click` with the row's `id` in `ROZI_ROW_ID` and its label as the row text, so `send` may use
 `{line}` for the label. Without `on_click`, activating a row with children shows or hides them.
 

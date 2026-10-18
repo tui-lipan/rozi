@@ -8,9 +8,12 @@ mod tree_rows;
 mod user_tabs;
 mod worktrees;
 
+pub(crate) use row::SidebarRow;
+
 use tui_lipan::prelude::*;
 
 use crate::config::SidebarTab;
+use crate::state::State;
 use crate::{AppRoot, Msg};
 
 /// `width` is the panel's settled width, which is not always the width it is being drawn into: on
@@ -275,7 +278,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         // repeating the same fact one row lower.
         None => empty_body(ctx, panel, None),
         Some(SidebarTab::Tree { view, config }) => tree::tree_tab(ctx, panel, *view, config),
-        Some(tab) => row_list(ctx, panel, tab),
+        Some(tab) => tree_rows::tab(ctx, panel, tab),
     };
 
     VStack::new()
@@ -422,51 +425,37 @@ pub(crate) fn body_key(ctx: &Context<AppRoot>, panel: usize) -> String {
     )
 }
 
-/// Every sidebar row, in display order, with interaction metadata supplied by the model projection
-/// that update handlers consume too.
-pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
-    let mut rows = visual_body_rows(ctx, tab);
-    let projections = ctx.state.sidebar_item_projections(tab);
-    debug_assert_eq!(
-        rows.len(),
-        projections.len(),
-        "sidebar visual rows and semantic projections diverged for {:?}",
-        tab.id()
-    );
-    if rows.len() != projections.len() {
-        // Fail closed in release builds: a stale visual/model mapping must never activate or close
-        // a different row merely because it happens to occupy the same index.
-        for row in &mut rows {
-            row.target = crate::state::RowTarget::Inert;
-            row.close = None;
-        }
-        return rows;
-    }
-    for (row, projection) in rows.iter_mut().zip(projections) {
-        row.target = projection.target;
-        row.close = projection.close;
-    }
-    rows
-}
-
-fn visual_body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
-    if let Some(items) = ctx.state.tree_items(tab) {
-        return tree_rows::tree_rows(ctx, items);
+/// A row tab's rows, in display order. The view draws them and update handlers resolve clicks,
+/// keys, and the cursor against them, so a row index means the same row to both.
+pub(crate) fn rows(state: &State, tab: &SidebarTab) -> Vec<row::SidebarRow> {
+    if let Some(items) = state.tree_items(tab) {
+        return tree_rows::tree_rows(state, items);
     }
     match tab {
-        SidebarTab::Panes => panes::panes_rows(ctx),
-        SidebarTab::Activity => agents::agents_rows(ctx),
-        SidebarTab::Agents => global_agents::global_agents_rows(ctx),
-        SidebarTab::Sessions => sessions::sessions_rows(ctx),
-        SidebarTab::Worktrees => worktrees::worktrees_rows(ctx),
-        SidebarTab::Launcher { name, entries, .. } => user_tabs::launcher_rows(ctx, name, entries),
-        SidebarTab::Command { name, on_click, .. } => {
-            user_tabs::command_rows(ctx, name, on_click.is_some())
+        SidebarTab::Panes => panes::panes_rows(state),
+        SidebarTab::Activity => agents::agents_rows(state),
+        SidebarTab::Agents => global_agents::global_agents_rows(state),
+        SidebarTab::Sessions => sessions::sessions_rows(state),
+        SidebarTab::Worktrees => worktrees::worktrees_rows(state),
+        SidebarTab::Launcher { name, entries, .. } => {
+            user_tabs::launcher_rows(state, name, entries)
         }
-        // The tree owns its own rows inside the widget; nothing to enumerate here. Projects is
-        // hierarchical and drawn above.
+        SidebarTab::Command { name, on_click, .. } => {
+            user_tabs::command_rows(state, name, on_click.is_some())
+        }
+        // The file tree owns its rows inside the widget; Projects and stream tabs are listed above.
         SidebarTab::Tree { .. } | SidebarTab::Projects | SidebarTab::Stream { .. } => Vec::new(),
     }
+}
+
+/// Where the cursor actually sits: the stored index if it still points at a selectable row,
+/// otherwise the nearest one.
+pub(crate) fn resolve_cursor(cursor: usize, rows: &[row::SidebarRow]) -> Option<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.selectable())
+        .map(|(index, _)| index)
+        .min_by_key(|index| index.abs_diff(cursor))
 }
 
 /// The message a tab shows in place of rows. Distinct from "loading" for command tabs, where an
@@ -499,95 +488,6 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
     }
 }
 
-/// The row list for every tab except the file tree: composed rows in a scroll view.
-///
-/// Rows are direct `ScrollView` children so each can carry its own key — that is what lets
-/// `scroll_to_key` follow the cursor. Nesting them inside one stack would make the whole body a
-/// single child and scrolling would only ever resolve to the top of it.
-fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
-    if let Some(items) = ctx.state.tree_items(tab) {
-        return tree_rows::tab(ctx, panel, tab, items);
-    }
-    let rows = body_rows(ctx, tab);
-    if rows.is_empty() {
-        return empty_body(ctx, panel, Some(empty_text(ctx, tab)));
-    }
-    let panel_state = &ctx.state.sidebar.panels[panel];
-    let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
-    let cursor = cursor_index(ctx, panel, tab);
-    let tab_id = tab.id();
-
-    let mut view = ScrollView::new()
-        .scrollbar(true)
-        .scrollbar_config(scrollbar_config())
-        // Focusable so `focus-sidebar` has a target and the cursor can mean something, but its own
-        // scroll keys are off: arrows move the cursor, and the view follows via `scroll_to_key`.
-        .focusable(true)
-        .tab_stop(false)
-        .scroll_keys(ScrollKeymap::NONE)
-        .on_viewport_change(crate::view::sidebar::callback(ctx, move |event| {
-            Msg::SidebarViewportChanged {
-                panel,
-                tab_id: tab_id.clone(),
-                event,
-            }
-        }));
-    if let Some(cursor) = cursor.filter(|_| focused) {
-        view = view.scroll_to_key(row_key(ctx, panel, cursor));
-    }
-
-    for (index, row) in rows.into_iter().enumerate() {
-        let selectable = row.selectable();
-        let closable = row.close.is_some();
-        let selected = focused && cursor == Some(index);
-        let close = close_affordance(ctx, panel, &row, index, selected);
-        let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
-        let element = match row.kind {
-            row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
-            row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => item.build(ctx, selected, hovered, close),
-        };
-        // The row used to lose its own hover effect whenever the keyed ✕ region owned hover, so
-        // this re-applied the same background transform through a scope. tui-lipan 0.7.0 makes a
-        // `MouseRegion`'s hover visuals cover interactive descendants, so the row's native effect
-        // stays on and re-applying it lifted the background twice.
-        // Hover is tracked for *every* row, not only the ones a click does something to. Pointing
-        // at a row is a fact about the pointer; whether the row can be activated is not. Tying the
-        // two together left `hovered_row` pointing at a row whose region had gone: a host row stops
-        // being selectable the moment connecting starts, so the pointer leaving it fired no
-        // `on_hover_change`, and the index stayed hovered forever — long enough for the failed
-        // host to come back wearing "Connect" instead of its status, and for a connected host
-        // (inert, but closable) to be unable to show its ✕ at all.
-        let interactive = selectable || closable;
-        let mut region = MouseRegion::new()
-            .on_mouse_move(crate::view::sidebar::callback(ctx, move |_| {
-                Msg::SidebarPointerMoved(panel)
-            }))
-            .on_hover_change(crate::view::sidebar::callback(ctx, move |hovered| {
-                Msg::SidebarRowHover {
-                    panel,
-                    index,
-                    hovered,
-                }
-            }))
-            .child(element);
-        if selectable {
-            region = region.on_click(crate::view::sidebar::callback(ctx, move |_| {
-                Msg::SidebarRowActivate { panel, index }
-            }));
-        }
-        if interactive && !panel_state.suppress_row_hover {
-            // A transform rather than a style: it lifts whatever the row already painted, so
-            // the active pane's row and the row under the keyboard cursor still respond to the
-            // pointer. An absolute hover style sits *under* those backgrounds and never shows.
-            region = region.hover_effect(VisualEffect::transform_bg(super::hover_lift()));
-        }
-        let element: Element = region.into();
-        view = view.child(element.key(row_key(ctx, panel, index)));
-    }
-    view.key(body_key(ctx, panel))
-}
-
 /// Whether a row shows its ✕ this frame, and in which state.
 ///
 /// Aiming is what reveals it — the pointer on the row, or the keyboard cursor while the sidebar
@@ -613,18 +513,6 @@ fn close_affordance(
         index,
         armed,
     })
-}
-
-/// Per-row element key, used both for reconciliation and as the `scroll_to_key` target.
-fn row_key(ctx: &Context<AppRoot>, panel: usize, index: usize) -> String {
-    format!("sidebar-{}-row-{index}", panel_identity(&ctx.state, panel))
-}
-
-fn cursor_index(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Option<usize> {
-    crate::state::SidebarItemProjection::resolve_cursor(
-        ctx.state.sidebar.panels[panel].cursor,
-        &ctx.state.sidebar_item_projections(tab),
-    )
 }
 
 /// Scrollbar presentation shared by every scrolling surface in the sidebar, including the file

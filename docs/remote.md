@@ -61,7 +61,7 @@ a connected host opens immediately. Connection failures leave the host list open
 on its row so you can retry or edit the host. Opening a host does not attach a session or start a
 shell; choose or create a session in Sessions.
 
-While a host is connecting, its row shows a spinner and `connecting…`, and `Esc` cancels the
+While a host is connecting, its row shows a spinner and `Connecting…`, and `Esc` cancels the
 attempt. One host connects at a time.
 
 `rozi --remote <host>` also opens Sessions on the host’s tab as soon as it connects.
@@ -241,7 +241,7 @@ Before connecting, rozi checks the host for a compatible rozi binary, whether yo
 inside rozi or start with `rozi --remote <host>`. When rozi needs to install one, a dialog shows
 the host, the install location as the host resolves it (your home directory shown as `~`), and the
 version, with `Install` and `Cancel`; `Esc` also cancels. While
-rozi copies itself onto the host, the host's row shows a spinner and `installing…`. The connection
+rozi copies itself onto the host, the host's row shows a spinner and `Installing…`. The connection
 continues after installation.
 
 | `[remote] install` | TUI connection or interactive terminal | Non-interactive run |
@@ -343,15 +343,15 @@ in place for up to two minutes. It reuses the rozi binary it already found on th
 
 - `Esc` stops waiting and opens Sessions.
 - These automatic retries never prompt. If the host now needs a password, passphrase, or host-key
-  approval, they fail until the session goes **offline**; a retry you start with `Enter` can then
+  approval, they fail until the session goes **Offline**; a retry you start with `Enter` can then
   show the SSH dialog.
 - A reconnect you start, with `Enter` on an offline session or by switching back to a session that
   lost its connection, shows any SSH prompt over the overlay. `Esc` cancels that prompt, and the
   reconnecting overlay returns.
-- If the remote session no longer exists, the overlay shows **session lost**. rozi never starts a
+- If the remote session no longer exists, the overlay shows **Session lost**. rozi never starts a
   replacement on its own: press `Enter` to recreate the session from the panes still on screen, or
   `Esc` to open Sessions without recreating it.
-- If the host is still unreachable after two minutes, the session stays on screen as **offline**.
+- If the host is still unreachable after two minutes, the session stays on screen as **Offline**.
   `Enter` retries and `Esc` opens Sessions.
 
 Dismissing Sessions with `Esc` while the current session is offline shows the launcher. The offline
@@ -369,7 +369,7 @@ just because rozi starts or a picker opens.
 
 The channel keeps the host's session list current. It does not attach to sessions, receive terminal
 output, or take layout control. If the host becomes unreachable, rozi keeps trying in the
-background, and its last session list stays visible with rows marked `last seen`. `Ctrl+K` twice on a `last seen` row forgets
+background, and its last session list stays visible with rows marked `Last seen`. `Ctrl+K` twice on a `Last seen` row forgets
 it without contacting the host; if the host still reports the session later, it is listed again.
 
 Background reconnects never prompt. If a host needs a password or host-key approval, select it in

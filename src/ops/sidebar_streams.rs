@@ -411,14 +411,10 @@ pub(crate) fn key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Update> {
     if !matches!(tab, SidebarTab::Stream { .. }) {
         return None;
     }
-    let tab = tab.clone();
-    let items = ctx.state.tree_items(&tab)?;
-    let projections = ctx.state.sidebar_item_projections(&tab);
-    let index = crate::state::SidebarItemProjection::resolve_cursor(
-        ctx.state.sidebar.panels[panel].cursor,
-        &projections,
-    )?;
-    let crate::state::RowTarget::StreamRow(row) = items.get(index)?.target() else {
+    let mut rows = ctx.state.sidebar_rows(tab);
+    let index =
+        crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows)?;
+    let crate::state::RowTarget::StreamRow(row) = rows.swap_remove(index).target else {
         return None;
     };
     let (producer, spec) = ctx.state.stream_row(&row)?;

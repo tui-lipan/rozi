@@ -303,8 +303,10 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
     );
 }
 
+/// A file created after the first listing appears on its own: no refresh tick, no remount. The
+/// deadline is shorter than the tree's repair reread, so only the watcher can satisfy it.
 #[test]
-fn files_tab_refresh_tick_reloads_directory_without_remounting() {
+fn files_tab_shows_a_new_file_without_a_refresh_tick() {
     let Some(repo) = Repo::new("refresh") else {
         eprintln!("skipping: git is unavailable");
         return;
@@ -356,22 +358,31 @@ fn files_tab_refresh_tick_reloads_directory_without_remounting() {
                 "the file does not predate its creation"
             );
 
-            std::fs::write(new_file, "// new\n").expect("create file after initial listing");
-            let epoch = backend
-                .state()
-                .sidebar
-                .tree_refresh_armed_epoch
-                .expect("visible tree has a refresh chain");
-            backend
-                .dispatch(Msg::SidebarTreeRefresh { epoch })
-                .expect("dispatch refresh tick");
-
+            // The watcher starts in the background after the tree mounts, so one write could land
+            // before it does. Recreating the file until its row appears keeps the test independent
+            // of that timing while still never dispatching a refresh.
+            //
+            // The backend's clock is virtual, so the watcher's batch window only closes as it is
+            // advanced. Small steps keep the total far below the tree's 30-second repair reread
+            // within the deadline, so that reread cannot be what makes the row appear.
+            let mut last_write: Option<std::time::Instant> = None;
             assert!(
-                pump_until(&mut backend, |backend| backend
-                    .capture_frame()
-                    .plain_text()
-                    .contains("appeared-later.rs")),
-                "the refresh updates local entries without a remount"
+                pump_until(&mut backend, |backend| {
+                    if last_write
+                        .is_none_or(|at| at.elapsed() > std::time::Duration::from_millis(200))
+                    {
+                        let _ = std::fs::remove_file(&new_file);
+                        std::fs::write(&new_file, "// new\n")
+                            .expect("create file after initial listing");
+                        last_write = Some(std::time::Instant::now());
+                    }
+                    backend.advance(std::time::Duration::from_millis(20));
+                    backend
+                        .capture_frame()
+                        .plain_text()
+                        .contains("appeared-later.rs")
+                }),
+                "the watcher shows a new file without a refresh or remount"
             );
         })
         .expect("spawn refresh smoke thread")

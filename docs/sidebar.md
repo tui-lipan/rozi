@@ -226,8 +226,14 @@ Instead of an empty tree, the tab says when the repository is clean, when the di
 repository, when it is loading, or when changes are unavailable. In a remote session, `git` must be
 on the remote host's `PATH`.
 
-Files and Git refresh while they are on screen. They stop refreshing when you hide the sidebar or
-switch every visible panel to other tabs.
+Files and Git update as files change, usually within a fraction of a second. File listings follow
+the directories you have open, and reopening a directory shows its current contents. Git status
+follows every tracked directory, open or not, so a file an agent edits under a collapsed directory
+still shows up as changed. It also refreshes when a command finishes. On a filesystem that does
+not report changes, such as some network mounts, or in a repository with more than 4,096 tracked
+directories, the tree rereads every five seconds instead. In a remote session, Files and Git
+refresh when a command finishes and every few seconds. Neither tab refreshes while hidden: hide the
+sidebar or switch every visible panel to other tabs and it stops.
 
 ## Worktrees
 

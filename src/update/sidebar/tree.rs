@@ -33,13 +33,15 @@ pub(crate) fn ensure_tree_refresh_armed(ctx: &mut Context<AppRoot>) {
     );
 }
 
-/// Refresh directory entries and Git state, then reschedule only while a tree remains visible.
+/// Refresh Git state, then reschedule only while a tree remains visible.
+///
+/// Local directory entries and Git status follow the filesystem through the tree's own watchers,
+/// so the tick no longer rereads entries. It still bumps the Git token: the remote tree and the
+/// Worktrees tab have no watcher and refresh on it.
 pub(crate) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if ctx.state.sidebar.tree_refresh_armed_epoch != Some(epoch) || !repository_tabs_active(ctx) {
         return Update::none();
     }
-    ctx.state.sidebar.tree_entry_refresh_token =
-        ctx.state.sidebar.tree_entry_refresh_token.wrapping_add(1);
     ctx.state.sidebar.git_refresh_token = ctx.state.sidebar.git_refresh_token.wrapping_add(1);
     Update::with_command(Command::after(
         TREE_REFRESH_INTERVAL,

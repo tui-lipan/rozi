@@ -549,7 +549,8 @@ Set at most one of `command` or `argv`. Omit both for an interactive shell.
 | --- | --- | --- | --- |
 | `command` | string or null | null | Command line interpreted by `command_shell`. |
 | `argv` | string array or null | null | Direct executable and arguments. |
-| `cwd` | string or null | focused pane cwd | Working directory. |
+| `cwd` | string or null | focused pane cwd | Working directory on the session host. |
+| `local_cwd` | string or null | null | Working directory for a local pane, taking precedence over `cwd`. Ignored for a remote session. The CLI supplies its resolved local directory here. |
 | `title` | string or null | generated | Initial title. |
 | `keep_open` | bool | `false` | Replaces a finished command with a shell. |
 | `focus` | bool | `false` | Focuses the new pane and its workspace. |

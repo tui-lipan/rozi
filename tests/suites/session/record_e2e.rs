@@ -55,6 +55,7 @@ fn spawn(session: &str, script: &str) -> u32 {
         ControlCommand::NewPane {
             command: None,
             argv: Some(vec!["sh".into(), "-c".into(), script.into()]),
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,

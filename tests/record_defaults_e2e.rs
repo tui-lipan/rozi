@@ -74,6 +74,7 @@ fn a_recording_without_a_path_is_named_in_the_state_directory_and_stops_by_its_p
                 "-c".into(),
                 "echo ready; sleep 60".into(),
             ]),
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,

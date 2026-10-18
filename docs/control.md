@@ -336,6 +336,9 @@ answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `P
 ## Open a pane
 
 `split` opens a pane. It leaves focus unchanged unless `--focus` is present.
+For a local endpoint, the directory defaults to the configured `cwd`, or the calling shell's
+directory when `cwd` is unset. Relative `--cwd` paths resolve from the calling shell's directory.
+With `--remote`, paths resolve on the remote host.
 
 | Option | Effect |
 | --- | --- |

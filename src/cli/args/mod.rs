@@ -1073,6 +1073,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let command = control::ControlCommand::NewPane {
                     command,
                     argv,
+                    local_cwd: None,
                     cwd,
                     title,
                     keep_open,
@@ -2812,6 +2813,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: None,
                 argv: Some(vec!["grok".into()]),
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -2960,6 +2962,7 @@ mod tests {
         let expected = |command: Option<&str>, focus: bool| control::ControlCommand::NewPane {
             command: command.map(str::to_string),
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -2995,6 +2998,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: Some("cargo test".into()),
                 argv: None,
+                local_cwd: None,
                 cwd: Some("/repo with space".into()),
                 title: Some("tests".into()),
                 keep_open: true,
@@ -3038,6 +3042,7 @@ mod tests {
                     "--literal".into(),
                     "semi; $HOME 'quoted'".into(),
                 ]),
+                local_cwd: None,
                 cwd: Some("/repo with spaces".into()),
                 title: None,
                 keep_open: false,
@@ -3694,6 +3699,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: Some("--odd-command".into()),
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,

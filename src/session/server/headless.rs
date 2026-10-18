@@ -581,6 +581,7 @@ impl SessionServer {
             ControlCommand::NewPane {
                 command,
                 argv,
+                local_cwd,
                 cwd,
                 title,
                 keep_open,
@@ -591,7 +592,7 @@ impl SessionServer {
                 SessionSpawn {
                     command,
                     argv,
-                    cwd,
+                    cwd: local_cwd.or(cwd),
                     title,
                     keep_open,
                     focus,
@@ -1168,6 +1169,10 @@ impl SessionServer {
             return Some(response);
         }
 
+        let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {
+            Ok(bytes) => bytes,
+            Err(response) => return Some(response),
+        };
         if let Some(until) = request.wait
             && let Err(response) = self.register_post_prompt_wait(
                 client_id,
@@ -1180,8 +1185,6 @@ impl SessionServer {
             return Some(response);
         }
 
-        let mut bytes = request.prompt.as_bytes().to_vec();
-        bytes.push(b'\r');
         let written = if attached {
             self.write_running_pane(reference.pane.pane_id, bytes)
         } else {
@@ -1390,6 +1393,20 @@ impl SessionServer {
             Ok(()) => ControlResponse::empty(),
             Err(response) => response,
         }
+    }
+
+    fn session_prompt_bytes(
+        &self,
+        id: PaneId,
+        prompt: &str,
+    ) -> std::result::Result<Vec<u8>, ControlResponse> {
+        let enter = self.session_key_bytes(id, &["Enter".into()], false)?;
+        let modes = self.panes[&id].screen().key_modes();
+        // Keep Enter outside the paste so bulk-input detection cannot treat it as
+        // an invisible character in the prompt. Honor the child's keyboard protocol too.
+        let mut bytes = tui_lipan::prelude::encode_paste(prompt, modes);
+        bytes.extend(enter);
+        Ok(bytes)
     }
 
     /// Encode `keys` for pane `id`, all of them or none.
@@ -2894,6 +2911,24 @@ mod tests {
     }
 
     #[test]
+    fn agent_prompt_pastes_multiline_text_and_sends_enter_outside_the_paste() {
+        let mut server = SessionServer::new_named("prompt");
+        pane_with_screen(&mut server, 7, b"\x1b[?2004h");
+        assert_eq!(
+            server.session_prompt_bytes(7, "one\ntwo").unwrap(),
+            b"\x1b[200~one\ntwo\x1b[201~\r"
+        );
+        // A child that did not enable paste framing must receive plain input.
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"\x1b[?2004l");
+        assert_eq!(server.session_prompt_bytes(7, "hello").unwrap(), b"hello\r");
+    }
+
+    #[test]
     fn atomic_prompt_refuses_a_blocked_agent_before_writing() {
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
@@ -3552,6 +3587,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: Some("worker".to_string()),
                 keep_open: false,
@@ -3607,6 +3643,7 @@ mod tests {
         let spawn = |size| ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -3649,6 +3686,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -3689,6 +3727,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -3721,6 +3760,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -3748,6 +3788,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -3952,6 +3993,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: Some("btop".to_string()),
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -3998,6 +4040,7 @@ mod tests {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,

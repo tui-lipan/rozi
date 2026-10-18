@@ -512,6 +512,10 @@ pub enum ControlCommand {
         /// Direct executable and arguments. Mutually exclusive with `command`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         argv: Option<Vec<String>>,
+        /// CLI-resolved directory on the caller's host. Used only for local spawns;
+        /// a UI attached to a remote session uses `cwd` on that host instead.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_cwd: Option<String>,
         cwd: Option<String>,
         title: Option<String>,
         #[serde(default)]

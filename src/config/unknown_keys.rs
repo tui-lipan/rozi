@@ -42,7 +42,13 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "keys",
 ];
 
-const INPUT_KEYS: &[&str] = &["modifier", "prefix", "modifier_shortcuts", "which_key"];
+const INPUT_KEYS: &[&str] = &[
+    "modifier",
+    "prefix",
+    "modifier_shortcuts",
+    "which_key",
+    "scroll_multiplier",
+];
 
 const ANIMATION_KEYS: &[&str] = &[
     "enabled",
@@ -112,7 +118,6 @@ const PANE_KEYS: &[&str] = &[
     "highlight_focused_titlebar",
     "focus_on_hover",
     "focus_on_hover_pause_modifier",
-    "scroll_multiplier",
     "show_workbar",
     "workbar_gap",
     "workbar_background",

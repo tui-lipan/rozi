@@ -42,7 +42,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                 ),
                 (
                     "Scroll multiplier",
-                    crate::state::scroll_multiplier_label(pane.scroll_multiplier),
+                    crate::state::scroll_multiplier_label(ctx.state.config.input.scroll_multiplier),
                     EditScrollMultiplier,
                 ),
             ],

@@ -1277,7 +1277,6 @@ pub(crate) fn pane_element(
         .scrollbar(!pane.closing)
         .h_scrollbar(!pane.closing)
         .scroll_wheel(terminal_ready && !hinting)
-        .scroll_wheel_multiplier(ctx.state.config.pane.scroll_multiplier)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
             Msg::PaneResize(id, viewport.cols, viewport.rows)
         }));

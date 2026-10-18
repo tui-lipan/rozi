@@ -66,7 +66,7 @@ fn agent_row(state: &State, row: GlobalAgentRow) -> Row {
         crate::state::AgentLocation::OtherSession { .. } => false,
     };
     let muted = super::super::fg_only(&theme.muted).dim();
-    let mut content = Row::new(row.title().to_string())
+    let mut content = Row::new(row.title())
         .active(active)
         .glyph(glyph)
         .title_style(super::super::fg_only(&theme.primary))
@@ -144,6 +144,7 @@ mod tests {
             elapsed: None,
             project: None,
             branch: None,
+            ordinal: None,
         }
     }
 

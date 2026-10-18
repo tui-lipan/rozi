@@ -41,6 +41,9 @@ pub(crate) struct GlobalAgentRow {
     pub project: Option<String>,
     /// The branch checked out where the agent works.
     pub branch: Option<String>,
+    /// Which of several rows this is that would otherwise read exactly the same - one program's
+    /// untitled runs in one checkout - and `None` for every row that reads apart on its own.
+    pub ordinal: Option<usize>,
 }
 
 impl GlobalAgentRow {
@@ -71,9 +74,14 @@ impl GlobalAgentRow {
         matches!(self.location, AgentLocation::Here { .. })
     }
 
-    /// What the row is called: its task when it named one, else the agent.
-    pub fn title(&self) -> &str {
-        self.task.as_deref().unwrap_or(&self.agent)
+    /// What the row is called: its task when it named one, else the agent, numbered only when
+    /// another row would otherwise read the same.
+    pub fn title(&self) -> String {
+        let title = self.task.as_deref().unwrap_or(&self.agent);
+        match self.ordinal {
+            Some(number) => format!("{title} #{number}"),
+            None => title.to_string(),
+        }
     }
 
     /// `rozi (fix-login)`: the project and the branch checked out there.
@@ -94,10 +102,14 @@ impl GlobalAgentRow {
     /// line. The place belongs in the label rather than the description because it is the half a
     /// user types.
     pub fn label(&self) -> String {
-        crate::view::vocabulary::fields(self.task.iter().cloned().chain([
-            self.agent.clone(),
-            crate::view::vocabulary::session_at(&self.session, self.host.as_deref()),
-        ]))
+        crate::view::vocabulary::fields(
+            std::iter::once(self.title())
+                .chain(self.task.is_some().then(|| self.agent.clone()))
+                .chain([crate::view::vocabulary::session_at(
+                    &self.session,
+                    self.host.as_deref(),
+                )]),
+        )
     }
 
     /// What else a search should find a row by: its host's spec, the project and branch it works
@@ -173,6 +185,44 @@ fn summary_row(
         elapsed: None,
         project: checkout.map(|checkout| project_name(checkout.repository_root())),
         branch: checkout.and_then(|checkout| checkout.branch.clone()),
+        ordinal: None,
+    }
+}
+
+/// Where a row sits, for numbering rows that would otherwise read the same: its pane, then its
+/// place among that pane's agents. Stable while states change, and the order Activity numbers the
+/// same runs in, so one run carries one number everywhere.
+type Seat = (crate::state::PaneId, usize);
+
+/// Number the rows that would otherwise read exactly the same - same title, same session and host,
+/// same project and branch - by where they sit. Every other row stays unnumbered.
+fn number_twins(rows: &mut [(GlobalAgentRow, Seat)]) {
+    let key = |row: &GlobalAgentRow| {
+        (
+            row.title(),
+            row.session.clone(),
+            row.host.clone(),
+            row.place(),
+        )
+    };
+    let keys: Vec<_> = rows.iter().map(|(row, _)| key(row)).collect();
+    let ordinals: Vec<Option<usize>> = (0..rows.len())
+        .map(|index| {
+            let mut twins: Vec<usize> = (0..rows.len())
+                .filter(|other| keys[*other] == keys[index])
+                .collect();
+            if twins.len() < 2 {
+                return None;
+            }
+            twins.sort_by_key(|other| rows[*other].1);
+            twins
+                .iter()
+                .position(|other| *other == index)
+                .map(|at| at + 1)
+        })
+        .collect();
+    for ((row, _), ordinal) in rows.iter_mut().zip(ordinals) {
+        row.ordinal = ordinal;
     }
 }
 
@@ -189,7 +239,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
         .as_ref()
         .map(|target| state.remote_target_label(target));
     let here_session = state.current().session_name.clone();
-    let mut rows = Vec::new();
+    let mut rows: Vec<(GlobalAgentRow, Seat)> = Vec::new();
     if let Some(session) = here_session.as_deref() {
         // The Activity tab's rows, minus its activities: only the agent projection is listed.
         for row in crate::view::sidebar::agents::agent_rows(state) {
@@ -204,7 +254,8 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 row.run,
             )
             .map(|(elapsed, _)| elapsed);
-            rows.push(GlobalAgentRow {
+            let seat = (row.pane_id, row.order);
+            let global = GlobalAgentRow {
                 location: AgentLocation::Here {
                     pane: row.pane_id,
                     row: row.slot.as_ref().map(|slot| slot.key.clone()),
@@ -221,15 +272,19 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 elapsed,
                 project,
                 branch,
-            });
+                ordinal: None,
+            };
+            rows.push((global, seat));
         }
     }
     if let Some(snapshot) = &state.local_agent_snapshot {
-        for agent in &snapshot.agents {
+        // Summaries arrive in pane order and, within a pane, in the order it publishes them.
+        for (index, agent) in snapshot.agents.iter().enumerate() {
             if here_target.is_none() && here_session.as_deref() == Some(&agent.session) {
                 continue;
             }
-            rows.push(summary_row(state, agent, None, &snapshot.projects));
+            let row = summary_row(state, agent, None, &snapshot.projects);
+            rows.push((row, (agent.pane(), index)));
         }
     }
     for (target, agents) in &state.remote.agents {
@@ -238,7 +293,7 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             .projects
             .get(target)
             .map_or(&[][..], Vec::as_slice);
-        for agent in agents {
+        for (index, agent) in agents.iter().enumerate() {
             // The session on screen is already listed from its live panes, which are fresher than a
             // snapshot taken between polls. Two answers for one agent, disagreeing by up to a poll
             // interval and sitting next to each other, is worse than either alone.
@@ -247,9 +302,12 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             {
                 continue;
             }
-            rows.push(summary_row(state, agent, Some(target), projects));
+            let row = summary_row(state, agent, Some(target), projects);
+            rows.push((row, (agent.pane(), index)));
         }
     }
+    number_twins(&mut rows);
+    let mut rows: Vec<GlobalAgentRow> = rows.into_iter().map(|(row, _)| row).collect();
     rows.sort_by(|a, b| {
         a.rank()
             .cmp(&b.rank())
@@ -364,6 +422,7 @@ mod tests {
             elapsed: Some(std::time::Duration::from_secs(240)),
             project: Some("rozi".into()),
             branch: Some("worktree-fix".into()),
+            ordinal: None,
         };
         assert_eq!(row.title(), "fix login redirect");
         assert_eq!(row.label(), "fix login redirect · Claude Code · dev");
@@ -474,6 +533,46 @@ mod tests {
             rows[0]
                 .search_aliases(&state)
                 .contains(&"rozi (fix-ssh)".to_string())
+        );
+    }
+
+    /// Two untitled runs of one program in one session and checkout read the same, so each is
+    /// numbered by where it sits - in the label a search matches too. A row that reads apart on its
+    /// own keeps no number.
+    #[test]
+    fn rows_that_would_read_the_same_are_numbered() {
+        let untitled = |pane| {
+            let mut agent = summary("api", pane, "idle");
+            agent.label = "OpenCode".into();
+            agent
+        };
+        let mut titled = untitled(3);
+        titled.task = Some("fix reconnect".into());
+        let state = state_with_hosts(&[("workbox", vec![untitled(5), untitled(2), titled])]);
+        let mut titles: Vec<_> = global_agent_rows(&state)
+            .iter()
+            .map(|row| (row.location.pane(), row.title(), row.label()))
+            .collect();
+        titles.sort();
+        assert_eq!(
+            titles,
+            vec![
+                (
+                    2,
+                    "OpenCode #1".to_string(),
+                    "OpenCode #1 · api@workbox".to_string()
+                ),
+                (
+                    3,
+                    "fix reconnect".to_string(),
+                    "fix reconnect · OpenCode · api@workbox".to_string()
+                ),
+                (
+                    5,
+                    "OpenCode #2".to_string(),
+                    "OpenCode #2 · api@workbox".to_string()
+                ),
+            ]
         );
     }
 

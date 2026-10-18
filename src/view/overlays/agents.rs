@@ -106,7 +106,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let (_, color) = status_colors
             .iter()
             .find(|(location, _)| location == &item.value)?;
-        let mut label = vec![Span::new(row.title().to_string()).style(name_style)];
+        let mut label = vec![Span::new(row.title()).style(name_style)];
         if row.task.is_some() {
             label.push(Span::new(format!(" · {}", row.agent)).style(agent_style));
         }
@@ -245,6 +245,7 @@ mod tests {
             elapsed: Some(std::time::Duration::from_secs(240)),
             project: Some("api".into()),
             branch: Some("fix-login".into()),
+            ordinal: None,
         }
     }
 

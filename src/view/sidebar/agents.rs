@@ -765,7 +765,8 @@ struct ClusterChild {
 
 /// What each run in a cluster is called: its task, else what its terminal says, else the agent's
 /// name - numbered only where two runs would otherwise read the same. Numbers follow where the runs
-/// sit, not how urgent they are, so a run keeps its number while the list reorders around it.
+/// sit - their pane, then their place among its agents - not how urgent they are, so a run keeps
+/// its number while the list reorders around it, and the Agents tab numbers it the same.
 fn member_labels(members: &[&AgentRow]) -> Vec<String> {
     let base: Vec<String> = members
         .iter()
@@ -791,10 +792,7 @@ fn member_labels(members: &[&AgentRow]) -> Vec<String> {
             if twins.len() < 2 {
                 return label.clone();
             }
-            twins.sort_by_key(|other| {
-                let member = members[*other];
-                (member.workspace_index, member.pane_index, member.order)
-            });
+            twins.sort_by_key(|other| (members[*other].pane_id, members[*other].order));
             let number = twins.iter().position(|other| *other == index).unwrap_or(0) + 1;
             format!("{label} #{number}")
         })

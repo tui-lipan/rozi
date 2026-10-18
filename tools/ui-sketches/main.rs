@@ -83,7 +83,7 @@ const SCENARIOS: [(&str, &str, fn()); 18] = [
     ),
     (
         "sidebar-activity",
-        "project headings, two-line agents, and a harness of published sessions, open and folded",
+        "project headings, two-line agents, and an agent cluster across panes, open and folded",
         sidebar_activity,
     ),
     (
@@ -1315,9 +1315,13 @@ fn sidebar_activity() {
             .collect();
         let codex = agent_pane(11, "Codex", "working", "/home/me/src/rozi");
         let opencode = agent_pane(12, "OpenCode", "error", "/home/me/src/tui-lipan");
+        // A second Claude Code in the same checkout, on another workspace: its run joins the
+        // cluster rather than standing beside it.
+        let mut second = agent_pane(13, "Claude Code", "working", "/home/me/src/rozi");
+        second.terminal.title = Some("✳ Refactor sidebar".into());
         let workspaces = &mut state.current_mut().workspaces;
         workspaces[0].panes = vec![claude, codex];
-        workspaces[1].panes = vec![opencode];
+        workspaces[1].panes = vec![opencode, second];
         workspaces[0].focused_pane = Some(10);
         state.current_mut().focused_pane = Some(10);
     }

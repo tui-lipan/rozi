@@ -46,9 +46,9 @@ pub(crate) struct AgentRow {
     pub reason: Option<String>,
     /// Position among its pane's occupants, so one pane's rows keep the projection's order.
     pub order: usize,
-    /// For a published slot, the program publishing it (`Claude Code`): what several sessions in
-    /// one pane are grouped under.
-    pub harness: Option<String>,
+    /// What a pane's own agent shows as its terminal title, when that says more than its name or
+    /// its directory. `None` for a published row, whose title is its task.
+    pub screen_title: Option<String>,
 }
 
 /// A row's identity within a pane that publishes several agents or activities.
@@ -66,6 +66,9 @@ pub(crate) struct SlotRef {
 /// fallback group of agents whose pane has no usable cwd.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentGroup {
+    /// The host and directory the group stands for, `None` for the fallback group. Unlike the label,
+    /// which two unrelated projects can share, this names one place.
+    pub key: Option<String>,
     pub project: Option<String>,
     /// Branch checked out in the group's project, shown on its header.
     pub branch: Option<String>,
@@ -110,6 +113,12 @@ fn semantic_activity_text(
     {
         return Some(reason.to_string());
     }
+    screen_title(pane, kind_label)
+}
+
+/// The pane's terminal title, when it says more than the agent's name or the directory it is in:
+/// agents write their current task there, which makes it the only work a detected-only agent names.
+fn screen_title(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<String> {
     let title = pane.title()?;
     let title = strip_agent_title_prefix(strip_title_decoration(&title), kind_label);
     if title.is_empty()
@@ -270,18 +279,13 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 } else if let Some((index, published_row)) = slot {
                                     let key = published_row.key();
                                     let ui = pane.terminal.published_row_ui.get(&key);
-                                    // Behind a detected agent its rows are that agent's sessions, so
-                                    // they are numbered under its name; the title says which one.
-                                    let number = effective[..index]
-                                        .iter()
-                                        .filter(|row| row.is_agent())
-                                        .count()
-                                        + 1;
                                     (
+                                        // Behind a detected agent its rows are that agent's
+                                        // sessions: named for the agent, told apart by their task.
                                         if occupant.is_agent()
                                             && pane.terminal.detected_agent.is_some()
                                         {
-                                            format!("{kind_label} #{number}")
+                                            kind_label.to_string()
                                         } else if published_row.title.trim().is_empty() {
                                             pane.display_title(pane.terminal.title())
                                         } else {
@@ -328,15 +332,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                         None,
                                     )
                                 };
-                            // Only a program's own sessions group under it: activities another
-                            // publisher lists in the same pane stay rows of their own.
-                            let harness = slot.as_ref().filter(|_| occupant.is_agent()).map(|_| {
-                                if kind_label.is_empty() {
-                                    pane.display_title(pane.terminal.title())
-                                } else {
-                                    kind_label.to_string()
-                                }
-                            });
+                            let screen_title = (occupant.is_agent() && slot.is_none())
+                                .then(|| screen_title(&pane.terminal, kind_label))
+                                .flatten();
                             AgentRow {
                                 pane_id: pane.id,
                                 workspace_index,
@@ -364,7 +362,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 reason: occupant.reason.clone(),
                                 identity: occupant.agent.clone(),
                                 order,
-                                harness,
+                                screen_title,
                             }
                         })
                 })
@@ -391,12 +389,39 @@ fn agent_target(row: &AgentRow) -> RowTarget {
     }
 }
 
-/// Where a harness's open or folded state is kept, by its pane, so it survives updates.
-fn harness_key(pane_id: PaneId) -> TreeExpansionKey {
+/// Which agent cluster a row belongs to within its group: the agent's identity, and in the
+/// fallback group its pane too. Activities never cluster.
+///
+/// In a known checkout, every run of one agent working there is one cluster, whichever pane hosts
+/// it: four Claude Code conversations in `rozi (master)` are four jobs in one place, not three in
+/// one terminal and one in another. Without a known place nothing says two panes are related, so
+/// only one pane's own sessions cluster there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClusterKey {
+    pane: Option<PaneId>,
+    agent: String,
+}
+
+fn cluster_key(row: &AgentRow, known_place: bool) -> Option<ClusterKey> {
+    let identity = row.identity.as_ref()?;
+    Some(ClusterKey {
+        pane: (!known_place).then_some(row.pane_id),
+        agent: identity.id.clone(),
+    })
+}
+
+/// Where a cluster's open or folded state is kept: by the place it stands for and its agent, never
+/// by a display label that two places can share, so it survives panes coming and going.
+fn cluster_expansion_key(group: Option<&str>, key: &ClusterKey) -> TreeExpansionKey {
+    let place = match (group, key.pane) {
+        (Some(group), _) => group.to_string(),
+        (None, Some(pane)) => format!("pane:{pane}"),
+        (None, None) => String::new(),
+    };
     TreeExpansionKey {
         tab: crate::config::SidebarTab::Activity.id(),
         section: String::new(),
-        row: format!("harness:{pane_id}"),
+        row: format!("cluster:{place}|{}", key.agent),
     }
 }
 
@@ -482,8 +507,13 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
                 .find_map(|row| row.branch.clone())
                 .filter(|branch| !branch.trim().is_empty());
             (
-                keyed.path,
+                keyed.path.clone(),
                 AgentGroup {
+                    key: Some(format!(
+                        "{}|{}",
+                        keyed.host.as_deref().unwrap_or_default(),
+                        keyed.path
+                    )),
                     project: Some(label),
                     branch,
                     rows: keyed.rows,
@@ -502,6 +532,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     let mut groups: Vec<AgentGroup> = groups.into_iter().map(|(_, group)| group).collect();
     if !unknown.is_empty() {
         groups.push(AgentGroup {
+            key: None,
             project: None,
             branch: None,
             rows: unknown,
@@ -658,8 +689,8 @@ pub(super) fn activity_budget(width: u16) -> usize {
     (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
-/// The Activity tab: a heading per project with its agents beneath, and a harness wherever one
-/// pane publishes several sessions of a program, holding them unless folded.
+/// The Activity tab: a heading per project with its agents beneath, and a cluster wherever one
+/// agent runs more than once there, holding its runs unless folded.
 pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
     let groups = agent_groups(state);
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
@@ -679,48 +710,104 @@ pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
         } else {
             0
         };
-        let mut grouped: Vec<PaneId> = Vec::new();
+        let known_place = group.key.is_some();
+        let mut placed: Vec<ClusterKey> = Vec::new();
         for row in &group.rows {
-            let sessions: Vec<&AgentRow> = group
+            let key = cluster_key(row, known_place);
+            let members: Vec<&AgentRow> = group
                 .rows
                 .iter()
-                .filter(|other| other.pane_id == row.pane_id && other.harness.is_some())
+                .filter(|other| key.is_some() && cluster_key(other, known_place) == key)
                 .collect();
-            let Some(label) = row.harness.as_deref().filter(|_| sessions.len() > 1) else {
-                rows.push(agent_line(state, row, false).at(depth));
+            let Some(key) = key.filter(|_| members.len() > 1) else {
+                rows.push(agent_line(state, row, None).at(depth));
                 continue;
             };
-            // The harness takes the place of its most urgent session; the rest follow it.
-            if grouped.contains(&row.pane_id) {
+            // The cluster takes the place of its most urgent run; the rest follow it.
+            if placed.contains(&key) {
                 continue;
             }
-            grouped.push(row.pane_id);
+            let expansion = cluster_expansion_key(group.key.as_deref(), &key);
+            placed.push(key);
             let expanded = state
                 .sidebar
                 .tree_rows_expanded
-                .get(&harness_key(row.pane_id))
+                .get(&expansion)
                 .copied()
                 .unwrap_or(true);
-            rows.push(harness_row(state, label, row, &sessions, expanded).at(depth));
+            let spans_workspaces = members
+                .iter()
+                .any(|member| member.workspace_index != row.workspace_index);
+            rows.push(
+                cluster_row(state, &members, expansion, expanded, spans_workspaces).at(depth),
+            );
             if expanded {
-                rows.extend(
-                    sessions
-                        .into_iter()
-                        .map(|session| agent_line(state, session, true).at(depth + 1)),
-                );
+                let labels = member_labels(&members);
+                rows.extend(members.iter().zip(labels).map(|(member, label)| {
+                    let child = ClusterChild {
+                        label,
+                        show_workspace: spans_workspaces,
+                    };
+                    agent_line(state, member, Some(child)).at(depth + 1)
+                }));
             }
         }
     }
     rows
 }
 
+/// How a run reads beneath its cluster, which already names the agent.
+struct ClusterChild {
+    label: String,
+    /// The cluster spans workspaces, so each run says which one it is on.
+    show_workspace: bool,
+}
+
+/// What each run in a cluster is called: its task, else what its terminal says, else the agent's
+/// name - numbered only where two runs would otherwise read the same. Numbers follow where the runs
+/// sit, not how urgent they are, so a run keeps its number while the list reorders around it.
+fn member_labels(members: &[&AgentRow]) -> Vec<String> {
+    let base: Vec<String> = members
+        .iter()
+        .map(|member| {
+            let agent = member
+                .identity
+                .as_ref()
+                .map_or(member.title.as_str(), |identity| identity.label.as_str());
+            member
+                .task
+                .as_deref()
+                .and_then(|task| task_title(task, agent))
+                .or_else(|| member.screen_title.clone())
+                .unwrap_or_else(|| agent.to_string())
+        })
+        .collect();
+    base.iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let mut twins: Vec<usize> = (0..members.len())
+                .filter(|other| base[*other] == *label)
+                .collect();
+            if twins.len() < 2 {
+                return label.clone();
+            }
+            twins.sort_by_key(|other| {
+                let member = members[*other];
+                (member.workspace_index, member.pane_index, member.order)
+            });
+            let number = twins.iter().position(|other| *other == index).unwrap_or(0) + 1;
+            format!("{label} #{number}")
+        })
+        .collect()
+}
+
 /// An agent's placed row, keyed by its pane and published slot.
-fn agent_line(state: &State, row: &AgentRow, in_harness: bool) -> SidebarRow {
+fn agent_line(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> SidebarRow {
     let key = match &row.slot {
         Some(slot) => format!("agent:{}:{:?}", row.pane_id, slot.key),
         None => format!("agent:{}:{}", row.pane_id, row.order),
     };
-    SidebarRow::item(agent_row(state, row, in_harness), agent_target(row)).keyed(key)
+    SidebarRow::item(agent_row(state, row, child), agent_target(row)).keyed(key)
 }
 
 /// Whether a row is in the "finished a run, not looked at yet" state: quiescent (neither working
@@ -833,15 +920,26 @@ fn status_icon(glyph: String, color: Color, spinner: bool) -> Element {
     }
 }
 
-/// A harness's one-line row: the program, the most urgent of its sessions' glyphs, and its
-/// workspace. Folded, it also counts its sessions by state, and its arrow takes the most urgent
-/// session's color, which is returned alongside the row.
-fn harness_row(
+/// Whether a row is the one its agent shows: its pane is focused and, for a published row, the
+/// program has it on screen.
+fn row_is_active(state: &State, row: &AgentRow) -> bool {
+    state.current().focused_pane == Some(row.pane_id)
+        && row.slot.as_ref().is_none_or(|slot| slot.active)
+}
+
+/// A cluster's one-line row: the agent, the most urgent of its runs' glyphs, and its workspace when
+/// they share one. Folded, it also counts its runs by state, and its arrow takes the most urgent
+/// run's color.
+///
+/// Selecting it goes to that most urgent run - its pane and, for a published row, the row itself -
+/// so the glyph and the destination always agree. The arrow only folds. Folded, it is the active
+/// row whenever one of its hidden runs is; open, the run says so itself.
+fn cluster_row(
     state: &State,
-    label: &str,
-    first: &AgentRow,
-    sessions: &[&AgentRow],
+    members: &[&AgentRow],
+    key: TreeExpansionKey,
     expanded: bool,
+    spans_workspaces: bool,
 ) -> SidebarRow {
     let theme = &state.theme;
     let status = |row: &AgentRow| {
@@ -850,37 +948,40 @@ fn harness_row(
             .unwrap_or(pane_status::IDLE)
             .to_string()
     };
-    let urgent = sessions
-        .iter()
-        .min_by_key(|row| status_rank(row.status.as_deref(), row.finished_unseen));
-    let mut content = Row::new(label)
-        .active(!expanded && state.current().focused_pane == Some(first.pane_id))
-        .title_style(super::super::fg_only(&theme.primary));
-    let mut tint = None;
-    if let Some(urgent) = urgent {
-        let (glyph, color, spinner) = row_glyph(&status(urgent), urgent.finished_unseen, theme);
-        content = content.glyph(status_icon(glyph, color, spinner));
-        tint = (!expanded).then_some(color);
-    }
-    let workspace = super::workspace_badge(state, first.workspace_index);
+    // Members arrive in the Activity order, most urgent first.
+    let lead = members[0];
+    let label = lead
+        .identity
+        .as_ref()
+        .map_or(lead.title.as_str(), |identity| identity.label.as_str());
+    let (glyph, color, spinner) = row_glyph(&status(lead), lead.finished_unseen, theme);
+    let content = Row::new(label)
+        .active(!expanded && members.iter().any(|member| row_is_active(state, member)))
+        .title_style(super::super::fg_only(&theme.primary))
+        .glyph(status_icon(glyph, color, spinner));
+    let workspace =
+        (!spans_workspaces).then(|| super::workspace_badge(state, lead.workspace_index));
     let muted = super::super::fg_only(&theme.muted).dim();
-    let key = harness_key(first.pane_id);
     let placed = |content: Row| {
-        let row = SidebarRow::item(content, RowTarget::Pane(first.pane_id))
+        let row = SidebarRow::item(content, agent_target(lead))
             .keyed(key.row.clone())
             .collapsible(key.clone(), expanded);
-        match tint {
-            Some(tint) => row.arrow_style(Style::new().fg(tint)),
-            None => row,
+        if expanded {
+            row
+        } else {
+            row.arrow_style(Style::new().fg(color))
         }
     };
     if expanded {
-        return placed(content.badge_text(workspace, muted));
+        return placed(match workspace {
+            Some(workspace) => content.badge_text(workspace, muted),
+            None => content,
+        });
     }
-    // Folded, its sessions are out of sight: count them by state, most urgent first, leaving idle
-    // ones out as the remote session summaries do.
+    // Folded, its runs are out of sight: count them by state, most urgent first, leaving idle ones
+    // out as the remote session summaries do.
     let mut tally: Vec<(u8, String, Color, usize)> = Vec::new();
-    for row in sessions {
+    for row in members {
         let value = status(row);
         if normalized_status(&value) == pane_status::IDLE && !row.finished_unseen {
             continue;
@@ -897,36 +998,48 @@ fn harness_row(
         .into_iter()
         .map(|(_, glyph, color, count)| (format!("{glyph}{count}"), Style::new().fg(color)))
         .collect();
-    parts.push((workspace, muted));
+    parts.extend(workspace.map(|workspace| (workspace, muted)));
     placed(content.badge_parts(parts))
 }
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 ///
-/// Beneath a harness, which already names the program and its workspace, a session is titled by
-/// what it is working on, with its status on the detail line and no badge.
-fn agent_row(state: &State, row: &AgentRow, in_harness: bool) -> Row {
+/// Beneath a cluster, which already names the agent, a run is titled by what it works on, with its
+/// state and the reason for it on the detail line. It carries no badge unless the cluster spans
+/// workspaces, and then only where it sits.
+fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
     let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &state.theme);
     let duration = row_duration(row).map(|(text, _)| text);
-    if in_harness {
-        let title = row.activity.clone().unwrap_or_else(|| {
-            let program = row.harness.as_deref().unwrap_or_default();
-            row.title
-                .strip_prefix(program)
-                .map_or_else(|| row.title.clone(), |rest| rest.trim().to_string())
-        });
-        let mut content = Row::new(title)
-            .active(
-                state.current().focused_pane == Some(row.pane_id)
-                    && row.slot.as_ref().is_none_or(|slot| slot.active),
-            )
+    let muted = super::super::fg_only(&state.theme.muted).dim();
+    if let Some(child) = child {
+        let mut content = Row::new(child.label)
+            .active(row_is_active(state, row))
             .glyph(status_icon(glyph, color, spinner))
             .title_style(super::super::fg_only(&state.theme.primary))
             .detail(
                 row_status_label(status, row.finished_unseen),
                 Style::new().fg(color),
             );
+        if let Some(reason) = row.reason.as_deref() {
+            let budget = activity_budget(
+                state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
+            );
+            content = content.detail(row::truncate(reason, budget), muted);
+        }
+        let badge = crate::view::vocabulary::fields(
+            row.subpath
+                .iter()
+                .map(|subpath| row::truncate_start(subpath, SUBPATH_MAX_CHARS))
+                .chain(
+                    child
+                        .show_workspace
+                        .then(|| super::workspace_badge(state, row.workspace_index)),
+                ),
+        );
+        if !badge.is_empty() {
+            content = content.badge_text(badge, muted);
+        }
         if let Some(duration) = duration {
             content = content.meta(duration, Style::new().fg(color));
         }
@@ -935,10 +1048,7 @@ fn agent_row(state: &State, row: &AgentRow, in_harness: bool) -> Row {
     let mut content = Row::new(row.title.clone())
         // For a published slot, being on screen in its own program decides this: a focused pane
         // shows exactly one of its slots, so marking them all active would say nothing.
-        .active(
-            state.current().focused_pane == Some(row.pane_id)
-                && row.slot.as_ref().is_none_or(|slot| slot.active),
-        )
+        .active(row_is_active(state, row))
         .glyph(status_icon(glyph, color, spinner))
         .title_style(super::super::fg_only(&state.theme.primary))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
@@ -1470,10 +1580,11 @@ mod tests {
             "one pane's rows keep the publisher's own order among themselves"
         );
         assert!(rows.iter().all(|row| row.pane_id == 1));
-        // The name column stays the agent, numbered so one pane's rows are distinguishable; the
-        // row's own title is what it is doing, and moves to the detail line.
-        assert_eq!(rows[1].title, "Claude Code #2");
+        // The name column stays the agent; the row's own title is its task, which is what tells
+        // one pane's rows apart.
+        assert_eq!(rows[1].title, "Claude Code");
         assert_eq!(rows[1].activity.as_deref(), Some("tab b"));
+        assert_eq!(rows[1].task.as_deref(), Some("tab b"));
     }
 
     #[test]
@@ -1528,10 +1639,10 @@ mod tests {
         assert_eq!(rows[1].activity.as_deref(), Some("compiling crates"));
     }
 
-    /// The name column reads `Claude Code #1` for every row in a pane, so the title is the only
-    /// thing saying which one this is. A reason cannot be allowed to hide it: a session is often
-    /// blocked on its first question before anything has titled it, and the row would then be
-    /// stuck reading "answer required" for the rest of the run.
+    /// The name column reads `Claude Code` for every row in a pane, so the title is the only thing
+    /// saying which one this is. A reason cannot be allowed to hide it: a session is often blocked
+    /// on its first question before anything has titled it, and the row would then be stuck
+    /// reading "answer required" for the rest of the run. The reason stays beside it.
     #[test]
     fn a_titled_row_shows_its_title_even_while_blocked() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
@@ -1545,8 +1656,9 @@ mod tests {
         state.current_mut().workspaces[0].panes = vec![publisher];
 
         let rows = agent_rows(&state);
-        assert_eq!(rows[0].title, "Claude Code #1");
+        assert_eq!(rows[0].title, "Claude Code");
         assert_eq!(rows[0].activity.as_deref(), Some("audit the widget layer"));
+        assert_eq!(rows[0].reason.as_deref(), Some("permission required"));
     }
 
     /// Until a title exists the reason is all the row has to say.
@@ -2222,7 +2334,7 @@ mod tests {
             task: None,
             reason: None,
             order: 0,
-            harness: None,
+            screen_title: None,
         };
         // A live state reports how long it has held, and keeps advancing.
         assert_eq!(
@@ -2292,7 +2404,7 @@ mod tests {
             task: None,
             reason: None,
             order: 0,
-            harness: None,
+            screen_title: None,
         };
         assert_eq!(row_duration(&row), None);
     }
@@ -2358,5 +2470,113 @@ mod tests {
         let rows = agent_rows(&state);
         assert_eq!(rows[0].status.as_deref(), Some("blocked"));
         assert_eq!(rows[0].activity.as_deref(), Some("approval"));
+    }
+
+    fn item_targets(rows: &[SidebarRow]) -> Vec<(usize, RowTarget)> {
+        rows.iter()
+            .filter(|row| matches!(row.kind, row::RowKind::Item(_)))
+            .map(|row| (row.depth, row.target.clone()))
+            .collect()
+    }
+
+    /// One agent working in one checkout from two panes is one cluster: two jobs in one place, not
+    /// one job in each of two terminals. The cluster leads with its most urgent run and goes there.
+    #[test]
+    fn one_agent_in_one_checkout_clusters_across_panes() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let first = pane_in_project(1, Some("working"), "/x/rozi", "/x/rozi", Some("master"));
+        let second = pane_in_project(2, Some("blocked"), "/x/rozi/src", "/x/rozi", Some("master"));
+        state.current_mut().workspaces[0].panes = vec![first];
+        state.current_mut().workspaces[1].panes = vec![second];
+
+        let rows = agents_rows(&state);
+        assert_eq!(
+            item_targets(&rows),
+            vec![
+                (1, RowTarget::Pane(2)),
+                (2, RowTarget::Pane(2)),
+                (2, RowTarget::Pane(1)),
+            ]
+        );
+        let cluster = rows
+            .iter()
+            .find(|row| row.expansion.is_some())
+            .expect("a cluster row");
+        assert_eq!(
+            cluster.expansion.as_ref().unwrap().row,
+            "cluster:|/x/rozi|claude"
+        );
+    }
+
+    /// Without a known place nothing says two panes are related, so their agents stay apart; one
+    /// pane's own sessions still cluster.
+    #[test]
+    fn agents_without_a_known_place_cluster_only_within_their_pane() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut sessions = pane(1, None, false);
+        sessions.terminal.published_rows = vec![row("a", "working", true), row("b", "idle", false)];
+        sync_published_refs(&mut sessions);
+        state.current_mut().workspaces[0].panes = vec![sessions, pane(2, Some("idle"), false)];
+
+        let rows = agents_rows(&state);
+        let clusters = rows.iter().filter(|row| row.expansion.is_some()).count();
+        assert_eq!(clusters, 1, "only the publishing pane's sessions cluster");
+        assert_eq!(item_targets(&rows).len(), 4);
+    }
+
+    /// Selecting a cluster goes to its most urgent run itself - for a published session, the
+    /// session, not merely the pane that hosts it.
+    #[test]
+    fn a_cluster_goes_to_its_most_urgent_runs_own_row() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        let mut sessions = pane_in_project(1, None, "/x/rozi", "/x/rozi", Some("master"));
+        sessions.terminal.published_rows =
+            vec![row("a", "working", true), row("b", "blocked", false)];
+        sync_published_refs(&mut sessions);
+        let other = pane_in_project(2, Some("idle"), "/x/rozi", "/x/rozi", Some("master"));
+        state.current_mut().workspaces[0].panes = vec![sessions, other];
+
+        let rows = agents_rows(&state);
+        let blocked = RowTarget::PublishedRow {
+            pane_id: 1,
+            row: crate::session::protocol::RowKey::new("sessions", "b"),
+        };
+        assert_eq!(item_targets(&rows)[0], (1, blocked));
+    }
+
+    /// Runs are named by their task, else what their terminal says, else the agent - numbered
+    /// only where two would read the same, by where they sit rather than how urgent they are.
+    #[test]
+    fn cluster_members_are_numbered_only_to_break_a_tie() {
+        let member = |pane_index: usize, task: Option<&str>| AgentRow {
+            pane_id: pane_index as PaneId + 1,
+            workspace_index: 0,
+            pane_index,
+            title: "Claude Code".into(),
+            status: Some("idle".into()),
+            activity: None,
+            age: None,
+            run: None,
+            cwd: None,
+            cwd_host: None,
+            project_root: None,
+            subpath: None,
+            branch: None,
+            repository: None,
+            finished_unseen: false,
+            slot: None,
+            identity: Some(AgentIdentity::new("claude", "Claude Code")),
+            task: task.map(str::to_string),
+            reason: None,
+            order: 0,
+            screen_title: None,
+        };
+        let later = member(2, None);
+        let titled = member(0, Some("✳ fix login"));
+        let earlier = member(1, None);
+        assert_eq!(
+            member_labels(&[&later, &titled, &earlier]),
+            ["Claude Code #2", "fix login", "Claude Code #1"]
+        );
     }
 }

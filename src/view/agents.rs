@@ -396,7 +396,7 @@ mod tests {
             task: None,
             reason: None,
             order: 0,
-            harness: None,
+            screen_title: None,
         };
         assert_eq!(
             row_project(&agent_row),

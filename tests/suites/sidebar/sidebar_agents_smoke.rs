@@ -362,7 +362,7 @@ fn focusing_a_finished_agent_clears_its_pulse() {
 /// A pane that publishes its own agents renders one row each, named after the agent and numbered
 /// so the rows are distinguishable, with each slot's own title as its activity.
 #[test]
-fn published_slots_render_one_numbered_row_each() {
+fn published_sessions_render_under_one_cluster() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -418,39 +418,39 @@ fn published_slots_render_one_numbered_row_each() {
                 println!("{line}");
             }
 
-            // One harness row names the program, and its sessions are listed beneath it.
+            // One cluster row names the program, and its sessions are listed beneath it. Untitled
+            // sessions fall back to the program's name, numbered so the two read apart.
+            let named: Vec<&String> = sidebar
+                .iter()
+                .filter(|line| line.contains("OpenCode"))
+                .collect();
             assert_eq!(
-                sidebar
-                    .iter()
-                    .filter(|line| line.contains("OpenCode"))
-                    .count(),
-                1,
-                "the program is named once: {sidebar:#?}"
+                named.len(),
+                3,
+                "the program and its two untitled runs: {sidebar:#?}"
             );
-            let harness = sidebar
+            assert!(named.iter().any(|line| line.contains("OpenCode #1")));
+            assert!(named.iter().any(|line| line.contains("OpenCode #2")));
+            let cluster = sidebar
                 .iter()
                 .position(|line| line.contains("OpenCode"))
                 .unwrap();
-            let program = sidebar[harness].find("OpenCode").unwrap();
+            let program = sidebar[cluster].find("OpenCode").unwrap();
             let session = sidebar
                 .iter()
                 .find(|line| line.contains("audit the widget"))
                 .unwrap();
             assert!(
                 session.find("audit").unwrap() > program,
-                "sessions sit deeper than their harness: {sidebar:#?}"
+                "sessions sit deeper than their cluster: {sidebar:#?}"
             );
-            // A session titled after the program itself is told apart by its number.
-            assert!(sidebar.iter().any(|line| line.contains("#4")));
-            // A slot's own title is its activity, and it outranks a reason: the name column
-            // cannot say which tab this is, so a prompt must not hide the one thing that can.
+            // A titled session is named by its task and still says why it is blocked: task and
+            // reason answer different questions, so neither hides the other.
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
             assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
             assert!(
-                !sidebar
-                    .iter()
-                    .any(|line| line.contains("permission required")),
-                "a titled slot shows its title, not its reason"
+                sidebar.iter().any(|line| line.contains("permission requ")),
+                "a titled session shows its reason beside its state: {sidebar:#?}"
             );
             // Until a title exists, the reason is all the row has.
             assert!(sidebar.iter().any(|line| line.contains("answer required")));

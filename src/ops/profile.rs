@@ -1040,6 +1040,51 @@ mod tests {
         });
     }
 
+    /// A saved session outranks its same-name profile: selecting the profile restores the session
+    /// without reading the profile, so one that no longer parses cannot stand in the way.
+    #[test]
+    fn selecting_a_profile_with_a_saved_session_restores_it_without_reading_the_profile() {
+        on_large_stack(|| {
+            const NAME: &str = "restore-over-broken-profile";
+            let path = temp_profile_path();
+            std::fs::write(&path, "this is [not toml").expect("write broken profile");
+            crate::session::server::write_empty_snapshot_for_test(NAME);
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().profile_picker =
+                Some(ProfilePickerState::new(vec![entry(NAME, path.clone())]));
+            backend.state_mut().show_profile_picker = true;
+            backend.state_mut().current_mut().pending_session_attach = None;
+
+            // `update_level`, not `dispatch`: the assertion is about the attach this queues.
+            backend
+                .update_level(Msg::SelectProfile(0))
+                .expect("dispatch profile select");
+
+            let queued = backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .map(|pending| {
+                    (
+                        pending.name.clone(),
+                        pending.autostart,
+                        pending.intent.clone(),
+                    )
+                });
+            crate::session::server::delete_snapshot(NAME).expect("remove snapshot");
+            std::fs::remove_file(path).expect("remove profile");
+            let (name, autostart, intent) = queued.expect("a restoring attach is queued");
+            assert_eq!(name, NAME);
+            assert!(
+                autostart,
+                "the server starts so resurrection can restore it"
+            );
+            assert_eq!(intent, crate::state::AttachIntent::Plain);
+        });
+    }
+
     /// Profiles are local. A remote session on screen that shares a profile's name is not that
     /// profile's session, so it must not mark the profile as running; a local one does.
     #[test]

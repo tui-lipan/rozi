@@ -15,14 +15,8 @@ fn alert_edges_for(
     if state.attachment_by_identity(&agent.session, None).is_some() {
         return None;
     }
-    let before = previous
-        .iter()
-        .find(|earlier| earlier.same_agent(agent))
-        .map(|earlier| earlier.state.as_str());
-    Some(crate::update::session::status::agent_status_edges(
-        before,
-        Some(&agent.state),
-    ))
+    let before = previous.iter().find(|earlier| earlier.same_agent(agent));
+    Some(crate::update::session::status::summary_edges(before, agent))
 }
 
 /// Replace one local metadata snapshot. A failed sweep clears live claims; the next successful
@@ -85,15 +79,15 @@ mod tests {
 
     fn summary(session: &str, state: &str) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(3, 1, None),
             session: session.into(),
-            pane: 3,
-            generation: 1,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 1,
-            launch: 0,
         }
     }
 
@@ -240,7 +234,7 @@ mod tests {
                 .unwrap()
                 .agents[0]
                 .state,
-            "working"
+            crate::session::protocol::AgentState::Working
         );
         backend
             .dispatch(crate::Msg::LocalAgentMetadata(None))
@@ -257,7 +251,7 @@ mod tests {
                 .unwrap()
                 .agents[0]
                 .state,
-            "blocked"
+            crate::session::protocol::AgentState::Blocked
         );
     }
 }

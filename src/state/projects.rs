@@ -450,15 +450,15 @@ mod tests {
 
     fn agent(session: &str, pane: crate::state::PaneId, state: &str) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 

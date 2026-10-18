@@ -143,7 +143,7 @@ pub fn attached_message() -> ServerMessage {
             .map(|pane| PaneMeta {
                 pane_id: pane.pane_id,
                 generation: pane.generation,
-                agent_refs: Vec::new(),
+                agents: Vec::new(),
                 cols: 200,
                 rows: 60,
                 pid: Some(10_000 + pane.pane_id),

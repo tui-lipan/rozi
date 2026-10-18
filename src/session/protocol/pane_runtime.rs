@@ -43,7 +43,7 @@ pub struct PaneMeta {
     pub pane_id: PaneId,
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub agent_refs: Vec<super::AgentRef>,
+    pub agents: Vec<super::AgentRecord>,
     pub cols: u16,
     pub rows: u16,
     pub pid: Option<u32>,

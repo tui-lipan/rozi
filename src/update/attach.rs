@@ -27,7 +27,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.opening = false;
     pane.terminal_active = true;
     pane.pty_generation = meta.generation;
-    pane.agent_refs.clone_from(&meta.agent_refs);
+    pane.agents.clone_from(&meta.agents);
     pane.terminal.cols = meta.cols.max(1);
     pane.terminal.rows = meta.rows.max(1);
     pane.terminal
@@ -329,7 +329,7 @@ mod tests {
             &PaneMeta {
                 pane_id: 1,
                 generation: 7,
-                agent_refs: Vec::new(),
+                agents: Vec::new(),
                 cols: 80,
                 rows: 24,
                 pid: Some(101),

@@ -816,11 +816,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             pane_id,
             local,
             generation,
-            agent_refs,
+            agents,
             state,
-        } => {
-            session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, agent_refs, state)
-        }
+        } => session::pane_runtime_changed(ctx, epoch, pane_id, local, generation, agents, state),
         Msg::SessionAgentReportResult {
             epoch,
             request_id,

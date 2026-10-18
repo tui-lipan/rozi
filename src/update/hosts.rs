@@ -233,11 +233,8 @@ fn apply_agents(
         {
             continue;
         }
-        let before = previous
-            .iter()
-            .find(|earlier| earlier.same_agent(agent))
-            .map(|earlier| earlier.state.as_str());
-        let edges = crate::update::session::status::agent_status_edges(before, Some(&agent.state));
+        let before = previous.iter().find(|earlier| earlier.same_agent(agent));
+        let edges = crate::update::session::status::summary_edges(before, agent);
         crate::pane::pty_events::maybe_notify_session_agent(
             &ctx.state.config,
             Some(&host),
@@ -468,15 +465,15 @@ mod tests {
 
     fn summary(session: &str, state: &str) -> crate::session::protocol::AgentSummary {
         crate::session::protocol::AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(1, 0, None),
             session: session.into(),
-            pane: 1,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 

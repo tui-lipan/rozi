@@ -2445,15 +2445,15 @@ fn monitored_agent(
     state: &str,
 ) -> crate::session::protocol::AgentSummary {
     crate::session::protocol::AgentSummary {
+        reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
         session: session.into(),
-        pane,
-        generation: 0,
-        row: None,
         agent: "codex".into(),
         label: "Codex".into(),
-        state: state.into(),
+        state: crate::session::protocol::AgentState::from_status(state),
+        reason: None,
+        task: None,
+        completions: 0,
         changed_at: 0,
-        launch: 0,
     }
 }
 
@@ -2471,15 +2471,18 @@ fn the_agents_tab_leads_with_attention_across_hosts_and_focuses_a_local_agent() 
                 state: crate::session::protocol::DetectedAgentState::Idle,
             });
             let id = pane.id;
-            pane.agent_refs = vec![crate::session::protocol::AgentRef {
-                pane: crate::session::protocol::PaneRef {
-                    session_instance: crate::session::protocol::SessionInstanceId::generate(),
-                    pane_id: id,
-                    generation: 0,
-                },
-                slot: None,
-                incarnation: 1,
-            }];
+            pane.agents = vec![
+                crate::session::protocol::AgentRef {
+                    pane: crate::session::protocol::PaneRef {
+                        session_instance: crate::session::protocol::SessionInstanceId::generate(),
+                        pane_id: id,
+                        generation: 0,
+                    },
+                    slot: None,
+                    incarnation: 1,
+                }
+                .into(),
+            ];
             state.config.sidebar.layout.left.panel_count = 1;
             state.sidebar.apply_configured_panels(&state.config.sidebar);
             state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());

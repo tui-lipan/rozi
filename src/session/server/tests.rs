@@ -2213,8 +2213,8 @@ fn query_carries_agent_summaries_only_for_a_client_that_asked_for_them() {
     let agents = summaries(&asked);
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].session, "dev");
-    assert_eq!(agents[0].pane, 1);
-    assert_eq!(agents[0].state, "blocked");
+    assert_eq!(agents[0].pane(), 1);
+    assert_eq!(agents[0].state, protocol::AgentState::Blocked);
 
     // An explicit empty set is a client asking for no optional work, and a missing field is a
     // pre-capability peer that cannot deserialize the summaries anyway. Neither gets them.
@@ -2277,26 +2277,16 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
 
     let summaries = server.agent_summaries();
     assert_eq!(summaries.len(), 2);
-    // Publish order, not row-id order: the publisher's own numbering is what the label counts.
-    assert_eq!(
-        summaries[0].row.as_ref().map(|row| row.id.as_str()),
-        Some("left")
-    );
-    assert_eq!(summaries[0].label, "Codex #1");
-    assert_eq!(summaries[0].state, "working");
-    assert_eq!(
-        summaries[1].row.as_ref().map(|row| row.id.as_str()),
-        Some("right")
-    );
-    assert_eq!(summaries[1].label, "Codex #2");
-    assert_eq!(summaries[1].state, "blocked");
-    // The title is what the row is *doing*. Identity and activity are different fields, and only
-    // the first one crosses this boundary.
-    assert!(
-        !summaries
-            .iter()
-            .any(|summary| summary.label.contains("tests"))
-    );
+    // Publish order, not row-id order.
+    assert_eq!(summaries[0].row().map(|row| row.id.as_str()), Some("left"));
+    assert_eq!(summaries[0].state, protocol::AgentState::Working);
+    assert_eq!(summaries[1].row().map(|row| row.id.as_str()), Some("right"));
+    assert_eq!(summaries[1].state, protocol::AgentState::Blocked);
+    // Identity and task are different fields: the label stays the program's name, and each row's
+    // title is the task that tells the two apart.
+    assert!(summaries.iter().all(|summary| summary.label == "Codex"));
+    assert_eq!(summaries[0].task.as_deref(), Some("running tests"));
+    assert_eq!(summaries[1].task.as_deref(), Some("waiting on approval"));
     assert!(!summaries[0].same_agent(&summaries[1]));
 }
 

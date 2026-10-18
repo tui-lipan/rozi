@@ -115,6 +115,35 @@ pub enum AgentAuthority {
     Detected,
 }
 
+/// What the session server tracks about one agent reference beyond the reference itself.
+///
+/// `completions` counts the runs this incarnation has finished: each time its state went from
+/// working to idle or done. The server counts every transition it makes, so a client comparing
+/// two values learns that a run ended even when it never saw the agent working - a monitor
+/// polling between the two, or a client that was detached at the time. A new incarnation starts
+/// again from zero, which is why the count is only meaningful beside the reference it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentRecord {
+    pub reference: AgentRef,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub completions: u64,
+}
+
+impl From<AgentRef> for AgentRecord {
+    /// A reference with no finished runs yet.
+    fn from(reference: AgentRef) -> Self {
+        Self {
+            reference,
+            completions: 0,
+        }
+    }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 /// One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,
 /// paired with the reference that names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,8 +153,16 @@ pub struct AgentRuntime {
     pub identity: AgentIdentity,
     pub label: String,
     pub state: AgentState,
+    /// Why the agent is in its state, as the agent said it (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// What the agent is working on, when it named its work: the title of the published row it
+    /// is. Never a terminal title, which changes with every tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    /// Runs this agent has finished. See [`AgentRecord::completions`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub completions: u64,
     pub source: AgentAuthority,
 }
 
@@ -301,7 +338,7 @@ pub fn agent_signature(runtime: &PaneRuntimeState) -> Vec<(Option<RowKey>, Strin
 /// its own and none can disagree about what is an agent.
 pub fn effective_agent_runtimes(
     runtime: &PaneRuntimeState,
-    references: &[AgentRef],
+    records: &[AgentRecord],
 ) -> Vec<AgentRuntime> {
     agent_occupants(runtime)
         .into_iter()
@@ -310,21 +347,38 @@ pub fn effective_agent_runtimes(
             let reference = match (&occupant.slot, &runtime.integration) {
                 // The report alone speaks for the pane under the reference it was bound to.
                 (None, Some(report)) => report.reference.clone(),
-                (slot, _) => references
+                (slot, _) => records
                     .iter()
-                    .find(|reference| reference.slot == *slot)?
+                    .find(|record| record.reference.slot == *slot)?
+                    .reference
                     .clone(),
             };
+            let completions = records
+                .iter()
+                .find(|record| record.reference == reference)
+                .map_or(0, |record| record.completions);
+            let task = occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
             Some(AgentRuntime {
                 reference,
                 identity,
                 label: occupant.label,
                 state: AgentState::from_status(occupant.state.as_str()),
                 reason: occupant.reason,
+                task,
+                completions,
                 source: occupant.source,
             })
         })
         .collect()
+}
+
+/// What one agent occupant is working on: its published row's title, when it is a row that has
+/// one saying more than the agent's own name.
+pub fn occupant_task(rows: &[PublishedRow], slot: Option<&RowKey>, label: &str) -> Option<String> {
+    let slot = slot?;
+    let row = rows.iter().find(|row| row.has_key(slot))?;
+    let title = row.title.trim();
+    (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
 }
 
 fn effective_single_status(
@@ -376,7 +430,7 @@ fn row_integration<'a>(
 #[derive(Debug, PartialEq)]
 pub enum PaneAgent {
     Missing,
-    One(AgentRuntime),
+    One(Box<AgentRuntime>),
     /// Published rows, none of them on screen.
     NoneOnScreen,
 }
@@ -402,7 +456,9 @@ pub fn pane_agent(runtimes: Vec<AgentRuntime>, rows: &[PublishedRow]) -> PaneAge
                 .as_ref()
                 .is_none_or(|slot| rows.iter().any(|row| row.has_key(slot) && row.active))
         })
-        .map_or(PaneAgent::NoneOnScreen, PaneAgent::One)
+        .map_or(PaneAgent::NoneOnScreen, |runtime| {
+            PaneAgent::One(Box::new(runtime))
+        })
 }
 
 /// `row` as everything downstream of the protocol must present it: with the status and reason of
@@ -579,6 +635,8 @@ mod tests {
             identity: AgentIdentity::new("claude", "Claude Code"),
             state: AgentState::Idle,
             reason: None,
+            task: None,
+            completions: 0,
             source: AgentAuthority::Published,
         }
     }
@@ -623,7 +681,7 @@ mod tests {
         assert_eq!(pane_agent(Vec::new(), &[]), PaneAgent::Missing);
         assert_eq!(
             pane_agent(vec![runtime(None)], &[]),
-            PaneAgent::One(runtime(None))
+            PaneAgent::One(Box::new(runtime(None)))
         );
         let rows = [listed("shown", true), listed("background", false)];
         assert_eq!(
@@ -631,7 +689,7 @@ mod tests {
                 vec![runtime(Some("shown")), runtime(Some("background"))],
                 &rows
             ),
-            PaneAgent::One(runtime(Some("shown")))
+            PaneAgent::One(Box::new(runtime(Some("shown"))))
         );
         // A lone background row is still not the agent on screen.
         assert_eq!(
@@ -663,7 +721,10 @@ mod tests {
             active_agent_row(&rows).map(|row| row.id.as_str()),
             Some("first")
         );
-        assert_eq!(pane_agent(runtimes, &rows), PaneAgent::One(expected));
+        assert_eq!(
+            pane_agent(runtimes, &rows),
+            PaneAgent::One(Box::new(expected))
+        );
     }
 
     #[test]
@@ -680,7 +741,7 @@ mod tests {
             }),
             ..PaneRuntimeState::default()
         };
-        let projected = effective_agent_runtimes(&runtime, &[reference(None, 1)]);
+        let projected = effective_agent_runtimes(&runtime, &[reference(None, 1).into()]);
         assert_eq!(projected[0].state, AgentState::Blocked);
         assert_eq!(projected[0].source, AgentAuthority::Detected);
         assert_eq!(projected[0].reason, None);
@@ -725,7 +786,10 @@ mod tests {
         };
         let projected = effective_agent_runtimes(
             &runtime,
-            &[reference(Some("one"), 1), reference(Some("two"), 2)],
+            &[
+                reference(Some("one"), 1).into(),
+                reference(Some("two"), 2).into(),
+            ],
         );
         assert_eq!(projected.len(), 2);
         assert_eq!(projected[0].state, AgentState::Working);
@@ -776,7 +840,10 @@ mod tests {
             integration: Some(hook_report("abc", AgentState::Blocked)),
             ..PaneRuntimeState::default()
         };
-        let references = [reference(Some("one"), 1), reference(Some("two"), 2)];
+        let references = [
+            reference(Some("one"), 1).into(),
+            reference(Some("two"), 2).into(),
+        ];
         let projected = effective_agent_runtimes(&runtime, &references);
         assert_eq!(projected.len(), 2);
         assert_eq!(projected[0].reference.slot, Some(key("one")));
@@ -815,7 +882,7 @@ mod tests {
             integration: Some(hook_report("gone", AgentState::Working)),
             ..PaneRuntimeState::default()
         };
-        let projected = effective_agent_runtimes(&runtime, &[reference(Some("one"), 1)]);
+        let projected = effective_agent_runtimes(&runtime, &[reference(Some("one"), 1).into()]);
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].state, AgentState::Idle);
         assert_eq!(projected[0].source, AgentAuthority::Published);
@@ -829,7 +896,7 @@ mod tests {
             ..PaneRuntimeState::default()
         };
         assert_eq!(
-            effective_agent_runtimes(&unnamed, &[reference(Some("one"), 1)])[0].state,
+            effective_agent_runtimes(&unnamed, &[reference(Some("one"), 1).into()])[0].state,
             AgentState::Idle
         );
     }
@@ -850,7 +917,7 @@ mod tests {
             ..PaneRuntimeState::default()
         };
 
-        let projected = effective_agent_runtimes(&runtime, &[reference(None, 2)]);
+        let projected = effective_agent_runtimes(&runtime, &[reference(None, 2).into()]);
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].state, AgentState::Blocked);
         assert_eq!(projected[0].source, AgentAuthority::Reported);
@@ -897,7 +964,7 @@ mod tests {
         );
         assert_eq!(occupants[1].label, "pr-1");
 
-        let agents = effective_agent_runtimes(&runtime, &[reference(None, 1)]);
+        let agents = effective_agent_runtimes(&runtime, &[reference(None, 1).into()]);
         assert_eq!(agents.len(), 1, "only Codex is an agent");
         assert_eq!(agents[0].identity.id, "codex");
         assert_eq!(agents[0].state, AgentState::Working);
@@ -914,7 +981,7 @@ mod tests {
             rows: vec![session_row("api-run", "working", None)],
             ..PaneRuntimeState::default()
         };
-        let agents = effective_agent_runtimes(&runtime, &[reference(Some("api-run"), 1)]);
+        let agents = effective_agent_runtimes(&runtime, &[reference(Some("api-run"), 1).into()]);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].identity.id, "api-run");
         assert_eq!(agents[0].state, AgentState::Working);
@@ -937,7 +1004,7 @@ mod tests {
         assert_eq!(occupants.len(), 2);
         assert!(occupants.iter().all(|occupant| !occupant.is_agent()));
         assert_eq!(occupants[0].reason.as_deref(), Some("cargo build"));
-        assert!(effective_agent_runtimes(&runtime, &[reference(None, 1)]).is_empty());
+        assert!(effective_agent_runtimes(&runtime, &[reference(None, 1).into()]).is_empty());
         assert!(agent_occupant_identities(&runtime).is_empty());
     }
 
@@ -957,7 +1024,7 @@ mod tests {
             effective_row(&activity, runtime.integration.as_deref()),
             activity
         );
-        let agents = effective_agent_runtimes(&runtime, &[reference(Some("one"), 1)]);
+        let agents = effective_agent_runtimes(&runtime, &[reference(Some("one"), 1).into()]);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].reference.slot, Some(key("one")));
         assert_eq!(agents[0].state, AgentState::Blocked);

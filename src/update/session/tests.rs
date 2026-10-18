@@ -706,7 +706,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                     pane_id,
                     local: false,
                     generation,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: PaneRuntimeState {
                         sequence: 1,
                         status: Some(crate::session::protocol::PaneStatus {
@@ -1685,7 +1685,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: runtime.clone(),
                 })
                 .expect("dispatch status transition");
@@ -1711,7 +1711,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: runtime,
                 })
                 .expect("dispatch duplicate status");
@@ -1723,7 +1723,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: PaneRuntimeState {
                         status: None,
                         sequence: 0,
@@ -1772,7 +1772,7 @@ fn parked_runtime_updates_keep_background_metadata_current() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: PaneRuntimeState {
                         cwd: Some("/remote/project".to_string()),
                         foreground_program: Some("cargo".to_string()),
@@ -2743,7 +2743,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     panes: vec![crate::session::protocol::PaneMeta {
                         pane_id: 7,
                         generation: 1,
-                        agent_refs: vec![agent_ref],
+                        agents: vec![agent_ref.into()],
                         cols: 80,
                         rows: 24,
                         pid: Some(42),

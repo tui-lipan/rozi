@@ -235,7 +235,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 20,
-  "session_protocol": 30,
+  "session_protocol": 31,
   "capabilities": [
     "agent-waits",
     "attached-control",

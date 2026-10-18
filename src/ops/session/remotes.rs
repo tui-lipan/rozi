@@ -897,15 +897,15 @@ mod tests {
             state.remote.agents.insert(
                 target.clone(),
                 vec![crate::session::protocol::AgentSummary {
+                    reference: crate::session::protocol::AgentRef::for_test(1, 0, None),
                     session: name.into(),
-                    pane: 1,
-                    generation: 0,
-                    row: None,
                     agent: "claude".into(),
                     label: "Claude Code".into(),
-                    state: "blocked".into(),
+                    state: crate::session::protocol::AgentState::from_status("blocked"),
+                    reason: None,
+                    task: None,
+                    completions: 0,
                     changed_at: 0,
-                    launch: 0,
                 }],
             );
             backend

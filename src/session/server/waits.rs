@@ -30,7 +30,7 @@ enum WaitSubject {
 
 enum WaitEvaluation {
     Pending,
-    Ready(Option<protocol::AgentRuntime>),
+    Ready(Option<Box<protocol::AgentRuntime>>),
     Error(ControlErrorCode, String),
 }
 
@@ -74,7 +74,7 @@ impl SessionServer {
         match evaluation {
             WaitEvaluation::Ready(agent) => Some(ControlResponse::ok(AgentWaitResult {
                 condition: until,
-                agent,
+                agent: agent.map(|agent| *agent),
             })),
             WaitEvaluation::Error(code, message) => {
                 Some(ControlResponse::error_with(code, message))
@@ -237,7 +237,7 @@ impl SessionServer {
             let response = match evaluation {
                 WaitEvaluation::Ready(agent) => ControlResponse::ok(AgentWaitResult {
                     condition: wait.until,
-                    agent,
+                    agent: agent.map(|agent| *agent),
                 }),
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
@@ -379,7 +379,7 @@ impl SessionServer {
             .find(|runtime| runtime.reference == *reference)
         {
             if condition_matches(until, runtime.state) {
-                WaitEvaluation::Ready(Some(runtime.clone()))
+                WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
             } else {
                 WaitEvaluation::Pending
             }
@@ -413,7 +413,7 @@ impl SessionServer {
             pane_id,
             generation: pane.generation,
         };
-        protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref))
+        protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(pane_ref))
     }
 }
 

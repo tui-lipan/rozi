@@ -619,7 +619,7 @@ pub enum ServerMessage {
         local: bool,
         generation: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        agent_refs: Vec<super::AgentRef>,
+        agents: Vec<super::AgentRecord>,
         state: PaneRuntimeState,
     },
     Renamed {

@@ -411,15 +411,15 @@ mod tests {
         state.remote.agents.insert(
             RemoteTarget::Alias("workbox".into()),
             vec![crate::session::protocol::AgentSummary {
+                reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                 session: "backend".into(),
-                pane: 4,
-                generation: 0,
-                row: None,
                 agent: "codex".into(),
                 label: "Codex".into(),
-                state: "blocked".into(),
+                state: crate::session::protocol::AgentState::from_status("blocked"),
+                reason: None,
+                task: None,
+                completions: 0,
                 changed_at: 0,
-                launch: 0,
             }],
         );
         state
@@ -539,15 +539,15 @@ mod tests {
             backend.state_mut().remote.agents.insert(
                 RemoteTarget::Alias("workbox".into()),
                 vec![crate::session::protocol::AgentSummary {
+                    reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                     session: "backend".into(),
-                    pane: 4,
-                    generation: 0,
-                    row: None,
                     agent: "codex".into(),
                     label: "Codex".into(),
-                    state: "blocked".into(),
+                    state: crate::session::protocol::AgentState::from_status("blocked"),
+                    reason: None,
+                    task: None,
+                    completions: 0,
                     changed_at: 0,
-                    launch: 0,
                 }],
             );
             backend
@@ -579,15 +579,15 @@ mod tests {
                     projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![crate::session::protocol::AgentSummary {
+                        reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                         session: "backend".into(),
-                        pane: 4,
-                        generation: 0,
-                        row: None,
                         agent: "codex".into(),
                         label: "Codex".into(),
-                        state: "blocked".into(),
+                        state: crate::session::protocol::AgentState::from_status("blocked"),
+                        reason: None,
+                        task: None,
+                        completions: 0,
                         changed_at: 0,
-                        launch: 0,
                     }],
                 });
             backend
@@ -610,15 +610,15 @@ mod tests {
         backend.state_mut().config.animations.picker =
             crate::layout::anim::PickerAnimationStyle::Off;
         let summary = |pane, label: &str, status: &str| crate::session::protocol::AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: "dev".into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: label.into(),
-            state: status.into(),
+            state: crate::session::protocol::AgentState::from_status(status),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         };
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
@@ -837,7 +837,7 @@ mod tests {
             let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
             let mut newcomer = snapshot.agents[0].clone();
             newcomer.session = "aaa".into();
-            newcomer.pane = 7;
+            newcomer.reference.pane.pane_id = 7;
             snapshot.agents.push(newcomer);
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             backend.render();
@@ -867,15 +867,15 @@ mod tests {
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
             let summary = |pane| crate::session::protocol::AgentSummary {
+                reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
                 session: "dev".into(),
-                pane,
-                generation: 0,
-                row: None,
                 agent: "codex".into(),
                 label: "Codex".into(),
-                state: "idle".into(),
+                state: crate::session::protocol::AgentState::from_status("idle"),
+                reason: None,
+                task: None,
+                completions: 0,
                 changed_at: 0,
-                launch: 0,
             };
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
@@ -925,15 +925,19 @@ mod tests {
             .enumerate()
             .map(
                 |(pane, (label, session))| crate::session::protocol::AgentSummary {
+                    reference: crate::session::protocol::AgentRef::for_test(
+                        pane as crate::state::PaneId + 1,
+                        0,
+                        None,
+                    ),
                     session: (*session).into(),
-                    pane: pane as crate::state::PaneId + 1,
-                    generation: 0,
-                    row: None,
                     agent: "codex".into(),
                     label: (*label).into(),
-                    state: "idle".into(),
+                    state: crate::session::protocol::AgentState::from_status("idle"),
+                    reason: None,
+                    task: None,
+                    completions: 0,
                     changed_at: 0,
-                    launch: 0,
                 },
             )
             .collect::<Vec<_>>();

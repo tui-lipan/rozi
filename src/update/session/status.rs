@@ -61,6 +61,25 @@ pub(crate) fn agent_status_edges(previous: Option<&str>, current: Option<&str>) 
     }
 }
 
+/// The alertable transitions between two summaries of one agent, for a monitor that only ever
+/// sees snapshots.
+///
+/// A finished run is read from the server's completion count rather than from a working -> idle
+/// pair, so a run that started and ended between two polls still announces itself. An agent with
+/// no earlier summary is a first sighting: it reports a standing prompt by this rule, and the
+/// caller keeps a freshly connected source quiet by seeding its baseline without alerting.
+pub(crate) fn summary_edges(
+    previous: Option<&crate::session::protocol::AgentSummary>,
+    current: &crate::session::protocol::AgentSummary,
+) -> AgentEdges {
+    use crate::session::protocol::AgentState;
+    AgentEdges {
+        became_blocked: current.state == AgentState::Blocked
+            && previous.is_none_or(|previous| previous.state != AgentState::Blocked),
+        finished: previous.is_some_and(|previous| current.completions > previous.completions),
+    }
+}
+
 pub(crate) fn update_agent_status_edge(
     pane: &mut crate::pane::TerminalPane,
     previous: Option<&str>,
@@ -178,7 +197,7 @@ pub(crate) fn pane_runtime_changed(
     pane_id: PaneId,
     local: bool,
     generation: u64,
-    agent_refs: Vec<crate::session::protocol::AgentRef>,
+    agents: Vec<crate::session::protocol::AgentRecord>,
     state: PaneRuntimeState,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
@@ -195,7 +214,7 @@ pub(crate) fn pane_runtime_changed(
                 && pane.pty_generation == generation
                 && state.sequence > pane.terminal.runtime_sequence
             {
-                pane.agent_refs.clone_from(&agent_refs);
+                pane.agents.clone_from(&agents);
                 apply_pane_runtime_state(pane, state);
             }
             if at_prompt {
@@ -220,7 +239,7 @@ pub(crate) fn pane_runtime_changed(
         && state.sequence > pane.terminal.runtime_sequence
     {
         title = Some(pane.display_title(None));
-        pane.agent_refs = agent_refs;
+        pane.agents = agents;
         if pane.terminal.recording != state.recording {
             recording_changed = Some(state.recording);
         }

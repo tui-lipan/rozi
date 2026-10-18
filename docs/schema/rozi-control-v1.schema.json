@@ -178,6 +178,12 @@
     "AgentRuntime": {
       "description": "One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,\npaired with the reference that names it.",
       "properties": {
+        "completions": {
+          "description": "Runs this agent has finished. See [`AgentRecord::completions`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "identity": {
           "$ref": "#/$defs/AgentIdentity"
         },
@@ -185,6 +191,7 @@
           "type": "string"
         },
         "reason": {
+          "description": "Why the agent is in its state, as the agent said it (`Permission required`).",
           "type": [
             "string",
             "null"
@@ -198,6 +205,13 @@
         },
         "state": {
           "$ref": "#/$defs/AgentState"
+        },
+        "task": {
+          "description": "What the agent is working on, when it named its work: the title of the published row it\nis. Never a terminal title, which changes with every tool call.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

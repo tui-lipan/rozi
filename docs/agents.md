@@ -300,6 +300,10 @@ active one, the same row session restore resumes. A row that is not on screen, e
 is reached with `--ref`. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
+JSON output also gives each agent's `reason` for its state, the `task` its published row names, and
+`completions`, the number of runs it has finished. A script that compares `completions` between two
+reads learns that a run ended even if it never saw the agent working.
+
 ### Every agent, everywhere
 
 `agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows

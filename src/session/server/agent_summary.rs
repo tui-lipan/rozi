@@ -10,8 +10,9 @@ impl SessionServer {
     /// protocol wearing a smaller name.
     ///
     /// One entry per *agent*, not per pane: a pane publishing several rows contributes one summary
-    /// each, named the way the Agents tab names them, because an alert has to say which of a
-    /// program's runs wants attention. Panes are visited in id order, and a pane's own rows keep
+    /// each, because an alert has to say which of a program's runs wants attention. Each carries
+    /// the task its row names, which is what tells one run of a program from another; the label
+    /// stays the program's own name. Panes are visited in id order, and a pane's own rows keep
     /// their publish order, so a client comparing consecutive snapshots sees a state change rather
     /// than a reshuffle.
     pub(super) fn agent_summaries(&self) -> Vec<protocol::AgentSummary> {
@@ -28,31 +29,25 @@ impl SessionServer {
                 generation: pane.generation,
             };
             let runtimes =
-                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref));
-            let multiple = runtimes.len() > 1;
-            for (index, runtime) in runtimes.into_iter().enumerate() {
-                let label = if multiple {
-                    format!("{} #{}", runtime.label, index + 1)
-                } else {
-                    runtime.label
-                };
+                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(pane_ref));
+            for runtime in runtimes {
                 summaries.push(protocol::AgentSummary {
                     session: self.session_name.clone(),
-                    pane: *id,
-                    generation: pane.generation,
-                    row: runtime.reference.slot,
+                    reference: runtime.reference,
                     agent: runtime.identity.id,
-                    label,
-                    state: runtime.state.as_str().into(),
+                    label: runtime.label,
+                    state: runtime.state,
+                    reason: runtime.reason,
+                    task: runtime.task,
+                    completions: runtime.completions,
                     changed_at: pane.agent.summary_changed_at,
-                    launch: pane.runtime.agent_launch,
                 });
             }
         }
         // `panes` is a hash map, so without this the wire order would vary between polls and a
         // client diffing two snapshots would see churn that never happened. Stable, so a pane's
         // rows keep the order their publisher sent them in.
-        summaries.sort_by_key(|summary| summary.pane);
+        summaries.sort_by_key(protocol::AgentSummary::pane);
         summaries
     }
 }

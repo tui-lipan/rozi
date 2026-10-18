@@ -44,7 +44,7 @@ fn agent_pane(
         reason: reason.map(str::to_string),
         set_at,
     });
-    pane.agent_refs = vec![agent_ref(id, None, 1)];
+    pane.agents = vec![agent_ref(id, None, 1).into()];
     pane.terminal.cwd = cwd.map(str::to_string);
     pane
 }
@@ -389,10 +389,12 @@ fn published_slots_render_one_numbered_row_each() {
                     // it: the reason is all this row has to say until a title arrives.
                     published_row("ses_e", "", "blocked", Some("answer required"), false),
                 ];
-                publisher.agent_refs = ["ses_a", "ses_b", "ses_c", "ses_d", "ses_e"]
+                publisher.agents = ["ses_a", "ses_b", "ses_c", "ses_d", "ses_e"]
                     .into_iter()
                     .enumerate()
-                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .map(|(index, slot)| {
+                        agent_ref(publisher.id, Some(slot), index as u64 + 1).into()
+                    })
                     .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
@@ -530,10 +532,12 @@ fn a_harness_folds_its_sessions_and_counts_them() {
                     published_row("ses_b", "fix the flaky test", "blocked", None, false),
                     published_row("ses_c", "update the changelog", "idle", None, false),
                 ];
-                publisher.agent_refs = ["ses_a", "ses_b", "ses_c"]
+                publisher.agents = ["ses_a", "ses_b", "ses_c"]
                     .into_iter()
                     .enumerate()
-                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .map(|(index, slot)| {
+                        agent_ref(publisher.id, Some(slot), index as u64 + 1).into()
+                    })
                     .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }

@@ -1274,17 +1274,20 @@ mod finished_rows_notice {
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });
-        pane.agent_refs = rows
+        pane.agents = rows
             .iter()
             .enumerate()
-            .map(|(index, row)| AgentRef {
-                pane: PaneRef {
-                    session_instance: SessionInstanceId::for_test("server"),
-                    pane_id: pane.id,
-                    generation: pane.pty_generation,
-                },
-                slot: Some(row.key()),
-                incarnation: index as u64 + 2,
+            .map(|(index, row)| {
+                AgentRef {
+                    pane: PaneRef {
+                        session_instance: SessionInstanceId::for_test("server"),
+                        pane_id: pane.id,
+                        generation: pane.pty_generation,
+                    },
+                    slot: Some(row.key()),
+                    incarnation: index as u64 + 2,
+                }
+                .into()
             })
             .collect();
         pane.terminal.published_rows = rows;

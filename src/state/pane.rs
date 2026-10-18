@@ -39,7 +39,7 @@ pub struct Pane {
     pub(crate) fade_stage: Cell<crate::layout::anim::FadeStage>,
     pub logging: bool,
     pub activity: PaneActivity,
-    pub agent_refs: Vec<crate::session::protocol::AgentRef>,
+    pub agents: Vec<crate::session::protocol::AgentRecord>,
     pub terminal: TerminalPane,
     pub(crate) live_title: LivePaneTitle,
     /// This pane's element keys, built once here rather than formatted in every `view()`.
@@ -202,7 +202,7 @@ impl Pane {
             logging: false,
             activity: PaneActivity::default(),
             live_title: LivePaneTitle::default(),
-            agent_refs: Vec::new(),
+            agents: Vec::new(),
             keys: PaneKeys::new(id),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);
@@ -241,10 +241,7 @@ impl Pane {
 
     /// The agent projection: this pane's agents, for the Agents view and `rozi agents`.
     pub fn agent_runtimes(&self) -> Vec<crate::session::protocol::AgentRuntime> {
-        crate::session::protocol::effective_agent_runtimes(
-            &self.semantic_runtime(),
-            &self.agent_refs,
-        )
+        crate::session::protocol::effective_agent_runtimes(&self.semantic_runtime(), &self.agents)
     }
 
     /// The activity projection: everything happening in this pane, agents and activities alike,

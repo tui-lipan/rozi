@@ -100,15 +100,12 @@ impl AgentScratch {
         if let Some(integration) = &runtime.integration
             && !runtime.rows.iter().any(protocol::PublishedRow::is_agent)
         {
+            let claim = self.references.remove(&None);
             self.references.clear();
-            self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
-            self.references.insert(
-                None,
-                TrackedAgentReference {
-                    identity: integration.identity.id.clone(),
-                    incarnation: integration.reference.incarnation,
-                },
-            );
+            if let Some(claim) = claim {
+                self.references.insert(None, claim);
+            }
+            self.bind_claim(integration);
             return;
         }
         let occupants = protocol::agent_occupant_identities(runtime);
@@ -127,20 +124,90 @@ impl AgentScratch {
                 TrackedAgentReference {
                     identity,
                     incarnation: self.next_incarnation,
+                    completions: 0,
                 },
             );
         }
         // A claim beside published rows keeps its own reference, so it is the same agent - not a
         // replacement - when the rows are withdrawn and it speaks for the pane alone again.
         if let Some(integration) = &runtime.integration {
-            self.next_incarnation = self.next_incarnation.max(integration.reference.incarnation);
-            self.references.insert(
-                None,
-                TrackedAgentReference {
-                    identity: integration.identity.id.clone(),
-                    incarnation: integration.reference.incarnation,
-                },
-            );
+            self.bind_claim(integration);
+        }
+    }
+
+    /// Track the pane-level reference an integration claim is bound to. The claim names its own
+    /// incarnation, so re-binding the same one keeps the runs it has already finished.
+    fn bind_claim(&mut self, integration: &protocol::AgentIntegrationReport) {
+        let incarnation = integration.reference.incarnation;
+        let identity = integration.identity.id.clone();
+        self.next_incarnation = self.next_incarnation.max(incarnation);
+        let completions = self
+            .references
+            .get(&None)
+            .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
+            .map_or(0, |tracked| tracked.completions);
+        self.references.insert(
+            None,
+            TrackedAgentReference {
+                identity,
+                incarnation,
+                completions,
+            },
+        );
+    }
+
+    /// Each agent `runtime` holds, under the reference that names it now: what
+    /// [`Self::observe`] compares the next runtime against. Taken *before* a runtime changes.
+    pub(super) fn agent_states(&self, runtime: &PaneRuntimeState) -> AgentStates {
+        protocol::agent_signature(runtime)
+            .into_iter()
+            .map(|(slot, identity, state)| {
+                let incarnation = self
+                    .references
+                    .get(&slot)
+                    .filter(|tracked| tracked.identity == identity)
+                    .map(|tracked| tracked.incarnation);
+                AgentStateEntry {
+                    slot,
+                    identity,
+                    incarnation,
+                    state,
+                }
+            })
+            .collect()
+    }
+
+    /// Adopt `runtime`'s agents after a change: renew references, count each run that ended, and
+    /// move the summary's change time when any agent's state moved.
+    ///
+    /// A run ends when an agent that was working is idle or done under the same reference. That is
+    /// the one definition every client reads, through [`protocol::AgentRecord::completions`]: a
+    /// blocked agent has not finished, and an agent replaced by a new incarnation did not finish
+    /// anything - its successor starts from zero.
+    pub(super) fn observe(&mut self, before: AgentStates, runtime: &PaneRuntimeState) {
+        self.sync_references(runtime);
+        let after = self.agent_states(runtime);
+        for entry in &after {
+            let ended = before.iter().any(|earlier| {
+                earlier.slot == entry.slot
+                    && earlier.identity == entry.identity
+                    && earlier.incarnation.is_some()
+                    && earlier.incarnation == entry.incarnation
+                    && earlier.state == protocol::AgentState::Working
+                    && entry.state.is_quiescent()
+            });
+            if ended && let Some(tracked) = self.references.get_mut(&entry.slot) {
+                tracked.completions = tracked.completions.saturating_add(1);
+            }
+        }
+        let semantics = |states: &AgentStates| {
+            states
+                .iter()
+                .map(|entry| (entry.slot.clone(), entry.identity.clone(), entry.state))
+                .collect::<Vec<_>>()
+        };
+        if semantics(&before) != semantics(&after) {
+            self.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         }
     }
 
@@ -165,6 +232,7 @@ impl AgentScratch {
                 TrackedAgentReference {
                     identity: identity.to_string(),
                     incarnation: self.next_incarnation,
+                    completions: 0,
                 },
             );
         }
@@ -207,18 +275,30 @@ impl AgentScratch {
         };
     }
 
+    #[cfg(test)]
     pub(super) fn references(&self, pane: protocol::PaneRef) -> Vec<protocol::AgentRef> {
-        let mut references = self
+        self.records(pane)
+            .into_iter()
+            .map(|record| record.reference)
+            .collect()
+    }
+
+    /// Every agent reference this pane tracks, with the runs each has finished.
+    pub(super) fn records(&self, pane: protocol::PaneRef) -> Vec<protocol::AgentRecord> {
+        let mut records = self
             .references
             .iter()
-            .map(|(slot, tracked)| protocol::AgentRef {
-                pane: pane.clone(),
-                slot: slot.clone(),
-                incarnation: tracked.incarnation,
+            .map(|(slot, tracked)| protocol::AgentRecord {
+                reference: protocol::AgentRef {
+                    pane: pane.clone(),
+                    slot: slot.clone(),
+                    incarnation: tracked.incarnation,
+                },
+                completions: tracked.completions,
             })
             .collect::<Vec<_>>();
-        references.sort_by(|left, right| left.slot.cmp(&right.slot));
-        references
+        records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));
+        records
     }
 }
 
@@ -251,15 +331,17 @@ fn integration_has_strong_replacement_evidence(
         .is_some_and(|detected| detected.agent.id != integration.identity.id)
 }
 
-fn agent_summary_semantics(
-    runtime: &PaneRuntimeState,
-    references: &[protocol::AgentRef],
-) -> Vec<(String, protocol::AgentState)> {
-    protocol::effective_agent_runtimes(runtime, references)
-        .into_iter()
-        .map(|agent| (agent.identity.id, agent.state))
-        .collect()
+/// One agent as [`AgentScratch::agent_states`] saw it.
+#[derive(Debug)]
+pub(super) struct AgentStateEntry {
+    slot: Option<protocol::RowKey>,
+    identity: String,
+    /// `None` for an agent no reference names yet: one that has only just appeared.
+    incarnation: Option<u64>,
+    state: protocol::AgentState,
 }
+
+pub(super) type AgentStates = Vec<AgentStateEntry>;
 
 type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>);
 type IntegrationResult<T> = std::result::Result<T, (&'static str, String)>;
@@ -535,15 +617,15 @@ fn build_integration_report(
 }
 
 impl SessionServer {
-    pub(super) fn agent_references(
+    pub(super) fn agent_records(
         &self,
         owner: Option<ClientId>,
         pane_id: PaneId,
-    ) -> Vec<protocol::AgentRef> {
+    ) -> Vec<protocol::AgentRecord> {
         let Some(pane) = self.pane(owner, pane_id) else {
             return Vec::new();
         };
-        pane.agent.references(protocol::PaneRef {
+        pane.agent.records(protocol::PaneRef {
             session_instance: self.instance_id.clone(),
             pane_id,
             generation: pane.generation,
@@ -635,23 +717,23 @@ impl SessionServer {
         }
 
         let previous_runtime = pane.runtime.clone();
+        let before = pane.agent.agent_states(&pane.runtime);
         let set_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
         pane.runtime.status = value.map(|value| PaneStatus {
             value,
             reason,
             set_at,
         });
-        pane.agent.sync_references(&pane.runtime);
         pane.runtime.work_started_at = next_work_started_at(
             &previous_runtime,
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
         );
+        pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         self.resolve_agent_waits();
@@ -810,7 +892,7 @@ impl SessionServer {
                 pane_id,
                 local: wire_local(None),
                 generation: pane.generation,
-                agent_refs: pane.agent.references(protocol::PaneRef {
+                agents: pane.agent.records(protocol::PaneRef {
                     session_instance: session_instance.clone(),
                     pane_id,
                     generation: pane.generation,
@@ -859,13 +941,7 @@ impl SessionServer {
         if !to_row {
             validate_integration_update(pane, &integration, report.as_ref(), seq, pane_id)?;
         }
-        let pane_ref = protocol::PaneRef {
-            session_instance: session_instance.clone(),
-            pane_id,
-            generation,
-        };
-        let previous_summary =
-            agent_summary_semantics(&previous_runtime, &pane.agent.references(pane_ref.clone()));
+        let before = pane.agent.agent_states(&previous_runtime);
 
         if to_row {
             match report {
@@ -926,12 +1002,7 @@ impl SessionServer {
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
         );
-        pane.agent.sync_references(&pane.runtime);
-        let current_summary =
-            agent_summary_semantics(&pane.runtime, &pane.agent.references(pane_ref));
-        if current_summary != previous_summary {
-            pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
-        }
+        pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         self.resolve_agent_waits();
@@ -1158,23 +1229,17 @@ impl SessionServer {
             pane_id,
             generation,
         };
-        let previous_summary =
-            agent_summary_semantics(&pane.runtime, &pane.agent.references(pane_ref.clone()));
+        let before = pane.agent.agent_states(&pane.runtime);
         let snapshot_foreground_changed = tracks_snapshot_foreground
             && pane.launch.is_none()
             && resurrection_foreground_changed(&pane.runtime, &next);
-        pane.agent.sync_references(&next);
-        let current_summary =
-            agent_summary_semantics(&next, &pane.agent.references(pane_ref.clone()));
-        if current_summary != previous_summary {
-            pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
-        }
+        pane.agent.observe(before, &next);
         pane.runtime = next.clone();
         let message = ServerMessage::PaneRuntimeChanged {
             pane_id,
             local: wire_local(owner),
             generation,
-            agent_refs: pane.agent.references(pane_ref),
+            agents: pane.agent.records(pane_ref),
             state: next,
         };
         if let Some(owner) = owner {
@@ -1928,11 +1993,8 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .rows
         .iter()
         .any(protocol::PublishedRow::is_agent);
-    let before = protocol::agent_signature(&pane.runtime);
+    let before = pane.agent.agent_states(&pane.runtime);
     pane.runtime.rows = next;
-    if protocol::agent_signature(&pane.runtime) != before {
-        pane.agent.summary_changed_at = crate::runtime_metrics::unix_time_millis();
-    }
     // An agent publisher that enumerates its own sessions is better informed than the scraper,
     // which can only see the one it draws. Drop anything the scraper was holding for this pane.
     // An activity publisher says nothing about the pane's agent, so detection carries on.
@@ -1948,7 +2010,7 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     if has_agent_rows {
         pane.agent.retained_resume = None;
     }
-    pane.agent.sync_references(&pane.runtime);
+    pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
 }
 
@@ -2603,6 +2665,117 @@ mod tests {
         assert!(scratch.references(pane_ref)[0].incarnation > replacement);
     }
 
+    /// A finished run is what every client's "done, not yet looked at" reads. Only a working agent
+    /// that goes quiet under the same reference finishes one: a blocked agent the user dismissed
+    /// did not, and a replacement agent's quiet start is not its predecessor finishing.
+    #[test]
+    fn completions_count_each_run_that_ends() {
+        let mut scratch = AgentScratch::default();
+        let runtime = |id: &str, state| PaneRuntimeState {
+            detected_agent: Some(DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
+                state,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let mut current = PaneRuntimeState::default();
+        let mut step = |scratch: &mut AgentScratch, next: PaneRuntimeState| {
+            let before = scratch.agent_states(&current);
+            scratch.observe(before, &next);
+            current = next;
+            scratch.records(pane_ref.clone())
+        };
+        use protocol::DetectedAgentState::{Blocked, Idle, Working};
+
+        step(&mut scratch, runtime("claude", Working));
+        step(&mut scratch, runtime("claude", Blocked));
+        step(&mut scratch, runtime("claude", Working));
+        let records = step(&mut scratch, runtime("claude", Idle));
+        assert_eq!(records[0].completions, 1, "blocked and resumed is one run");
+
+        step(&mut scratch, runtime("claude", Blocked));
+        let records = step(&mut scratch, runtime("claude", Idle));
+        assert_eq!(records[0].completions, 1, "a dismissed prompt is not a run");
+
+        step(&mut scratch, runtime("claude", Working));
+        let records = step(&mut scratch, runtime("codex", Idle));
+        assert_eq!(records[0].completions, 0, "a new agent starts from zero");
+    }
+
+    /// Several agents in one pane finish separately: each published row counts its own runs, and
+    /// re-binding the same integration claim keeps the runs it already finished.
+    #[test]
+    fn completions_belong_to_one_row_and_survive_a_claim_rebind() {
+        let row = |id: &str, status: &str| protocol::PublishedRow {
+            publisher: "7/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        };
+        let rows = |left: &str, right: &str| PaneRuntimeState {
+            rows: vec![row("left", left), row("right", right)],
+            ..PaneRuntimeState::default()
+        };
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 3,
+            generation: 7,
+        };
+        let mut scratch = AgentScratch::default();
+        let first = rows("working", "working");
+        scratch.observe(Vec::new(), &first);
+        let finished = rows("idle", "working");
+        scratch.observe(scratch.agent_states(&first), &finished);
+        let completions: Vec<_> = scratch
+            .records(pane_ref.clone())
+            .into_iter()
+            .map(|record| (record.reference.slot.unwrap().id, record.completions))
+            .collect();
+        assert_eq!(
+            completions,
+            vec![("left".to_string(), 1), ("right".to_string(), 0)]
+        );
+
+        let claim = |state| PaneRuntimeState {
+            integration: Some(Box::new(protocol::AgentIntegrationReport {
+                integration: "hook-a".into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: protocol::AgentRef {
+                    pane: pane_ref.clone(),
+                    slot: None,
+                    incarnation: 40,
+                },
+                state,
+                reason: None,
+                native_session: None,
+                seq: 1,
+                reported_at_unix_ms: 42,
+            })),
+            ..PaneRuntimeState::default()
+        };
+        let mut scratch = AgentScratch::default();
+        let working = claim(protocol::AgentState::Working);
+        scratch.observe(Vec::new(), &working);
+        let done = claim(protocol::AgentState::Done);
+        scratch.observe(scratch.agent_states(&working), &done);
+        scratch.sync_references(&done);
+        assert_eq!(scratch.records(pane_ref)[0].completions, 1);
+    }
+
     #[test]
     fn integration_claim_restores_its_bound_reference_after_detection_reset() {
         let pane_ref = protocol::PaneRef {
@@ -2685,11 +2858,10 @@ mod tests {
             &integration,
             &runtime
         ));
-        let references = vec![integration.reference.clone()];
         runtime.integration = Some(Box::new(integration.clone()));
-        let claimed = agent_summary_semantics(&runtime, &references);
+        let claimed = protocol::agent_signature(&runtime);
         runtime.integration = None;
-        let retired = agent_summary_semantics(&runtime, &references);
+        let retired = protocol::agent_signature(&runtime);
         assert_ne!(
             claimed, retired,
             "retirement to sticky idle detection is summary-visible"

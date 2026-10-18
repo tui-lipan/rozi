@@ -993,13 +993,13 @@ impl SessionServer {
                     pane_id: *id,
                     generation: pane.generation,
                 };
-                let references = pane.agent.references(reference.clone());
+                let records = pane.agent.records(reference.clone());
                 // The agent a pane id names: its own, or the published row on screen.
                 let runtime = match protocol::pane_agent(
-                    protocol::effective_agent_runtimes(&pane.runtime, &references),
+                    protocol::effective_agent_runtimes(&pane.runtime, &records),
                     &pane.runtime.rows,
                 ) {
-                    protocol::PaneAgent::One(runtime) => Some(runtime),
+                    protocol::PaneAgent::One(runtime) => Some(*runtime),
                     _ => None,
                 };
                 PaneInfo {
@@ -1474,7 +1474,7 @@ impl SessionServer {
                         pane_id: id,
                         local: false,
                         generation,
-                        agent_refs: self.agent_references(None, id),
+                        agents: self.agent_records(None, id),
                         state,
                     },
                 ));
@@ -1527,7 +1527,7 @@ impl SessionServer {
                         pane_id: id,
                         local: false,
                         generation,
-                        agent_refs: self.agent_references(None, id),
+                        agents: self.agent_records(None, id),
                         state,
                     },
                 ));

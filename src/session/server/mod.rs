@@ -494,6 +494,8 @@ pub struct RetainedResume {
 struct TrackedAgentReference {
     identity: String,
     incarnation: u64,
+    /// Runs this incarnation finished; see [`protocol::AgentRecord::completions`].
+    completions: u64,
 }
 
 /// The process a detection sweep named as a pane's agent.

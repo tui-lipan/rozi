@@ -1002,24 +1002,8 @@ mod tests {
     }
 
     fn sync_single_ref(pane: &mut Pane) {
-        pane.agent_refs = vec![crate::session::protocol::AgentRef {
-            pane: crate::session::protocol::PaneRef {
-                session_instance: crate::session::protocol::SessionInstanceId::for_test("server"),
-                pane_id: pane.id,
-                generation: pane.pty_generation,
-            },
-            slot: None,
-            incarnation: 1,
-        }];
-    }
-
-    fn sync_published_refs(pane: &mut Pane) {
-        pane.agent_refs = pane
-            .terminal
-            .published_rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| crate::session::protocol::AgentRef {
+        pane.agents = vec![
+            crate::session::protocol::AgentRef {
                 pane: crate::session::protocol::PaneRef {
                     session_instance: crate::session::protocol::SessionInstanceId::for_test(
                         "server",
@@ -1027,8 +1011,32 @@ mod tests {
                     pane_id: pane.id,
                     generation: pane.pty_generation,
                 },
-                slot: Some(row.key()),
-                incarnation: index as u64 + 2,
+                slot: None,
+                incarnation: 1,
+            }
+            .into(),
+        ];
+    }
+
+    fn sync_published_refs(pane: &mut Pane) {
+        pane.agents = pane
+            .terminal
+            .published_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                crate::session::protocol::AgentRef {
+                    pane: crate::session::protocol::PaneRef {
+                        session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                            "server",
+                        ),
+                        pane_id: pane.id,
+                        generation: pane.pty_generation,
+                    },
+                    slot: Some(row.key()),
+                    incarnation: index as u64 + 2,
+                }
+                .into()
             })
             .collect();
     }
@@ -1059,7 +1067,7 @@ mod tests {
             .map(|(i, status)| {
                 let mut pane = pane_in(i as PaneId + 1, Some(status), false, Some("/repo"));
                 pane.terminal.detected_agent = None;
-                pane.agent_refs.clear();
+                pane.agents.clear();
                 pane.terminal.finished_unseen = *status == "error";
                 pane
             })
@@ -1154,7 +1162,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut osc = pane_in(1, None, false, Some("/repo"));
         osc.terminal.detected_agent = None;
-        osc.agent_refs.clear();
+        osc.agents.clear();
         osc.terminal.finished_unseen = true;
         let mut screen = TerminalScreen::new(24, 80, 100);
         screen.set_program_status_enabled(true);
@@ -1162,7 +1170,7 @@ mod tests {
         osc.terminal.program_status = screen.program_status_snapshot();
         let mut done = pane_in(2, Some("done"), false, Some("/repo"));
         done.terminal.detected_agent = None;
-        done.agent_refs.clear();
+        done.agents.clear();
         state.current_mut().workspaces[0].panes = vec![osc, done];
         let rendered = agent_groups(&state)
             .into_iter()
@@ -1291,7 +1299,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         let mut build = pane(1, Some("working"), false);
         build.terminal.detected_agent = None;
-        build.agent_refs.clear();
+        build.agents.clear();
         build.title = "cargo build".into();
         state.current_mut().workspaces[0].panes = vec![build];
 
@@ -1329,7 +1337,7 @@ mod tests {
     fn integration_authority_drives_rendered_rows_and_sorting() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut integrated = pane(1, Some("idle"), false);
-        let reference = integrated.agent_refs[0].clone();
+        let reference = integrated.agents[0].reference.clone();
         integrated.terminal.agent_integration =
             Some(Box::new(crate::session::protocol::AgentIntegrationReport {
                 integration: "hook-a".into(),

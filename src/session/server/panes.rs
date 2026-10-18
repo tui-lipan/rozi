@@ -857,7 +857,7 @@ impl SessionServer {
             .map(|(pane_id, pane)| PaneMeta {
                 pane_id: *pane_id,
                 generation: pane.generation,
-                agent_refs: pane.agent.references(protocol::PaneRef {
+                agents: pane.agent.records(protocol::PaneRef {
                     session_instance: self.instance_id.clone(),
                     pane_id: *pane_id,
                     generation: pane.generation,

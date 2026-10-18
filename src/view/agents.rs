@@ -172,13 +172,13 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 location: AgentLocation::OtherSession {
                     target: None,
                     session: agent.session.clone(),
-                    pane: agent.pane,
-                    row: agent.row.clone(),
+                    pane: agent.pane(),
+                    row: agent.row().cloned(),
                 },
                 agent: agent.label.clone(),
                 host: None,
                 session: agent.session.clone(),
-                status: agent.state.clone(),
+                status: agent.state.as_str().to_string(),
                 finished_unseen: false,
                 elapsed: None,
                 activity: None,
@@ -201,13 +201,13 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
                 location: AgentLocation::OtherSession {
                     target: Some(target.clone()),
                     session: agent.session.clone(),
-                    pane: agent.pane,
-                    row: agent.row.clone(),
+                    pane: agent.pane(),
+                    row: agent.row().cloned(),
                 },
                 agent: agent.label.clone(),
                 host: Some(host.clone()),
                 session: agent.session.clone(),
-                status: agent.state.clone(),
+                status: agent.state.as_str().to_string(),
                 finished_unseen: false,
                 elapsed: None,
                 activity: None,
@@ -243,15 +243,15 @@ mod tests {
 
     fn summary(session: &str, pane: crate::state::PaneId, state: &str) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 

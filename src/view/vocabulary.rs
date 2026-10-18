@@ -458,7 +458,7 @@ pub(crate) fn other_clients(entry: &DiscoveredSession, presence: SessionPresence
 /// state to the Agents tab and the pane chrome, and a snapshot taken between polls would be the
 /// staler of the two answers sitting next to each other.
 pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Option<String> {
-    use crate::session::protocol::pane_status;
+    use crate::session::protocol::AgentState;
     let target = entry.remote_target.as_ref()?;
     if state
         .attachment_by_identity(&entry.name, Some(target))
@@ -475,15 +475,11 @@ pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Opti
     let mut counts = [0_usize; 3];
     let mut named: [Option<&str>; 3] = [None; 3];
     for agent in mine {
-        let state = agent.state.trim();
-        let bucket = if state.eq_ignore_ascii_case(pane_status::BLOCKED) {
-            0
-        } else if !crate::session::protocol::status_is_quiescent(Some(state)) {
-            1
-        } else if state.eq_ignore_ascii_case(pane_status::DONE) {
-            2
-        } else {
-            continue;
+        let bucket = match agent.state {
+            AgentState::Blocked => 0,
+            AgentState::Working => 1,
+            AgentState::Done => 2,
+            AgentState::Idle => continue,
         };
         counts[bucket] += 1;
         named[bucket] = named[bucket].or(Some(agent.label.as_str()));
@@ -755,15 +751,15 @@ mod tests {
         state: &str,
     ) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: label.to_lowercase(),
             label: label.into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 

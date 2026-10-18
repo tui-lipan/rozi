@@ -70,12 +70,15 @@ exclude = [
 # 0.27.0: Tree shares FileTree's row layout and option names, row icons, per-row arrow styles,
 # and always-open rows that line up with their siblings.
 # 0.27.2: runtime `Context::set_scroll_wheel_multiplier` updates and `TestBackend` parity.
-tui-lipan = { version = "0.27.2", features = [
+# 0.27.3: FileTree filesystem watching, hidden/ignored entry styles, compact directories, and
+# symlink target icons.
+tui-lipan = { version = "0.27.3", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
   "clipboard-images",
   "theme-reload",
+  "file-tree-watch",
   "devtools",
   # `capture-pane --render png`.
   "ui-snapshot-png",

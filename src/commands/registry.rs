@@ -356,6 +356,9 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         }
         Action::MarkPaneRecording => crate::ops::recording::target_is_recording(state),
         Action::MarkUiRecording => crate::ops::ui_recording::is_recording(state),
+        Action::SidebarTabSettings => {
+            crate::ops::tab_settings::active_tab_with_settings(state).is_some()
+        }
         _ => true,
     }
 }

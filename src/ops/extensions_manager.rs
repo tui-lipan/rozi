@@ -1021,7 +1021,7 @@ fn scan(ctx: &mut Context<AppRoot>) -> ManagerScan {
         };
         let mut warnings = Vec::new();
         let effective = crate::config::merge_extension_settings(
-            &entry.settings,
+            &entry.setting_specs,
             &id,
             user.settings.get(&id),
             &mut warnings,

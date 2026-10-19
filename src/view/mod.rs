@@ -436,8 +436,21 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_palette {
         root = root.child(palette_overlay(ctx));
     }
-    if ctx.state.sidebar_manager {
+    // A tab's settings replace Sidebar tabs rather than stacking on it, like every other nested
+    // picker; its query and highlight wait in state for the way back.
+    if ctx.state.sidebar_manager.is_some() && ctx.state.tab_settings.is_none() {
         root = root.child(overlays::sidebar_manager_overlay(ctx));
+    }
+    if ctx.state.tab_settings.is_some() {
+        root = root.child(overlays::tab_settings_overlay(ctx));
+    }
+    if ctx
+        .state
+        .tab_settings
+        .as_ref()
+        .is_some_and(|picker| picker.prompt.is_some())
+    {
+        root = root.child(overlays::tab_setting_prompt_overlay(ctx));
     }
     if ctx.state.show_settings {
         root = root.child(settings_overlay(ctx));

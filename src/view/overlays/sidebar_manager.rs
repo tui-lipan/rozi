@@ -53,6 +53,32 @@ pub(crate) fn sidebar_manager_overlay(ctx: &Context<AppRoot>) -> Element {
         ));
         statuses.insert(id, (enabled, available));
     }
+    let manager = ctx.state.sidebar_manager.clone().unwrap_or_default();
+    let selected = manager.selected.as_deref().and_then(|selected| {
+        entries.iter().position(|entry| match entry {
+            SearchEntry::Item(item) => item.value == selected,
+            _ => false,
+        })
+    });
+    let has_settings = manager
+        .selected
+        .as_deref()
+        .is_some_and(|id| crate::ops::tab_settings::tab_has_settings(&ctx.state, id));
+    let actions = vec![
+        OverlayAction::new(
+            "enter",
+            "toggle",
+            Msg::SidebarManagerActivate(manager.selected.clone().unwrap_or_default()),
+            true,
+        )
+        .hint_only(),
+        OverlayAction::new(
+            "ctrl-e",
+            "settings",
+            Msg::SidebarManagerSettings,
+            has_settings,
+        ),
+    ];
     let statuses = Arc::new(statuses);
     let gutter_statuses = Arc::clone(&statuses);
     let accent = fg_only(&ctx.state.theme.accent);
@@ -64,6 +90,17 @@ pub(crate) fn sidebar_manager_overlay(ctx: &Context<AppRoot>) -> Element {
         65,
     )
     .entries(entries)
+    .actions(actions)
+    .selected(selected)
+    .initial_query(manager.query)
+    .on_query_change(
+        ctx.link()
+            .callback(|query: Arc<str>| Msg::SidebarManagerQueryChanged(query.to_string())),
+    )
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<String>| Msg::SidebarManagerSelect(event.item.value)),
+    )
     .placeholder("Search tabs…")
     .item_gutter(Arc::new(move |item, _| {
         let &(enabled, available) = gutter_statuses.get(&item.value)?;

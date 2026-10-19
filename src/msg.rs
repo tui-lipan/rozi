@@ -172,6 +172,22 @@ pub enum Msg {
     },
     SidebarManagerBack,
     SidebarManagerActivate(String),
+    SidebarManagerQueryChanged(String),
+    SidebarManagerSelect(String),
+    /// Open the highlighted tab's settings from Sidebar tabs.
+    SidebarManagerSettings,
+    TabSettingsBack,
+    TabSettingsQueryChanged(String),
+    TabSettingsSelect(String),
+    /// Edit a setting: flip a toggle, list a choice's values, or ask for a typed value.
+    TabSettingsActivate(String),
+    /// Put the highlighted setting back to its default.
+    TabSettingsReset,
+    /// Apply a value from an open choice list.
+    TabSettingsChoose(String),
+    TabSettingPromptChanged(InputEvent),
+    TabSettingPromptClose,
+    TabSettingPromptSubmit,
     SidebarDockPanelsResized {
         side: crate::config::SidebarPosition,
         event: SplitterResizeEvent,

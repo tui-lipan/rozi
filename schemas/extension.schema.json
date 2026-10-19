@@ -7,6 +7,27 @@
   "required": [
     "extension"
   ],
+  "$defs": {
+    "settingValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  },
   "properties": {
     "extension": {
       "type": "object",
@@ -563,6 +584,15 @@
             "default": "client",
             "description": "Command tabs only. Where the listing command and an on_click exec run."
           },
+          "settings": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9_-]+$"
+            },
+            "description": "Keys of declared [settings] this tab offers in its settings picker, in order. Lists of strings cannot be offered."
+          },
           "suggested_location": {
             "type": "object",
             "additionalProperties": false,
@@ -601,25 +631,73 @@
     },
     "settings": {
       "type": "object",
-      "description": "Settings this extension understands, each at its default value. Users override them in [extensions.<id>].",
+      "description": "Settings this extension understands, each its default value or a table describing it. Users override them in [extensions.<id>].",
       "propertyNames": {
         "pattern": "^[a-z0-9_-]+$"
       },
       "additionalProperties": {
         "oneOf": [
           {
-            "type": "string"
+            "$ref": "#/$defs/settingValue"
           },
           {
-            "type": "integer"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "default"
+            ],
+            "properties": {
+              "default": {
+                "$ref": "#/$defs/settingValue"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The setting's name in the tab settings picker. Defaults to the key."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "One line shown while the setting is highlighted."
+              },
+              "choices": {
+                "type": "array",
+                "minItems": 1,
+                "description": "String settings only. The allowed values; default must be one of them.",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "value"
+                      ],
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "min": {
+                "type": "integer",
+                "description": "Integer settings only. Lowest allowed value."
+              },
+              "max": {
+                "type": "integer",
+                "description": "Integer settings only. Highest allowed value."
+              }
             }
           }
         ]

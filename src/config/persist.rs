@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::ExtensionSettingValue;
+use super::SettingValue;
 use super::file::{config_home, config_path, note_config_text};
 use super::schema::ProfileEntry;
 
@@ -675,10 +675,12 @@ fn upsert_extensions_disabled(text: &str, ids: &[String]) -> String {
     upsert_value_in_section(text, "extensions", "disabled", &format!("[{value}]"))
 }
 
-pub fn persist_extension_setting(
-    id: &str,
+/// Set one setting in the table its owner keeps settings in, or remove it with `None` so it falls
+/// back to its default. Every other line of the file is kept as written.
+pub fn persist_setting(
+    owner: &super::SettingsOwner,
     key: &str,
-    value: &ExtensionSettingValue,
+    value: Option<&SettingValue>,
 ) -> std::result::Result<PathBuf, String> {
     let _edit = config_edit_lock();
     let path = config_path();
@@ -687,29 +689,22 @@ pub fn persist_extension_setting(
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
     };
-    let updated = upsert_value_in_section(
-        &text,
-        &format!("extensions.{id}"),
-        key,
-        &extension_setting_toml(value),
-    );
-    write_config_text(&path, updated)?;
+    // A malformed manual edit must never be overwritten by a preference save.
+    toml::from_str::<toml::Value>(&text).map_err(|err| format!("Config is invalid: {err}"))?;
+    write_config_text(&path, apply_setting_edit(&text, owner, key, value))?;
     Ok(path)
 }
 
-fn extension_setting_toml(value: &ExtensionSettingValue) -> String {
+fn apply_setting_edit(
+    text: &str,
+    owner: &super::SettingsOwner,
+    key: &str,
+    value: Option<&SettingValue>,
+) -> String {
+    let section = owner.table_path().join(".");
     match value {
-        ExtensionSettingValue::Bool(value) => value.to_string(),
-        ExtensionSettingValue::Integer(value) => value.to_string(),
-        ExtensionSettingValue::String(value) => toml::Value::String(value.clone()).to_string(),
-        ExtensionSettingValue::List(values) => {
-            let values = values
-                .iter()
-                .map(|value| toml::Value::String(value.clone()).to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("[{values}]")
-        }
+        Some(value) => upsert_value_in_section(text, &section, key, &value.to_toml()),
+        None => remove_value_in_section(text, &section, key),
     }
 }
 
@@ -1831,22 +1826,18 @@ name = \"rozi\"
         let cases = [
             (
                 "runner",
-                ExtensionSettingValue::String("a \"quoted\" \\ path\nnext".to_string()),
+                SettingValue::String("a \"quoted\" \\ path\nnext".to_string()),
             ),
             (
                 "ignore",
-                ExtensionSettingValue::List(vec!["target".to_string(), "a\"b\\c".to_string()]),
+                SettingValue::List(vec!["target".to_string(), "a\"b\\c".to_string()]),
             ),
-            ("rows", ExtensionSettingValue::Integer(50)),
-            ("notify", ExtensionSettingValue::Bool(true)),
+            ("rows", SettingValue::Integer(50)),
+            ("notify", SettingValue::Bool(true)),
         ];
+        let owner = super::super::SettingsOwner::Extension("tasks".into());
         let updated = cases.iter().fold(source.to_string(), |text, (key, value)| {
-            upsert_value_in_section(
-                &text,
-                "extensions.tasks",
-                key,
-                &extension_setting_toml(value),
-            )
+            apply_setting_edit(&text, &owner, key, Some(value))
         });
         let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
         let tasks = &parsed["extensions"]["tasks"];
@@ -1859,6 +1850,49 @@ name = \"rozi\"
             Some(true)
         );
         assert!(updated.contains("# keep"));
+
+        let reset = apply_setting_edit(&updated, &owner, "rows", None);
+        let parsed: toml::Value = toml::from_str(&reset).expect("reset config remains valid");
+        assert!(parsed["extensions"]["tasks"].get("rows").is_none());
+        assert_eq!(
+            parsed["extensions"]["tasks"]["notify"].as_bool(),
+            Some(true)
+        );
+    }
+
+    /// A built-in tab's settings get a table of their own under `[sidebar]`, created on first use
+    /// beside a `[sidebar]` whose custom tab definitions it never touches.
+    #[test]
+    fn sidebar_tab_settings_are_written_to_their_own_table() {
+        let source = "[sidebar]\ntabs = [\"files\", { name = \"x\", label = \"X\", command = \"ls\" }]\n\n[workbar]\nleft = []\n";
+        let owner = super::super::SettingsOwner::SidebarTab("files".into());
+        let updated =
+            apply_setting_edit(source, &owner, "explorer", Some(&SettingValue::Bool(true)));
+        let updated = apply_setting_edit(
+            &updated,
+            &owner,
+            "root",
+            Some(&SettingValue::String("repo".into())),
+        );
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert_eq!(
+            parsed["sidebar"]["settings"]["files"]["explorer"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            parsed["sidebar"]["settings"]["files"]["root"].as_str(),
+            Some("repo")
+        );
+        assert_eq!(parsed["sidebar"]["tabs"].as_array().map(Vec::len), Some(2));
+        assert!(parsed["workbar"]["left"].as_array().is_some());
+
+        let reset = apply_setting_edit(&updated, &owner, "explorer", None);
+        let parsed: toml::Value = toml::from_str(&reset).expect("reset config remains valid");
+        assert!(
+            parsed["sidebar"]["settings"]["files"]
+                .get("explorer")
+                .is_none()
+        );
     }
 
     /// The Settings dialog's Startup/Sessions rows write into `[session]`, a section a config that

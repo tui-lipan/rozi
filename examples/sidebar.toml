@@ -6,11 +6,11 @@
 [sidebar]
 startup = true
 tabs = [
-  { name = "activity", worktrees = "repository" },
+  "activity",
   "agents",
   "panes",
   "sessions",
-  { name = "files", label = "", explorer = true },
+  "files",
   "git",
   "worktrees",
   { name = "dev", label = "Dev", entries = [
@@ -59,3 +59,10 @@ layout = { left = { width = 38, panel_count = 2, panels = [
   { weight = 0.62, tabs = ["activity", "agents", "panes", "files", "git", "worktrees"] },
   { weight = 0.38, tabs = ["sessions", "dev", "branches", "launch", "remotes", "todo", "deploys"] },
 ] }, right = { width = 32, panel_count = 1, panels = [{ weight = 1.0, tabs = [] }] }, hidden = [] }
+
+# Built-in tabs take their settings here; Sidebar tabs… → ctrl+e edits them in the app.
+[sidebar.settings.activity]
+worktrees = "repository"
+
+[sidebar.settings.files]
+explorer = true

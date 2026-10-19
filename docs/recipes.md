@@ -113,10 +113,8 @@ The sidebar's file tree follows the same rule: an `on_click` action receives the
 `ROZI_FILE`. Read the variable instead of inserting the path into a command:
 
 ```toml
-[sidebar]
-tabs = [
-  { name = "files", label = "", on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' } },
-]
+[sidebar.settings.files]
+on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' }
 ```
 
 ## Watch events

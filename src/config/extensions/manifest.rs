@@ -56,6 +56,9 @@ pub(super) struct ExtensionSidebarTabFile {
     pub(super) stream: Option<bool>,
     /// Where the listing command and an `on_click` `exec` run. See [`super::placement`].
     pub(super) placement: Option<String>,
+    /// Keys of the extension's declared `[settings]` this tab offers in its settings picker, in
+    /// the order the picker lists them.
+    pub(super) settings: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

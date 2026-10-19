@@ -158,6 +158,19 @@ impl<'a> PromptChrome<'a> {
         self.mask = Some(glyph);
         self
     }
+
+    pub(super) fn caption(mut self, caption: Option<PromptCaption<'a>>) -> Self {
+        self.caption = caption;
+        self
+    }
+
+    /// For a prompt raised over a picker that stays open beneath it: the picker recedes and the
+    /// prompt pins one row below its top, like every other stacked card.
+    pub(super) fn over_picker(mut self) -> Self {
+        self.dim_behind = true;
+        self.parent_reserve_percent = Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT);
+        self
+    }
 }
 
 /// Shared chrome for the single-input prompt overlays so they all read like the command palette:

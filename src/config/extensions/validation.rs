@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -362,7 +362,7 @@ pub(super) fn validate_command(
 /// existing is an error, matching how a malformed command or service is treated.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn validate_sidebar_tab(
-    raw: ExtensionSidebarTabFile,
+    mut raw: ExtensionSidebarTabFile,
     extension_id: &str,
     directory: &str,
     env: &[(String, String)],
@@ -370,6 +370,8 @@ pub(super) fn validate_sidebar_tab(
     info: &mut ExtensionInfo,
     tabs: &mut Vec<SidebarTab>,
     placed: &mut PlacedContributions,
+    declared: &super::settings::ExtensionSettingSpecs,
+    tab_settings: &mut BTreeMap<String, Vec<String>>,
 ) {
     let Some(local_name) = raw
         .name
@@ -424,6 +426,11 @@ pub(super) fn validate_sidebar_tab(
         ));
         None
     };
+    let settings = raw
+        .settings
+        .take()
+        .map(|keys| tab_setting_keys(&id, keys, declared, info))
+        .unwrap_or_default();
     let expand = |value: String| value.replace("{extension_dir}", directory);
     let parts = super::super::sidebar::CustomTabParts {
         label: raw.label.unwrap_or_default(),
@@ -458,11 +465,40 @@ pub(super) fn validate_sidebar_tab(
             if let Some(placed_tab) = placed_tab {
                 placed.tabs.insert(SidebarTabId::new(&id), placed_tab);
             }
+            if !settings.is_empty() {
+                tab_settings.insert(id.clone(), settings);
+            }
             info.sidebar_tabs.push(id);
             tabs.push(tab);
         }
         Err(error) => info.errors.push(error),
     }
+}
+
+/// Check a tab's `settings` list: each key names a declared setting once, and a picker can edit it.
+fn tab_setting_keys(
+    id: &str,
+    keys: Vec<String>,
+    declared: &super::settings::ExtensionSettingSpecs,
+    info: &mut ExtensionInfo,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut accepted = Vec::new();
+    for key in keys {
+        match declared.get(&key) {
+            None => info.errors.push(format!(
+                "sidebar tab `{id}` lists setting `{key}`, which `[settings]` does not declare"
+            )),
+            Some(spec) if !spec.editable() => info.errors.push(format!(
+                "sidebar tab `{id}` lists setting `{key}`, a string list, which a tab cannot offer"
+            )),
+            Some(_) if !seen.insert(key.clone()) => info
+                .errors
+                .push(format!("sidebar tab `{id}` lists setting `{key}` twice")),
+            Some(_) => accepted.push(key),
+        }
+    }
+    accepted
 }
 
 #[allow(clippy::too_many_arguments)]

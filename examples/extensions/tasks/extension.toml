@@ -21,11 +21,14 @@ key = "."
 # Task sources to scan, in the order their groups appear.
 sources = ["just", "make", "npm"]
 # Where a task runs: "focus" takes you to it, "background" leaves you where you are.
-pane = "focus"
+pane = { default = "focus", label = "Task pane", choices = [
+  { value = "focus", label = "Focused" },
+  { value = "background", label = "In the background" },
+] }
 # Hold the pane open after the task exits so its output stays readable.
-keep_open = true
+keep_open = { default = true, label = "Keep pane open" }
 # Workspace to run in; 0 means the current one.
-workspace = 0
+workspace = { default = 0, label = "Workspace", description = "0 runs in the current workspace", min = 0, max = 9 }
 
 [[sidebar_tabs]]
 name = "list"
@@ -34,3 +37,5 @@ command = "python {extension_dir}/bin/tasks.py list"
 interval = 30
 group_prefix = "## "
 on_click = { send = "{line}" }
+# Ctrl+E in Sidebar tabs edits these from the tab.
+settings = ["pane", "keep_open", "workspace"]

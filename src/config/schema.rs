@@ -2197,6 +2197,9 @@ pub struct SidebarConfig {
     pub presets: Vec<SidebarLayoutPreset>,
     pub layout: SidebarDockLayout,
     pub tabs: Vec<SidebarTab>,
+    /// The settings each configurable tab offers, by tab id: a built-in tab's own, or the extension
+    /// settings an extension tab names. A tab with no settings has no entry.
+    pub tab_settings: std::collections::BTreeMap<String, super::setting_schema::SettingsGroup>,
     /// Paints the sidebar with the canvas backdrop instead of the elevated panel fill.
     pub background_follows_canvas: bool,
     /// Keeps one row between each panel's tab bar and its list.
@@ -2223,12 +2226,16 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
             SidebarTab::Projects,
         ];
+        let mut tabs = tabs;
+        let tab_settings =
+            super::sidebar::apply_builtin_settings(&mut tabs, &Default::default(), &mut Vec::new());
         Self {
             startup: false,
             migrated_docks: None,
             layout: SidebarDockLayout::default(),
             presets: Vec::new(),
             tabs,
+            tab_settings,
             background_follows_canvas: false,
             gap: true,
             background: true,

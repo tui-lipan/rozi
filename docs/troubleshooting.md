@@ -284,6 +284,21 @@ wrong table, or no longer exists. A value outside the allowed choices is skipped
 some numbers are clamped into range. Several warnings share one toast, and each is also printed to
 stderr. Compare the key with [Configuration](configuration.md).
 
+### `Sidebar tab … is built in; list it by name …`
+
+A built-in tab is listed in `[sidebar] tabs` by its name alone, and its options go in a table of
+their own. Write `"files"` in the list and move the options:
+
+```toml
+[sidebar]
+tabs = ["activity", "files", "git"]
+
+[sidebar.settings.files]
+explorer = true
+```
+
+See [Built-in tab settings](configuration.md#built-in-tab-settings).
+
 ## Scripting and extensions
 
 ### `no live rozi control socket found`

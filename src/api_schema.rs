@@ -172,10 +172,14 @@ mod tests {
             "AgentAuthority",
         ] {
             assert!(
-                defs[name].get("enum").is_some(),
+                enumerated_values(&defs[name]).is_some(),
                 "{name} should enumerate its values"
             );
         }
+        assert_eq!(
+            enumerated_values(&defs["AgentState"]).unwrap(),
+            vec!["working", "blocked", "idle", "done", "error"],
+        );
 
         let mut closed = Vec::new();
         collect_closed_objects(&bundle, &mut String::new(), &mut closed);
@@ -184,6 +188,32 @@ mod tests {
             "these objects forbid unknown properties, which breaks a consumer the first time a \
              response gains a field: {closed:?}"
         );
+    }
+
+    // Schemars uses oneOf with enum/const branches when a variant has its own description.
+    // Every branch must still name a finite set of values; an open branch fails this check.
+    fn enumerated_values(schema: &Value) -> Option<Vec<&Value>> {
+        if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+            return (!values.is_empty()).then(|| values.iter().collect());
+        }
+        if let Some(value) = schema.get("const") {
+            return Some(vec![value]);
+        }
+        let branches = schema.get("oneOf")?.as_array()?;
+        let values: Option<Vec<_>> = branches.iter().map(enumerated_values).collect();
+        (!branches.is_empty()).then_some(values?.into_iter().flatten().collect())
+    }
+
+    #[test]
+    fn an_open_branch_does_not_count_as_an_enumeration() {
+        assert!(
+            enumerated_values(&json!({
+                "oneOf": [{"enum": ["working", "idle"]}, {"type": "string"}]
+            }))
+            .is_none()
+        );
+        assert!(enumerated_values(&json!({"enum": []})).is_none());
+        assert!(enumerated_values(&json!({"oneOf": []})).is_none());
     }
 
     fn collect_closed_objects(value: &Value, path: &mut String, found: &mut Vec<String>) {

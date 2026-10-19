@@ -667,6 +667,57 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
         .expect("bell focus lifecycle test completes");
 }
 
+#[test]
+fn agent_bell_leaves_the_mark_to_the_agent_state() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            let pane_id = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("fresh pane focus");
+            let generation = 42;
+            {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(pane_id, generation);
+                pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                    agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+                    state: crate::session::protocol::DetectedAgentState::Idle,
+                });
+            }
+            let events = backend
+                .state()
+                .event_hub
+                .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+
+            backend
+                .set_window_focused(false)
+                .expect("lose host-window focus");
+            backend
+                .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id,
+                    local: false,
+                    generation,
+                    bytes: vec![7],
+                })
+                .expect("deliver BEL while unfocused");
+            assert!(events.recv().unwrap().contains("\"pane\""));
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            assert!(pane.activity.has_unseen_output);
+            assert!(!pane.activity.bell);
+        })
+        .expect("spawn agent bell test")
+        .join()
+        .expect("agent bell test completes");
+}
+
 fn finished_record(
     pane_id: crate::state::PaneId,
     generation: u64,

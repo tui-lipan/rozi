@@ -243,6 +243,90 @@ fn agents_tab_renders_project_groups() {
 
 /// Agents spread through one repository read as one project headed by its branch, with each row
 /// saying where in the project it sits.
+/// Two worktrees of one repository carry the same name, so in a narrow sidebar the branch is what
+/// must survive: it keeps its width and its tail, and the name gives way. A repository with one
+/// checkout keeps its name whole instead.
+#[test]
+fn worktree_headings_keep_their_branch_when_the_name_repeats() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                state.config.sidebar.layout.left.width = 28;
+                let repo = "/x/very-long-repository-name";
+                let primary = agent_pane_in_project(
+                    1,
+                    agent("claude", "Claude Code"),
+                    Some(("working", None)),
+                    repo,
+                    repo,
+                    "master",
+                );
+                let worktree_root = "/x/very-long-repository-name/.worktrees/inbox";
+                let mut worktree = agent_pane_in_project(
+                    2,
+                    agent("claude", "Claude Code"),
+                    Some(("working", None)),
+                    worktree_root,
+                    worktree_root,
+                    "feat/worktree-work-status",
+                );
+                worktree.terminal.repository = Some(repo.to_string());
+                let lipan = agent_pane_in_project(
+                    3,
+                    agent("codex", "Codex"),
+                    Some(("working", None)),
+                    "/x/tui-lipan",
+                    "/x/tui-lipan",
+                    "feat/an-equally-long-branch-name",
+                );
+                state.current_mut().workspaces[0].panes = vec![primary, worktree, lipan];
+            }
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(29).collect())
+                .collect();
+            let heading = |needle: &str| {
+                sidebar
+                    .iter()
+                    .find(|line| line.contains(needle))
+                    .unwrap_or_else(|| panic!("{needle:?} in {sidebar:#?}"))
+                    .clone()
+            };
+            assert!(heading("master").contains("very-"), "{sidebar:#?}");
+            let worktree = heading("work-status");
+            assert!(
+                worktree.contains(" ve…"),
+                "the name keeps a stub where the branch needs the room: {sidebar:#?}"
+            );
+            assert!(
+                worktree.contains("…")
+                    && worktree
+                        .trim_end_matches([' ', '│'])
+                        .ends_with("work-status"),
+                "the long branch keeps its tail: {sidebar:#?}"
+            );
+            assert!(
+                heading("tui-lipan").contains("tui-lipan"),
+                "a lone checkout keeps its name: {sidebar:#?}"
+            );
+        })
+        .expect("spawn worktree headings thread")
+        .join()
+        .expect("worktree headings complete");
+}
+
 #[test]
 fn agents_tab_heads_projects_with_their_branch() {
     std::thread::Builder::new()

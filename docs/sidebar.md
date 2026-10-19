@@ -87,7 +87,9 @@ agents among them also appear in the [Agents view](sessions.md#go-to-an-agent); 
 the Git project that contains each pane's working directory, with branch and workspace context. A
 published row can name its own directory, so a program that runs several sessions in separate
 worktrees shows each one under its own branch. A linked Git worktree is labelled with its
-repository's name, and the branch beside it tells the checkouts apart.
+repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
+repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
+repository name shortens. A checkout with no branch shows its short commit.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 

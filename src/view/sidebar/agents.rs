@@ -696,15 +696,33 @@ pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
     let show_headers = groups.len() > 1 || groups.first().is_some_and(|g| g.project.is_some());
+    let labels: Vec<Option<String>> = groups
+        .iter()
+        .map(|group| group.project.as_deref().map(str::to_lowercase))
+        .collect();
     let mut rows = Vec::new();
     for group in groups {
         let project = group.project.as_deref();
+        // Several checkouts of one repository share its name, so only the branch tells their
+        // headings apart: it then keeps its width, and the name gives way first.
+        let shared = project.is_some_and(|project| {
+            labels
+                .iter()
+                .filter(|label| label.as_deref() == Some(project.to_lowercase().as_str()))
+                .count()
+                > 1
+        });
         let depth = if show_headers {
             rows.push(
-                SidebarRow::header(group_header(state, project, group.branch.as_deref()))
-                    .shape(Shape::Heading)
-                    .apart()
-                    .keyed(format!("project:{}", project.unwrap_or(""))),
+                SidebarRow::header(group_header(
+                    state,
+                    project,
+                    group.branch.as_deref(),
+                    shared,
+                ))
+                .shape(Shape::Heading)
+                .apart()
+                .keyed(format!("project:{}", project.unwrap_or(""))),
             );
             1
         } else {
@@ -865,14 +883,28 @@ pub(crate) fn row_glyph(
 /// The header deliberately carries no aggregated status glyph. Groups never collapse, so every row
 /// it would summarize is already on screen directly beneath it — and the glyph plus the nesting it
 /// forced cost four cells on every row of the narrowest surface in the app.
-fn group_header(state: &State, project: Option<&str>, branch: Option<&str>) -> Element {
+///
+/// Which side keeps its width depends on what tells the group apart. A repository with one checkout
+/// on screen is named by its name, and the branch takes whatever width is left, down to nothing.
+/// Several checkouts of one repository all carry its name, so there the branch is the identity: it
+/// keeps its width, shortened from the start if it must be, and the name truncates first, down to a
+/// stub. A detached checkout's branch is its short commit.
+fn group_header(
+    state: &State,
+    project: Option<&str>,
+    branch: Option<&str>,
+    shared_name: bool,
+) -> Element {
     let Some(label) = project else {
         return row::header(state, "Elsewhere", true);
     };
-    // The project name is what the group is; the branch qualifies it and takes whatever width the
-    // name leaves, down to nothing.
+    let priority = if shared_name {
+        row::Priority::Distinguishing
+    } else {
+        row::Priority::Label
+    };
     match branch {
-        Some(branch) => row::header_with_note(state, label, branch.trim(), row::Priority::Label),
+        Some(branch) => row::header_with_note(state, label, branch.trim(), priority),
         None => row::header(state, label, false),
     }
 }

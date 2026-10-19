@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 18] = [
+const SCENARIOS: [(&str, &str, fn()); 19] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -90,6 +90,11 @@ const SCENARIOS: [(&str, &str, fn()); 18] = [
         "sidebar-agents",
         "the Agents tab inbox: blocked, failed, and unread agents, working ones left out",
         sidebar_agents,
+    ),
+    (
+        "sidebar-activity-worktrees",
+        "two worktrees of one long-named repository beside a lone checkout, at three widths",
+        sidebar_activity_worktrees,
     ),
     (
         "sidebar-panes",
@@ -1478,6 +1483,70 @@ fn sidebar_agents() {
         backend.set_viewport(viewport(100, 22));
         backend.render();
         write_png(&mut backend, &format!("sidebar-agents-{width}"));
+    }
+}
+
+/// Activity headings where the repository name repeats: the branch keeps its room and its tail,
+/// and the name shortens to a stub. A lone checkout beside them keeps its name whole.
+fn sidebar_activity_worktrees() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
+        SessionInstanceId,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let agent_pane = |id: u32, label: &str, root: &str, branch: &str| {
+        let mut pane = live_pane(id);
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new(label.to_lowercase(), label).into(),
+            state: DetectedAgentState::Idle,
+        });
+        pane.terminal.reported_status = Some(PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: now.saturating_sub(90),
+        });
+        pane.agents = vec![
+            AgentRef {
+                pane: PaneRef {
+                    session_instance: SessionInstanceId::generate(),
+                    pane_id: id,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            }
+            .into(),
+        ];
+        pane.terminal.cwd = Some(root.to_string());
+        pane.terminal.project_root = Some(root.to_string());
+        pane.terminal.git_branch = Some(branch.to_string());
+        pane
+    };
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        let repo = "/home/me/src/very-long-repository-name";
+        let worktree = "/home/me/src/very-long-repository-name/.worktrees/status";
+        let primary = agent_pane(10, "Claude Code", repo, "master");
+        let mut linked = agent_pane(11, "Claude Code", worktree, "feat/worktree-work-status");
+        linked.terminal.repository = Some(repo.to_string());
+        let lone = agent_pane(12, "Codex", "/home/me/src/tui-lipan", "fix/cursor-blink");
+        state.current_mut().workspaces[0].panes = vec![primary, linked, lone];
+    }
+    for width in [28, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 20));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-activity-worktrees-{width}"));
     }
 }
 

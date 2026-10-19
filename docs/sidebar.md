@@ -394,8 +394,9 @@ rozi remembers which rows you expanded or collapsed until the client exits.
 </CaptureGallery>
 
 Open **Settings… → Bars → Sidebar tabs…** to choose which tabs appear. Search by name and press
-`Enter` to turn a tab on or off; the picker stays open so you can change several. `Ctrl+E` opens
-the highlighted tab's [settings](#tab-settings). A tab from an extension that is not loaded stays
+`Enter` to turn a tab on or off; the picker stays open so you can change several. A tab with
+[settings](#tab-settings) counts them beside its status, as in `Enabled · 5 settings`, and `Ctrl+E`
+opens them. A tab from an extension that is not loaded stays
 listed with a dash and keeps its place for when it returns.
 
 Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a tab on another

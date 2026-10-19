@@ -92,6 +92,19 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         b.dispatch(Msg::RunAction(Action::OpenSettings)).unwrap();
         b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarTabs))
             .unwrap();
+        // A tab with settings counts them beside its status; one without shows only the status.
+        let grid = screen(&mut b);
+        let row = |name: &str| {
+            grid.lines()
+                .find(|line| line.contains(&format!("● {name} ")))
+                .unwrap_or_else(|| panic!("{name} is listed:\n{grid}"))
+                .to_string()
+        };
+        assert!(row("Files").contains("Enabled · 5 settings"), "{grid}");
+        assert!(row("Git").contains("Enabled · 6 settings"), "{grid}");
+        assert!(row("Activity").contains("Enabled · 1 setting "), "{grid}");
+        assert!(!row("Panes").contains("setting"), "{grid}");
+
         b.dispatch(Msg::SidebarManagerSelect("panes".into()))
             .unwrap();
         // Panes has no settings, so the action is greyed and does nothing.

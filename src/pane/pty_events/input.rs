@@ -122,36 +122,72 @@ pub(crate) fn handle_pane_input(
         // installed still enables bracketed paste and focus reports.
         return Update::none();
     }
+    if matches!(input.kind, TerminalInputKind::Paste) {
+        return paste_pane_bytes(ctx, id, input.bytes.to_vec());
+    }
     if let Some(blocked) = input_blocked(ctx) {
         return blocked.notified.update();
     }
-
     let client = ctx.state.pty_client_for_pane(id);
-    // Only a paste is the user putting something into this session. The focus notifications that
-    // also arrive here are the terminal reporting on itself — counting those would mark a session
-    // worked-in for having been looked at, which is the opposite of what engagement means.
-    if matches!(input.kind, TerminalInputKind::Paste) {
-        if !crate::scratchpad::contains(&ctx.state, id) {
-            ctx.state.current_mut().engaged = true;
-        }
-        // Same distinction, applied to attention: a paste is the user acting in this pane, so it
-        // answers an alert the way a keystroke does. The focus notifications that also arrive here
-        // are the terminal reporting on itself and answer nothing.
-        crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
-    }
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, local, input.bytes.to_vec());
-            if matches!(input.kind, TerminalInputKind::Paste) && pane.terminal.set_scrollback(0) {
-                return Update::full();
-            }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
         }
     }
     Update::none()
+}
+
+/// Admit a user paste before changing engagement, attention, or the visible scroll position.
+/// Focus reports do not pass through this path because they are not user input.
+/// Returns the connected client and whether attention or scrollback changed.
+pub(crate) fn prepare_pane_paste(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+) -> std::result::Result<(crate::session::client::SessionClient, bool), Update> {
+    if let Some(blocked) = input_blocked(ctx) {
+        return Err(blocked.notified.update());
+    }
+    if crate::pane::lifecycle::find_pane(&ctx.state, id).is_none() {
+        return Err(Update::none());
+    }
+    let Some(client) = ctx.state.pty_client_for_pane(id) else {
+        pane_disconnected(ctx, id);
+        return Err(Update::full());
+    };
+    // Only accepted input in the session itself counts; scratch panes are client-local.
+    if !crate::scratchpad::contains(&ctx.state, id) {
+        ctx.state.current_mut().engaged = true;
+    }
+    let acknowledged = crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
+    let scrolled =
+        find_pane_mut(&mut ctx.state, id).is_some_and(|pane| pane.terminal.set_scrollback(0));
+    Ok((client, acknowledged || scrolled))
+}
+
+fn pane_disconnected(ctx: &mut Context<AppRoot>, id: PaneId) {
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+        pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+    }
+    crate::pane::pty_events::notify_error(ctx, "Paste failed", "session disconnected");
+}
+
+pub(crate) fn paste_pane_bytes(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
+    let (client, repaint) = match prepare_pane_paste(ctx, id) {
+        Ok(accepted) => accepted,
+        Err(update) => return update,
+    };
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
+    let pane = find_pane_mut(&mut ctx.state, id).expect("accepted paste has a pane");
+    client.send_input(id, pane.pty_generation, local, bytes);
+    if repaint {
+        Update::full()
+    } else {
+        Update::none()
+    }
 }
 
 pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {

@@ -100,7 +100,8 @@ paste command also accept clipboard images and copied files. rozi uploads them
 and pastes their remote paths without submitting the prompt. Codex and Claude
 Code can use the image paths as attachments. Other files arrive as paths for the
 pane program to interpret. An empty clipboard keeps direct `Ctrl+V` available
-to the program.
+to the program. If the connection is unavailable, pasting reports an error;
+reconnect and paste again.
 
 Copy up to 16 regular files at once from a file manager. Each file may be up to
 16 MiB; clipboard images may be up to 10,000,000 bytes after PNG encoding.

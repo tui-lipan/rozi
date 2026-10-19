@@ -284,4 +284,7 @@ error colors. Override or turn off those colors with the `blocked` and `error` k
 `working`, `done`, and progress updates never notify.
 
 A program status report is not an agent, even when it says `app=codex` or `app=claude-code`: it
-does not change agent detection, keep-awake, or conversation restore.
+does not change agent detection, keep-awake, or conversation restore. When the report names the
+agent rozi detected in that pane, such as `app=claude-code` from Claude Code, it describes that agent
+instead of adding a row of its own: the agent's row shows the report's message as what it is doing,
+and its title names the run.

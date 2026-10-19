@@ -295,11 +295,19 @@ impl Pane {
 
     /// The activity projection: everything happening in this pane, agents and activities alike,
     /// for the Activity sidebar.
+    ///
+    /// A program status the pane's own agent reports (`app=claude-code` from Claude Code) describes
+    /// that agent, so it rides on the agent's occupant rather than becoming a second row for it.
     pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {
         let mut occupants = crate::session::protocol::pane_occupants(&self.semantic_runtime());
         if let Some(record) =
             crate::session::protocol::program_status_summary(&self.terminal.program_status)
         {
+            let app = self.terminal.program_status.app_for(record);
+            if let Some(agent) = app.and_then(|app| self.reporting_agent(&mut occupants, app)) {
+                agent.program_status = Some(record.clone());
+                return occupants;
+            }
             occupants.push(crate::session::protocol::PaneOccupant {
                 slot: None,
                 agent: None,
@@ -316,6 +324,29 @@ impl Pane {
             });
         }
         occupants
+    }
+
+    /// The agent occupant a program status naming `app` speaks for: the pane's own agent, or of
+    /// several conversations the one on screen, since that is the one its terminal shows.
+    fn reporting_agent<'a>(
+        &self,
+        occupants: &'a mut [crate::session::protocol::PaneOccupant],
+        app: &str,
+    ) -> Option<&'a mut crate::session::protocol::PaneOccupant> {
+        let named = crate::agent_detection::AgentCatalog::shared_builtin()
+            .by_name(app)
+            .map(|definition| definition.id().to_string());
+        let on_screen = |slot: &crate::session::protocol::RowKey| {
+            self.terminal
+                .published_rows
+                .iter()
+                .any(|row| row.has_key(slot) && row.active)
+        };
+        occupants.iter_mut().find(|occupant| {
+            occupant.agent.as_ref().is_some_and(|identity| {
+                identity.id.eq_ignore_ascii_case(app) || named.as_deref() == Some(&identity.id)
+            }) && occupant.slot.as_ref().is_none_or(on_screen)
+        })
     }
 
     /// Where one of this pane's occupants is working.

@@ -1488,7 +1488,8 @@ fn sidebar_agents() {
 
 /// Activity headings where the repository name repeats: the branch keeps its room and its tail,
 /// and the name shortens to a stub. A lone checkout beside them keeps its name whole. Then the same
-/// checkouts with `worktrees = "repository"`: the repository named once, a branch line each.
+/// checkouts with `worktrees = "repository"`: the repository named once, a branch line each, and
+/// the lone checkout under its usual heading.
 fn sidebar_activity_worktrees() {
     use rozi::session::protocol::{
         AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,

@@ -92,7 +92,8 @@ repository are listed, the branch keeps its room in a narrow sidebar, showing it
 repository name shortens. A checkout with no branch shows its short commit.
 
 If you run many worktrees of one repository at once, set `worktrees = "repository"` on the tab to
-name each repository once, with a line per checkout's branch and its agents beneath:
+name each repository once, with a line per checkout's branch and its agents beneath. A repository
+with one checkout keeps its usual heading, its branch beside its name:
 
 ```toml
 [sidebar]

@@ -760,8 +760,8 @@ fn separate_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<Sideba
 
 /// One section per repository: its name, then each checkout's branch on a line of its own with
 /// the checkout's agents beneath. The repository is named once however many worktrees it has, at
-/// the cost of a level of nesting. A directory outside any repository, which has no branch to
-/// list, keeps a section of its own as it would laid out separately.
+/// the cost of a level of nesting. A repository with a single checkout, and a directory outside
+/// any repository, keep a section of their own as they would laid out separately.
 fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<SidebarRow>) {
     let mut placed: Vec<&str> = Vec::new();
     for group in groups {
@@ -783,6 +783,23 @@ fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<Side
             .iter()
             .filter(|other| other.repository.as_deref() == Some(repository))
             .collect();
+        // A repository with one checkout has nothing to factor out: it reads as it would laid out
+        // separately, its branch beside its name, without spending a level on a single line.
+        if let [checkout] = checkouts.as_slice() {
+            rows.push(
+                SidebarRow::header(group_header(
+                    state,
+                    checkout.project.as_deref(),
+                    checkout.branch.as_deref(),
+                    false,
+                ))
+                .shape(Shape::Heading)
+                .apart()
+                .keyed(format!("project:{}", checkout.key.as_deref().unwrap_or(""))),
+            );
+            group_rows(state, checkout, 1, rows);
+            continue;
+        }
         let label = group.project.as_deref().unwrap_or_default();
         rows.push(
             SidebarRow::header(row::header(state, label, false))

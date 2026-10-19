@@ -73,6 +73,7 @@ pub(crate) enum SessionCommand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlCli {
+    pub(crate) config_path: Option<String>,
     pub(super) endpoint: ControlEndpoint,
     pub(super) request: control::ControlRequest,
     /// Explicit report format. Without one, a terminal gets human output and a pipe gets JSON.
@@ -548,6 +549,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     );
                 }
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint,
                     request,
                     output_format,
@@ -592,6 +594,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let output_format = parse_output_format(&mut iter, "list-panes")?;
                 let command = control::ControlCommand::ListPanes;
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
@@ -605,6 +608,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     layout::parse_pane_args(&mut iter)?
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
@@ -615,6 +619,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let output_format = parse_output_format(&mut iter, "metrics")?;
                 let command = control::ControlCommand::Metrics;
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
@@ -630,6 +635,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "focus")?;
                 let command = control::ControlCommand::Focus { target };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -670,6 +676,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     scale: reply.scale,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: reply.output_format,
@@ -722,6 +729,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     scale: reply.scale,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: reply.output_format,
@@ -759,6 +767,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     level,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -786,6 +795,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     visible: verb == "show-command",
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -839,6 +849,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     reason,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -1073,6 +1084,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let command = control::ControlCommand::NewPane {
                     command,
                     argv,
+                    local_cwd: None,
                     cwd,
                     title,
                     keep_open,
@@ -1081,6 +1093,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     size,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -1092,6 +1105,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "run-action")?;
                 let command = control::ControlCommand::RunAction { action };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -1173,6 +1187,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     image_pixels,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
@@ -1229,6 +1244,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     image_pixels,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format,
@@ -1246,6 +1262,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "switch-workspace")?;
                 let command = control::ControlCommand::SwitchWorkspace { index };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -1263,6 +1280,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "move-to-workspace")?;
                 let command = control::ControlCommand::MoveToWorkspace { index };
                 return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
                     output_format: None,
@@ -1577,7 +1595,9 @@ pub(super) fn control_endpoint(
     socket: Option<PathBuf>,
     command: &control::ControlCommand,
 ) -> std::result::Result<ControlEndpoint, String> {
-    let offender = if cli.config_path.is_some() {
+    let offender = if cli.config_path.is_some()
+        && !matches!(command, control::ControlCommand::NewPane { .. })
+    {
         "--config"
     } else if cli.read_only {
         "--read-only"
@@ -2812,6 +2832,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: None,
                 argv: Some(vec!["grok".into()]),
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -2960,6 +2981,7 @@ mod tests {
         let expected = |command: Option<&str>, focus: bool| control::ControlCommand::NewPane {
             command: command.map(str::to_string),
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -2995,6 +3017,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: Some("cargo test".into()),
                 argv: None,
+                local_cwd: None,
                 cwd: Some("/repo with space".into()),
                 title: Some("tests".into()),
                 keep_open: true,
@@ -3038,6 +3061,7 @@ mod tests {
                     "--literal".into(),
                     "semi; $HOME 'quoted'".into(),
                 ]),
+                local_cwd: None,
                 cwd: Some("/repo with spaces".into()),
                 title: None,
                 keep_open: false,
@@ -3694,6 +3718,7 @@ mod tests {
             control::ControlCommand::NewPane {
                 command: Some("--odd-command".into()),
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,

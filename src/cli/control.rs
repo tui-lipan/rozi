@@ -569,6 +569,30 @@ fn exit_on_failure(response: &serde_json::Value) {
     }
 }
 
+/// Resolve CLI spawn paths before IPC loses the caller's working directory.
+fn resolve_split_cwd(command: &mut control::ControlCommand) -> std::io::Result<()> {
+    let control::ControlCommand::NewPane { cwd, local_cwd, .. } = command else {
+        return Ok(());
+    };
+    let loaded = crate::config::load_config();
+    crate::config::log_config_warnings(&loaded.warnings);
+    let caller = std::env::current_dir()?;
+    *local_cwd = Some(split_cwd(
+        cwd.as_deref(),
+        loaded.config.cwd.as_deref(),
+        &caller,
+    ));
+    Ok(())
+}
+
+fn split_cwd(explicit: Option<&str>, configured: Option<&str>, caller: &std::path::Path) -> String {
+    let path = explicit.or(configured).map(crate::config::expand_path);
+    caller
+        .join(path.as_deref().unwrap_or(caller))
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     use std::io::IsTerminal;
 
@@ -585,13 +609,14 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         &mut request,
         std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
     );
+    if !matches!(endpoint, ControlEndpoint::Remote { .. }) {
+        resolve_split_cwd(&mut request.command)?;
+    }
     let value = match endpoint {
         ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &request)?,
-        ControlEndpoint::Session(session) => {
-            ask_session_endpoint(&session, command.request.clone())?
-        }
+        ControlEndpoint::Session(session) => ask_session_endpoint(&session, request)?,
         ControlEndpoint::Remote { target, session } => {
-            ask_remote_endpoint(&target, &session, command.request.clone())?
+            ask_remote_endpoint(&target, &session, request)?
         }
         ControlEndpoint::OwnSession(instance) => ask_own_session_endpoint(&instance, request)?,
     };
@@ -652,6 +677,7 @@ mod tests {
         output: Option<&str>,
     ) -> ControlCli {
         ControlCli {
+            config_path: None,
             endpoint: ControlEndpoint::Ui(None),
             request: control_request(control::ControlCommand::CapturePane {
                 target: None,
@@ -844,5 +870,28 @@ mod tests {
             .collect();
         let last = format!("t{}", crate::state::MAX_PICK_TABS);
         assert_eq!(opening_tab(&many, Some(&last)), Some("t0"));
+    }
+}
+
+#[cfg(test)]
+mod split_cwd_tests {
+    use super::split_cwd;
+
+    #[test]
+    fn split_directory_uses_explicit_then_configured_then_caller() {
+        let caller = std::env::temp_dir().join("rozi-caller");
+        let configured = std::env::temp_dir().join("rozi-configured");
+        let configured = configured.to_str().unwrap();
+        assert_eq!(split_cwd(None, Some(configured), &caller), configured);
+        assert_eq!(split_cwd(None, None, &caller), caller.to_string_lossy());
+        assert_eq!(
+            split_cwd(Some("."), Some(configured), &caller),
+            caller.join(".").to_string_lossy()
+        );
+        assert_eq!(
+            split_cwd(Some("child"), Some(configured), &caller),
+            caller.join("child").to_string_lossy()
+        );
+        assert_eq!(split_cwd(Some(configured), None, &caller), configured);
     }
 }

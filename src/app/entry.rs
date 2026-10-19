@@ -181,7 +181,10 @@ pub fn run() -> Result<()> {
     // every `run-action` makes editor edge navigation visibly stall without making the request any
     // safer. The serving UI already passed recovery when it started.
     let parsed = match parsed {
-        cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
+        cli::ParsedCli::Control(command) => {
+            apply_config_path(command.config_path.clone());
+            return cli::run_control_cli(command);
+        }
         cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
         cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
         cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),

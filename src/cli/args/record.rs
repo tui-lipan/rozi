@@ -556,6 +556,7 @@ pub(super) fn control_cli(
 ) -> RecordCli {
     RecordCli::Control {
         control: Box::new(ControlCli {
+            config_path: None,
             endpoint,
             request: control_request(command),
             output_format,

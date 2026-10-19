@@ -86,6 +86,35 @@ fn capture_until(session: &str, pane: u32, predicate: impl Fn(&str) -> bool) -> 
 }
 
 #[test]
+fn a_headless_split_uses_the_cli_directory_instead_of_the_server_directory() {
+    let server = spawn_listener(headless_settings());
+    let directory = tempfile::tempdir().unwrap();
+    let cwd = directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let spawned = expect_ok(
+        server.session(),
+        ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            local_cwd: Some(cwd.clone()),
+            cwd: Some("/unused/server/path".into()),
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+            size: None,
+        },
+    );
+    assert_eq!(spawned["pty_ready"], true);
+    let panes = expect_ok(server.session(), ControlCommand::ListPanes);
+    assert_eq!(panes[0]["cwd"], cwd);
+}
+
+#[test]
 fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
     let server = spawn_listener(headless_settings());
     let session = server.session().to_string();
@@ -99,6 +128,7 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: Some("headless".to_string()),
             keep_open: false,
@@ -237,6 +267,7 @@ fn a_detached_session_captures_its_screen_as_ansi_png_and_spans() {
         ControlCommand::NewPane {
             command: None,
             argv: Some(argv.map(str::to_string).to_vec()),
+            local_cwd: None,
             cwd: None,
             title: None,
             // The screen must outlive the program that drew it.
@@ -333,6 +364,7 @@ fn a_detached_session_reports_its_arrangement_without_any_client() {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: Some(title.to_string()),
                 keep_open: false,
@@ -389,6 +421,7 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -479,6 +512,7 @@ fn a_detached_session_can_close_a_pane_without_any_client() {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -560,6 +594,7 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -595,6 +630,7 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
             ControlCommand::NewPane {
                 command: None,
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,
@@ -630,6 +666,7 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -647,6 +684,7 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -763,6 +801,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -791,6 +830,7 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -864,6 +904,7 @@ fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
         ControlCommand::NewPane {
             command: None,
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: false,
@@ -964,6 +1005,7 @@ fn pane_identity(session: &str) -> (u32, rozi::session::protocol::SessionInstanc
                     .to_string(),
             ),
             argv: None,
+            local_cwd: None,
             cwd: None,
             title: None,
             keep_open: true,

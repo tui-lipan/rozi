@@ -730,6 +730,7 @@ mod tests {
             let split = request(ControlCommand::NewPane {
                 command: Some("id".to_string()),
                 argv: None,
+                local_cwd: None,
                 cwd: None,
                 title: None,
                 keep_open: false,

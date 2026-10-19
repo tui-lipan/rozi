@@ -72,10 +72,17 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
             }),
         );
     } else {
+        // Startup panes can be created before the first viewport arrives. Only a
+        // float the user has placed has a meaningful remembered size.
+        let remembered = if scratch || pane.floating_rect_initialized {
+            pane.floating_rect
+        } else {
+            crate::layout::geometry::default_floating_rect(floating_bounds, id)
+        };
         let rect = match (scratch, pane.floating_rect_initialized, current_rect) {
             (true, true, _) => clamp_floating_rect(pane.floating_rect, floating_bounds),
-            (_, _, Some(tile)) => lift_off_float_rect(tile, pane.floating_rect, floating_bounds),
-            (_, _, None) => clamp_float_rect(pane.floating_rect, floating_bounds),
+            (_, _, Some(tile)) => lift_off_float_rect(tile, remembered, floating_bounds),
+            (_, _, None) => clamp_float_rect(remembered, floating_bounds),
         };
         float_pane(ctx.state.active_workspace_mut(), id, rect);
     }
@@ -1111,6 +1118,45 @@ mod tests {
                     .tiled_ids()
                     .contains(&1)
             );
+        });
+    }
+
+    #[test]
+    fn first_float_uses_current_viewport_and_then_remembers_user_size() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let stale = FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 18.0,
+                h: 6.0,
+            };
+            {
+                let state = backend.state_mut();
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.floating_rect = stale;
+                pane.floating_rect_initialized = false;
+            }
+            let bounds = backend.state().floating_bounds(TEST_VIEWPORT);
+            let expected = crate::layout::geometry::default_floating_rect(bounds, 1);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .unwrap();
+            let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+            assert_eq!((rect.w, rect.h), (expected.w, expected.h));
+            assert_ne!((rect.w, rect.h), (stale.w, stale.h));
+
+            // A deliberately small float must survive tiling and floating again.
+            backend.state_mut().current_mut().workspaces[0].panes[0].floating_rect = stale;
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .unwrap();
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .unwrap();
+            let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+            assert_eq!((rect.w, rect.h), (stale.w, stale.h));
         });
     }
 

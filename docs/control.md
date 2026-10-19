@@ -221,8 +221,9 @@ ui`, `record mark --ui`, and `record stop --ui` record the UI itself, which writ
 own machine. `record export` and `record play` read a file and take no endpoint. See
 [Record a pane or the UI](recording.md).
 
-Control commands reject the launch-only options `--config`, `--read-only`, `--profile`, `--pick`,
-and `--cwd`. `--session <NAME>` is the one target they accept, optionally qualified by
+Control commands reject the launch-only options `--read-only`, `--profile`, `--pick`,
+and `--cwd`. `--config PATH` selects the configuration for `split`; other control commands reject
+it. `--session <NAME>` is the one target they accept, optionally qualified by
 `--remote <HOST>`.
 
 ### Check the installed API
@@ -336,6 +337,9 @@ answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `P
 ## Open a pane
 
 `split` opens a pane. It leaves focus unchanged unless `--focus` is present.
+For a local endpoint, the directory defaults to the configured `cwd`, or the calling shell's
+directory when `cwd` is unset. Relative `--cwd` paths resolve from the calling shell's directory.
+With `--remote`, paths resolve on the remote host.
 
 | Option | Effect |
 | --- | --- |

@@ -195,6 +195,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::NewPane {
             command,
             argv,
+            local_cwd,
             cwd,
             title,
             keep_open,
@@ -207,7 +208,11 @@ pub(crate) fn handle_control_request(
                 envelope.request.source_pane,
                 command,
                 argv,
-                cwd,
+                if ctx.state.current().remote_host.is_some() {
+                    cwd
+                } else {
+                    local_cwd.or(cwd)
+                },
                 title,
                 keep_open,
                 focus,
@@ -2623,6 +2628,7 @@ mod tests {
                     command: ControlCommand::NewPane {
                         command: None,
                         argv: None,
+                        local_cwd: None,
                         cwd: None,
                         title: None,
                         keep_open: false,
@@ -2701,6 +2707,47 @@ mod tests {
             .expect("spawn new-pane readiness test thread")
             .join()
             .expect("new-pane readiness test thread completes");
+    }
+
+    #[test]
+    fn split_uses_local_directory_only_for_local_attachments() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                for remote in [false, true] {
+                    let mut backend = settled_backend();
+                    let _outbound = attach_test_session(&mut backend);
+                    if remote {
+                        backend.state_mut().current_mut().remote_host = Some("test-host".into());
+                    }
+                    let (mut envelope, _response) = new_pane_request(false);
+                    let ControlCommand::NewPane { cwd, local_cwd, .. } =
+                        &mut envelope.request.command
+                    else {
+                        unreachable!()
+                    };
+                    *cwd = Some("remote/relative".into());
+                    *local_cwd = Some("/local/caller".into());
+                    backend
+                        .dispatch(crate::Msg::ControlRequest(envelope))
+                        .unwrap();
+                    let pane = backend.state().current().workspaces[0]
+                        .panes
+                        .last()
+                        .unwrap();
+                    assert_eq!(
+                        pane.identity.cwd.as_deref(),
+                        Some(if remote {
+                            "remote/relative"
+                        } else {
+                            "/local/caller"
+                        })
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

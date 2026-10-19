@@ -1329,6 +1329,7 @@ fn apply_shared_pane_fields(
     pane.fullscreen = shared_pane.fullscreen;
     if shared_pane.floating {
         pane.floating_rect = float_rect;
+        pane.floating_rect_initialized = true;
     }
     pane.identity.custom_title = shared_pane.title.clone();
     pane.identity.profile_name = shared_pane.profile_name.clone();
@@ -1788,6 +1789,26 @@ mod tests {
             crate::state::DEFAULT_SCROLLABLE_WIDTH
         );
         assert_eq!(SHARED_LAYOUT_VERSION, 3);
+    }
+
+    #[test]
+    fn a_shared_float_remembers_its_size_after_a_shared_return_to_tiling() {
+        let mut state = state_with_split();
+        state.current_mut().workspaces[0].panes[0].floating = true;
+        let layout = shared_layout_from_state(&state, (80, 24));
+        let mut shared = layout.workspaces[0].panes[0].clone();
+        let remembered = FloatRect {
+            x: 5.0,
+            y: 3.0,
+            w: 30.0,
+            h: 10.0,
+        };
+        let mut pane = Pane::new(1, 100, FloatRect::default());
+        apply_shared_pane_fields(&mut pane, &shared, remembered);
+        shared.floating = false;
+        apply_shared_pane_fields(&mut pane, &shared, FloatRect::default());
+        assert!(pane.floating_rect_initialized);
+        assert_eq!(pane.floating_rect, remembered);
     }
 
     fn state_with_split() -> State {

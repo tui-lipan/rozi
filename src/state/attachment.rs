@@ -74,6 +74,8 @@ pub struct Attachment {
     /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
     /// remote when this is set, even if `cwd_host` is `None` (server-relative).
     pub remote_host: Option<String>,
+    /// The session server's filesystem rules, retained while disconnected and when parked.
+    pub(crate) path_family: crate::platform::paths::PathFamily,
     /// The resolved `--remote` target for the current session, carried alongside `remote_host` so a
     /// dropped link reconnects to the *same* remote host instead of re-parsing (or, worse, falling
     /// back to a same-named local session). `None` for local sessions.
@@ -162,6 +164,7 @@ impl Attachment {
             session_name: None,
             session_instance: None,
             remote_host: None,
+            path_family: crate::platform::paths::PathFamily::local(),
             remote_target: None,
             origin: crate::session::origin::SessionOrigin::default(),
             deferred_profile_seed: None,

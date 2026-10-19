@@ -143,6 +143,8 @@ pub struct SessionClient {
     #[cfg(test)]
     test_observer: Option<mpsc::Sender<ClientOutbound>>,
     server_pid: Option<u32>,
+    /// Filesystem family announced by the remote proxy, or the local platform for local IPC.
+    pub(crate) path_family: crate::platform::paths::PathFamily,
     /// Wire version agreed with this server. Gates messages added after the minimum supported
     /// version so an older server never receives a variant it cannot deserialize.
     effective_protocol: u32,
@@ -261,6 +263,7 @@ impl SessionClient {
                 piped_buffer: None,
                 test_observer: Some(test_tx),
                 cell: tui_lipan::TerminalCellSize::default(),
+                path_family: crate::platform::paths::PathFamily::local(),
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
@@ -544,6 +547,7 @@ impl SessionClient {
             piped_buffer,
             #[cfg(test)]
             test_observer: None,
+            path_family: crate::platform::paths::PathFamily::local(),
             server_pid,
             effective_protocol,
             capabilities,
@@ -1710,6 +1714,7 @@ mod tests {
             metrics_request_pending: Arc::new(AtomicBool::new(false)),
             piped_buffer: None,
             test_observer: None,
+            path_family: crate::platform::paths::PathFamily::local(),
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),

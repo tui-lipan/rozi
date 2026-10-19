@@ -62,16 +62,19 @@ pub(crate) struct SlotRef {
     pub active: bool,
 }
 
-/// Repository identity keeps host names exact and follows the platform's path comparison rules.
+/// Repository identity follows the filesystem rules of the host that owns its paths.
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct RepositoryKey {
+    family: crate::platform::paths::PathFamily,
     host: Option<String>,
     path: String,
 }
 
 impl PartialEq for RepositoryKey {
     fn eq(&self, other: &Self) -> bool {
-        self.host == other.host && crate::platform::paths::paths_equal(&self.path, &other.path)
+        self.host == other.host
+            && self.family == other.family
+            && self.family.paths_equal(&self.path, &other.path)
     }
 }
 
@@ -453,6 +456,7 @@ fn cluster_expansion_key(group: Option<&str>, key: &ClusterKey) -> TreeExpansion
 pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     struct Keyed {
         host: Option<String>,
+        family: crate::platform::paths::PathFamily,
         /// Project root where there is one, else the raw cwd: what the label is derived from and
         /// what rows are matched against.
         path: String,
@@ -467,13 +471,25 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
         match row.project_root.clone().or_else(|| row.cwd.clone()) {
             Some(path) => {
                 let host = row.cwd_host.clone();
+                let family = if host.is_none() {
+                    state.current().path_family
+                } else if crate::platform::paths::is_windows_path_shape(&path) {
+                    // A nested SSH shell's cwd belongs to another host, for which the session
+                    // proxy has no platform metadata. Its absolute path supplies the family.
+                    crate::platform::paths::PathFamily::Windows
+                } else {
+                    crate::platform::paths::PathFamily::Posix
+                };
                 if let Some(group) = known.iter_mut().find(|group| {
-                    group.host == host && crate::platform::paths::paths_equal(&group.path, &path)
+                    group.host == host
+                        && group.family == family
+                        && family.paths_equal(&group.path, &path)
                 }) {
                     group.rows.push(row);
                 } else {
                     known.push(Keyed {
                         host,
+                        family,
                         repository: row.repository.clone().unwrap_or_else(|| path.clone()),
                         path,
                         rows: vec![row],
@@ -499,10 +515,10 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
             known.iter().zip(&labels).any(|(other, other_label)| {
                 other_label.eq_ignore_ascii_case(label)
                     && (other.host != group.host
-                        || !crate::platform::paths::paths_equal(
-                            &other.repository,
-                            &group.repository,
-                        ))
+                        || other.family != group.family
+                        || !group
+                            .family
+                            .paths_equal(&other.repository, &group.repository))
             })
         })
         .collect();
@@ -532,6 +548,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
                         keyed.path
                     )),
                     repository: Some(RepositoryKey {
+                        family: keyed.family,
                         host: keyed.host,
                         path: keyed.repository,
                     }),
@@ -2115,11 +2132,31 @@ mod tests {
     }
 
     #[test]
-    fn repository_sections_follow_platform_path_identity_and_keep_hosts_separate() {
+    fn repository_sections_follow_session_host_identity_and_keep_hosts_separate() {
+        use crate::platform::paths::PathFamily;
         let mut state = State::new(crate::config::Config::default(), Theme::default());
-        for linked_path in [r"C:\Users\Adam\src\rozi", r"c:\Users\Adam\src\rozi"] {
-            let primary = r"C:\Users\Adam\src\rozi";
-            let checkout = r"C:\Users\Adam\worktrees\fix-ssh";
+        state.current_mut().remote_host = Some("session-host".into());
+        for (family, primary, linked_path, shared) in [
+            (
+                PathFamily::Windows,
+                r"C:\Users\Adam\src\rozi",
+                r"C:\Users\Adam\src\rozi",
+                true,
+            ),
+            (
+                PathFamily::Windows,
+                r"C:\Users\Adam\src\rozi",
+                r"c:\Users\Adam\src\rozi",
+                true,
+            ),
+            (PathFamily::Posix, "/src/Foo", "/src/Foo", true),
+            (PathFamily::Posix, "/src/Foo", "/src/foo", false),
+        ] {
+            state.current_mut().path_family = family;
+            let checkout = match family {
+                PathFamily::Windows => r"C:\Users\Adam\worktrees\fix-ssh",
+                PathFamily::Posix => "/worktrees/fix-ssh",
+            };
             let mut worktree =
                 pane_in_project(2, Some("idle"), checkout, checkout, Some("fix/ssh"));
             worktree.terminal.repository = Some(linked_path.into());
@@ -2127,6 +2164,13 @@ mod tests {
                 pane_in_project(1, Some("idle"), primary, primary, Some("master")),
                 worktree,
             ];
+            // A --remote server reports its own paths without cwd_host.
+            assert!(
+                state.current().workspaces[0]
+                    .panes
+                    .iter()
+                    .all(|pane| pane.terminal.cwd_host.is_none())
+            );
             let mut groups = agent_groups(&state);
             assert_eq!(groups.len(), 2);
             let mut remote = groups[0].clone();
@@ -2135,20 +2179,36 @@ mod tests {
             groups.push(remote);
             let mut rows = Vec::new();
             repository_sections(&state, &groups, &mut rows);
-            let shared =
-                crate::platform::paths::paths_equal(r"C:\Users\Adam\src\rozi", linked_path);
             assert_eq!(
                 rows.iter().filter(|row| row.depth == 0).count(),
                 if shared { 2 } else { 3 },
-                "{linked_path}",
+                "{family:?}: {linked_path}",
             );
             assert_eq!(
                 rows.iter()
                     .filter(|row| row.depth == 1 && row.shape == Shape::Heading)
                     .count(),
                 if shared { 2 } else { 0 },
-                "{linked_path}",
+                "{family:?}: {linked_path}",
             );
+        }
+    }
+
+    #[test]
+    fn checkout_groups_follow_session_host_path_identity() {
+        use crate::platform::paths::PathFamily;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        for (family, paths, count) in [
+            (PathFamily::Windows, [r"C:\src\rozi", r"c:\src\rozi"], 1),
+            (PathFamily::Posix, ["/src/Foo", "/src/foo"], 2),
+        ] {
+            state.current_mut().path_family = family;
+            state.current_mut().workspaces[0].panes = paths
+                .into_iter()
+                .zip(1..)
+                .map(|(path, id)| pane_in_project(id, Some("idle"), path, path, Some("master")))
+                .collect();
+            assert_eq!(agent_groups(&state).len(), count, "{family:?}");
         }
     }
 

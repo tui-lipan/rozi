@@ -189,6 +189,7 @@ pub(super) fn parse(
                 }
             }
             Ok(ParsedCli::Control(ControlCli {
+                config_path,
                 endpoint: ControlEndpoint::Ui(None),
                 request: control_request(crate::control::ControlCommand::ExtensionRuntimeStatus),
                 output_format: format,

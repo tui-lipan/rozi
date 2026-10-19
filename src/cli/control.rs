@@ -677,6 +677,7 @@ mod tests {
         output: Option<&str>,
     ) -> ControlCli {
         ControlCli {
+            config_path: None,
             endpoint: ControlEndpoint::Ui(None),
             request: control_request(control::ControlCommand::CapturePane {
                 target: None,

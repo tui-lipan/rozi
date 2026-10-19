@@ -1253,6 +1253,13 @@
               "default": false,
               "type": "boolean"
             },
+            "local_cwd": {
+              "description": "CLI-resolved directory on the caller's host. Used only for local spawns;\na UI attached to a remote session uses `cwd` on that host instead.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "size": {
               "anyOf": [
                 {
@@ -2695,6 +2702,13 @@
             "keep_open": {
               "default": false,
               "type": "boolean"
+            },
+            "local_cwd": {
+              "description": "CLI-resolved directory on the caller's host. Used only for local spawns;\na UI attached to a remote session uses `cwd` on that host instead.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "size": {
               "anyOf": [

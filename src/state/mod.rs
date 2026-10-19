@@ -239,6 +239,9 @@ pub struct State {
     /// would redraw an identical string. Recorded by the view (rather than reformatted in the
     /// handler) so the comparison is against what is really on screen, with no sampling skew.
     pub last_clock_text: RefCell<Option<String>>,
+    /// Where the once-a-second ticks read the wall clock's phase from; see
+    /// [`crate::app::WallAnchor`].
+    pub wall_anchor: Cell<Option<crate::app::WallAnchor>>,
     /// Shared half-period phase for urgent alert borders and inactive workspace markers.
     pub alert_pulse_phase: bool,
     /// Phase for calm alerts (a finished agent), flipped once per full urgent cycle so it breathes
@@ -638,6 +641,7 @@ impl State {
             connect_hold: None,
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
+            wall_anchor: Cell::new(None),
             alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,

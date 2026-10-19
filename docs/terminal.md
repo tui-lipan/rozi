@@ -105,9 +105,13 @@ to the program.
 Copy up to 16 regular files at once from a file manager. Each file may be up to
 16 MiB; clipboard images may be up to 10,000,000 bytes after PNG encoding.
 Directories and symbolic links are rejected. A single absolute PNG, JPEG, GIF,
-WebP, or BMP path dropped into the terminal is also uploaded when it names a
-local file. Paths absent from your computer and other pasted text paths stay text. If the terminal consumes the shortcut before rozi receives it,
-use the `v` command key or the paste command in the command palette.
+WebP, or BMP path emitted by the terminal is also uploaded when it names a
+local file. Text read by rozi's clipboard shortcut or paste command stays literal,
+even if it names a local image. Paths absent from your computer also stay text.
+A terminal can emit identical text for its own paste gestures and file drops;
+use rozi's `Ctrl+V` or paste command to keep a copied path literal. If the terminal
+consumes the shortcut before rozi receives it, use the `v` command key or the
+paste command in the command palette.
 
 Uploaded files survive detach and reconnect while the session server runs.
 They are removed when that server stops and are not restored with a saved

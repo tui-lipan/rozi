@@ -563,7 +563,7 @@ pub enum Msg {
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),
     CopyFeedbackExpired(u64, PaneId, u64),
-    PanePaste(PaneId, ClipboardContent),
+    PanePaste(PaneId, TerminalPasteEvent),
     AttachmentUploadFinished(std::result::Result<(), String>),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),

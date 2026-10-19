@@ -532,7 +532,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CopyFeedbackExpired(attachment, id, epoch) => {
             panes::copy_feedback_expired(ctx, attachment, id, epoch)
         }
-        Msg::PanePaste(id, content) => crate::ops::attachments::paste(ctx, id, content),
+        Msg::PanePaste(id, event) => crate::ops::attachments::paste(ctx, id, event),
         Msg::AttachmentUploadFinished(result) => {
             if let Err(error) = result {
                 crate::pane::pty_events::notify_error(ctx, "Paste failed", error);

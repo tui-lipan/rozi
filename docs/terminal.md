@@ -171,7 +171,8 @@ precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes
 
 With `[notifications] bell = true`, a bell from a pane you are not watching marks its workspace. You
 are watching a pane only when both the terminal window and the pane have focus. A bell from a pane
-whose agent state rozi tracks does not mark it: the agent's own finished or blocked mark covers it.
+running an agent does not mark it: the agent's own finished or blocked mark covers it. A pane with
+only a `rozi status` activity is not running an agent, so its bell still marks it.
 
 Switching to a workspace preserves its panes' attention marks, including finished-agent marks,
 even when a marked pane is selected automatically. Click or explicitly focus the pane, scroll

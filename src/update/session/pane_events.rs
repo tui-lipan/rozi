@@ -58,8 +58,9 @@ fn apply_current_pane_output(
     pane.activity.last_activity = Some(std::time::Instant::now());
     // An agent rings the bell to say it finished or needs an answer, and the agent's tracked state
     // already raises exactly that mark and cue. Letting the bell mark the pane too would paint a
-    // finished run as urgent and play a second sound for it.
-    let bell_marks = bell_notifications && pane.terminal.agent_status().is_none();
+    // finished run as urgent and play a second sound for it. A generic `rozi status` activity has
+    // no such mark, so its bell still does.
+    let bell_marks = bell_notifications && !pane.terminal.has_agent();
 
     let mut indicator_raised = false;
     let mut bell_alert_raised = false;

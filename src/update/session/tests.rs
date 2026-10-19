@@ -669,9 +669,33 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
 
 #[test]
 fn agent_bell_leaves_the_mark_to_the_agent_state() {
+    assert!(!unwatched_bell_marks(|terminal| {
+        terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: crate::session::protocol::DetectedAgentState::Idle,
+        });
+    }));
+}
+
+#[test]
+fn generic_activity_bell_still_marks_the_pane() {
+    assert!(unwatched_bell_marks(|terminal| {
+        terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: crate::session::protocol::pane_status::WORKING.into(),
+            reason: Some("running tests".into()),
+            set_at: 1,
+        });
+    }));
+}
+
+/// Rings BEL in a pane nobody is watching, after `configure` sets up its terminal, and returns
+/// whether the bell marked the pane. The bell event and unseen output fire either way.
+fn unwatched_bell_marks(
+    configure: impl FnOnce(&mut crate::pane::TerminalPane) + Send + 'static,
+) -> bool {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
+        .spawn(move || {
             let mut backend = TestBackend::new(crate::AppRoot::default());
             let epoch = backend.state().runtime_epoch;
             let pane_id = backend
@@ -685,10 +709,7 @@ fn agent_bell_leaves_the_mark_to_the_agent_state() {
                     crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
                 pane.pty_generation = generation;
                 pane.terminal.bind_session(pane_id, generation);
-                pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                    agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
-                    state: crate::session::protocol::DetectedAgentState::Idle,
-                });
+                configure(&mut pane.terminal);
             }
             let events = backend
                 .state()
@@ -711,11 +732,11 @@ fn agent_bell_leaves_the_mark_to_the_agent_state() {
             assert!(events.recv().unwrap().contains("\"pane\""));
             let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
             assert!(pane.activity.has_unseen_output);
-            assert!(!pane.activity.bell);
+            pane.activity.bell
         })
-        .expect("spawn agent bell test")
+        .expect("spawn unwatched bell test")
         .join()
-        .expect("agent bell test completes");
+        .expect("unwatched bell test completes")
 }
 
 fn finished_record(

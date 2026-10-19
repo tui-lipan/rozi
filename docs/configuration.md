@@ -484,7 +484,7 @@ host, or when rozi was installed from a distribution package or in a way it does
 | `pane_exit_error` | bool | `true` | Notifies when a pane exits on its own with a nonzero status. |
 | `pane_blocked` | bool | `true` | Notifies when an unattended pane becomes blocked. |
 | `pane_done` | bool | `false` | Notifies when a pane you have not looked at goes from working to finished. |
-| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless rozi tracks an agent state for the pane. Works even when `enabled` is off. |
+| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless the pane is running an agent, whose finished or blocked mark covers it. Works even when `enabled` is off. |
 
 Desktop notifications go through the platform's notification service and are best effort.
 

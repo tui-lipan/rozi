@@ -345,6 +345,8 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) diff_stats: Option<bool>,
     pub(super) compact_dirs: Option<bool>,
     pub(super) max_entries: Option<usize>,
+    /// Activity only: `separate` or `repository`.
+    pub(super) worktrees: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

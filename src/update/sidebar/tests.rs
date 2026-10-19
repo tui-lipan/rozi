@@ -2176,7 +2176,7 @@ fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
             ),
         };
         let mut backend =
-            focused_sidebar_backend(vec![SidebarTab::Worktrees, files, SidebarTab::Activity]);
+            focused_sidebar_backend(vec![SidebarTab::Worktrees, files, SidebarTab::activity()]);
         let workspace = backend.state_mut().active_workspace_mut();
         workspace.panes.clear();
         workspace.focused_pane = None;
@@ -2200,7 +2200,7 @@ fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
 fn modified_vim_keys_mirror_the_modified_arrows() {
     on_test_thread(|| {
         let _config = crate::test_support::lock_config_file();
-        let mut backend = focused_sidebar_backend(vec![SidebarTab::Activity, SidebarTab::Panes]);
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::activity(), SidebarTab::Panes]);
         assert_eq!(
             backend.state().config.sidebar.layout.left.panel_count,
             2,
@@ -2250,7 +2250,7 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
             "Ctrl+k focuses the upper panel"
         );
 
-        let activity = SidebarTab::Activity.id();
+        let activity = SidebarTab::activity().id();
         send_sidebar_key(&mut backend, KeyCode::Char('l'), alt);
         assert_eq!(
             backend.state().sidebar.panels[0].tabs.get(1),

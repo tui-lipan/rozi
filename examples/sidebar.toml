@@ -6,7 +6,7 @@
 [sidebar]
 startup = true
 tabs = [
-  "activity",
+  { name = "activity", worktrees = "repository" },
   "agents",
   "panes",
   "sessions",

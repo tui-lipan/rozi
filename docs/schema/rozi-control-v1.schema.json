@@ -178,6 +178,12 @@
     "AgentRuntime": {
       "description": "One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,\npaired with the reference that names it.",
       "properties": {
+        "completions": {
+          "description": "Runs this agent has finished. See [`AgentRecord::completions`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "identity": {
           "$ref": "#/$defs/AgentIdentity"
         },
@@ -185,6 +191,7 @@
           "type": "string"
         },
         "reason": {
+          "description": "Why the agent is in its state, as the agent said it (`Permission required`).",
           "type": [
             "string",
             "null"
@@ -198,6 +205,13 @@
         },
         "state": {
           "$ref": "#/$defs/AgentState"
+        },
+        "task": {
+          "description": "What the agent is working on, when it named its work: the title of the published row it\nis. Never a terminal title, which changes with every tool call.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -210,13 +224,22 @@
       "type": "object"
     },
     "AgentState": {
-      "enum": [
-        "working",
-        "blocked",
-        "idle",
-        "done"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "working",
+            "blocked",
+            "idle",
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "The run failed. It ended, but not with a result worth reading as done.",
+          "type": "string"
+        }
+      ]
     },
     "AgentTarget": {
       "anyOf": [
@@ -236,6 +259,7 @@
         "blocked",
         "idle",
         "done",
+        "error",
         "quiescent",
         "gone"
       ],
@@ -3881,20 +3905,48 @@
     "GlobalAgentInfo": {
       "description": "One agent anywhere this UI knows about.",
       "properties": {
+        "branch": {
+          "description": "The branch checked out where the agent works.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "here": {
           "description": "In the session on screen.",
           "type": "boolean"
         },
         "label": {
-          "description": "The agent's name, numbered per row where a pane runs several (`Codex`, `Claude #2`).",
+          "description": "The agent's name (`Codex`, `Claude Code`). Several runs of one program share it.",
           "type": "string"
         },
         "location": {
           "$ref": "#/$defs/AgentLocationSpec"
         },
+        "project": {
+          "description": "The repository the agent works in, named after its primary checkout.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the agent is in its state, as it said (`Permission required`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "state": {
           "description": "`working`, `blocked`, `done`, `idle`, or a publisher's own word. `done` covers a finished\nrun the user has not looked at yet.",
           "type": "string"
+        },
+        "task": {
+          "description": "What the agent works on, when it named its work.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

@@ -481,7 +481,7 @@ mod tests {
                 pane_id,
                 local: false,
                 generation,
-                agent_refs: Vec::new(),
+                agents: Vec::new(),
                 state: PaneRuntimeState {
                     sequence,
                     recording,

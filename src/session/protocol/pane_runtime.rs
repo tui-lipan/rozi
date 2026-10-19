@@ -43,7 +43,7 @@ pub struct PaneMeta {
     pub pane_id: PaneId,
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub agent_refs: Vec<super::AgentRef>,
+    pub agents: Vec<super::AgentRecord>,
     pub cols: u16,
     pub rows: u16,
     pub pid: Option<u32>,
@@ -101,6 +101,14 @@ pub mod pane_status {
     pub const BLOCKED: &str = "blocked";
     pub const DONE: &str = "done";
     pub const IDLE: &str = "idle";
+    pub const ERROR: &str = "error";
+}
+
+/// Whether a status ends an agent's run: it stopped, successfully (`idle`, `done`) or not
+/// (`error`). Anything else, a publisher's own word included, is a run still going.
+pub fn status_ends_run(value: Option<&str>) -> bool {
+    status_is_quiescent(value)
+        || value.is_some_and(|value| value.trim().eq_ignore_ascii_case(pane_status::ERROR))
 }
 
 /// Whether a status describes a quiescent agent rather than an active run.
@@ -343,8 +351,8 @@ pub fn aggregate_row_state(rows: &[PublishedRow]) -> Option<DetectedAgentState> 
         if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
             return Some(DetectedAgentState::Blocked);
         }
-        // A custom status is an active run by the same rule `status_is_quiescent` uses elsewhere.
-        if !status_is_quiescent(Some(value)) {
+        // A custom status is an active run by the same rule `status_ends_run` uses elsewhere.
+        if !status_ends_run(Some(value)) {
             state = Some(DetectedAgentState::Working);
         } else if state.is_none() {
             state = Some(DetectedAgentState::Idle);

@@ -458,7 +458,7 @@ pub(crate) fn other_clients(entry: &DiscoveredSession, presence: SessionPresence
 /// state to the Agents tab and the pane chrome, and a snapshot taken between polls would be the
 /// staler of the two answers sitting next to each other.
 pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Option<String> {
-    use crate::session::protocol::pane_status;
+    use crate::session::protocol::AgentState;
     let target = entry.remote_target.as_ref()?;
     if state
         .attachment_by_identity(&entry.name, Some(target))
@@ -472,23 +472,20 @@ pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Opti
     // agent outranks any number of working ones, and any working one outranks the finished. Idle
     // is deliberately absent — a state that prompts no action is not news, and spending the line
     // on it would push a blocked agent in the *next* session off the visible part of the row.
-    let mut counts = [0_usize; 3];
-    let mut named: [Option<&str>; 3] = [None; 3];
+    let mut counts = [0_usize; 4];
+    let mut named: [Option<&str>; 4] = [None; 4];
     for agent in mine {
-        let state = agent.state.trim();
-        let bucket = if state.eq_ignore_ascii_case(pane_status::BLOCKED) {
-            0
-        } else if !crate::session::protocol::status_is_quiescent(Some(state)) {
-            1
-        } else if state.eq_ignore_ascii_case(pane_status::DONE) {
-            2
-        } else {
-            continue;
+        let bucket = match agent.state {
+            AgentState::Blocked => 0,
+            AgentState::Error => 1,
+            AgentState::Working => 2,
+            AgentState::Done => 3,
+            AgentState::Idle => continue,
         };
         counts[bucket] += 1;
         named[bucket] = named[bucket].or(Some(agent.label.as_str()));
     }
-    let (bucket, word) = [(0, "blocked"), (1, "working"), (2, "done")]
+    let (bucket, word) = [(0, "blocked"), (1, "error"), (2, "working"), (3, "done")]
         .into_iter()
         .find(|(bucket, _)| counts[*bucket] > 0)?;
     match (counts[bucket], named[bucket]) {
@@ -755,15 +752,15 @@ mod tests {
         state: &str,
     ) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: label.to_lowercase(),
             label: label.into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 

@@ -30,7 +30,7 @@ enum WaitSubject {
 
 enum WaitEvaluation {
     Pending,
-    Ready(Option<protocol::AgentRuntime>),
+    Ready(Option<Box<protocol::AgentRuntime>>),
     Error(ControlErrorCode, String),
 }
 
@@ -74,7 +74,7 @@ impl SessionServer {
         match evaluation {
             WaitEvaluation::Ready(agent) => Some(ControlResponse::ok(AgentWaitResult {
                 condition: until,
-                agent,
+                agent: agent.map(|agent| *agent),
             })),
             WaitEvaluation::Error(code, message) => {
                 Some(ControlResponse::error_with(code, message))
@@ -237,7 +237,7 @@ impl SessionServer {
             let response = match evaluation {
                 WaitEvaluation::Ready(agent) => ControlResponse::ok(AgentWaitResult {
                     condition: wait.until,
-                    agent,
+                    agent: agent.map(|agent| *agent),
                 }),
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
@@ -379,7 +379,7 @@ impl SessionServer {
             .find(|runtime| runtime.reference == *reference)
         {
             if condition_matches(until, runtime.state) {
-                WaitEvaluation::Ready(Some(runtime.clone()))
+                WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
             } else {
                 WaitEvaluation::Pending
             }
@@ -413,7 +413,7 @@ impl SessionServer {
             pane_id,
             generation: pane.generation,
         };
-        protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(pane_ref))
+        protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(pane_ref))
     }
 }
 
@@ -423,7 +423,10 @@ fn condition_matches(until: AgentWaitCondition, state: protocol::AgentState) -> 
         AgentWaitCondition::Blocked => state == protocol::AgentState::Blocked,
         AgentWaitCondition::Idle => state == protocol::AgentState::Idle,
         AgentWaitCondition::Done => state == protocol::AgentState::Done,
-        AgentWaitCondition::Quiescent => state.is_quiescent(),
+        AgentWaitCondition::Error => state == protocol::AgentState::Error,
+        // Stopped for any reason: a script waiting for the end of a turn must not hang on a
+        // turn that failed. The answer carries the state, so it can tell which.
+        AgentWaitCondition::Quiescent => state.is_stopped(),
         AgentWaitCondition::Gone => false,
     }
 }
@@ -446,6 +449,7 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
         AgentWaitCondition::Blocked => "blocked",
         AgentWaitCondition::Idle => "idle",
         AgentWaitCondition::Done => "done",
+        AgentWaitCondition::Error => "error",
         AgentWaitCondition::Quiescent => "quiescent",
         AgentWaitCondition::Gone => "gone",
     }
@@ -454,6 +458,19 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A script waiting for the end of a turn must not hang on a turn that failed, and can wait
+    /// for a failure on its own.
+    #[test]
+    fn a_failed_agent_has_stopped_and_can_be_waited_for() {
+        use protocol::AgentState::{Done, Error, Idle, Working};
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Error));
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Done));
+        assert!(condition_matches(AgentWaitCondition::Quiescent, Idle));
+        assert!(!condition_matches(AgentWaitCondition::Quiescent, Working));
+        assert!(condition_matches(AgentWaitCondition::Error, Error));
+        assert!(!condition_matches(AgentWaitCondition::Done, Error));
+    }
 
     fn server_with_agent(state: protocol::DetectedAgentState) -> SessionServer {
         let mut server = SessionServer::new_named("dev");

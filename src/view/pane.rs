@@ -298,7 +298,14 @@ pub(crate) fn pane_frame_chrome(
     };
     let alert = border_mode
         .draws_frames()
-        .then(|| pane_border_alert(pane, focused, &ctx.state.config.pane))
+        .then(|| {
+            pane_border_alert(
+                pane,
+                focused,
+                &ctx.state.config.pane,
+                &ctx.state.agent_attention,
+            )
+        })
         .flatten();
     let alert_pulses = alert.is_some_and(|(_, color)| {
         pane_alert_pulses(
@@ -383,23 +390,19 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     }
 }
 
-/// Generic activity failures do not change the pane's agent state.
+/// Whether anything in the pane failed: its agent, one of its published rows, or its own status.
 fn activity_failed(pane: &Pane) -> bool {
     let terminal = &pane.terminal;
+    let failed = |status: &str| {
+        status
+            .trim()
+            .eq_ignore_ascii_case(crate::session::protocol::pane_status::ERROR)
+    };
     terminal
-        .published_rows
+        .effective_rows()
         .iter()
-        .any(|row| !row.is_agent() && row.status.trim().eq_ignore_ascii_case("error"))
-        || (terminal.detected_agent.is_none()
-            && terminal.agent_integration.is_none()
-            && !terminal
-                .published_rows
-                .iter()
-                .any(crate::session::protocol::PublishedRow::is_agent)
-            && terminal
-                .reported_status
-                .as_ref()
-                .is_some_and(|status| status.value.trim().eq_ignore_ascii_case("error")))
+        .any(|row| failed(&row.status))
+        || terminal.agent_status().as_deref().is_some_and(failed)
 }
 
 /// The configured attention state this pane currently draws. Configured-off states deliberately
@@ -412,6 +415,7 @@ pub(crate) fn pane_alert(
     pane: &Pane,
     focused: bool,
     config: &PaneConfig,
+    attention: &crate::state::AgentAttention,
 ) -> Option<(crate::state::PaneAlert, BadgeColor)> {
     if pane.closing
         || matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
@@ -448,7 +452,7 @@ pub(crate) fn pane_alert(
         ),
         (
             PaneAlert::Finished,
-            pane.terminal.finished_unseen,
+            pane.finished_unseen(attention),
             colors.finished,
         ),
         (
@@ -481,11 +485,12 @@ pub(crate) fn pane_border_alert(
     pane: &Pane,
     focused: bool,
     config: &PaneConfig,
+    attention: &crate::state::AgentAttention,
 ) -> Option<(crate::state::PaneAlert, BadgeColor)> {
     if !config.alert_paint.paints_border() {
         return None;
     }
-    pane_alert(pane, focused, config)
+    pane_alert(pane, focused, config, attention)
 }
 
 /// Whether a visible pane shows an alert that can breathe: on a frame it draws, or as a tint over
@@ -499,10 +504,15 @@ pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
     }
     let workspace = &state.current().workspaces[state.current().active_workspace];
     let focused = workspace.focused_pane.or(state.current().focused_pane);
-    workspace
-        .panes
-        .iter()
-        .any(|pane| pane_alert(pane, focused == Some(pane.id), config).is_some())
+    workspace.panes.iter().any(|pane| {
+        pane_alert(
+            pane,
+            focused == Some(pane.id),
+            config,
+            &state.agent_attention,
+        )
+        .is_some()
+    })
 }
 
 /// Whether `color` can wash over pane content. Only truecolor can: a palette colour would have to
@@ -530,7 +540,7 @@ fn pane_content_alert_tint(
     if !config.alert_paint.paints_content() {
         return None;
     }
-    let (alert, color) = pane_alert(pane, focused, config)?;
+    let (alert, color) = pane_alert(pane, focused, config, &ctx.state.agent_attention)?;
     let theme = &ctx.state.theme;
     if !pane_content_alert_can_tint(theme, color) {
         return None;
@@ -2385,13 +2395,13 @@ mod tests {
         });
         pane.terminal.finished_unseen = true;
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Blocked, BadgeColor::Warning))
         );
 
         config.alert_colors.blocked = None;
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Finished, BadgeColor::Success))
         );
         pane.terminal.finished_unseen = false;
@@ -2402,7 +2412,7 @@ mod tests {
             .value = "working".into();
         config.alert_colors.working = Some(BadgeColor::Info);
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Working, BadgeColor::Info))
         );
 
@@ -2417,17 +2427,17 @@ mod tests {
         });
         config.alert_colors.blocked = Some(BadgeColor::Error);
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Blocked, BadgeColor::Error))
         );
-        assert_eq!(pane_alert(&pane, true, &config), None);
+        assert_eq!(pane_alert(&pane, true, &config, &Default::default()), None);
         pane.closing = true;
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         pane.closing = false;
         pane.terminal.status = ManagedTerminalStatus::Exited(0);
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         config.alert_border = AlertMode::Off;
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
     }
 
     #[test]
@@ -2444,17 +2454,21 @@ mod tests {
             Some("working"),
             Some(std::time::Duration::from_secs(12)),
             false,
+            false,
         );
         assert!(!edges.finished);
-        assert_eq!(pane_alert(&pane, true, &PaneConfig::default()), None);
         assert_eq!(
-            pane_alert(&pane, false, &PaneConfig::default()),
+            pane_alert(&pane, true, &PaneConfig::default(), &Default::default()),
+            None
+        );
+        assert_eq!(
+            pane_alert(&pane, false, &PaneConfig::default(), &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
     }
 
     #[test]
-    fn generic_error_has_an_independent_urgent_alert_without_changing_agents() {
+    fn a_failed_activity_or_agent_has_an_independent_urgent_alert() {
         let mut pane = alert_test_pane();
         let mut config = PaneConfig::default();
         pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -2463,31 +2477,37 @@ mod tests {
             set_at: 0,
         });
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
         assert!(!PaneAlert::Error.is_calm());
-        assert_eq!(pane_alert(&pane, true, &config), None);
+        assert_eq!(pane_alert(&pane, true, &config, &Default::default()), None);
         config.alert_colors.error = Some(BadgeColor::Info);
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Info))
         );
         config.alert_colors.error = None;
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         config.alert_colors.error = Some(BadgeColor::Error);
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        // The pane's agent reported the failure itself: the same alert.
+        assert_eq!(
+            pane_alert(&pane, false, &config, &Default::default()),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
+        pane.terminal.reported_status = None;
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         let row = serde_json::from_value(serde_json::json!({
             "id": "build", "title": "Build", "status": "error", "kind": "activity"
         }))
         .unwrap();
         pane.terminal.published_rows.push(row);
         assert_eq!(
-            pane_alert(&pane, false, &config),
+            pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
     }
@@ -2503,34 +2523,34 @@ mod tests {
         pane.terminal.finished_unseen = true;
         let mut config = PaneConfig::default();
         assert_eq!(
-            pane_alert(&pane, true, &config),
+            pane_alert(&pane, true, &config, &Default::default()),
             Some((PaneAlert::Blocked, BadgeColor::Warning))
         );
         screen.process_bytes(b"\x1b]7501;state=error\x07");
         pane.terminal.program_status = screen.program_status_snapshot();
         config.alert_colors.blocked = None;
         assert_eq!(
-            pane_alert(&pane, true, &config),
+            pane_alert(&pane, true, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
         config.alert_colors.error = Some(BadgeColor::Info);
         assert_eq!(
-            pane_alert(&pane, true, &config),
+            pane_alert(&pane, true, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Info))
         );
         config.alert_colors.error = None;
         assert_eq!(
-            pane_alert(&pane, true, &config),
+            pane_alert(&pane, true, &config, &Default::default()),
             Some((PaneAlert::Finished, BadgeColor::Success))
         );
         config.alert_colors.error = Some(BadgeColor::Error);
         pane.terminal.program_status_attention = false;
         assert_eq!(
-            pane_alert(&pane, true, &config),
+            pane_alert(&pane, true, &config, &Default::default()),
             Some((PaneAlert::Finished, BadgeColor::Success))
         );
         pane.terminal.finished_unseen = false;
-        assert_eq!(pane_alert(&pane, false, &config), None);
+        assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
     }
 
     #[test]

@@ -92,7 +92,7 @@ impl SessionServer {
                     pane_id,
                     generation: pane.generation,
                 };
-                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.references(reference))
+                protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(reference))
                     .iter()
                     .any(|runtime| runtime.state == AgentState::Working)
             })

@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::tiling::append_tiled_window;
 
+mod agent_attention;
 mod appearance;
 mod attachment;
 mod capture;
@@ -33,6 +34,7 @@ mod sidebar_tree;
 mod workbar;
 mod workspace;
 
+pub use agent_attention::*;
 pub use appearance::*;
 pub use attachment::*;
 pub use capture::*;
@@ -338,6 +340,8 @@ pub struct State {
     /// Latest metadata from running local session servers. The current session's live panes win
     /// over their copy here; `None` means no successful local sweep has arrived.
     pub local_agent_snapshot: Option<crate::session::discovery::LocalAgentSnapshot>,
+    /// Which finished agent runs this client has looked at, for every agent it knows about.
+    pub agent_attention: AgentAttention,
     /// Rows programs publish to stream tabs, by tab and producer.
     pub sidebar_streams: SidebarStreams,
     /// The pane the Agents view aimed at, waiting for the session that owns it to arrive.
@@ -697,6 +701,7 @@ impl State {
             remote_picker: None,
             agent_picker: None,
             local_agent_snapshot: None,
+            agent_attention: AgentAttention::default(),
             sidebar_streams: SidebarStreams::default(),
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),

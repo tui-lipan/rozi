@@ -69,6 +69,26 @@ pub struct AgentRef {
 }
 
 #[cfg(test)]
+impl AgentRef {
+    /// A first incarnation in a fixed test server, for fixtures that only care which pane and row.
+    pub(crate) fn for_test(
+        pane_id: crate::state::PaneId,
+        generation: u64,
+        slot: Option<super::RowKey>,
+    ) -> Self {
+        Self {
+            pane: PaneRef {
+                session_instance: SessionInstanceId::for_test("test-server"),
+                pane_id,
+                generation,
+            },
+            slot,
+            incarnation: 1,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

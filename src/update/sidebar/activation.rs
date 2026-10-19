@@ -318,10 +318,20 @@ pub(crate) fn activate_published_row(
     let update = focus_pane(ctx, pane_id);
     // Looking at a row acknowledges its finish, exactly as focusing a pane acknowledges the
     // pane's. The pane-wide chokepoint cannot do this: it does not know which row was asked for.
-    if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, pane_id)
-        && let Some(ui) = pane.terminal.published_row_ui.get_mut(&row)
-    {
-        ui.finished_unseen = false;
+    let mut agent = None;
+    if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, pane_id) {
+        if let Some(ui) = pane.terminal.published_row_ui.get_mut(&row) {
+            ui.finished_unseen = false;
+        }
+        agent = pane
+            .agent_runtimes()
+            .into_iter()
+            .find(|runtime| runtime.reference.slot.as_ref() == Some(&row));
+    }
+    if let Some(agent) = agent {
+        ctx.state
+            .agent_attention
+            .acknowledge(&agent.reference, agent.completions);
     }
     crate::ops::published_rows::request_activation(&mut ctx.state, pane_id, &row);
     update

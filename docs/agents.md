@@ -1,7 +1,7 @@
 # Agent definitions
 
 rozi recognizes coding-agent CLIs running in panes and shows whether each one is working, blocked,
-done, or idle. This page covers adding or overriding an agent definition, the full rule reference,
+done, failed, or idle. This page covers adding or overriding an agent definition, the full rule reference,
 and the `rozi agents` commands for scripts.
 
 ## What agent detection shows
@@ -300,12 +300,16 @@ active one, the same row session restore resumes. A row that is not on screen, e
 is reached with `--ref`. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
+JSON output also gives each agent's `reason` for its state, the `task` its published row names, and
+`completions`, the number of runs it has finished. A script that compares `completions` between two
+reads learns that a run ended even if it never saw the agent working.
+
 ### Every agent, everywhere
 
 `agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows
 about — the session on screen, your other local sessions, and every
 [connected host](remote.md#agents-on-a-machine-you-are-not-in) — most urgent first, the same list as
-the [Agents view](sessions.md#go-to-an-agent) and the sidebar's [Agents tab](sidebar.md#agents):
+the [Agents view](sessions.md#go-to-an-agent):
 
 ```bash
 rozi agents list --all
@@ -314,7 +318,9 @@ rozi agents go --location '{"host":"workbox","session":"backend","pane":4}'
 ```
 
 In JSON, each agent has a `location`: its host (absent for this machine), session, pane, and its
-published `row` when it is one of several in its pane. `agents go --location '<json>'` goes there
+published `row` when it is one of several in its pane. It also carries its `label`, `state`, and,
+when known, its `task`, the `reason` for its state, and the `project` and `branch` it works in.
+`state` reads `done` for a finished run you have not looked at. `agents go --location '<json>'` goes there
 the way activating the row does: it focuses the pane in the session on screen, and switches to or
 attaches the session first anywhere else. A location naming a session rozi does not know is refused.
 Both need a running rozi; a session server knows only its own agents.
@@ -328,9 +334,10 @@ screen, or to the session a `--ref` names.
 
 `--timeout` is required for `agents wait`, and for `agents prompt` with `--wait`.
 
-Wait states are `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), and `gone`. An agent
-that finishes a turn is `done` until you look at its pane, so wait for `quiescent` to catch the end of
-a turn; `idle` alone may never come. A timeout names the state the agent was left in.
+Wait states are `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done, or error),
+and `gone`. An agent that finishes a turn is `done` until you look at its pane, so wait for
+`quiescent` to catch the end of a turn; `idle` alone may never come, and a failed turn ends in
+`error`. The answer names the state the agent reached, and a timeout names the state it was left in.
 
 Waiting on a pane whose agent has not been detected yet, such as one you just opened with `split`,
 waits for the agent to appear. `gone` answers at once for a pane with no agent. Errors distinguish a

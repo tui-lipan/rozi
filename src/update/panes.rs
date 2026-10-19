@@ -401,7 +401,13 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     let config = &state.config.pane;
     let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
     workspace.panes.iter().any(|pane| {
-        crate::view::pane_alert(pane, focused == Some(pane.id), config).is_some_and(|(_, color)| {
+        crate::view::pane_alert(
+            pane,
+            focused == Some(pane.id),
+            config,
+            &state.agent_attention,
+        )
+        .is_some_and(|(_, color)| {
             (frames && crate::ops::theme::pane_frame_alert_can_pulse(&state.theme, color))
                 || (config.alert_paint.paints_content()
                     && crate::view::pane_content_alert_can_tint(&state.theme, color))
@@ -420,7 +426,11 @@ fn inactive_tab_marker_can_pulse(state: &State) -> bool {
         .enumerate()
         .filter(|(index, _)| *index != state.current().active_workspace)
         .filter_map(|(_, workspace)| {
-            crate::view::workspace_marker(workspace, &state.config.workbar.alert)
+            crate::view::workspace_marker(
+                workspace,
+                &state.config.workbar.alert,
+                &state.agent_attention,
+            )
         })
         .map(crate::view::workspace_marker_color)
         .any(|color| {

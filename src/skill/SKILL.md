@@ -163,7 +163,7 @@ Re-read pane ids before acting after a delay or any layout or session change.
 ## Coding agents in panes
 
 Rozi detects coding-agent CLIs in panes and tracks their state: `working`, `blocked`, `idle`,
-`done`, or `unknown`. Use the `agents` commands rather than scraping the screen or typing into an
+`done`, `error` (the run failed), or `unknown`. Use the `agents` commands rather than scraping the screen or typing into an
 agent pane with `send-keys`:
 
 ```bash
@@ -179,9 +179,10 @@ The pane id always goes after `--target`; `agents get 3` is refused. A pane can 
 agents, such as a client's background conversations: `--target` names the one on screen, and the
 others, even a lone background one, need their `--ref` from `agents list`. From a UI pane, every
 `agents` command addresses the session on screen; add `--session <NAME>` for a detached one.
-`--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `quiescent` (idle or done), or
-`gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the user visits
-its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn. Right after `split`,
+`--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done,
+or error), or `gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the
+user visits its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn; check the
+returned state, since a failed turn also ends the wait, as `error`. Right after `split`,
 `wait` waits for the new pane's agent to be detected; `get` and `prompt` refuse a pane with no agent
 yet.
 

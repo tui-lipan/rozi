@@ -48,7 +48,7 @@ selection. The plugin works on its own when you only need activity for the main 
 | Response finishes without background tasks or scheduled wakeups | `done` |
 | Response finishes with background tasks or scheduled wakeups | `working` |
 | Compaction | `working`, keeping the same integration token |
-| Turn fails because of an API error | `idle`, with an error reason |
+| Turn fails because of an API error | `error`, with the reason |
 | Session ends | Releases the report; Rozi returns to screen detection |
 
 Permission and MCP dialog notifications also report `blocked`. Authentication, delayed idle

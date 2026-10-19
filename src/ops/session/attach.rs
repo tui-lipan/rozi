@@ -1212,8 +1212,12 @@ pub(crate) fn disconnect_host(
         // The session on screen is being taken away rather than left, so land somewhere the user
         // recognizes. Attachments on this host are already gone from the background above, so the
         // candidates are exactly the sessions that survive the disconnect.
-        return land_on_surviving_session(ctx);
+        let update = land_on_surviving_session(ctx);
+        ctx.state.prune_agent_attention();
+        return update;
     }
+    // Nothing on this host reports its agents any more, so reconnecting starts from a baseline.
+    ctx.state.prune_agent_attention();
     Update::full()
 }
 

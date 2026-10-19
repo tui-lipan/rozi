@@ -79,6 +79,8 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
     let Some(pane) = crate::pane::lifecycle::find_pane_mut(state, pane_id) else {
         return false;
     };
+    // The agents the pane shows have been seen; one behind another tab of the same program has not.
+    let on_screen = pane.agents_on_screen();
 
     // Only the rows publishers have on screen were actually looked at - one per publisher. The
     // others are behind a tab the user has not visited, so their pulses stay lit until it opens.
@@ -105,7 +107,13 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
     pane.activity.bell = false;
     pane.terminal.finished_unseen = false;
     pane.terminal.program_status_attention = false;
-    changed
+    let mut agent_cleared = false;
+    for runtime in on_screen {
+        agent_cleared |= state
+            .agent_attention
+            .acknowledge(&runtime.reference, runtime.completions);
+    }
+    changed || agent_cleared
 }
 
 /// Whether focus is pinned to the pane currently covering the workspace.

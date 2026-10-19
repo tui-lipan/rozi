@@ -260,10 +260,10 @@ pub struct TerminalPane {
     /// [`crate::session::protocol::PaneRuntimeState::agent_launch`].
     pub agent_launch: u64,
     pub agent_integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
-    /// Set when this agent pane's effective status transitions from `working` to a quiescent state
-    /// (finished), and cleared once it is attended (its host window and the pane are both focused).
-    /// Drives the sidebar's "unseen finish" pulse so a completed run does not blend into panes that
-    /// were idle all along. Never set for `blocked`, which already has its own attention glyph.
+    /// Set when this pane's own activity status - a `rozi status` naming no agent - ends an active
+    /// run successfully, and cleared once the pane is attended (its host window and the pane are
+    /// both focused). An agent's finishes are [`crate::state::AgentAttention`]'s instead; read both
+    /// through [`crate::state::Pane::finished_unseen`].
     pub finished_unseen: bool,
     /// Server timestamp for the current active agent run. It stays unchanged while an agent is
     /// blocked and resumes working, so the sidebar can show one continuous run age.
@@ -362,15 +362,9 @@ pub struct TerminalSearchHighlight {
     pub end_col: usize,
 }
 
-fn status_is_quiescent(value: &str) -> bool {
-    let value = value.trim();
-    value.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
-        || value.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
-}
-
 fn activity_is_terminal(value: &str, agent: bool) -> bool {
     if agent {
-        status_is_quiescent(value)
+        crate::session::protocol::status_ends_run(Some(value))
     } else {
         crate::session::protocol::ActivityState::from_status(value).is_terminal()
     }
@@ -421,8 +415,9 @@ fn previous_started(
 /// which finishes they have looked at, and that disagreement is correct.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PublishedRowUiState {
-    /// This row finished a run that has not been looked at. Cleared by attending the row, which
-    /// means the pane is focused *and* the publisher has this row on screen.
+    /// This activity row finished a run that has not been looked at. Cleared by attending the row,
+    /// which means the pane is focused *and* the publisher has this row on screen. An agent row's
+    /// finishes are [`crate::state::AgentAttention`]'s instead.
     pub finished_unseen: bool,
     /// How long this row's last run lasted, captured as it ended.
     pub last_run: Option<std::time::Duration>,
@@ -973,14 +968,15 @@ impl TerminalPane {
 
     /// How long this pane's active agent run has lasted, for the sidebar's duration column.
     ///
-    /// Replace the pane's published rows, recording each row's finish edge.
+    /// Replace the pane's published rows, recording each activity row's finish edge and what each
+    /// row's last run cost.
     ///
-    /// Returns the keys of rows that just finished a run. Their alerts are raised per row rather
-    /// than per pane: a background tab finishing is news even while the pane is focused, because
-    /// focusing the pane only ever showed the row the publisher had on screen.
-    /// Edges are read from each row's *effective* status, with `integration` (the pane's report
-    /// arriving in the same update) merged in, so a run the hooks report finishing raises the same
-    /// pulse as one the publisher reports.
+    /// Returns the keys of activity rows that just finished a run; agent rows report theirs through
+    /// the server's completion counts instead. Their alerts are raised per row rather than per
+    /// pane: a background tab finishing is news even while the pane is focused, because focusing
+    /// the pane only ever showed the row the publisher had on screen. Edges are read from each
+    /// row's *effective* status, with `integration` (the pane's report arriving in the same update)
+    /// merged in.
     pub fn apply_rows(
         &mut self,
         rows: Vec<crate::session::protocol::PublishedRow>,
@@ -1008,16 +1004,16 @@ impl TerminalPane {
             let state = crate::session::protocol::ActivityState::from_status(&row.status);
             let entry = self.published_row_ui.entry(key.clone()).or_default();
             if row.is_agent() {
-                if row
-                    .status
-                    .trim()
-                    .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+                // An agent row's finish is the server's count, and whether it was seen is
+                // `AgentAttention`'s; only what the run cost is kept here.
+                if was_working
+                    && !status_is_blocked(&row.status)
+                    && !row
+                        .status
+                        .trim()
+                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
                 {
-                    entry.finished_unseen = false;
-                } else if was_working && !status_is_blocked(&row.status) {
                     entry.last_run = row_run_age(previous_started(&previous, &key));
-                    entry.finished_unseen = true;
-                    finished.push(key);
                 }
             } else {
                 if !state.is_successful_terminal() {

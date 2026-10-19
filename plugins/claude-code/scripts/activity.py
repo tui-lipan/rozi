@@ -25,7 +25,7 @@ EVENT_STATES = {
     "ElicitationResult": ("working", None),
     "PermissionRequest": ("blocked", "Permission required"),
     "Elicitation": ("blocked", "Input required"),
-    "StopFailure": ("idle", "Turn ended with an API error"),
+    "StopFailure": ("error", "Turn ended with an API error"),
     "SessionEnd": ("release", None),
 }
 NOTIFICATIONS = {

@@ -854,7 +854,7 @@ pub enum Msg {
         pane_id: PaneId,
         local: bool,
         generation: u64,
-        agent_refs: Vec<crate::session::protocol::AgentRef>,
+        agents: Vec<crate::session::protocol::AgentRecord>,
         state: crate::session::protocol::PaneRuntimeState,
     },
     SessionAgentReportResult {

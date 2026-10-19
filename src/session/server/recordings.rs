@@ -695,7 +695,7 @@ impl SessionServer {
             pane_id,
             local: false,
             generation,
-            agent_refs: self.agent_references(None, pane_id),
+            agents: self.agent_records(None, pane_id),
             state,
         };
         self.broadcast_outbound(&ServerOutbound::control(message));

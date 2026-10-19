@@ -2173,9 +2173,9 @@ pub struct SidebarConfig {
 
 impl Default for SidebarConfig {
     fn default() -> Self {
-        // Two panels out of the box: the session's own state on top, the repository below. The
-        // trees cost nothing until their tab is the active one, so carrying them by default only
-        // spends sidebar rows, not work.
+        // Two panels out of the box: the session's own state and what needs the user on top, the
+        // repository below. The trees cost nothing until their tab is the active one, so carrying
+        // them by default only spends sidebar rows, not work.
         let tabs = vec![
             SidebarTab::Activity,
             SidebarTab::Agents,

@@ -824,10 +824,11 @@ mod tests {
         );
         client.stage(&bundle);
         client.spawn(1, &bundle, probe(), true);
-        assert!(matches!(
-            client.next_message(),
-            Message::Spawned { worker: 1, .. }
-        ));
+        let spawned = client.next_message();
+        assert!(
+            matches!(spawned, Message::Spawned { worker: 1, .. }),
+            "probe starts: {spawned:?}"
+        );
         let Message::Exited {
             worker: 1,
             code: Some(0),

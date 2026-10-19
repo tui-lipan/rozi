@@ -210,7 +210,13 @@ pub(crate) fn render_workspace_panes(
     let mut floating_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
     let mut fullscreen_panes: Vec<(FloatRect, Element, bool)> = Vec::new();
     for pane in ordered_panes(workspace, focused_pane, |pane| {
-        pane_border_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
+        pane_border_alert(
+            pane,
+            focused_pane == Some(pane.id),
+            &ctx.state.config.pane,
+            &ctx.state.agent_attention,
+        )
+        .is_some()
     }) {
         // Floating geometry is stored in canvas-origin coordinates; translate it by the (possibly
         // negative) letterbox origin so a follower's floats sit inside the centered canvas. This is
@@ -334,9 +340,12 @@ pub(crate) fn render_workspace_panes(
         // in their effected pane until the paint transition settles.
         if divider_mode && !pane.floating && !pane.fullscreen && !pane.closing && moving.is_none() {
             divider_panes.push(pane.id);
-            if let Some((_, color)) =
-                pane_border_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane)
-            {
+            if let Some((_, color)) = pane_border_alert(
+                pane,
+                focused_pane == Some(pane.id),
+                &ctx.state.config.pane,
+                &ctx.state.agent_attention,
+            ) {
                 divider_alerts.push((pane.id, color));
             }
         }

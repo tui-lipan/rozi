@@ -477,7 +477,7 @@ impl PaneInfo {
             pane.agent_runtimes(),
             &pane.terminal.published_rows,
         ) {
-            crate::session::protocol::PaneAgent::One(runtime) => Some(runtime),
+            crate::session::protocol::PaneAgent::One(runtime) => Some(*runtime),
             _ => None,
         };
         Self {

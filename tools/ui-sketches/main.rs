@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 17] = [
+const SCENARIOS: [(&str, &str, fn()); 19] = [
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -83,8 +83,18 @@ const SCENARIOS: [(&str, &str, fn()); 17] = [
     ),
     (
         "sidebar-activity",
-        "project headings, two-line agents, and a harness of published sessions, open and folded",
+        "project headings, two-line agents, and an agent cluster across panes, open and folded",
         sidebar_activity,
+    ),
+    (
+        "sidebar-agents",
+        "the Agents tab inbox: blocked, failed, and unread agents, working ones left out",
+        sidebar_agents,
+    ),
+    (
+        "sidebar-activity-worktrees",
+        "two worktrees of one long-named repository beside a lone checkout, at three widths",
+        sidebar_activity_worktrees,
     ),
     (
         "sidebar-panes",
@@ -766,15 +776,19 @@ fn agent_picker() {
                 project: None,
                 native_session: None,
             });
-            pane.agent_refs.push(AgentRef {
-                pane: PaneRef {
-                    session_instance: SessionInstanceId::generate(),
-                    pane_id: 1,
-                    generation: 0,
-                },
-                slot: Some(rozi::session::protocol::RowKey::new("sketch", id)),
-                incarnation: pane.agent_refs.len() as u64 + 1,
-            });
+            let incarnation = pane.agents.len() as u64 + 1;
+            pane.agents.push(
+                AgentRef {
+                    pane: PaneRef {
+                        session_instance: SessionInstanceId::generate(),
+                        pane_id: 1,
+                        generation: 0,
+                    },
+                    slot: Some(rozi::session::protocol::RowKey::new("sketch", id)),
+                    incarnation,
+                }
+                .into(),
+            );
         }
         state.current_mut().workspaces[0].panes = vec![pane];
         state.agent_picker = Some(AgentPickerState::new(Some(AgentLocation::Here {
@@ -787,14 +801,22 @@ fn agent_picker() {
         projects: Vec::new(),
         agents: vec![rozi::session::protocol::AgentSummary {
             session: "backend".into(),
-            pane: 9,
-            generation: 0,
-            row: None,
+            reference: AgentRef {
+                pane: PaneRef {
+                    session_instance: SessionInstanceId::generate(),
+                    pane_id: 9,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            },
             agent: "codex".into(),
             label: "Codex".into(),
-            state: "blocked".into(),
+            state: rozi::session::protocol::AgentState::Blocked,
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }],
     });
     for (width, height) in [(64, 22), (100, 30), (180, 40)] {
@@ -1256,7 +1278,7 @@ fn sidebar_activity() {
             reason: None,
             set_at: now.saturating_sub(180),
         });
-        pane.agent_refs = vec![agent_ref(id, None, 1)];
+        pane.agents = vec![agent_ref(id, None, 1).into()];
         pane.terminal.cwd = Some(cwd.to_string());
         pane
     };
@@ -1291,16 +1313,20 @@ fn sidebar_activity() {
             session("c", "sidebar audit", "done", false),
             session("d", "notes", "idle", false),
         ];
-        claude.agent_refs = ["a", "b", "c", "d"]
+        claude.agents = ["a", "b", "c", "d"]
             .into_iter()
             .enumerate()
-            .map(|(index, slot)| agent_ref(10, Some(slot), index as u64 + 1))
+            .map(|(index, slot)| agent_ref(10, Some(slot), index as u64 + 1).into())
             .collect();
         let codex = agent_pane(11, "Codex", "working", "/home/me/src/rozi");
         let opencode = agent_pane(12, "OpenCode", "error", "/home/me/src/tui-lipan");
+        // A second Claude Code in the same checkout, on another workspace: its run joins the
+        // cluster rather than standing beside it.
+        let mut second = agent_pane(13, "Claude Code", "working", "/home/me/src/rozi");
+        second.terminal.title = Some("✳ Refactor sidebar".into());
         let workspaces = &mut state.current_mut().workspaces;
         workspaces[0].panes = vec![claude, codex];
-        workspaces[1].panes = vec![opencode];
+        workspaces[1].panes = vec![opencode, second];
         workspaces[0].focused_pane = Some(10);
         state.current_mut().focused_pane = Some(10);
     }
@@ -1320,6 +1346,208 @@ fn sidebar_activity() {
     backend.state_mut().config.sidebar.layout.left.width = 36;
     backend.render();
     write_png(&mut backend, "sidebar-activity-folded");
+}
+
+/// The Agents tab as an inbox: a blocked session that named its work and said why, a failed run in
+/// another session, and a finished run nobody has read. The agents still working - one here, one in
+/// the other session - are Activity's and the Agents view's, so the tab leaves them out.
+fn sidebar_agents() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRecord, AgentRef, AgentState, AgentSummary, DetectedAgent,
+        DetectedAgentState, PaneRef, PaneStatus, ProjectSummary, PublishedRow, PublisherKind,
+        RowKey, SessionInstanceId,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let reference = |pane_id: u32, slot: Option<&str>| AgentRef {
+        pane: PaneRef {
+            session_instance: SessionInstanceId::generate(),
+            pane_id,
+            generation: 0,
+        },
+        slot: slot.map(|id| RowKey::new("sessions", id)),
+        incarnation: 1,
+    };
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Agents];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+        state.current_mut().session_name = Some("dev".into());
+
+        let mut claude = live_pane(10);
+        claude.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Idle,
+        });
+        claude.terminal.cwd = Some("/home/me/src/rozi".into());
+        claude.terminal.project_root = Some("/home/me/src/rozi".into());
+        claude.terminal.git_branch = Some("master".into());
+        let session = |id: &str, title: &str, status: &str, reason: Option<&str>| PublishedRow {
+            publisher: "sessions".into(),
+            kind: PublisherKind::Agent,
+            live_session: None,
+            reported: false,
+            id: id.to_string(),
+            title: title.to_string(),
+            status: status.to_string(),
+            reason: reason.map(str::to_string),
+            active: id == "fix",
+            work_started_at: Some(now.saturating_sub(200)),
+            cwd: None,
+            project: None,
+            native_session: None,
+        };
+        claude.terminal.published_rows = vec![
+            session(
+                "fix",
+                "Fix SSH reconnect",
+                "blocked",
+                Some("Permission required"),
+            ),
+            session("watch", "Add filesystem watcher", "idle", None),
+        ];
+        claude.agents = vec![
+            reference(10, Some("fix")).into(),
+            AgentRecord {
+                reference: reference(10, Some("watch")),
+                completions: 1,
+            },
+        ];
+        state
+            .agent_attention
+            .observe_records(&claude.agents, rozi::state::FirstSighting::New);
+
+        let mut codex = live_pane(11);
+        codex.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("codex", "Codex").into(),
+            state: DetectedAgentState::Idle,
+        });
+        codex.terminal.reported_status = Some(PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: now.saturating_sub(65),
+        });
+        codex.terminal.cwd = Some("/home/me/src/tui-lipan".into());
+        codex.terminal.project_root = Some("/home/me/src/tui-lipan".into());
+        codex.terminal.git_branch = Some("fix/cursor-blink".into());
+        codex.agents = vec![reference(11, None).into()];
+        state.current_mut().workspaces[0].panes = vec![claude, codex];
+        state.current_mut().workspaces[0].focused_pane = Some(10);
+        state.current_mut().focused_pane = Some(10);
+
+        state.local_agent_snapshot = Some(rozi::session::discovery::LocalAgentSnapshot {
+            sessions: Vec::new(),
+            agents: vec![
+                AgentSummary {
+                    session: "backend".into(),
+                    reference: reference(4, Some("review")),
+                    agent: "claude".into(),
+                    label: "Claude Code".into(),
+                    state: AgentState::Working,
+                    reason: None,
+                    task: Some("Review graphics PR".into()),
+                    completions: 0,
+                    changed_at: 0,
+                },
+                AgentSummary {
+                    session: "backend".into(),
+                    reference: reference(5, Some("migrate")),
+                    agent: "codex".into(),
+                    label: "Codex".into(),
+                    state: AgentState::Error,
+                    reason: Some("Thread failed".into()),
+                    task: Some("Migrate the schema".into()),
+                    completions: 0,
+                    changed_at: 0,
+                },
+            ],
+            projects: vec![ProjectSummary {
+                session: "backend".into(),
+                root: "/srv/api".into(),
+                repository: None,
+                branch: Some("main".into()),
+                panes: vec![4],
+                rows: Vec::new(),
+            }],
+        });
+    }
+    for width in [28, 36, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 22));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-agents-{width}"));
+    }
+}
+
+/// Activity headings where the repository name repeats: the branch keeps its room and its tail,
+/// and the name shortens to a stub. A lone checkout beside them keeps its name whole.
+fn sidebar_activity_worktrees() {
+    use rozi::session::protocol::{
+        AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
+        SessionInstanceId,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let agent_pane = |id: u32, label: &str, root: &str, branch: &str| {
+        let mut pane = live_pane(id);
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new(label.to_lowercase(), label).into(),
+            state: DetectedAgentState::Idle,
+        });
+        pane.terminal.reported_status = Some(PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: now.saturating_sub(90),
+        });
+        pane.agents = vec![
+            AgentRef {
+                pane: PaneRef {
+                    session_instance: SessionInstanceId::generate(),
+                    pane_id: id,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            }
+            .into(),
+        ];
+        pane.terminal.cwd = Some(root.to_string());
+        pane.terminal.project_root = Some(root.to_string());
+        pane.terminal.git_branch = Some(branch.to_string());
+        pane
+    };
+    let mut backend = TestBackend::new(AppRoot::default());
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        let repo = "/home/me/src/very-long-repository-name";
+        let worktree = "/home/me/src/very-long-repository-name/.worktrees/status";
+        let primary = agent_pane(10, "Claude Code", repo, "master");
+        let mut linked = agent_pane(11, "Claude Code", worktree, "feat/worktree-work-status");
+        linked.terminal.repository = Some(repo.to_string());
+        let lone = agent_pane(12, "Codex", "/home/me/src/tui-lipan", "fix/cursor-blink");
+        state.current_mut().workspaces[0].panes = vec![primary, linked, lone];
+    }
+    for width in [28, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.set_viewport(viewport(100, 20));
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-activity-worktrees-{width}"));
+    }
 }
 
 /// Two workspaces: the focused one with an editor, an agent, and a build, and a second with one
@@ -1416,7 +1644,7 @@ fn sidebar_sessions() {
 
 fn sidebar_projects() {
     use rozi::session::discovery::LocalAgentSnapshot;
-    use rozi::session::protocol::{AgentSummary, ProjectSummary};
+    use rozi::session::protocol::ProjectSummary;
     let mut backend = TestBackend::new(AppRoot::default());
     {
         let state = backend.state_mut();
@@ -1473,16 +1701,24 @@ fn sidebar_projects() {
         let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
         snapshot.projects[0].session = "eph-other".into();
         snapshot.projects[0].branch = Some("fix/long-branch-name-with-unicode-修正".into());
-        snapshot.agents.push(AgentSummary {
+        snapshot.agents.push(rozi::session::protocol::AgentSummary {
             session: "eph-other".into(),
-            pane: 2,
-            generation: 0,
-            row: None,
+            reference: rozi::session::protocol::AgentRef {
+                pane: rozi::session::protocol::PaneRef {
+                    session_instance: rozi::session::protocol::SessionInstanceId::generate(),
+                    pane_id: 2,
+                    generation: 0,
+                },
+                slot: None,
+                incarnation: 1,
+            },
             agent: "codex".into(),
             label: "Codex".into(),
-            state: "blocked".into(),
+            state: rozi::session::protocol::AgentState::Blocked,
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         });
     }
     backend.state_mut().config.sidebar.layout.left.width = 32;

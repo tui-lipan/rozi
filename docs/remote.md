@@ -391,18 +391,21 @@ WORKBOX                                     ● Connected
 
 Each row shows the most urgent state in the session — blocked, then working, then done — and names
 the agent when only one is in that state. Idle agents are not shown. A session you are attached to
-shows no summary, because the Agents tab already shows its live state.
+shows no summary, because the Activity tab already shows its live state.
 
 When an agent becomes blocked or finishes, you get the same desktop notification and sound as in an
 attached session, under the same `[notifications]` and `[sounds]` settings, and Do not disturb
 silences them the same way. The first update after connecting only sets a baseline, so connecting
 to a host whose agent has been waiting since yesterday does not notify.
 
-Summaries contain only the session, pane, agent, state, and when the state last changed. Terminal
-contents, scrollback, working directories, and layout need an attached session.
+Summaries contain the session, pane, and agent, its state and the reason it gave, the task a
+listed session names, how many runs the agent has finished, and when its state last changed.
+Terminal contents, scrollback, working directories, and layout need an attached session.
 
 The [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists these alongside local
-agents, most urgent first. `Enter` on a remote row attaches to that session and focuses the agent's
+agents, most urgent first, placed in the project and branch the host's
+[project summaries](#projects-on-a-machine-you-are-not-in) report. The sidebar's
+[Agents tab](sidebar.md#agents) lists the ones that need you. `Enter` on a remote row attaches to that session and focuses the agent's
 pane in one step.
 
 ### Projects on a machine you are not in

@@ -87,19 +87,25 @@ agents among them also appear in the [Agents view](sessions.md#go-to-an-agent); 
 the Git project that contains each pane's working directory, with branch and workspace context. A
 published row can name its own directory, so a program that runs several sessions in separate
 worktrees shows each one under its own branch. A linked Git worktree is labelled with its
-repository's name, and the branch beside it tells the checkouts apart.
+repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
+repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
+repository name shortens. A checkout with no branch shows its short commit.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
-When one pane runs several sessions of an agent, such as Claude Code with background sessions,
-they are listed beneath one row for the agent, titled by what each session is working on. That
-row shows the most urgent session's state and can be collapsed; collapsed, it counts its sessions
-by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
+When an agent runs more than once in one project, such as Claude Code with background sessions or
+in two panes, its runs are listed beneath one row for the agent, titled by what each works on. A
+run with no title is named after its terminal title or the agent, numbered when two would read the
+same. The agent's row shows its most urgent run's state, and selecting it goes to that run; its
+arrow collapses it. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
+out. When the runs are on different workspaces, each one shows its workspace number. Runs in a
+pane with no known directory are grouped only with other sessions in the same pane.
 
 Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
-for you stands apart from work that failed. A finished run stays marked `Done` until you visit its
-pane. Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
+for you stands apart from work that failed. A finished run stays marked `Done` until you look at
+the agent: focus its pane or, for one of several sessions in a pane, switch to that session.
+Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
 attached client sees the same thing.
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
@@ -111,25 +117,37 @@ rozi ships definitions for common coding-agent CLIs. To add or override one, see
 
 ## Agents
 
-Agents lists every coding agent rozi knows about: in the session on screen, in your other running
-local sessions, and on every [connected host](remote.md#connected-host-monitoring). It is the
-sidebar form of the [Agents view](sessions.md#go-to-an-agent) and lists the same agents in the same
-order — blocked first, then working, then done, then idle — so the agent that needs an answer is
-at the top wherever it runs.
+Agents lists the coding agents that need you, wherever they run: in the session on screen, in your
+other running local sessions, and on every [connected host](remote.md#connected-host-monitoring).
+An agent needs you when it is waiting for an answer, when it failed, or when it finished a run you
+have not looked at. Agents still working, idle agents, and finished runs you have seen are left
+out; Activity shows what is happening in the session on screen, and the
+[Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists every agent. With nothing
+needing you, the tab reads `No agents need attention`.
 
 ```text
-▲ Codex           workbox/backend
-  Blocked
-⠋ Claude Code 4m00s           dev
-  Working · rozi (fix-login)
+▲ Fix SSH reconnect 3m20s      dev
+  Claude Code  Permission required
+× Migrate the schema   backend@workbox
+  Codex               Thread failed
+● Add filesystem watcher       dev
+  Claude Code                 Done
 ```
 
-Each row names the agent, then the session it runs in, prefixed by the host for a remote session.
-The second line gives its status and, for the session on screen, what it is working on or the
-project and branch it works in. Agents in the session on screen also show a time: how long a
-working or blocked state has held, or how long a finished run took, which then stops. An idle agent
-shows no time. The [picker](sessions.md#go-to-an-agent) shows the same time. A marker in the left
-margin shows the agent in the focused pane.
+Agents waiting for you come first, then failed ones, then finished runs. A row is titled by the
+agent's task when it names one, such as the title of a session that Claude Code, Codex, or OpenCode
+lists, and by the agent's name otherwise; two rows that would read the same are numbered. The
+session it runs in is on the right, as `session@host` on a connected host. The second line names the
+agent and gives the reason for its state when it gave one, such as `Permission required`. A row
+without a task shows its state and the project and branch the agent works in instead.
+
+Agents in the session on screen also show a time: how long a blocked state has held, or how long a
+finished run took. A marker in the left margin shows the agent in the focused pane.
+
+A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
+one of several sessions in a pane, switch to that session. It then leaves the tab. Looking at an
+agent anywhere counts everywhere, whichever session or host it runs in. Runs that finished before
+rozi attached to a session or connected to a host are not listed.
 
 Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
@@ -305,7 +323,8 @@ Projects lists every Git checkout any of your sessions works in — on this mach
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
 works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
-most urgent agent below it: blocked, then working, then done. A session row names its agent, counts
+most urgent agent below it: blocked, then failed, then a finished run you have not looked at,
+then working. A session row names its agent, counts
 several, or counts its panes when none runs an agent. When more than one machine has work, each
 machine gets a heading, `LOCAL` for this one.
 

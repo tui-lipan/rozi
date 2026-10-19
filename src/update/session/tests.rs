@@ -667,6 +667,17 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
         .expect("bell focus lifecycle test completes");
 }
 
+fn finished_record(
+    pane_id: crate::state::PaneId,
+    generation: u64,
+    completions: u64,
+) -> crate::session::protocol::AgentRecord {
+    crate::session::protocol::AgentRecord {
+        reference: crate::session::protocol::AgentRef::for_test(pane_id, generation, None),
+        completions,
+    }
+}
+
 #[test]
 fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
     std::thread::Builder::new()
@@ -695,7 +706,15 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                         .into(),
                     state: crate::session::protocol::DetectedAgentState::Idle,
                 });
+                pane.agents = vec![finished_record(pane_id, generation, 0)];
             }
+            let agents = backend.state().current().workspaces[0].panes[0]
+                .agents
+                .clone();
+            backend
+                .state_mut()
+                .agent_attention
+                .observe_records(&agents, crate::state::FirstSighting::Baseline);
 
             backend
                 .set_window_focused(false)
@@ -706,7 +725,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
                     pane_id,
                     local: false,
                     generation,
-                    agent_refs: Vec::new(),
+                    agents: vec![finished_record(pane_id, generation, 1)],
                     state: PaneRuntimeState {
                         sequence: 1,
                         status: Some(crate::session::protocol::PaneStatus {
@@ -732,8 +751,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
             assert!(
                 crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
-                    .terminal
-                    .finished_unseen
+                    .finished_unseen(&backend.state().agent_attention)
             );
 
             // The run finished while the user was away, in the pane they were already sitting in.
@@ -747,8 +765,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
             assert!(
                 crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
-                    .terminal
-                    .finished_unseen
+                    .finished_unseen(&backend.state().agent_attention)
             );
 
             backend
@@ -763,8 +780,7 @@ fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
             assert!(
                 !crate::pane::lifecycle::find_pane(backend.state(), pane_id)
                     .expect("finished pane")
-                    .terminal
-                    .finished_unseen
+                    .finished_unseen(&backend.state().agent_attention)
             );
         })
         .expect("spawn finished focus lifecycle test")
@@ -881,50 +897,53 @@ fn parked_rename_updates_retained_identity() {
 /// The two edges it must never invent are the ones that would fire on every poll of a machine
 /// that has simply been sitting there: a standing prompt, and an agent that was already idle.
 #[test]
-fn agent_status_edges_report_transitions_rather_than_standing_states() {
-    let blocked = agent_status_edges(Some("working"), Some("blocked"));
+fn summary_edges_report_transitions_rather_than_standing_states() {
+    use crate::session::protocol::{AgentRef, AgentState, AgentSummary};
+    let summary = |state, completions| AgentSummary {
+        session: "dev".into(),
+        reference: AgentRef::for_test(1, 1, None),
+        agent: "codex".into(),
+        label: "Codex".into(),
+        state,
+        reason: None,
+        task: None,
+        completions,
+        changed_at: 0,
+    };
+    let edges = |previous: Option<(AgentState, u64)>, current: (AgentState, u64)| {
+        let previous = previous.map(|(state, completions)| summary(state, completions));
+        summary_edges(previous.as_ref(), &summary(current.0, current.1))
+    };
+
+    let blocked = edges(Some((AgentState::Working, 0)), (AgentState::Blocked, 0));
     assert!(blocked.became_blocked);
     assert!(!blocked.finished);
-
     // Still blocked on the next poll. The prompt is not new, so neither is the news.
-    assert!(!agent_status_edges(Some("blocked"), Some("blocked")).became_blocked);
-
+    assert!(!edges(Some((AgentState::Blocked, 0)), (AgentState::Blocked, 0)).became_blocked);
     // A first sighting of an agent that is already blocked *is* an edge by this rule; the caller
     // is what keeps a freshly connected host quiet, by seeding its baseline without alerting.
-    assert!(agent_status_edges(None, Some("blocked")).became_blocked);
+    assert!(edges(None, (AgentState::Blocked, 0)).became_blocked);
 
-    let finished = agent_status_edges(Some("working"), Some("idle"));
-    assert!(finished.finished);
-    assert!(!finished.became_blocked);
-    assert!(agent_status_edges(Some("working"), Some("done")).finished);
-
-    // An agent that was already quiescent has not just finished anything.
-    assert!(!agent_status_edges(Some("idle"), Some("idle")).finished);
-    assert!(!agent_status_edges(None, Some("done")).finished);
+    // A finish is a rise in the server's count, whether or not a poll ever saw the agent working.
+    assert!(edges(Some((AgentState::Idle, 2)), (AgentState::Idle, 3)).finished);
+    assert!(edges(Some((AgentState::Working, 0)), (AgentState::Done, 1)).finished);
+    // An agent that was already quiet has not just finished anything.
+    assert!(!edges(Some((AgentState::Idle, 1)), (AgentState::Idle, 1)).finished);
+    assert!(!edges(None, (AgentState::Done, 4)).finished);
     // Blocking is not finishing, and neither is carrying on working.
-    assert!(!agent_status_edges(Some("working"), Some("blocked")).finished);
-    assert!(!agent_status_edges(Some("working"), Some("working")).finished);
+    assert!(!edges(Some((AgentState::Working, 0)), (AgentState::Blocked, 0)).finished);
 }
 
+/// An agent pane reports the finish the server counted and keeps no flag of its own: whether
+/// anyone has looked is `AgentAttention`'s.
 #[test]
-fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
-    // working -> idle arms the pulse.
+fn an_agent_pane_reports_the_counted_finish_and_keeps_no_flag() {
     let mut pane = agent_pane("idle");
-    update_agent_status_edge(&mut pane, Some("working"), None, false);
-    assert!(pane.finished_unseen);
-
-    // A later idle -> idle poll leaves it armed until the pane is looked at.
-    update_agent_status_edge(&mut pane, Some("idle"), None, false);
-    assert!(pane.finished_unseen);
-
-    // Resuming work disarms it: a spinning agent must not wear a completed dot.
-    pane.reported_status = Some(crate::session::protocol::PaneStatus {
-        value: "working".into(),
-        reason: None,
-        set_at: 2,
-    });
-    update_agent_status_edge(&mut pane, Some("idle"), None, false);
+    let edges = update_agent_status_edge(&mut pane, Some("working"), None, false, true);
+    assert!(edges.finished);
     assert!(!pane.finished_unseen);
+    let quiet = update_agent_status_edge(&mut pane, Some("idle"), None, false, false);
+    assert!(!quiet.finished);
 }
 
 /// The duration column is only honest if the stamp moves on a real state change and holds
@@ -933,10 +952,10 @@ fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
 fn status_since_stamps_transitions_and_survives_unchanged_polls() {
     let mut pane = agent_pane("working");
     assert!(pane.status_since.is_none());
-    update_agent_status_edge(&mut pane, Some("idle"), None, false);
+    update_agent_status_edge(&mut pane, Some("idle"), None, false, false);
     let stamped = pane.status_since.expect("a transition stamps the pane");
 
-    update_agent_status_edge(&mut pane, Some("working"), None, false);
+    update_agent_status_edge(&mut pane, Some("working"), None, false, false);
     assert_eq!(pane.status_since, Some(stamped));
 
     pane.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -944,7 +963,7 @@ fn status_since_stamps_transitions_and_survives_unchanged_polls() {
         reason: None,
         set_at: 2,
     });
-    update_agent_status_edge(&mut pane, Some("working"), None, false);
+    update_agent_status_edge(&mut pane, Some("working"), None, false, false);
     assert!(pane.status_since.expect("re-stamped") > stamped);
 }
 
@@ -954,7 +973,7 @@ fn status_since_stamps_transitions_and_survives_unchanged_polls() {
 fn finishing_a_run_banks_its_length_and_freezes_it() {
     let run = std::time::Duration::from_secs(12 * 60);
     let mut pane = agent_pane("idle");
-    update_agent_status_edge(&mut pane, Some("working"), Some(run), false);
+    update_agent_status_edge(&mut pane, Some("working"), Some(run), false, false);
     assert_eq!(pane.last_run, Some(run));
 
     // Repeated idle polls afterwards leave the banked run alone.
@@ -962,6 +981,7 @@ fn finishing_a_run_banks_its_length_and_freezes_it() {
         &mut pane,
         Some("idle"),
         Some(std::time::Duration::from_secs(1)),
+        false,
         false,
     );
     assert_eq!(pane.last_run, Some(run));
@@ -977,25 +997,9 @@ fn finishing_a_run_banks_its_length_and_freezes_it() {
         Some("blocked"),
         Some(std::time::Duration::from_secs(3)),
         false,
+        false,
     );
     assert_eq!(pane.last_run, Some(run));
-}
-
-#[test]
-fn finished_unseen_ignores_working_to_blocked() {
-    let mut pane = agent_pane("blocked");
-    update_agent_status_edge(&mut pane, Some("working"), None, false);
-    assert!(!pane.finished_unseen);
-}
-
-#[test]
-fn detected_blocked_over_stale_idle_does_not_arm_finished_unseen() {
-    let mut pane = agent_pane("idle");
-    pane.detected_agent.as_mut().expect("agent").state =
-        crate::session::protocol::DetectedAgentState::Blocked;
-    update_agent_status_edge(&mut pane, Some("working"), None, false);
-    assert_eq!(pane.agent_status().as_deref(), Some("blocked"));
-    assert!(!pane.finished_unseen);
 }
 
 #[test]
@@ -1006,7 +1010,7 @@ fn agent_edges_report_detected_only_blocked() {
         state: crate::session::protocol::DetectedAgentState::Blocked,
     });
 
-    let edges = update_agent_status_edge(&mut pane, Some("idle"), None, false);
+    let edges = update_agent_status_edge(&mut pane, Some("idle"), None, false, false);
 
     assert!(edges.became_blocked);
     assert!(!edges.finished);
@@ -1022,8 +1026,8 @@ fn agent_edges_report_reported_only_blocked_once() {
         set_at: 1,
     });
 
-    let first = update_agent_status_edge(&mut pane, None, None, false);
-    let repeated = update_agent_status_edge(&mut pane, None, None, true);
+    let first = update_agent_status_edge(&mut pane, None, None, false, false);
+    let repeated = update_agent_status_edge(&mut pane, None, None, true, false);
 
     assert!(first.became_blocked);
     assert!(!repeated.became_blocked);
@@ -1685,7 +1689,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: runtime.clone(),
                 })
                 .expect("dispatch status transition");
@@ -1711,7 +1715,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: runtime,
                 })
                 .expect("dispatch duplicate status");
@@ -1723,7 +1727,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: PaneRuntimeState {
                         status: None,
                         sequence: 0,
@@ -1772,7 +1776,7 @@ fn parked_runtime_updates_keep_background_metadata_current() {
                     pane_id: 1,
                     local: false,
                     generation: 7,
-                    agent_refs: Vec::new(),
+                    agents: Vec::new(),
                     state: PaneRuntimeState {
                         cwd: Some("/remote/project".to_string()),
                         foreground_program: Some("cargo".to_string()),
@@ -2743,7 +2747,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     panes: vec![crate::session::protocol::PaneMeta {
                         pane_id: 7,
                         generation: 1,
-                        agent_refs: vec![agent_ref],
+                        agents: vec![agent_ref.into()],
                         cols: 80,
                         rows: 24,
                         pid: Some(42),

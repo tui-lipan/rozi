@@ -62,8 +62,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --location <JSON>",
                 "Where an agent runs, from list --all",
             ),
-            row("    --until <STATE>", "working, blocked, idle, done,"),
-            row("", "quiescent (idle or done), or gone"),
+            row(
+                "    --until <STATE>",
+                "working, blocked, idle, done, error,",
+            ),
+            row("", "quiescent (idle, done, or error), or gone"),
             row("    --wait <STATE>", "The same states as --until"),
             row(
                 "    --timeout <DUR>",
@@ -261,6 +264,7 @@ fn parse_report_state(
         "blocked" => Ok(crate::session::protocol::AgentState::Blocked),
         "idle" => Ok(crate::session::protocol::AgentState::Idle),
         "done" => Ok(crate::session::protocol::AgentState::Done),
+        "error" => Ok(crate::session::protocol::AgentState::Error),
         _ => Err(format!("unknown agent state `{value}`")),
     }
 }
@@ -396,7 +400,8 @@ fn parse_wait(
         ControlCommand::AgentWait {
             target: require_target(target, "agents wait")?,
             until: until.ok_or_else(|| {
-                "agents wait requires --until working|blocked|idle|done|quiescent|gone".to_string()
+                "agents wait requires --until working|blocked|idle|done|error|quiescent|gone"
+                    .to_string()
             })?,
             timeout_ms: Some(timeout_ms.ok_or_else(|| {
                 "agents wait requires --timeout, such as --timeout 2m".to_string()
@@ -498,6 +503,7 @@ fn parse_condition(value: &str) -> std::result::Result<AgentWaitCondition, Strin
         "blocked" => Ok(AgentWaitCondition::Blocked),
         "idle" => Ok(AgentWaitCondition::Idle),
         "done" => Ok(AgentWaitCondition::Done),
+        "error" => Ok(AgentWaitCondition::Error),
         "quiescent" => Ok(AgentWaitCondition::Quiescent),
         "gone" => Ok(AgentWaitCondition::Gone),
         _ => Err(format!("unknown agent wait condition `{value}`")),
@@ -584,6 +590,48 @@ mod tests {
                 timeout_ms: Some(30_000),
             }
         );
+    }
+
+    /// A failed agent can be waited for directly, by `wait --until` and by `prompt --wait`.
+    #[test]
+    fn wait_and_prompt_take_the_error_state() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
+        let (command, _) = parse_agents_args(args(&[
+            "wait",
+            "--target",
+            "3",
+            "--until",
+            "error",
+            "--timeout",
+            "2m",
+        ]))
+        .unwrap();
+        assert_eq!(
+            command,
+            ControlCommand::AgentWait {
+                target: AgentTarget::Pane(3),
+                until: AgentWaitCondition::Error,
+                timeout_ms: Some(120_000),
+            }
+        );
+        let (command, _) = parse_agents_args(args(&[
+            "prompt",
+            "--target",
+            "3",
+            "--wait",
+            "error",
+            "--timeout",
+            "2m",
+            "Fix it",
+        ]))
+        .unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentPrompt {
+                wait: Some(AgentWaitCondition::Error),
+                ..
+            }
+        ));
     }
 
     /// `list --all` asks for every agent anywhere, and `go` takes back the location it printed.

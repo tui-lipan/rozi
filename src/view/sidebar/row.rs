@@ -181,6 +181,10 @@ pub(super) enum Priority {
     Description,
     /// Reserve 40% for the label when both sides are long; either side can use spare space.
     Balanced,
+    /// The description is what tells this row from its neighbours, so it keeps its width first, but
+    /// the label keeps a stub - enough to show it is there and how it starts. A branch beside a
+    /// repository name that several headings share.
+    Distinguishing,
 }
 
 /// The least blank space between a label and its description, so the two read as separate things
@@ -435,6 +439,9 @@ fn titled_item(label: Vec<Span>, description: Vec<Span>, priority: Priority) -> 
         Priority::Balanced => item
             .primary_truncate_description_first(false)
             .primary_min_label_width(Length::Percent(40)),
+        Priority::Distinguishing => item
+            .primary_truncate_description_first(false)
+            .primary_min_label_width(Length::Px(3)),
     }
 }
 
@@ -451,7 +458,10 @@ fn joined_spans(parts: Vec<(String, Style)>) -> Vec<Span> {
 }
 
 fn labeled_item(label: Vec<Span>, description: Vec<Span>) -> ListItem {
-    let mut item = ListItem::from_spans(label).primary_truncate_description_first(true);
+    // The cell between the two keeps a truncated description from running into the label.
+    let mut item = ListItem::from_spans(label)
+        .primary_truncate_description_first(true)
+        .primary_description_gap(1);
     if !description.is_empty() {
         item = item.description_spans(description);
     }

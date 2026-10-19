@@ -298,6 +298,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     tabs: Option<OverlayTabs>,
     item_key: Option<OverlayItemKey<T>>,
     description_wins: Option<Length>,
+    detail: Option<Element>,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -330,6 +331,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             tabs: None,
             item_key: None,
             description_wins: None,
+            detail: None,
         }
     }
 
@@ -347,6 +349,13 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
     /// Identify rows across refreshes by something other than label and aliases. The shared key
     /// needs those to be unique; a picker whose rows can share both, but whose values are stable
     /// identities, keys by value instead so the cursor stays on the row it was on.
+    /// A line about the highlighted row, between the results and the hints. See
+    /// [`detail_line`](super::common::detail_line).
+    pub(crate) fn detail(mut self, detail: Option<Element>) -> Self {
+        self.detail = detail;
+        self
+    }
+
     pub(crate) fn item_key(mut self, key: OverlayItemKey<T>) -> Self {
         self.item_key = Some(key);
         self
@@ -458,6 +467,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             tabs,
             item_key,
             description_wins,
+            detail,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -546,6 +556,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             body = body.child(palette.key(format!("{key}-page-{}", tabs.active)));
         } else {
             body = body.child(palette);
+        }
+        if let Some(detail) = detail {
+            body = body.child(detail);
         }
         if actions.iter().any(OverlayAction::shows_hint) {
             body = body.child(overlay_hints(ctx, &actions));

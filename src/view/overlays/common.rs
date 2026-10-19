@@ -45,6 +45,30 @@ pub(super) fn hint_button(ctx: &Context<AppRoot>, label: &str, key: &str, msg: M
 
 /// The base footer row shared by every overlay hint bar: content-height with a leading gap above
 /// it. Callers add [`hint_button`] or [`hint_pill`] children and may override justify/gap.
+/// One line of detail about a picker's highlighted row, above its hints: the facts that would
+/// crowd every row if each carried them. Never wraps; a long line ends in an ellipsis.
+pub(super) fn detail_line(spans: Vec<Span>) -> Element {
+    VStack::new()
+        .height(Length::Auto)
+        .padding((HINT_PAD_TOP, HINT_PAD_X, 0, HINT_PAD_X))
+        .child(
+            List::new()
+                .items([ListItem::from_spans(spans)])
+                .selected(None)
+                .focusable(false)
+                .tab_stop(false)
+                .symbol_column(false)
+                .scroll_wheel(false)
+                .activate_on_click(false)
+                .scroll_keys(ScrollKeymap::NONE)
+                .hover_style(Style::new())
+                .item_hover_style(Style::new())
+                .height(Length::Px(1))
+                .width(Length::Flex(1)),
+        )
+        .into()
+}
+
 pub(super) fn hint_row() -> Flow {
     Flow::new()
         .padding((HINT_PAD_TOP, HINT_PAD_X, 0, HINT_PAD_X))

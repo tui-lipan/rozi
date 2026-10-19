@@ -147,7 +147,7 @@ fn pane_meta_from_older_peer_defaults_original_user() {
     let mut value = serde_json::to_value(PaneMeta {
         pane_id: 1,
         generation: 2,
-        agent_refs: Vec::new(),
+        agents: Vec::new(),
         cols: 80,
         rows: 24,
         pid: Some(42),

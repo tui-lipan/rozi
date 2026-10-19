@@ -231,6 +231,22 @@ fn agent_tone(agent: &GlobalAgentRow) -> SidebarTone {
     SidebarTone::from_status(&agent.status, agent.finished_unseen)
 }
 
+/// The tone a row reads in when `lead` is the most urgent agent below it: the Agents tab's
+/// attention order, so a finished run nobody has read outranks an agent still working at every
+/// level of the tree.
+fn lead_tone(lead: Option<&GlobalAgentRow>) -> SidebarTone {
+    lead.map_or(SidebarTone::Normal, agent_tone)
+}
+
+fn most_urgent<'a>(
+    agents: impl IntoIterator<Item = Option<&'a GlobalAgentRow>>,
+) -> Option<&'a GlobalAgentRow> {
+    agents
+        .into_iter()
+        .flatten()
+        .min_by_key(|agent| agent.rank())
+}
+
 /// One host's repositories, checkouts, and sessions, as tree rows.
 fn host_rows(
     state: &State,
@@ -317,7 +333,7 @@ fn host_rows(
             expandable: false,
             expanded: None,
         });
-        let mut repo_tones = Vec::new();
+        let mut repo_leads = Vec::new();
         for root in checkouts {
             let checkout_id = format!("checkout:{root}");
             let sessions: Vec<&ProjectSummary> = in_repo
@@ -339,14 +355,15 @@ fn host_rows(
                 expandable: false,
                 expanded: None,
             });
-            let mut checkout_tones = Vec::new();
+            let mut checkout_leads = Vec::new();
             let mut ordered = sessions;
             ordered.sort_by(|a, b| a.session.cmp(&b.session));
             for summary in ordered {
                 let mut session_agents = agents_of(summary);
                 session_agents.sort_by_key(|agent| agent.rank());
-                let tone = SidebarTone::most_urgent(session_agents.iter().map(|a| agent_tone(a)));
-                checkout_tones.push(tone);
+                let lead = session_agents.first().copied();
+                let tone = lead_tone(lead);
+                checkout_leads.push(lead);
                 let is_here = here(summary);
                 let active = is_here && focused_checkout == Some(summary.root.as_str());
                 // Keep the current destination when already in this checkout. Otherwise land on
@@ -404,11 +421,11 @@ fn host_rows(
                     expanded: None,
                 });
             }
-            let tone = SidebarTone::most_urgent(checkout_tones);
-            repo_tones.push(tone);
-            rows[checkout_index].content.tone = tone;
+            let lead = most_urgent(checkout_leads);
+            repo_leads.push(lead);
+            rows[checkout_index].content.tone = lead_tone(lead);
         }
-        rows[repo_index].content.tone = SidebarTone::most_urgent(repo_tones);
+        rows[repo_index].content.tone = lead_tone(most_urgent(repo_leads));
     }
     rows
 }
@@ -450,15 +467,15 @@ mod tests {
 
     fn agent(session: &str, pane: crate::state::PaneId, state: &str) -> AgentSummary {
         AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
     }
 
@@ -523,6 +540,44 @@ mod tests {
                 "tui-lipan Normal",
                 "  main Normal",
                 "    dev Normal [Running · 1 pane]",
+            ]
+        );
+    }
+
+    /// The tree rolls up by what to look at next: a finished run nobody has read outranks an agent
+    /// still working, at the checkout and at the repository.
+    #[test]
+    fn an_unread_finish_outranks_work_still_in_progress() {
+        let mut state = state();
+        let mut finished = agent("fix", 3, "idle");
+        finished.completions = 1;
+        state.agent_attention.observe(
+            &finished.reference,
+            0,
+            crate::state::FirstSighting::Baseline,
+        );
+        state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            sessions: Vec::new(),
+            agents: vec![finished, agent("dev", 1, "working")],
+            projects: vec![
+                summary(
+                    "fix",
+                    "/x/rozi/.worktrees/fix",
+                    Some("/x/rozi"),
+                    "fix/ssh",
+                    &[3],
+                ),
+                summary("dev", "/x/rozi", None, "master", &[1]),
+            ],
+        });
+        assert_eq!(
+            outline(&state.project_sections()),
+            [
+                "rozi Success",
+                "  master Working",
+                "    dev Working [Running · Codex]",
+                "  fix/ssh Success",
+                "    fix Success [Running · Codex]",
             ]
         );
     }

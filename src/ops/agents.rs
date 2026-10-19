@@ -213,7 +213,11 @@ pub(crate) fn overview(state: &crate::state::State) -> Vec<crate::control::Globa
                     row: slot,
                 },
                 label: row.agent,
+                task: row.task,
                 state: state_word,
+                reason: row.reason,
+                project: row.project,
+                branch: row.branch,
                 here,
             }
         })
@@ -411,15 +415,15 @@ mod tests {
         state.remote.agents.insert(
             RemoteTarget::Alias("workbox".into()),
             vec![crate::session::protocol::AgentSummary {
+                reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                 session: "backend".into(),
-                pane: 4,
-                generation: 0,
-                row: None,
                 agent: "codex".into(),
                 label: "Codex".into(),
-                state: "blocked".into(),
+                state: crate::session::protocol::AgentState::from_status("blocked"),
+                reason: None,
+                task: None,
+                completions: 0,
                 changed_at: 0,
-                launch: 0,
             }],
         );
         state
@@ -539,15 +543,15 @@ mod tests {
             backend.state_mut().remote.agents.insert(
                 RemoteTarget::Alias("workbox".into()),
                 vec![crate::session::protocol::AgentSummary {
+                    reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                     session: "backend".into(),
-                    pane: 4,
-                    generation: 0,
-                    row: None,
                     agent: "codex".into(),
                     label: "Codex".into(),
-                    state: "blocked".into(),
+                    state: crate::session::protocol::AgentState::from_status("blocked"),
+                    reason: None,
+                    task: None,
+                    completions: 0,
                     changed_at: 0,
-                    launch: 0,
                 }],
             );
             backend
@@ -556,14 +560,14 @@ mod tests {
             backend.render();
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                frame.lines().any(
-                    |line| line.contains("Codex") && line.contains("Blocked · backend@workbox")
-                ),
+                frame
+                    .lines()
+                    .any(|line| line.contains("Codex") && line.contains("backend@workbox")),
                 "the row names who and where:\n{frame}"
             );
             assert!(
                 frame.contains("Blocked"),
-                "and what it is waiting on:\n{frame}"
+                "and the highlighted row's detail says what it is waiting on:\n{frame}"
             );
         });
     }
@@ -579,15 +583,15 @@ mod tests {
                     projects: Vec::new(),
                     sessions: Vec::new(),
                     agents: vec![crate::session::protocol::AgentSummary {
+                        reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
                         session: "backend".into(),
-                        pane: 4,
-                        generation: 0,
-                        row: None,
                         agent: "codex".into(),
                         label: "Codex".into(),
-                        state: "blocked".into(),
+                        state: crate::session::protocol::AgentState::from_status("blocked"),
+                        reason: None,
+                        task: None,
+                        completions: 0,
                         changed_at: 0,
-                        launch: 0,
                     }],
                 });
             backend
@@ -598,7 +602,7 @@ mod tests {
             assert!(
                 frame
                     .lines()
-                    .any(|line| line.contains("Codex") && line.contains("Blocked · backend")),
+                    .any(|line| line.contains("Codex") && line.contains("backend")),
                 "{frame}"
             );
             assert!(frame.contains("Blocked"), "{frame}");
@@ -610,15 +614,15 @@ mod tests {
         backend.state_mut().config.animations.picker =
             crate::layout::anim::PickerAnimationStyle::Off;
         let summary = |pane, label: &str, status: &str| crate::session::protocol::AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: "dev".into(),
-            pane,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: label.into(),
-            state: status.into(),
+            state: crate::session::protocol::AgentState::from_status(status),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         };
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
@@ -837,7 +841,7 @@ mod tests {
             let snapshot = backend.state_mut().local_agent_snapshot.as_mut().unwrap();
             let mut newcomer = snapshot.agents[0].clone();
             newcomer.session = "aaa".into();
-            newcomer.pane = 7;
+            newcomer.reference.pane.pane_id = 7;
             snapshot.agents.push(newcomer);
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             backend.render();
@@ -867,15 +871,15 @@ mod tests {
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
             let summary = |pane| crate::session::protocol::AgentSummary {
+                reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
                 session: "dev".into(),
-                pane,
-                generation: 0,
-                row: None,
                 agent: "codex".into(),
                 label: "Codex".into(),
-                state: "idle".into(),
+                state: crate::session::protocol::AgentState::from_status("idle"),
+                reason: None,
+                task: None,
+                completions: 0,
                 changed_at: 0,
-                launch: 0,
             };
             backend.state_mut().local_agent_snapshot =
                 Some(crate::session::discovery::LocalAgentSnapshot {
@@ -925,15 +929,19 @@ mod tests {
             .enumerate()
             .map(
                 |(pane, (label, session))| crate::session::protocol::AgentSummary {
+                    reference: crate::session::protocol::AgentRef::for_test(
+                        pane as crate::state::PaneId + 1,
+                        0,
+                        None,
+                    ),
                     session: (*session).into(),
-                    pane: pane as crate::state::PaneId + 1,
-                    generation: 0,
-                    row: None,
                     agent: "codex".into(),
                     label: (*label).into(),
-                    state: "idle".into(),
+                    state: crate::session::protocol::AgentState::from_status("idle"),
+                    reason: None,
+                    task: None,
+                    completions: 0,
                     changed_at: 0,
-                    launch: 0,
                 },
             )
             .collect::<Vec<_>>();
@@ -954,7 +962,7 @@ mod tests {
             .capture_frame()
             .to_fixed_grid_lines()
             .into_iter()
-            .filter(|line| line.contains("Idle"))
+            .filter(|line| line.contains("Codex"))
             .collect()
     }
 
@@ -978,28 +986,28 @@ mod tests {
 
             let short = rendered_rows(&[("Codex", "dev")]).remove(0);
             assert!(
-                column(&short, "Idle") - column(&short, "Codex") > 40,
+                column(&short, "dev") - column(&short, "Codex") > 40,
                 "a short description stays at the right edge: {short}"
             );
 
             let long = rendered_rows(&[("Codex", &long_session)]).remove(0);
-            assert!(long.contains("Codex  Idle · sss"), "{long}");
+            assert!(long.contains("Codex  sss"), "{long}");
             assert!(long.contains("s… │"), "truncated at the end: {long}");
 
             // The label keeps a third of what the row draws between its borders.
             let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
-            assert!(both.contains("…  Idle · sss"), "{both}");
+            assert!(both.contains("…  sss"), "{both}");
             let row_width = column(&both, " │") - column(&both, "│ ");
-            let label_width = column(&both, "…  Idle") + 1 - column(&both, "Codex");
+            let label_width = column(&both, "…  sss") + 1 - column(&both, "Codex");
             assert!(
                 (row_width * 30 / 100..=row_width * 36 / 100).contains(&label_width),
                 "{label_width} of {row_width}: {both}"
             );
 
             let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
-            assert!(label.contains("…  Idle · dev │"), "{label}");
+            assert!(label.contains("…  dev │"), "{label}");
             assert!(
-                column(&label, "…  Idle") + 1 - column(&label, "Codex") > row_width * 36 / 100,
+                column(&label, "…  dev") + 1 - column(&label, "Codex") > row_width * 36 / 100,
                 "{label}"
             );
         });

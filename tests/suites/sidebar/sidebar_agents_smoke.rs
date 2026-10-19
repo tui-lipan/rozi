@@ -44,9 +44,19 @@ fn agent_pane(
         reason: reason.map(str::to_string),
         set_at,
     });
-    pane.agent_refs = vec![agent_ref(id, None, 1)];
+    pane.agents = vec![agent_ref(id, None, 1).into()];
     pane.terminal.cwd = cwd.map(str::to_string);
     pane
+}
+
+/// Give each of `pane`'s agents one finished run this client has not looked at.
+fn finish_unseen(state: &mut rozi::state::State, pane: &mut rozi::state::Pane) {
+    state
+        .agent_attention
+        .observe_records(&pane.agents, rozi::state::FirstSighting::Baseline);
+    for record in &mut pane.agents {
+        record.completions += 1;
+    }
 }
 
 fn agent_ref(pane_id: PaneId, slot: Option<&str>, incarnation: u64) -> AgentRef {
@@ -140,14 +150,14 @@ fn agents_tab_renders_project_groups() {
                     Some(("idle", None)),
                     Some("/home/x/work/rozi"),
                 );
-                finished.terminal.finished_unseen = true;
+                finish_unseen(state, &mut finished);
                 let mut done = agent_pane(
                     5,
                     agent("gemini", "Gemini CLI"),
                     Some(("done", None)),
                     Some("/home/x/oss/tools"),
                 );
-                done.terminal.finished_unseen = true;
+                finish_unseen(state, &mut done);
                 state.current_mut().workspaces[0].panes = vec![
                     agent_pane(
                         1,
@@ -233,6 +243,90 @@ fn agents_tab_renders_project_groups() {
 
 /// Agents spread through one repository read as one project headed by its branch, with each row
 /// saying where in the project it sits.
+/// Two worktrees of one repository carry the same name, so in a narrow sidebar the branch is what
+/// must survive: it keeps its width and its tail, and the name gives way. A repository with one
+/// checkout keeps its name whole instead.
+#[test]
+fn worktree_headings_keep_their_branch_when_the_name_repeats() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                state.config.sidebar.layout.left.width = 28;
+                let repo = "/x/very-long-repository-name";
+                let primary = agent_pane_in_project(
+                    1,
+                    agent("claude", "Claude Code"),
+                    Some(("working", None)),
+                    repo,
+                    repo,
+                    "master",
+                );
+                let worktree_root = "/x/very-long-repository-name/.worktrees/inbox";
+                let mut worktree = agent_pane_in_project(
+                    2,
+                    agent("claude", "Claude Code"),
+                    Some(("working", None)),
+                    worktree_root,
+                    worktree_root,
+                    "feat/worktree-work-status",
+                );
+                worktree.terminal.repository = Some(repo.to_string());
+                let lipan = agent_pane_in_project(
+                    3,
+                    agent("codex", "Codex"),
+                    Some(("working", None)),
+                    "/x/tui-lipan",
+                    "/x/tui-lipan",
+                    "feat/an-equally-long-branch-name",
+                );
+                state.current_mut().workspaces[0].panes = vec![primary, worktree, lipan];
+            }
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(29).collect())
+                .collect();
+            let heading = |needle: &str| {
+                sidebar
+                    .iter()
+                    .find(|line| line.contains(needle))
+                    .unwrap_or_else(|| panic!("{needle:?} in {sidebar:#?}"))
+                    .clone()
+            };
+            assert!(heading("master").contains("very-"), "{sidebar:#?}");
+            let worktree = heading("work-status");
+            assert!(
+                worktree.contains(" ve…"),
+                "the name keeps a stub where the branch needs the room: {sidebar:#?}"
+            );
+            assert!(
+                worktree.contains("…")
+                    && worktree
+                        .trim_end_matches([' ', '│'])
+                        .ends_with("work-status"),
+                "the long branch keeps its tail: {sidebar:#?}"
+            );
+            assert!(
+                heading("tui-lipan").contains("tui-lipan"),
+                "a lone checkout keeps its name: {sidebar:#?}"
+            );
+        })
+        .expect("spawn worktree headings thread")
+        .join()
+        .expect("worktree headings complete");
+}
+
 #[test]
 fn agents_tab_heads_projects_with_their_branch() {
     std::thread::Builder::new()
@@ -335,14 +429,14 @@ fn focusing_a_finished_agent_clears_its_pulse() {
                     Some(("idle", None)),
                     Some("/home/x/repo"),
                 );
-                finished.terminal.finished_unseen = true;
+                finish_unseen(state, &mut finished);
                 state.current_mut().workspaces[0].panes = vec![finished];
             }
             // Looking at the pane through any focus path acknowledges the finish.
             backend.dispatch(Msg::SidebarFocusPane(7)).ok();
             let pane = &backend.state().current().workspaces[0].panes[0];
             assert_eq!(backend.state().current().focused_pane, Some(7));
-            assert!(!pane.terminal.finished_unseen);
+            assert!(!pane.finished_unseen(&backend.state().agent_attention));
         })
         .expect("spawn focus-clears-pulse thread")
         .join()
@@ -352,7 +446,7 @@ fn focusing_a_finished_agent_clears_its_pulse() {
 /// A pane that publishes its own agents renders one row each, named after the agent and numbered
 /// so the rows are distinguishable, with each slot's own title as its activity.
 #[test]
-fn published_slots_render_one_numbered_row_each() {
+fn published_sessions_render_under_one_cluster() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
@@ -389,10 +483,12 @@ fn published_slots_render_one_numbered_row_each() {
                     // it: the reason is all this row has to say until a title arrives.
                     published_row("ses_e", "", "blocked", Some("answer required"), false),
                 ];
-                publisher.agent_refs = ["ses_a", "ses_b", "ses_c", "ses_d", "ses_e"]
+                publisher.agents = ["ses_a", "ses_b", "ses_c", "ses_d", "ses_e"]
                     .into_iter()
                     .enumerate()
-                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .map(|(index, slot)| {
+                        agent_ref(publisher.id, Some(slot), index as u64 + 1).into()
+                    })
                     .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
@@ -406,39 +502,39 @@ fn published_slots_render_one_numbered_row_each() {
                 println!("{line}");
             }
 
-            // One harness row names the program, and its sessions are listed beneath it.
+            // One cluster row names the program, and its sessions are listed beneath it. Untitled
+            // sessions fall back to the program's name, numbered so the two read apart.
+            let named: Vec<&String> = sidebar
+                .iter()
+                .filter(|line| line.contains("OpenCode"))
+                .collect();
             assert_eq!(
-                sidebar
-                    .iter()
-                    .filter(|line| line.contains("OpenCode"))
-                    .count(),
-                1,
-                "the program is named once: {sidebar:#?}"
+                named.len(),
+                3,
+                "the program and its two untitled runs: {sidebar:#?}"
             );
-            let harness = sidebar
+            assert!(named.iter().any(|line| line.contains("OpenCode #1")));
+            assert!(named.iter().any(|line| line.contains("OpenCode #2")));
+            let cluster = sidebar
                 .iter()
                 .position(|line| line.contains("OpenCode"))
                 .unwrap();
-            let program = sidebar[harness].find("OpenCode").unwrap();
+            let program = sidebar[cluster].find("OpenCode").unwrap();
             let session = sidebar
                 .iter()
                 .find(|line| line.contains("audit the widget"))
                 .unwrap();
             assert!(
                 session.find("audit").unwrap() > program,
-                "sessions sit deeper than their harness: {sidebar:#?}"
+                "sessions sit deeper than their cluster: {sidebar:#?}"
             );
-            // A session titled after the program itself is told apart by its number.
-            assert!(sidebar.iter().any(|line| line.contains("#4")));
-            // A slot's own title is its activity, and it outranks a reason: the name column
-            // cannot say which tab this is, so a prompt must not hide the one thing that can.
+            // A titled session is named by its task and still says why it is blocked: task and
+            // reason answer different questions, so neither hides the other.
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
             assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
             assert!(
-                !sidebar
-                    .iter()
-                    .any(|line| line.contains("permission required")),
-                "a titled slot shows its title, not its reason"
+                sidebar.iter().any(|line| line.contains("permission requ")),
+                "a titled session shows its reason beside its state: {sidebar:#?}"
             );
             // Until a title exists, the reason is all the row has.
             assert!(sidebar.iter().any(|line| line.contains("answer required")));
@@ -530,10 +626,12 @@ fn a_harness_folds_its_sessions_and_counts_them() {
                     published_row("ses_b", "fix the flaky test", "blocked", None, false),
                     published_row("ses_c", "update the changelog", "idle", None, false),
                 ];
-                publisher.agent_refs = ["ses_a", "ses_b", "ses_c"]
+                publisher.agents = ["ses_a", "ses_b", "ses_c"]
                     .into_iter()
                     .enumerate()
-                    .map(|(index, slot)| agent_ref(publisher.id, Some(slot), index as u64 + 1))
+                    .map(|(index, slot)| {
+                        agent_ref(publisher.id, Some(slot), index as u64 + 1).into()
+                    })
                     .collect();
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }

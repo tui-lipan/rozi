@@ -147,6 +147,9 @@ pub(crate) fn apply(
             // `blocked` token beside one would claim a live prompt on a machine nothing can reach.
             ctx.state.remote.agents.remove(&target);
             ctx.state.remote.projects.remove(&target);
+            // What this client had seen of the host's agents goes with them, so the snapshot that
+            // arrives on reconnecting is a baseline again rather than a diff against a stale count.
+            ctx.state.prune_agent_attention();
             if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
                 host.probe = crate::state::HostProbe::Failed(error);
             }
@@ -214,6 +217,14 @@ fn apply_agents(
         .remote
         .agents
         .insert(target.clone(), agents.clone());
+    let sighting = if previous.is_some() {
+        crate::state::FirstSighting::New
+    } else {
+        crate::state::FirstSighting::Baseline
+    };
+    ctx.state
+        .agent_attention
+        .observe_summaries(&agents, sighting);
     let Some(previous) = previous else {
         return;
     };
@@ -233,11 +244,8 @@ fn apply_agents(
         {
             continue;
         }
-        let before = previous
-            .iter()
-            .find(|earlier| earlier.same_agent(agent))
-            .map(|earlier| earlier.state.as_str());
-        let edges = crate::update::session::status::agent_status_edges(before, Some(&agent.state));
+        let before = previous.iter().find(|earlier| earlier.same_agent(agent));
+        let edges = crate::update::session::status::summary_edges(before, agent);
         crate::pane::pty_events::maybe_notify_session_agent(
             &ctx.state.config,
             Some(&host),
@@ -468,16 +476,88 @@ mod tests {
 
     fn summary(session: &str, state: &str) -> crate::session::protocol::AgentSummary {
         crate::session::protocol::AgentSummary {
+            reference: crate::session::protocol::AgentRef::for_test(1, 0, None),
             session: session.into(),
-            pane: 1,
-            generation: 0,
-            row: None,
             agent: "codex".into(),
             label: "Codex".into(),
-            state: state.into(),
+            state: crate::session::protocol::AgentState::from_status(state),
+            reason: None,
+            task: None,
+            completions: 0,
             changed_at: 0,
-            launch: 0,
         }
+    }
+
+    /// Losing a host forgets what was seen of its agents, so the snapshot that comes back on
+    /// reconnecting is a baseline: runs that finished while nothing here was watching are not
+    /// presented as news, by the inbox or by a notification.
+    #[test]
+    fn reconnecting_a_host_does_not_resurrect_finishes_from_while_it_was_gone() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+                let target = RemoteTarget::Alias("reconnect-test.invalid".into());
+                {
+                    let state = backend.state_mut();
+                    state.command_link = None;
+                    state.sidebar.hide_all();
+                    state.remote.hosts.seed(
+                        &state.config.remote,
+                        std::slice::from_ref(&target),
+                        &[],
+                        &[],
+                    );
+                    state.remote.hosts.get_mut(&target).unwrap().probe =
+                        crate::state::HostProbe::Reached;
+                    state
+                        .remote
+                        .monitors
+                        .push(Monitor::dormant(target.clone(), 3));
+                }
+                let finished = |completions| {
+                    let mut agent = summary("dev", "idle");
+                    agent.completions = completions;
+                    agent
+                };
+                let metadata = |rows: std::result::Result<Vec<DiscoveredSession>, String>,
+                                agents| Msg::HostMetadata {
+                    projects: Vec::new(),
+                    agents,
+                    target: target.clone(),
+                    generation: 3,
+                    rows,
+                };
+                backend
+                    .dispatch(metadata(Ok(Vec::new()), vec![finished(1)]))
+                    .unwrap();
+                backend
+                    .dispatch(metadata(Err("offline".into()), Vec::new()))
+                    .unwrap();
+                // The same agent, which finished twice more while the host was unreachable.
+                backend
+                    .dispatch(metadata(Ok(Vec::new()), vec![finished(3)]))
+                    .unwrap();
+                assert!(
+                    !backend
+                        .state()
+                        .agent_attention
+                        .summary_finished_unseen(&finished(3))
+                );
+                // A run that finishes after reconnecting is news again.
+                backend
+                    .dispatch(metadata(Ok(Vec::new()), vec![finished(4)]))
+                    .unwrap();
+                assert!(
+                    backend
+                        .state()
+                        .agent_attention
+                        .summary_finished_unseen(&finished(4))
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     /// The monitor's agent snapshot is state a row reads, not an event stream — so a poll that

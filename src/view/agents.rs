@@ -200,12 +200,16 @@ fn summary_row(
 /// same runs in, so one run carries one number everywhere.
 type Seat = (crate::state::PaneId, usize);
 
-/// Number the rows that would otherwise read exactly the same - same title, same session and host,
-/// same project and branch - by where they sit. Every other row stays unnumbered.
+/// Number the rows that would otherwise read exactly the same - same title, same agent beside a
+/// task, same session and host, same project and branch - by where they sit. Every other row stays
+/// unnumbered.
 fn number_twins(rows: &mut [(GlobalAgentRow, Seat)]) {
+    // What a row shows: its title, the agent beside a task, and where it runs. Two programs with
+    // the same task already read apart by the agent's name, as they do in Activity.
     let key = |row: &GlobalAgentRow| {
         (
             row.title(),
+            row.task.is_some().then(|| row.agent.clone()),
             row.session.clone(),
             row.host.clone(),
             row.place(),
@@ -580,6 +584,24 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Two programs working on the same task read apart by their names, so neither is numbered.
+    #[test]
+    fn the_same_task_in_two_programs_is_not_numbered() {
+        let working = |pane, label: &str| {
+            let mut agent = summary("api", pane, "working");
+            agent.label = label.into();
+            agent.task = Some("Review PR #183".into());
+            agent
+        };
+        let state = state_with_hosts(&[(
+            "workbox",
+            vec![working(1, "Claude Code"), working(2, "Codex")],
+        )]);
+        let rows = global_agent_rows(&state);
+        assert!(rows.iter().all(|row| row.ordinal.is_none()));
+        assert!(rows.iter().all(|row| row.title() == "Review PR #183"));
     }
 
     /// An elapsed time is the field a reader trusts without checking, and the only timestamp a

@@ -150,7 +150,7 @@ pub(crate) fn agent_tick(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.sidebar.last_agent_durations = None;
         return Update::none();
     }
-    let command = crate::schedule_agent_tick();
+    let command = crate::schedule_agent_tick(ctx);
     if ctx.state.sidebar.last_agent_durations == current {
         return Update::command_only(command);
     }

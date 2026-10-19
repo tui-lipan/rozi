@@ -424,8 +424,8 @@ pub(crate) fn schedule_theme_tick() -> Command {
 
 /// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
 /// segment is present, so an idle app with the default workbar never wakes for this.
-pub(crate) fn schedule_workbar_tick() -> Command {
-    Command::after(until_next_second(), move |link: CommandLink<Msg>| {
+pub(crate) fn schedule_workbar_tick(ctx: &Context<AppRoot>) -> Command {
+    Command::after(until_next_second(ctx), move |link: CommandLink<Msg>| {
         link.send(Msg::WorkbarTick);
     })
 }
@@ -433,8 +433,8 @@ pub(crate) fn schedule_workbar_tick() -> Command {
 /// Low-frequency repaint so the Agents sidebar's elapsed-time column advances. Only scheduled
 /// while that column is actually on screen, so a hidden sidebar or a screen of idle agents never
 /// wakes the app for this.
-pub(crate) fn schedule_agent_tick() -> Command {
-    Command::after(until_next_second(), move |link: CommandLink<Msg>| {
+pub(crate) fn schedule_agent_tick(ctx: &Context<AppRoot>) -> Command {
+    Command::after(until_next_second(ctx), move |link: CommandLink<Msg>| {
         link.send(Msg::AgentTick);
     })
 }
@@ -443,17 +443,56 @@ pub(crate) fn schedule_agent_tick() -> Command {
 /// reads the new second.
 const SECOND_TICK_MARGIN: Duration = Duration::from_millis(5);
 
+/// How far the real wall clock may run ahead of the runtime clock's account of it before the
+/// anchor is retaken. Suspend and a forward clock step both land here.
+const WALL_RESYNC_THRESHOLD: Duration = Duration::from_millis(250);
+
+/// A wall-clock reading paired with the runtime clock at the same moment, so later wall times can
+/// be read off the runtime clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WallAnchor {
+    runtime: Duration,
+    wall: Duration,
+}
+
 /// The delay from now to just past the next wall-clock second.
 ///
 /// A fixed one-second re-arm drifts by the handling latency every lap, so a seconds display would
 /// lag the real second by a wandering fraction and then skip one when the phase wraps. Aiming each
 /// lap at the boundary keeps every tick on the second, and every surface that counts seconds steps
 /// together.
-fn until_next_second() -> Duration {
-    let now = std::time::SystemTime::now()
+///
+/// The wall time comes from the runtime clock through [`WallAnchor`], because `Command::after`
+/// waits on that clock: under a controlled clock the real wall clock stands still while the
+/// runtime advances, and reading it directly would re-arm at the same short delay many times in
+/// one advanced second.
+fn until_next_second(ctx: &Context<AppRoot>) -> Duration {
+    let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
+    let (anchor, now) = runtime_wall_time(ctx.state.wall_anchor.get(), ctx.elapsed(), wall);
+    ctx.state.wall_anchor.set(Some(anchor));
     delay_to_next_second(now.subsec_nanos())
+}
+
+/// The wall time the runtime clock implies, and the anchor to keep. The anchor is retaken only
+/// when the real wall clock has run ahead, so a controlled clock, whose wall clock always lags,
+/// keeps its first anchor and stays deterministic.
+fn runtime_wall_time(
+    anchor: Option<WallAnchor>,
+    runtime: Duration,
+    wall: Duration,
+) -> (WallAnchor, Duration) {
+    let fresh = WallAnchor { runtime, wall };
+    let Some(anchor) = anchor else {
+        return (fresh, wall);
+    };
+    let implied = anchor.wall + runtime.saturating_sub(anchor.runtime);
+    if wall > implied + WALL_RESYNC_THRESHOLD {
+        (fresh, wall)
+    } else {
+        (anchor, implied)
+    }
 }
 
 fn delay_to_next_second(subsec_nanos: u32) -> Duration {
@@ -491,6 +530,55 @@ mod tests {
             delay_to_next_second(999_999_999),
             Duration::from_nanos(1) + SECOND_TICK_MARGIN
         );
+    }
+
+    /// The delays a tick chain re-arms with on a controlled runtime clock while the real wall clock
+    /// stands at `phase` into a second, re-arming the way the tick handlers do.
+    fn controlled_delays(phase: Duration, laps: usize) -> Vec<Duration> {
+        let wall = Duration::from_secs(1_000) + phase;
+        let mut anchor = None;
+        let mut runtime = Duration::ZERO;
+        (0..laps)
+            .map(|_| {
+                let (kept, now) = runtime_wall_time(anchor, runtime, wall);
+                anchor = Some(kept);
+                let delay = delay_to_next_second(now.subsec_nanos());
+                runtime += delay;
+                delay
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_controlled_clock_ticks_once_per_second_whatever_the_wall_clock_phase() {
+        for phase_ms in [0, 500, 990, 999] {
+            let phase = Duration::from_millis(phase_ms);
+            let delays = controlled_delays(phase, 10);
+            assert_eq!(
+                delays[0],
+                delay_to_next_second(phase.subsec_nanos()),
+                "real wall clock {phase_ms} ms into a second"
+            );
+            assert!(
+                delays[1..]
+                    .iter()
+                    .all(|delay| *delay == Duration::from_secs(1)),
+                "real wall clock {phase_ms} ms into a second: {delays:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wall_anchor_is_retaken_only_when_the_wall_clock_runs_ahead() {
+        let secs = Duration::from_secs;
+        let (anchor, _) = runtime_wall_time(None, secs(10), secs(1_000));
+        // The runtime advanced 5 s while the wall clock stood still, as under a controlled clock.
+        let (kept, now) = runtime_wall_time(Some(anchor), secs(15), secs(1_000));
+        assert_eq!((kept, now), (anchor, secs(1_005)));
+        // The wall clock jumped an hour ahead of the runtime clock, as across a suspend.
+        let (fresh, now) = runtime_wall_time(Some(anchor), secs(15), secs(4_600));
+        assert_eq!(now, secs(4_600));
+        assert_ne!(fresh, anchor);
     }
 
     #[test]

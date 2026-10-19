@@ -1071,7 +1071,7 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
     if !ctx.state.config.workbar.has_clock() {
         return Update::none();
     }
-    let command = crate::schedule_workbar_tick();
+    let command = crate::schedule_workbar_tick(ctx);
     // The tick is 1s, but `clock_format` defaults to minute resolution. Comparing against the text
     // the view last rendered turns ~59 of every 60 ticks into a bare reschedule instead of a
     // full-app render that would redraw an identical badge.
@@ -1175,6 +1175,34 @@ mod tests {
             y: 0,
             w: 100,
             h: 30,
+        });
+    }
+
+    #[test]
+    fn the_clock_tick_keeps_its_wall_anchor_on_a_controlled_clock() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            sized(&mut backend);
+            backend
+                .state_mut()
+                .config
+                .workbar
+                .right
+                .push(crate::config::WorkbarItem {
+                    segment: crate::config::WorkbarSegment::Clock,
+                    color: None,
+                });
+            backend.dispatch(Msg::WorkbarTick).unwrap();
+            let anchor = backend.state().wall_anchor.get();
+            assert!(anchor.is_some(), "the tick read the wall clock's phase");
+            // Each advanced second fires one tick and leaves the real wall clock behind the runtime
+            // clock, which must not read as a jump that retakes the anchor.
+            for _ in 0..5 {
+                backend.advance(std::time::Duration::from_secs(1));
+                backend.pump().unwrap();
+                assert_eq!(backend.state().wall_anchor.get(), anchor);
+            }
         });
     }
 

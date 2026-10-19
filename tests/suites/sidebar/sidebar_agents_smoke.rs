@@ -108,10 +108,10 @@ fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
     // Revealing the sidebar after the first frame is a real toggle, so it runs the real
     // slide. These tests assert on the settled column, not on a frame part-way through it.
     state.config.animations.sidebar = false;
-    state.config.sidebar.tabs = vec![SidebarTab::Activity];
+    state.config.sidebar.tabs = vec![SidebarTab::activity()];
     state.config.sidebar.layout.left.panel_count = 1;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
-    state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+    state.sidebar.panels[0].active_tab = Some(SidebarTab::activity().id());
 }
 
 /// The same pane, plus the Git project the session server resolved for its cwd.
@@ -184,7 +184,7 @@ fn agents_tab_renders_project_groups() {
             }
             let targets: Vec<_> = backend
                 .state()
-                .sidebar_targets(&SidebarTab::Activity)
+                .sidebar_targets(&SidebarTab::activity())
                 .into_iter()
                 .filter_map(|target| match target {
                     rozi::state::RowTarget::Pane(id) => Some(id),
@@ -325,6 +325,103 @@ fn worktree_headings_keep_their_branch_when_the_name_repeats() {
         .expect("spawn worktree headings thread")
         .join()
         .expect("worktree headings complete");
+}
+
+/// With `worktrees = "repository"` a repository is named once and each checkout is a line beneath
+/// it, its branch keeping its end where the line must shorten. A repository with one checkout keeps
+/// its usual heading.
+#[test]
+fn the_repository_layout_names_a_repository_once_with_a_line_per_checkout() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                state.config.sidebar.tabs = vec![SidebarTab::Activity {
+                    config: rozi::config::SidebarActivityConfig {
+                        worktrees: rozi::config::ActivityWorktrees::Repository,
+                    },
+                }];
+                state.config.sidebar.layout.left.width = 28;
+                let repo = "/x/rozi";
+                let primary = agent_pane_in_project(
+                    1,
+                    agent("claude", "Claude Code"),
+                    Some(("working", None)),
+                    repo,
+                    repo,
+                    "master",
+                );
+                let root = "/x/rozi/.worktrees/inbox";
+                let mut worktree = agent_pane_in_project(
+                    2,
+                    agent("codex", "Codex"),
+                    Some(("working", None)),
+                    root,
+                    root,
+                    "feat/an-agent-attention-inbox-branch",
+                );
+                worktree.terminal.repository = Some(repo.to_string());
+                let lone = agent_pane_in_project(
+                    3,
+                    agent("codex", "Codex"),
+                    Some(("working", None)),
+                    "/x/lipan",
+                    "/x/lipan",
+                    "main",
+                );
+                state.current_mut().workspaces[0].panes = vec![primary, worktree, lone];
+            }
+            backend.render();
+            let sidebar: Vec<String> = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .map(|line| line.chars().take(29).collect())
+                .collect();
+            let named = sidebar
+                .iter()
+                .filter(|line| line.trim_start().starts_with("rozi"))
+                .count();
+            assert_eq!(named, 1, "the repository is named once: {sidebar:#?}");
+            let master = sidebar
+                .iter()
+                .position(|line| line.contains("master"))
+                .expect("a line for the primary checkout");
+            let branch = sidebar
+                .iter()
+                .position(|line| line.contains("inbox-branch"))
+                .unwrap_or_else(|| panic!("the branch keeps its end: {sidebar:#?}"));
+            assert!(sidebar[branch].contains('…'), "{sidebar:#?}");
+            assert!(
+                sidebar[master + 1].contains("Claude Code")
+                    && sidebar[branch + 1].contains("Codex"),
+                "each checkout's agents sit beneath its line: {sidebar:#?}"
+            );
+            // A repository with one checkout keeps its usual heading, branch beside the name.
+            let lone = sidebar
+                .iter()
+                .find(|line| line.contains("lipan"))
+                .unwrap_or_else(|| panic!("the lone repository: {sidebar:#?}"));
+            assert!(lone.contains("main"), "{sidebar:#?}");
+            assert!(
+                !sidebar
+                    .iter()
+                    .any(|line| line.trim_start().starts_with("└ main")),
+                "no branch line of its own: {sidebar:#?}"
+            );
+        })
+        .expect("spawn repository layout thread")
+        .join()
+        .expect("repository layout completes");
 }
 
 #[test]

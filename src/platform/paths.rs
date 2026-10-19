@@ -565,15 +565,38 @@ fn starts_with_drive_letter(value: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next() == Some(':')
 }
 
-/// Whether two paths name the same directory. Case-sensitive on Unix, case-insensitive on Windows
-/// (whose filesystems are, and whose shells will happily report `c:\users\x` where the launch
-/// directory was recorded as `C:\Users\x`).
-pub fn paths_equal(a: &str, b: &str) -> bool {
-    if cfg!(windows) {
-        a.eq_ignore_ascii_case(b)
-    } else {
-        a == b
+/// Filesystem comparison rules of the machine that owns a path, independent of the client OS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PathFamily {
+    Posix,
+    Windows,
+}
+
+impl PathFamily {
+    pub(crate) fn local() -> Self {
+        Self::from_os(std::env::consts::OS)
     }
+
+    pub(crate) fn from_os(os: &str) -> Self {
+        if os == "windows" {
+            Self::Windows
+        } else {
+            Self::Posix
+        }
+    }
+
+    pub(crate) fn paths_equal(self, a: &str, b: &str) -> bool {
+        match self {
+            Self::Windows => a.eq_ignore_ascii_case(b),
+            Self::Posix => a == b,
+        }
+    }
+}
+
+/// Whether two local paths name the same directory. Case-sensitive on Unix, case-insensitive on
+/// Windows, whose shells can report a drive letter with different casing than the launch path.
+pub fn paths_equal(a: &str, b: &str) -> bool {
+    PathFamily::local().paths_equal(a, b)
 }
 
 /// Whether a path uses the Windows drive/UNC shape. Unix paths may legally contain `\` inside a
@@ -790,6 +813,17 @@ pub fn compress_home(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_family_comparison_is_independent_of_the_client_os() {
+        assert!(
+            PathFamily::from_os("windows")
+                .paths_equal(r"C:\Users\Adam\src\rozi", r"c:\Users\Adam\src\rozi")
+        );
+        for os in ["linux", "macos", "netbsd"] {
+            assert!(!PathFamily::from_os(os).paths_equal("/src/Foo", "/src/foo"));
+        }
+    }
 
     #[test]
     fn project_relative_path_names_the_place_inside_the_project() {

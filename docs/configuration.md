@@ -615,8 +615,8 @@ for arranging tabs and panels.
 
 ### Tab tables
 
-An entry in `tabs` can be a table instead of an ID. A table can configure the built-in `files` or
-`git` tree tab, or define a custom tab: a launcher tab with fixed rows, a command tab that lists a
+An entry in `tabs` can be a table instead of an ID. A table can configure the built-in `activity`
+tab or the `files` or `git` tree tab, or define a custom tab: a launcher tab with fixed rows, a command tab that lists a
 command's output, or a stream tab that programs publish rows to.
 
 | Tab key | Type | Default | Constraints and behavior |
@@ -636,6 +636,7 @@ command's output, or a stream tab that programs publish rows to.
 | `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
 | `compact_dirs` | bool | `true` | Git only. Shows a directory whose changes are all in one subdirectory on that subdirectory's row, as in `src/view/sidebar`. |
 | `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |
+| `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. Activity only. See [Activity](sidebar.md#activity). |
 
 A launcher entry takes a `label`, exactly one of `run`, `send`, or `popup`, an optional `keep_open`
 (default `true`), and an optional `group`. An `on_click` action takes an optional `label`, exactly

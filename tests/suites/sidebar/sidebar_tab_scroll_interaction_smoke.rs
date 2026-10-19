@@ -272,7 +272,7 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
             let mut backend = TestBackend::new(AppRoot::default());
             {
                 let state = backend.state_mut();
-                state.config.sidebar.tabs = vec![SidebarTab::Activity];
+                state.config.sidebar.tabs = vec![SidebarTab::activity()];
                 state.sidebar.panels = vec![
                     rozi::state::SidebarPanelState {
                         tabs: vec![SidebarTabId::new("activity")],

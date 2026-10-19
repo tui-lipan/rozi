@@ -345,6 +345,8 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) diff_stats: Option<bool>,
     pub(super) compact_dirs: Option<bool>,
     pub(super) max_entries: Option<usize>,
+    /// Activity only: `separate` or `repository`.
+    pub(super) worktrees: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -3423,23 +3425,33 @@ command = "open"
     }
 
     #[test]
-    fn sidebar_example_is_a_valid_warning_free_config() {
-        let parsed: FileConfig = toml::from_str(include_str!("../../examples/sidebar.toml"))
-            .expect("sidebar example parses");
-        let mut sidebar = SidebarConfig::default();
-        let mut warnings = Vec::new();
-        apply_sidebar_config(
-            &mut sidebar,
-            parsed.sidebar,
-            Vec::new(),
-            Default::default(),
-            Vec::new(),
-            &mut warnings,
+    fn activity_repository_worktrees_load_without_warnings() {
+        let loaded = load_config_from_text(
+            r#"[sidebar]
+                tabs = [{ name = "activity", worktrees = "repository" }]
+            "#,
+            Path::new("config.toml"),
         );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.sidebar.tabs,
+            vec![SidebarTab::Activity {
+                config: super::super::SidebarActivityConfig {
+                    worktrees: super::super::ActivityWorktrees::Repository,
+                },
+            }]
+        );
+    }
 
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(sidebar.tabs.len(), 13);
-        assert_eq!(sidebar.layout.left.panel_count, 2);
+    #[test]
+    fn sidebar_example_is_a_valid_warning_free_config() {
+        let loaded = load_config_from_text(
+            include_str!("../../examples/sidebar.toml"),
+            Path::new("examples/sidebar.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.sidebar.tabs.len(), 13);
+        assert_eq!(loaded.config.sidebar.layout.left.panel_count, 2);
     }
 
     #[test]

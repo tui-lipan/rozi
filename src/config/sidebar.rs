@@ -29,6 +29,39 @@ fn tree_view(name: &str) -> Option<SidebarTreeView> {
     }
 }
 
+fn build_activity_tab(
+    table: super::file::SidebarTabTableSpec,
+    warnings: &mut Vec<String>,
+) -> SidebarTab {
+    let mut config = crate::config::SidebarActivityConfig::default();
+    if table.entries.is_some()
+        || table.command.is_some()
+        || table.interval.is_some()
+        || table.group_prefix.is_some()
+        || table.format.is_some()
+        || table.stream.is_some()
+        || table.root.is_some()
+        || table.show_hidden.is_some()
+        || table.explorer.is_some()
+        || table.diff_stats.is_some()
+        || table.compact_dirs.is_some()
+        || table.max_entries.is_some()
+    {
+        warnings.push(
+            "Sidebar tab `activity` takes only `worktrees`; ignoring its other options".to_string(),
+        );
+    }
+    if let Some(worktrees) = table.worktrees {
+        match crate::config::ActivityWorktrees::parse(&worktrees) {
+            Some(layout) => config.worktrees = layout,
+            None => warnings.push(format!(
+                "Sidebar tab `activity` worktrees `{worktrees}` is unknown (expected `separate` or `repository`)"
+            )),
+        }
+    }
+    SidebarTab::Activity { config }
+}
+
 fn build_tree_tab(
     view: SidebarTreeView,
     table: super::file::SidebarTabTableSpec,
@@ -42,9 +75,10 @@ fn build_tree_tab(
         || table.group_prefix.is_some()
         || table.format.is_some()
         || table.stream.is_some()
+        || table.worktrees.is_some()
     {
         warnings.push(format!(
-            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix`/`format`/`stream` (rename the tab to keep those as a custom tab)"
+            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix`/`format`/`stream`/`worktrees` (rename the tab to keep those as a custom tab)"
         ));
     }
     if let Some(root) = table.root {
@@ -428,7 +462,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
     for spec in raw {
         let tab = match spec {
             SidebarTabSpec::Name(name) => match name.trim().to_ascii_lowercase().as_str() {
-                "activity" => SidebarTab::Activity,
+                "activity" => SidebarTab::activity(),
                 "agents" => SidebarTab::Agents,
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
@@ -452,8 +486,17 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                     warnings.push("Sidebar tab name must not be empty; skipped".to_string());
                     continue;
                 }
-                // A table naming a built-in file tree configures it; every other built-in name is
-                // still reserved, since those tabs take no options.
+                // A table naming Activity or a built-in file tree configures it; every other
+                // built-in name is still reserved, since those tabs take no options.
+                if name == "activity" {
+                    let tab = build_activity_tab(table, warnings);
+                    if !seen.insert(tab.id()) {
+                        warnings.push("Duplicate sidebar tab `activity`; skipped".to_string());
+                        continue;
+                    }
+                    tabs.push(tab);
+                    continue;
+                }
                 if let Some(view) = tree_view(&name) {
                     let tab = build_tree_tab(view, table, warnings);
                     let id = tab.id();
@@ -600,6 +643,44 @@ mod tests {
             "ignoring `group_prefix`",
             "`stream = true`",
             "format `yaml` is unknown",
+        ] {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(expected)),
+                "{expected}: {warnings:?}"
+            );
+        }
+    }
+
+    /// The Activity tab's table form sets how worktrees of one repository are laid out, and warns
+    /// about anything it cannot honour rather than guessing.
+    #[test]
+    fn the_activity_tab_takes_a_worktree_layout() {
+        let (config, warnings) =
+            parse(r#"tabs = [{ name = "activity", worktrees = "repository" }]"#);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            config.tabs,
+            vec![SidebarTab::Activity {
+                config: crate::config::SidebarActivityConfig {
+                    worktrees: crate::config::ActivityWorktrees::Repository,
+                },
+            }]
+        );
+        let (config, _) = parse(r#"tabs = ["activity"]"#);
+        assert_eq!(config.tabs, vec![SidebarTab::activity()]);
+
+        let (config, warnings) = parse(
+            r#"tabs = [{ name = "activity", worktrees = "nested", root = "repo" }, "activity"]"#,
+        );
+        assert_eq!(
+            config.tabs,
+            vec![SidebarTab::activity()],
+            "the duplicate is skipped"
+        );
+        for expected in [
+            "`nested` is unknown",
+            "takes only `worktrees`",
+            "Duplicate sidebar tab",
         ] {
             assert!(
                 warnings.iter().any(|warning| warning.contains(expected)),

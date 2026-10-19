@@ -3299,3 +3299,55 @@ fn presentation_interest_reports_the_runtime_frame_rate_not_a_reloaded_one() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn attachment_keeps_the_remote_path_family_across_disconnect() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::platform::paths::PathFamily;
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            for family in [PathFamily::Windows, PathFamily::Posix] {
+                let (mut client, _rx) = SessionClient::test_channel();
+                client.path_family = family;
+                backend.state_mut().current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "remote-path-family".into(),
+                        client: Some(client),
+                        autostart: false,
+                        read_only: false,
+                        reconnect: false,
+                        remote_host: Some("session-host".into()),
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                backend
+                    .dispatch(Msg::SessionAttached {
+                        epoch: 1,
+                        session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                            "remote-path-family",
+                        ),
+                        session: "remote-path-family".into(),
+                        client_id: 1,
+                        panes: Vec::new(),
+                        layout_rev: 0,
+                        layout: None,
+                        controller: Some(1),
+                        clients: Vec::new(),
+                        input_locked: false,
+                        allow_takeover: false,
+                        read_only: false,
+                        origin: crate::session::origin::SessionOrigin::default(),
+                    })
+                    .expect("attach remote session");
+                assert_eq!(backend.state().current().path_family, family);
+                backend.state_mut().current_mut().mark_disconnected();
+                assert_eq!(backend.state().current().path_family, family);
+            }
+        })
+        .expect("spawn path family test")
+        .join()
+        .expect("path family test completes");
+}

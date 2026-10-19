@@ -186,7 +186,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
             {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
-                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::activity(), SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
                         tabs: vec![SidebarTabId::new("activity")],
@@ -297,7 +297,7 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
             {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
-                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::activity(), SidebarTab::Panes];
                 state.config.sidebar.layout.left.panels = configured_panels.clone();
                 state.config.sidebar.layout.left.panel_count = 1;
                 state.sidebar.reconcile(&state.config.sidebar.clone());
@@ -337,7 +337,7 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
             {
                 let state = backend.state_mut();
                 state.sidebar.shown = [true, false];
-                state.config.sidebar.tabs = vec![SidebarTab::Activity, SidebarTab::Panes];
+                state.config.sidebar.tabs = vec![SidebarTab::activity(), SidebarTab::Panes];
                 state.sidebar.panels = vec![
                     SidebarPanelState {
                         tabs: vec![SidebarTabId::new("activity")],

@@ -62,6 +62,22 @@ pub(crate) struct SlotRef {
     pub active: bool,
 }
 
+/// Repository identity follows the filesystem rules of the host that owns its paths.
+#[derive(Clone, Debug, Eq)]
+pub(crate) struct RepositoryKey {
+    family: crate::platform::paths::PathFamily,
+    host: Option<String>,
+    path: String,
+}
+
+impl PartialEq for RepositoryKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.host == other.host
+            && self.family == other.family
+            && self.family.paths_equal(&self.path, &other.path)
+    }
+}
+
 /// Agents that share a project, herdr-style "space" grouping. `project` is `None` for the trailing
 /// fallback group of agents whose pane has no usable cwd.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +85,10 @@ pub(crate) struct AgentGroup {
     /// The host and directory the group stands for, `None` for the fallback group. Unlike the label,
     /// which two unrelated projects can share, this names one place.
     pub key: Option<String>,
+    /// The host and repository the group's checkout belongs to - its primary checkout for a linked
+    /// worktree - so a repository's checkouts can be laid out together. `None` for the fallback
+    /// group.
+    pub repository: Option<RepositoryKey>,
     pub project: Option<String>,
     /// Branch checked out in the group's project, shown on its header.
     pub branch: Option<String>,
@@ -419,7 +439,7 @@ fn cluster_expansion_key(group: Option<&str>, key: &ClusterKey) -> TreeExpansion
         (None, None) => String::new(),
     };
     TreeExpansionKey {
-        tab: crate::config::SidebarTab::Activity.id(),
+        tab: crate::config::SidebarTab::activity().id(),
         section: String::new(),
         row: format!("cluster:{place}|{}", key.agent),
     }
@@ -436,6 +456,7 @@ fn cluster_expansion_key(group: Option<&str>, key: &ClusterKey) -> TreeExpansion
 pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     struct Keyed {
         host: Option<String>,
+        family: crate::platform::paths::PathFamily,
         /// Project root where there is one, else the raw cwd: what the label is derived from and
         /// what rows are matched against.
         path: String,
@@ -450,13 +471,25 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
         match row.project_root.clone().or_else(|| row.cwd.clone()) {
             Some(path) => {
                 let host = row.cwd_host.clone();
+                let family = if host.is_none() {
+                    state.current().path_family
+                } else if crate::platform::paths::is_windows_path_shape(&path) {
+                    // A nested SSH shell's cwd belongs to another host, for which the session
+                    // proxy has no platform metadata. Its absolute path supplies the family.
+                    crate::platform::paths::PathFamily::Windows
+                } else {
+                    crate::platform::paths::PathFamily::Posix
+                };
                 if let Some(group) = known.iter_mut().find(|group| {
-                    group.host == host && crate::platform::paths::paths_equal(&group.path, &path)
+                    group.host == host
+                        && group.family == family
+                        && family.paths_equal(&group.path, &path)
                 }) {
                     group.rows.push(row);
                 } else {
                     known.push(Keyed {
                         host,
+                        family,
                         repository: row.repository.clone().unwrap_or_else(|| path.clone()),
                         path,
                         rows: vec![row],
@@ -482,10 +515,10 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
             known.iter().zip(&labels).any(|(other, other_label)| {
                 other_label.eq_ignore_ascii_case(label)
                     && (other.host != group.host
-                        || !crate::platform::paths::paths_equal(
-                            &other.repository,
-                            &group.repository,
-                        ))
+                        || other.family != group.family
+                        || !group
+                            .family
+                            .paths_equal(&other.repository, &group.repository))
             })
         })
         .collect();
@@ -514,6 +547,11 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
                         keyed.host.as_deref().unwrap_or_default(),
                         keyed.path
                     )),
+                    repository: Some(RepositoryKey {
+                        family: keyed.family,
+                        host: keyed.host,
+                        path: keyed.repository,
+                    }),
                     project: Some(label),
                     branch,
                     rows: keyed.rows,
@@ -533,6 +571,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     if !unknown.is_empty() {
         groups.push(AgentGroup {
             key: None,
+            repository: None,
             project: None,
             branch: None,
             rows: unknown,
@@ -689,18 +728,39 @@ pub(super) fn activity_budget(width: u16) -> usize {
     (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
-/// The Activity tab: a heading per project with its agents beneath, and a cluster wherever one
-/// agent runs more than once there, holding its runs unless folded.
-pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
+/// The Activity tab: a heading per checkout with its agents beneath, and a cluster wherever one
+/// agent runs more than once there, holding its runs unless folded. With `worktrees = "repository"`
+/// a repository's checkouts share one heading instead, each a branch line with its agents beneath.
+pub(super) fn agents_rows(
+    state: &State,
+    config: &crate::config::SidebarActivityConfig,
+) -> Vec<SidebarRow> {
     let groups = agent_groups(state);
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
     let show_headers = groups.len() > 1 || groups.first().is_some_and(|g| g.project.is_some());
+    let mut rows = Vec::new();
+    if !show_headers {
+        for group in &groups {
+            group_rows(state, group, 0, &mut rows);
+        }
+        return rows;
+    }
+    match config.worktrees {
+        crate::config::ActivityWorktrees::Separate => separate_sections(state, &groups, &mut rows),
+        crate::config::ActivityWorktrees::Repository => {
+            repository_sections(state, &groups, &mut rows);
+        }
+    }
+    rows
+}
+
+/// One section per checkout, headed by its repository and branch.
+fn separate_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<SidebarRow>) {
     let labels: Vec<Option<String>> = groups
         .iter()
         .map(|group| group.project.as_deref().map(str::to_lowercase))
         .collect();
-    let mut rows = Vec::new();
     for group in groups {
         let project = group.project.as_deref();
         // Several checkouts of one repository share its name, so only the branch tells their
@@ -712,66 +772,153 @@ pub(super) fn agents_rows(state: &State) -> Vec<SidebarRow> {
                 .count()
                 > 1
         });
-        let depth = if show_headers {
+        rows.push(
+            SidebarRow::header(group_header(
+                state,
+                project,
+                group.branch.as_deref(),
+                shared,
+            ))
+            .shape(Shape::Heading)
+            .apart()
+            .keyed(format!("project:{}", group.key.as_deref().unwrap_or(""))),
+        );
+        group_rows(state, group, 1, rows);
+    }
+}
+
+/// One section per repository: its name, then each checkout's branch on a line of its own with
+/// the checkout's agents beneath. The repository is named once however many worktrees it has, at
+/// the cost of a level of nesting. A repository with a single checkout, and a directory outside
+/// any repository, keep a section of their own as they would laid out separately.
+fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<SidebarRow>) {
+    let mut placed: Vec<&RepositoryKey> = Vec::new();
+    for group in groups {
+        let Some(repository) = group.repository.as_ref() else {
+            rows.push(
+                SidebarRow::header(group_header(state, None, None, false))
+                    .shape(Shape::Heading)
+                    .apart()
+                    .keyed("project:"),
+            );
+            group_rows(state, group, 1, rows);
+            continue;
+        };
+        if placed.contains(&repository) {
+            continue;
+        }
+        placed.push(repository);
+        let checkouts: Vec<&AgentGroup> = groups
+            .iter()
+            .filter(|other| other.repository.as_ref() == Some(repository))
+            .collect();
+        // A repository with one checkout has nothing to factor out: it reads as it would laid out
+        // separately, its branch beside its name, without spending a level on a single line.
+        if let [checkout] = checkouts.as_slice() {
             rows.push(
                 SidebarRow::header(group_header(
                     state,
-                    project,
-                    group.branch.as_deref(),
-                    shared,
+                    checkout.project.as_deref(),
+                    checkout.branch.as_deref(),
+                    false,
                 ))
                 .shape(Shape::Heading)
                 .apart()
-                .keyed(format!("project:{}", project.unwrap_or(""))),
+                .keyed(format!("project:{}", checkout.key.as_deref().unwrap_or(""))),
             );
-            1
-        } else {
-            0
-        };
-        let known_place = group.key.is_some();
-        let mut placed: Vec<ClusterKey> = Vec::new();
-        for row in &group.rows {
-            let key = cluster_key(row, known_place);
-            let members: Vec<&AgentRow> = group
-                .rows
-                .iter()
-                .filter(|other| key.is_some() && cluster_key(other, known_place) == key)
-                .collect();
-            let Some(key) = key.filter(|_| members.len() > 1) else {
-                rows.push(agent_line(state, row, None).at(depth));
-                continue;
-            };
-            // The cluster takes the place of its most urgent run; the rest follow it.
-            if placed.contains(&key) {
-                continue;
+            group_rows(state, checkout, 1, rows);
+            continue;
+        }
+        let label = group.project.as_deref().unwrap_or_default();
+        rows.push(
+            SidebarRow::header(row::header(state, label, false))
+                .shape(Shape::Heading)
+                .apart()
+                .keyed(format!(
+                    "repository:{}|{}",
+                    repository.host.as_deref().unwrap_or_default(),
+                    repository.path
+                )),
+        );
+        if checkouts.iter().all(|checkout| checkout.branch.is_none()) {
+            for checkout in checkouts {
+                group_rows(state, checkout, 1, rows);
             }
-            let expansion = cluster_expansion_key(group.key.as_deref(), &key);
-            placed.push(key);
-            let expanded = state
-                .sidebar
-                .tree_rows_expanded
-                .get(&expansion)
-                .copied()
-                .unwrap_or(true);
-            let spans_workspaces = members
-                .iter()
-                .any(|member| member.workspace_index != row.workspace_index);
+            continue;
+        }
+        for checkout in checkouts {
+            let branch = checkout.branch.clone().unwrap_or_else(|| {
+                checkout
+                    .key
+                    .as_deref()
+                    .and_then(|key| path_segments(key).last().map(|name| name.to_string()))
+                    .unwrap_or_default()
+            });
+            // A long branch keeps its end, where the line of work is named, as it does on a
+            // separate heading. The budget is the tab less the gutter, the tree guide, and the
+            // divider and scrollbar columns.
+            let width = state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity"));
+            let branch = row::truncate_start(&branch, usize::from(width).saturating_sub(7).max(8));
+            // An item rather than a header, so it keeps the row gutter and its tree guide lines up
+            // with the agents beneath it.
+            let line = Row::new(branch).title_style(super::super::fg_only(&state.theme.muted));
             rows.push(
-                cluster_row(state, &members, expansion, expanded, spans_workspaces).at(depth),
+                SidebarRow::item(line, RowTarget::Inert)
+                    .shape(Shape::Heading)
+                    .at(1)
+                    .keyed(format!(
+                        "checkout:{}",
+                        checkout.key.as_deref().unwrap_or("")
+                    )),
             );
-            if expanded {
-                let labels = member_labels(&members);
-                rows.extend(members.iter().zip(labels).map(|(member, label)| {
-                    let child = ClusterChild {
-                        label,
-                        show_workspace: spans_workspaces,
-                    };
-                    agent_line(state, member, Some(child)).at(depth + 1)
-                }));
-            }
+            group_rows(state, checkout, 2, rows);
         }
     }
-    rows
+}
+
+/// One checkout's agents and activities at `depth`: a row each, and a cluster wherever one agent
+/// runs more than once there.
+fn group_rows(state: &State, group: &AgentGroup, depth: usize, rows: &mut Vec<SidebarRow>) {
+    let known_place = group.key.is_some();
+    let mut placed: Vec<ClusterKey> = Vec::new();
+    for row in &group.rows {
+        let key = cluster_key(row, known_place);
+        let members: Vec<&AgentRow> = group
+            .rows
+            .iter()
+            .filter(|other| key.is_some() && cluster_key(other, known_place) == key)
+            .collect();
+        let Some(key) = key.filter(|_| members.len() > 1) else {
+            rows.push(agent_line(state, row, None).at(depth));
+            continue;
+        };
+        // The cluster takes the place of its most urgent run; the rest follow it.
+        if placed.contains(&key) {
+            continue;
+        }
+        let expansion = cluster_expansion_key(group.key.as_deref(), &key);
+        placed.push(key);
+        let expanded = state
+            .sidebar
+            .tree_rows_expanded
+            .get(&expansion)
+            .copied()
+            .unwrap_or(true);
+        let spans_workspaces = members
+            .iter()
+            .any(|member| member.workspace_index != row.workspace_index);
+        rows.push(cluster_row(state, &members, expansion, expanded, spans_workspaces).at(depth));
+        if expanded {
+            let labels = member_labels(&members);
+            rows.extend(members.iter().zip(labels).map(|(member, label)| {
+                let child = ClusterChild {
+                    label,
+                    show_workspace: spans_workspaces,
+                };
+                agent_line(state, member, Some(child)).at(depth + 1)
+            }));
+        }
+    }
 }
 
 /// How a run reads beneath its cluster, which already names the agent.
@@ -1259,7 +1406,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_rows(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::activity())
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1359,7 +1506,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_rows(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::activity())
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1471,7 +1618,7 @@ mod tests {
         // The Activity tab's item list agrees with the rows it renders.
         assert_eq!(
             state
-                .sidebar_rows(&crate::config::SidebarTab::Activity)
+                .sidebar_rows(&crate::config::SidebarTab::activity())
                 .iter()
                 .filter(|item| !matches!(item.target, RowTarget::Inert))
                 .count(),
@@ -1548,7 +1695,7 @@ mod tests {
         assert_eq!(rows[0].activity.as_deref(), Some("approval"));
         assert_eq!(
             state
-                .sidebar_rows(&crate::config::SidebarTab::Activity)
+                .sidebar_rows(&crate::config::SidebarTab::activity())
                 .into_iter()
                 .filter_map(|item| match item.target {
                     RowTarget::Pane(pane_id) => Some(pane_id),
@@ -1984,6 +2131,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn repository_sections_follow_session_host_identity_and_keep_hosts_separate() {
+        use crate::platform::paths::PathFamily;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().remote_host = Some("session-host".into());
+        for (family, primary, linked_path, shared) in [
+            (
+                PathFamily::Windows,
+                r"C:\Users\Adam\src\rozi",
+                r"C:\Users\Adam\src\rozi",
+                true,
+            ),
+            (
+                PathFamily::Windows,
+                r"C:\Users\Adam\src\rozi",
+                r"c:\Users\Adam\src\rozi",
+                true,
+            ),
+            (PathFamily::Posix, "/src/Foo", "/src/Foo", true),
+            (PathFamily::Posix, "/src/Foo", "/src/foo", false),
+        ] {
+            state.current_mut().path_family = family;
+            let checkout = match family {
+                PathFamily::Windows => r"C:\Users\Adam\worktrees\fix-ssh",
+                PathFamily::Posix => "/worktrees/fix-ssh",
+            };
+            let mut worktree =
+                pane_in_project(2, Some("idle"), checkout, checkout, Some("fix/ssh"));
+            worktree.terminal.repository = Some(linked_path.into());
+            state.current_mut().workspaces[0].panes = vec![
+                pane_in_project(1, Some("idle"), primary, primary, Some("master")),
+                worktree,
+            ];
+            // A --remote server reports its own paths without cwd_host.
+            assert!(
+                state.current().workspaces[0]
+                    .panes
+                    .iter()
+                    .all(|pane| pane.terminal.cwd_host.is_none())
+            );
+            let mut groups = agent_groups(&state);
+            assert_eq!(groups.len(), 2);
+            let mut remote = groups[0].clone();
+            remote.key = Some("remote-checkout".into());
+            remote.repository.as_mut().unwrap().host = Some("remote".into());
+            groups.push(remote);
+            let mut rows = Vec::new();
+            repository_sections(&state, &groups, &mut rows);
+            assert_eq!(
+                rows.iter().filter(|row| row.depth == 0).count(),
+                if shared { 2 } else { 3 },
+                "{family:?}: {linked_path}",
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.depth == 1 && row.shape == Shape::Heading)
+                    .count(),
+                if shared { 2 } else { 0 },
+                "{family:?}: {linked_path}",
+            );
+        }
+    }
+
+    #[test]
+    fn checkout_groups_follow_session_host_path_identity() {
+        use crate::platform::paths::PathFamily;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        for (family, paths, count) in [
+            (PathFamily::Windows, [r"C:\src\rozi", r"c:\src\rozi"], 1),
+            (PathFamily::Posix, ["/src/Foo", "/src/foo"], 2),
+        ] {
+            state.current_mut().path_family = family;
+            state.current_mut().workspaces[0].panes = paths
+                .into_iter()
+                .zip(1..)
+                .map(|(path, id)| pane_in_project(id, Some("idle"), path, path, Some("master")))
+                .collect();
+            assert_eq!(agent_groups(&state).len(), count, "{family:?}");
+        }
+    }
+
     /// A linked worktree is named after its repository, not its directory: `.claude/worktrees/x`
     /// is `rozi` on another branch, not a project called `x`. Sharing that name is not ambiguity
     /// worth a parent segment — the branch already separates them — while an unrelated project
@@ -2188,7 +2416,7 @@ mod tests {
 
         // Keyboard navigation walks the same groups in the same order the view draws.
         let targets = state
-            .sidebar_rows(&crate::config::SidebarTab::Activity)
+            .sidebar_rows(&crate::config::SidebarTab::activity())
             .into_iter()
             .filter_map(|item| match item.target {
                 RowTarget::PublishedRow { row, .. } => Some(row.id),
@@ -2519,7 +2747,7 @@ mod tests {
         state.current_mut().workspaces[0].panes = vec![first];
         state.current_mut().workspaces[1].panes = vec![second];
 
-        let rows = agents_rows(&state);
+        let rows = agents_rows(&state, &Default::default());
         assert_eq!(
             item_targets(&rows),
             vec![
@@ -2548,7 +2776,7 @@ mod tests {
         sync_published_refs(&mut sessions);
         state.current_mut().workspaces[0].panes = vec![sessions, pane(2, Some("idle"), false)];
 
-        let rows = agents_rows(&state);
+        let rows = agents_rows(&state, &Default::default());
         let clusters = rows.iter().filter(|row| row.expansion.is_some()).count();
         assert_eq!(clusters, 1, "only the publishing pane's sessions cluster");
         assert_eq!(item_targets(&rows).len(), 4);
@@ -2566,7 +2794,7 @@ mod tests {
         let other = pane_in_project(2, Some("idle"), "/x/rozi", "/x/rozi", Some("master"));
         state.current_mut().workspaces[0].panes = vec![sessions, other];
 
-        let rows = agents_rows(&state);
+        let rows = agents_rows(&state, &Default::default());
         let blocked = RowTarget::PublishedRow {
             pane_id: 1,
             row: crate::session::protocol::RowKey::new("sessions", "b"),

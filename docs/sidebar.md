@@ -90,6 +90,27 @@ worktrees shows each one under its own branch. A linked Git worktree is labelled
 repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
 repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
 repository name shortens. A checkout with no branch shows its short commit.
+
+If you run many worktrees of one repository at once, set `worktrees = "repository"` on the tab to
+name each repository once, with a line per checkout's branch and its agents beneath. A repository
+with one checkout keeps its usual heading, its branch beside its name:
+
+```toml
+[sidebar]
+tabs = [{ name = "activity", worktrees = "repository" }, "agents", "panes", "sessions"]
+```
+
+```text
+rozi
+├ master
+│ └ ⠋ Claude Code
+├ fix/ssh
+│ └ ▲ Codex
+└ feat/sidebar
+  └ ⠋ Claude Code
+```
+
+The default, `"separate"`, gives each checkout a section of its own.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 

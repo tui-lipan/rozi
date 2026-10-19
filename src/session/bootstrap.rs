@@ -611,7 +611,9 @@ fn try_attach_remote(
                 ),
             };
             match attached {
-                Ok((client, attached)) => {
+                Ok((mut client, attached)) => {
+                    client.path_family =
+                        crate::platform::paths::PathFamily::from_os(&preamble.platform);
                     link.send(Msg::SessionConnected {
                         epoch,
                         name: name.to_string(),

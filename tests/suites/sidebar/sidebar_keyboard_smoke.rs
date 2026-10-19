@@ -463,7 +463,8 @@ fn tab_cycles_sidebar_tabs_while_focused() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
+            backend.state_mut().config.sidebar.tabs =
+                vec![SidebarTab::Panes, SidebarTab::activity()];
             backend.state_mut().sidebar.panels[0].tabs =
                 vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
             backend
@@ -494,7 +495,8 @@ fn left_and_right_do_not_cycle_non_tree_sidebar_tabs() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
+            backend.state_mut().config.sidebar.tabs =
+                vec![SidebarTab::Panes, SidebarTab::activity()];
             backend.state_mut().sidebar.panels[0].tabs =
                 vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
             backend
@@ -528,7 +530,8 @@ fn alt_left_and_right_reorder_sidebar_tabs() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
+            backend.state_mut().config.sidebar.tabs =
+                vec![SidebarTab::Panes, SidebarTab::activity()];
             backend.state_mut().sidebar.panels[0].tabs =
                 vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
             backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("activity"));
@@ -589,7 +592,7 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
                         ..Default::default()
                     },
                 ];
-                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Activity];
+                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
             }
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))

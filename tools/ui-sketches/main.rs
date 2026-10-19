@@ -93,7 +93,7 @@ const SCENARIOS: [(&str, &str, fn()); 19] = [
     ),
     (
         "sidebar-activity-worktrees",
-        "two worktrees of one long-named repository beside a lone checkout, at three widths",
+        "worktrees of one long-named repository beside a lone checkout, both layouts",
         sidebar_activity_worktrees,
     ),
     (
@@ -1302,10 +1302,10 @@ fn sidebar_activity() {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
         state.sidebar.shown = [true, false];
-        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.tabs = vec![SidebarTab::activity()];
         state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.apply_configured_panels(&state.config.sidebar);
-        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::activity().id());
         let mut claude = agent_pane(10, "Claude Code", "idle", "/home/me/src/rozi");
         claude.terminal.published_rows = vec![
             session("a", "fix login redirect", "blocked", false),
@@ -1487,7 +1487,9 @@ fn sidebar_agents() {
 }
 
 /// Activity headings where the repository name repeats: the branch keeps its room and its tail,
-/// and the name shortens to a stub. A lone checkout beside them keeps its name whole.
+/// and the name shortens to a stub. A lone checkout beside them keeps its name whole. Then the same
+/// checkouts with `worktrees = "repository"`: the repository named once, a branch line each, and
+/// the lone checkout under its usual heading.
 fn sidebar_activity_worktrees() {
     use rozi::session::protocol::{
         AgentIdentity, AgentRef, DetectedAgent, DetectedAgentState, PaneRef, PaneStatus,
@@ -1530,23 +1532,39 @@ fn sidebar_activity_worktrees() {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
         state.sidebar.shown = [true, false];
-        state.config.sidebar.tabs = vec![SidebarTab::Activity];
+        state.config.sidebar.tabs = vec![SidebarTab::activity()];
         state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.apply_configured_panels(&state.config.sidebar);
-        state.sidebar.panels[0].active_tab = Some(SidebarTab::Activity.id());
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::activity().id());
         let repo = "/home/me/src/very-long-repository-name";
         let worktree = "/home/me/src/very-long-repository-name/.worktrees/status";
         let primary = agent_pane(10, "Claude Code", repo, "master");
         let mut linked = agent_pane(11, "Claude Code", worktree, "feat/worktree-work-status");
         linked.terminal.repository = Some(repo.to_string());
+        let second_worktree = "/home/me/src/very-long-repository-name/.worktrees/ssh";
+        let mut second = agent_pane(13, "Codex", second_worktree, "fix/ssh-reconnect");
+        second.terminal.repository = Some(repo.to_string());
         let lone = agent_pane(12, "Codex", "/home/me/src/tui-lipan", "fix/cursor-blink");
-        state.current_mut().workspaces[0].panes = vec![primary, linked, lone];
+        state.current_mut().workspaces[0].panes = vec![primary, linked, second, lone];
     }
     for width in [28, 32, 44] {
         backend.state_mut().config.sidebar.layout.left.width = width;
-        backend.set_viewport(viewport(100, 20));
+        backend.set_viewport(viewport(100, 24));
         backend.render();
         write_png(&mut backend, &format!("sidebar-activity-worktrees-{width}"));
+    }
+    backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Activity {
+        config: rozi::config::SidebarActivityConfig {
+            worktrees: rozi::config::ActivityWorktrees::Repository,
+        },
+    }];
+    for width in [28, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("sidebar-activity-worktrees-repository-{width}"),
+        );
     }
 }
 

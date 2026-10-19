@@ -185,6 +185,8 @@ pub enum Msg {
     TabSettingsReset,
     /// Apply a value from an open choice list.
     TabSettingsChoose(String),
+    /// Highlight a value in an open choice list.
+    TabSettingsChoiceSelect(String),
     TabSettingPromptChanged(InputEvent),
     TabSettingPromptClose,
     TabSettingPromptSubmit,

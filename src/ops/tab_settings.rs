@@ -37,9 +37,10 @@ pub(crate) fn tab_has_settings(state: &crate::state::State, tab: &str) -> bool {
 }
 
 /// The tab the command palette's "Sidebar tab settings…" opens: the active tab of the focused
-/// sidebar panel, when the sidebar is showing and that tab has settings.
+/// sidebar panel, when that panel's dock is showing and the tab has settings. The active panel
+/// can sit in a dock hidden since it was focused, and a tab out of sight is not the one meant.
 pub(crate) fn active_tab_with_settings(state: &crate::state::State) -> Option<String> {
-    if !state.sidebar_shown() {
+    if !state.sidebar_panel_visible(state.sidebar.active_panel_index()) {
         return None;
     }
     let tab = state.sidebar.active_tab()?.as_str();
@@ -83,6 +84,7 @@ pub(crate) fn back(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     };
     if picker.choosing.take().is_some() {
+        picker.choice_highlight = None;
         ctx.request_focus(TAB_SETTINGS_KEY);
         return Update::full();
     }
@@ -136,6 +138,7 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, key: String) -> Update {
         (SettingKind::Choice(_), _) => {
             if let Some(picker) = ctx.state.tab_settings.as_mut() {
                 picker.choosing = Some(key);
+                picker.choice_highlight = value.as_str().map(str::to_string);
             }
             ctx.request_focus(TAB_SETTING_CHOICES_KEY);
             Update::full()
@@ -173,15 +176,24 @@ pub(crate) fn reset(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn choose(ctx: &mut Context<AppRoot>, value: String) -> Update {
-    let Some(key) = ctx
-        .state
-        .tab_settings
-        .as_mut()
-        .and_then(|picker| picker.choosing.take())
-    else {
+    let Some(picker) = ctx.state.tab_settings.as_mut() else {
+        return Update::none();
+    };
+    picker.choice_highlight = None;
+    let Some(key) = picker.choosing.take() else {
         return Update::none();
     };
     write(ctx, &key, Some(SettingValue::String(value)))
+}
+
+pub(crate) fn choice_select(ctx: &mut Context<AppRoot>, value: String) -> Update {
+    if let Some(picker) = ctx.state.tab_settings.as_mut()
+        && picker.choosing.is_some()
+    {
+        picker.choice_highlight = Some(value);
+    }
+    // The footer's `apply` carries the highlighted value.
+    Update::full()
 }
 
 fn prompt_mut(ctx: &mut Context<AppRoot>) -> Option<&mut TabSettingPrompt> {

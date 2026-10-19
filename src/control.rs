@@ -92,6 +92,10 @@ pub const PUBLISH_KIND_CAPABILITY: &str = "publish-kind";
 /// `sidebar-publish` streams rows into a sidebar stream tab, several producers to a tab, and
 /// command tabs accept `format = "json"`.
 pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
+/// Extension manifests accept a `[settings]` entry's table form (`default`, `label`,
+/// `description`, `choices`, `min`, `max`) and `settings` on `[[sidebar_tabs]]`, offered in the tab
+/// settings picker. An older binary rejects both.
+pub const SIDEBAR_TAB_SETTINGS_CAPABILITY: &str = "sidebar-tab-settings";
 /// A UI answers `agents-overview`, every agent it knows about in every session and on every
 /// connected host, and `agent-go`, which goes to one of them.
 pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
@@ -136,6 +140,7 @@ impl ApiDescription {
                 crate::extension_runtime::protocol::CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
+                SIDEBAR_TAB_SETTINGS_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,
             ],
         }

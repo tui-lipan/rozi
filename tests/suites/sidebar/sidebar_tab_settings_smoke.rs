@@ -1,7 +1,10 @@
-use rozi::config::{SidebarTab, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView};
+use rozi::config::{
+    SidebarPosition, SidebarTab, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
+};
 use rozi::input::Action;
 use rozi::state::SettingsAction;
 use rozi::{AppRoot, Msg};
+use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::{TestBackend, prelude::*};
 
 fn on_stack(test: impl FnOnce() + Send + 'static) {
@@ -67,6 +70,18 @@ fn title_row(grid: &str, title: &str) -> usize {
     grid.lines()
         .position(|line| line.contains(title))
         .unwrap_or_else(|| panic!("`{title}` is on screen:\n{grid}"))
+}
+
+/// The cell `text` starts at, on the last line that shows it: the topmost card's copy.
+fn cell_of(grid: &str, text: &str) -> (u16, u16) {
+    let (y, line) = grid
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(text))
+        .last()
+        .unwrap_or_else(|| panic!("`{text}` is on screen:\n{grid}"));
+    let x = line[..line.find(text).unwrap()].chars().count();
+    (x as u16, y as u16)
 }
 
 fn screen(b: &mut TestBackend<AppRoot>) -> String {
@@ -147,7 +162,22 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
             title_row(&grid, "╭Files settings") + 1,
             "{grid}"
         );
-        b.dispatch(Msg::TabSettingsChoose("repo".into())).unwrap();
+        // Moving the highlight and clicking the footer's `apply` applies the highlighted value.
+        b.send_key(key(KeyCode::Down, KeyMods::NONE)).unwrap();
+        let grid = screen(&mut b);
+        let (x, y) = cell_of(&grid, "apply Enter");
+        for kind in [
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ] {
+            b.send_mouse(MouseEvent {
+                x,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+        }
         assert_eq!(files(&b).root, SidebarTreeRoot::Repo);
         assert!(
             b.state()
@@ -207,6 +237,34 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();
         assert!(b.state().sidebar_manager.is_none());
         assert!(b.state().show_settings);
+    });
+}
+
+/// Hiding the dock that holds the active panel leaves that panel active but out of sight; the
+/// command must not open settings for a tab the user cannot see.
+#[test]
+fn the_palette_command_ignores_a_tab_in_a_hidden_dock() {
+    on_stack(|| {
+        let mut b = backend();
+        let state = b.state_mut();
+        state
+            .config
+            .sidebar
+            .layout
+            .place("git", SidebarPosition::Right, 0);
+        state.sidebar.shown = [true, true];
+        let config = state.config.sidebar.clone();
+        state.sidebar.apply_configured_panels(&config);
+        assert_eq!(
+            state.sidebar.active_tab().map(|id| id.as_str()),
+            Some("activity")
+        );
+
+        // The left dock goes away while focus is on a pane, so the active panel stays put.
+        state.sidebar.shown = [false, true];
+        b.dispatch(Msg::RunAction(Action::SidebarTabSettings))
+            .unwrap();
+        assert!(b.state().tab_settings.is_none());
     });
 }
 

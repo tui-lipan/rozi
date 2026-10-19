@@ -19,8 +19,10 @@ pub struct TabSettingsState {
     pub query: String,
     /// Key of the highlighted setting.
     pub selected: Option<String>,
-    /// The choice setting whose values are listed in place of the settings, if one is open.
+    /// The choice setting whose values are listed over the settings, if one is open.
     pub choosing: Option<String>,
+    /// The highlighted value in that list, which its `apply` footer applies.
+    pub choice_highlight: Option<String>,
     /// The typed value being entered for an integer or text setting, if one is open.
     pub prompt: Option<TabSettingPrompt>,
 }
@@ -32,6 +34,7 @@ impl TabSettingsState {
             query: String::new(),
             selected: None,
             choosing: None,
+            choice_highlight: None,
             prompt: None,
         }
     }

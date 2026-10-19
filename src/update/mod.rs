@@ -261,6 +261,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::TabSettingsActivate(key) => crate::ops::tab_settings::activate(ctx, key),
         Msg::TabSettingsReset => crate::ops::tab_settings::reset(ctx),
         Msg::TabSettingsChoose(value) => crate::ops::tab_settings::choose(ctx, value),
+        Msg::TabSettingsChoiceSelect(value) => crate::ops::tab_settings::choice_select(ctx, value),
         Msg::TabSettingPromptChanged(event) => crate::ops::tab_settings::prompt_changed(ctx, event),
         Msg::TabSettingPromptClose => crate::ops::tab_settings::prompt_close(ctx),
         Msg::TabSettingPromptSubmit => crate::ops::tab_settings::prompt_submit(ctx),

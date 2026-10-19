@@ -432,7 +432,8 @@ done = { default = false, label = "Show finished" }
 
 A table with an unknown field, choices on a non-string, bounds on a non-integer, or a default
 outside its choices or bounds makes the extension invalid. The value your processes receive is the
-same either way.
+same either way. An older `rozi` rejects the table form; set `min_rozi` to a release with the
+`sidebar-tab-settings` capability (see [Check the installed API](control.md#check-the-installed-api)).
 
 Users override settings per extension in `config.toml`:
 
@@ -591,7 +592,8 @@ settings = ["group", "done"]
 
 A boolean shows as `Enabled` or `Disabled`, a string with `choices` as a list of its values, and an
 integer or other string as a typed value. Each key must be a declared setting, listed once, and not
-a list of strings; otherwise the extension is invalid. Several tabs may offer the same setting.
+a list of strings; otherwise the extension is invalid. Several tabs may offer the same setting. An
+older `rozi` rejects `settings` on a tab, as it does the table form above.
 
 A change is the same as the user editing `config.toml`: it reaches every process in
 `ROZI_EXTENSION_CONFIG`, so a command tab's next run reads it and services restart with it. Read the
@@ -847,7 +849,8 @@ Extension API 1 is frozen. Within API 1, `rozi` will not break:
 - `--json` diagnostics with `schema_version` `1`.
 
 `rozi` may add manifest keys, control commands, and diagnostic fields within API 1; a manifest that
-does not use them keeps working. Any change that would invalidate a working manifest — a removed
+does not use them keeps working. A manifest that uses a key added later is invalid on an older
+`rozi`, which does not know the key; the page notes the capability each such key comes with. Any change that would invalidate a working manifest — a removed
 key, a narrowed value, a changed default, a renamed environment variable — requires `api = 2`, and
 an extension declaring `api = 1` keeps loading under the API 1 rules.
 

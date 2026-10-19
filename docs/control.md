@@ -258,6 +258,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "remote-extension-runtime",
     "session-control",
     "sidebar-streams",
+    "sidebar-tab-settings",
     "split-size"
   ]
 }
@@ -276,6 +277,10 @@ binary treats every published row as an agent and keeps one publisher per pane.
 `remote-extension-runtime` means the binary can run
 [placed extension processes](writing-extensions.md#run-on-the-session-host), as a client and as a host. Both
 need it.
+
+`sidebar-tab-settings` means extension manifests accept a setting's table form and
+[`settings` on a sidebar tab](writing-extensions.md#tab-settings). An older binary rejects a
+manifest that uses either.
 
 ## Output and exit status
 

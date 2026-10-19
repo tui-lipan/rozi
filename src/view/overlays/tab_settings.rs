@@ -45,6 +45,7 @@ pub(crate) fn tab_setting_choice_overlay(ctx: &Context<AppRoot>) -> Element {
         &tab_label(ctx, &picker.tab),
         spec,
         group.value(key),
+        picker.choice_highlight.as_deref(),
         base_depth(ctx) + 1,
     )
 }
@@ -163,6 +164,7 @@ fn choice_overlay(
     label: &str,
     spec: &SettingSpec,
     value: Option<&crate::config::SettingValue>,
+    highlight: Option<&str>,
     depth: u16,
 ) -> Element {
     let SettingKind::Choice(choices) = &spec.kind else {
@@ -192,9 +194,24 @@ fn choice_overlay(
             SearchEntry::Item(item)
         })
         .collect::<Vec<_>>();
+    // The footer's `apply` is clickable, so it applies the live highlight, not the value the list
+    // opened on.
+    let highlight = highlight.or(current);
     let selected = choices
         .iter()
-        .position(|choice| Some(choice.value.as_str()) == current);
+        .position(|choice| Some(choice.value.as_str()) == highlight);
+    let mut actions = Vec::new();
+    if let Some(highlight) = highlight {
+        actions.push(
+            OverlayAction::new(
+                "enter",
+                "apply",
+                Msg::TabSettingsChoose(highlight.to_string()),
+                true,
+            )
+            .hint_only(),
+        );
+    }
     OverlayPalette::new(
         format!("{label} · {}", spec.label),
         TAB_SETTING_CHOICES_KEY,
@@ -202,24 +219,15 @@ fn choice_overlay(
         40,
     )
     .entries(entries)
-    .actions(vec![
-        OverlayAction::new(
-            "enter",
-            "apply",
-            Msg::TabSettingsChoose(
-                selected
-                    .and_then(|index| choices.get(index))
-                    .map(|choice| choice.value.clone())
-                    .unwrap_or_default(),
-            ),
-            true,
-        )
-        .hint_only(),
-    ])
+    .actions(actions)
     .placeholder("Search values…")
     .nested(depth)
     .preserve_groups(false)
     .selected(selected)
+    .on_select(
+        ctx.link()
+            .callback(|event: SearchEvent<String>| Msg::TabSettingsChoiceSelect(event.item.value)),
+    )
     .on_activate(
         ctx.link()
             .callback(|event: SearchEvent<String>| Msg::TabSettingsChoose(event.item.value)),

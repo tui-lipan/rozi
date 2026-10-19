@@ -718,6 +718,22 @@ mod tests {
         assert!(!attached.terminal.program_status_attention);
     }
 
+    /// An agent's own `blocked` still alerts: while detection reads the agent as working, nothing
+    /// else would say it needs the user.
+    #[test]
+    fn an_agents_own_blocked_report_alerts_while_detection_says_working() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Working,
+        });
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=blocked:app=claude-code\x07");
+        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
+        assert!(pane.terminal.program_status_attention);
+    }
+
     #[test]
     fn generic_terminal_edges_distinguish_success_from_failure() {
         use crate::session::protocol::PaneStatus;

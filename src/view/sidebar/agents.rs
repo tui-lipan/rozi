@@ -62,6 +62,19 @@ pub(crate) struct SlotRef {
     pub active: bool,
 }
 
+/// Repository identity keeps host names exact and follows the platform's path comparison rules.
+#[derive(Clone, Debug, Eq)]
+pub(crate) struct RepositoryKey {
+    host: Option<String>,
+    path: String,
+}
+
+impl PartialEq for RepositoryKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.host == other.host && crate::platform::paths::paths_equal(&self.path, &other.path)
+    }
+}
+
 /// Agents that share a project, herdr-style "space" grouping. `project` is `None` for the trailing
 /// fallback group of agents whose pane has no usable cwd.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +85,7 @@ pub(crate) struct AgentGroup {
     /// The host and repository the group's checkout belongs to - its primary checkout for a linked
     /// worktree - so a repository's checkouts can be laid out together. `None` for the fallback
     /// group.
-    pub repository: Option<String>,
+    pub repository: Option<RepositoryKey>,
     pub project: Option<String>,
     /// Branch checked out in the group's project, shown on its header.
     pub branch: Option<String>,
@@ -518,11 +531,10 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
                         keyed.host.as_deref().unwrap_or_default(),
                         keyed.path
                     )),
-                    repository: Some(format!(
-                        "{}|{}",
-                        keyed.host.as_deref().unwrap_or_default(),
-                        keyed.repository
-                    )),
+                    repository: Some(RepositoryKey {
+                        host: keyed.host,
+                        path: keyed.repository,
+                    }),
                     project: Some(label),
                     branch,
                     rows: keyed.rows,
@@ -763,9 +775,9 @@ fn separate_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<Sideba
 /// the cost of a level of nesting. A repository with a single checkout, and a directory outside
 /// any repository, keep a section of their own as they would laid out separately.
 fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<SidebarRow>) {
-    let mut placed: Vec<&str> = Vec::new();
+    let mut placed: Vec<&RepositoryKey> = Vec::new();
     for group in groups {
-        let Some(repository) = group.repository.as_deref() else {
+        let Some(repository) = group.repository.as_ref() else {
             rows.push(
                 SidebarRow::header(group_header(state, None, None, false))
                     .shape(Shape::Heading)
@@ -781,7 +793,7 @@ fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<Side
         placed.push(repository);
         let checkouts: Vec<&AgentGroup> = groups
             .iter()
-            .filter(|other| other.repository.as_deref() == Some(repository))
+            .filter(|other| other.repository.as_ref() == Some(repository))
             .collect();
         // A repository with one checkout has nothing to factor out: it reads as it would laid out
         // separately, its branch beside its name, without spending a level on a single line.
@@ -805,7 +817,11 @@ fn repository_sections(state: &State, groups: &[AgentGroup], rows: &mut Vec<Side
             SidebarRow::header(row::header(state, label, false))
                 .shape(Shape::Heading)
                 .apart()
-                .keyed(format!("repository:{repository}")),
+                .keyed(format!(
+                    "repository:{}|{}",
+                    repository.host.as_deref().unwrap_or_default(),
+                    repository.path
+                )),
         );
         if checkouts.iter().all(|checkout| checkout.branch.is_none()) {
             for checkout in checkouts {
@@ -2096,6 +2112,44 @@ mod tests {
                 (Some("api-2".into()), Some("feat/pricing".into())),
             ]
         );
+    }
+
+    #[test]
+    fn repository_sections_follow_platform_path_identity_and_keep_hosts_separate() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        for linked_path in [r"C:\Users\Adam\src\rozi", r"c:\Users\Adam\src\rozi"] {
+            let primary = r"C:\Users\Adam\src\rozi";
+            let checkout = r"C:\Users\Adam\worktrees\fix-ssh";
+            let mut worktree =
+                pane_in_project(2, Some("idle"), checkout, checkout, Some("fix/ssh"));
+            worktree.terminal.repository = Some(linked_path.into());
+            state.current_mut().workspaces[0].panes = vec![
+                pane_in_project(1, Some("idle"), primary, primary, Some("master")),
+                worktree,
+            ];
+            let mut groups = agent_groups(&state);
+            assert_eq!(groups.len(), 2);
+            let mut remote = groups[0].clone();
+            remote.key = Some("remote-checkout".into());
+            remote.repository.as_mut().unwrap().host = Some("remote".into());
+            groups.push(remote);
+            let mut rows = Vec::new();
+            repository_sections(&state, &groups, &mut rows);
+            let shared =
+                crate::platform::paths::paths_equal(r"C:\Users\Adam\src\rozi", linked_path);
+            assert_eq!(
+                rows.iter().filter(|row| row.depth == 0).count(),
+                if shared { 2 } else { 3 },
+                "{linked_path}",
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.depth == 1 && row.shape == Shape::Heading)
+                    .count(),
+                if shared { 2 } else { 0 },
+                "{linked_path}",
+            );
+        }
     }
 
     /// A linked worktree is named after its repository, not its directory: `.claude/worktrees/x`

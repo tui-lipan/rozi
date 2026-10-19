@@ -205,12 +205,15 @@ const SIDEBAR_TAB_KEYS: &[&str] = &[
     "interval",
     "on_click",
     "group_prefix",
+    "format",
+    "stream",
     "root",
     "show_hidden",
     "explorer",
     "diff_stats",
     "compact_dirs",
     "max_entries",
+    "worktrees",
 ];
 
 const LAUNCHER_ENTRY_KEYS: &[&str] = &["label", "group", "run", "send", "popup", "keep_open"];

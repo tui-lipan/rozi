@@ -175,4 +175,24 @@ mod tests {
         );
         assert!(paste_path("/tmp/x\n.png").is_err());
     }
+    #[test]
+    fn drop_paths_unescape_only_where_backslash_is_not_a_separator() {
+        assert_eq!(
+            drop_path("\"/tmp/paste test.png\""),
+            Some("/tmp/paste test.png".into())
+        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                drop_path("/tmp/paste\\ test.png"),
+                Some("/tmp/paste test.png".into())
+            );
+            assert_eq!(drop_path("/tmp/trailing\\"), None);
+        }
+        #[cfg(windows)]
+        assert_eq!(
+            drop_path("C:\\Some User\\photo.png"),
+            Some("C:\\Some User\\photo.png".into())
+        );
+    }
 }

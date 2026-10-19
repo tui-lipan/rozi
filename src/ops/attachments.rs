@@ -202,13 +202,11 @@ mod tests {
         assert!(dropped_image_path("/tmp/notes.txt", PasteOrigin::Terminal).is_none());
         assert!(dropped_image_path("photo.png", PasteOrigin::Terminal).is_none());
         assert!(dropped_image_path("/tmp/photo.png\n/other.png", PasteOrigin::Terminal).is_none());
+        let path = std::env::temp_dir().join("paste test.png");
+        let quoted = format!("'{}'", path.display());
         assert_eq!(
-            dropped_image_path("'/tmp/paste test.png'", PasteOrigin::Terminal),
-            Some("/tmp/paste test.png".into())
-        );
-        assert_eq!(
-            dropped_image_path("/tmp/paste\\ test.png", PasteOrigin::Terminal),
-            Some("/tmp/paste test.png".into())
+            dropped_image_path(&quoted, PasteOrigin::Terminal),
+            Some(path)
         );
     }
 }

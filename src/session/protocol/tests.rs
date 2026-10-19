@@ -1195,3 +1195,38 @@ fn continuous_input_priority_round_trips_without_changing_bytes() {
         })
     );
 }
+
+#[test]
+fn attachment_steps_and_acknowledgements_round_trip_through_framing() {
+    for operation in [
+        AttachmentOperation::Begin {
+            pane_id: 7,
+            generation: 9,
+            local: true,
+            name: "photo.png".into(),
+            size: 4,
+        },
+        AttachmentOperation::Chunk {
+            data: "AAECAw==".into(),
+        },
+        AttachmentOperation::Finish,
+        AttachmentOperation::Cancel,
+    ] {
+        let message = ClientMessage::Attachment {
+            transfer_id: 42,
+            operation,
+        };
+        let mut bytes = vec![];
+        write_frame(&mut bytes, &message).unwrap();
+        let decoded: ClientMessage = read_frame(&mut std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(decoded, message);
+    }
+    let ack = ServerMessage::AttachmentAck {
+        transfer_id: 42,
+        error: Some("read-only client".into()),
+    };
+    let mut bytes = vec![];
+    write_frame(&mut bytes, &ack).unwrap();
+    let decoded: ServerMessage = read_frame(&mut std::io::Cursor::new(bytes)).unwrap();
+    assert_eq!(decoded, ack);
+}

@@ -1298,6 +1298,12 @@ pub(crate) fn pane_element(
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
         );
     }
+    if terminal_ready && crate::ops::attachments::bridge_enabled(&ctx.state, id) {
+        terminal_widget = terminal_widget.on_paste(
+            ctx.link()
+                .callback(move |content| Msg::PanePaste(id, content)),
+        );
+    }
     if let Some(blinking) = ctx.state.config.cursor.blink.override_blinking() {
         terminal_widget = terminal_widget.cursor_blinking(blinking);
     }

@@ -51,6 +51,7 @@
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring
 //! workspace**; treat CI as the first real verification of any of it.
 
+pub(crate) mod attachments;
 pub mod fs_security;
 pub mod install;
 pub mod install_source;

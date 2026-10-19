@@ -328,9 +328,11 @@ files, and relays its requests back to your client. `rozi extensions status` sho
 as a separate SSH command. Quote `~` in their paths so your local shell does not expand it.
 
 Clipboard reads and writes happen on the machine running the rozi window, so OSC 52 from a remote
-pane can update your local clipboard when enabled. A program that accesses the clipboard directly
-still uses the remote host's clipboard. See [Terminal features](terminal.md) for shell metadata,
-clipboard behavior, and image limits.
+pane can update your local clipboard when enabled. Paste images or copied files
+with `Ctrl+V` or the paste command to upload them and insert remote paths. A
+program that accesses a clipboard API directly still uses the remote host's
+clipboard. See [Select, copy, and paste](terminal.md#select-copy-and-paste) for
+file limits, retention, and the distinction from running plain `ssh` in a pane.
 
 ## Reconnection and switching
 

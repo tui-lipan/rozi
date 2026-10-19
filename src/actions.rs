@@ -26,6 +26,16 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.focused_pane() else {
         return Update::full();
     };
+    if crate::ops::attachments::bridge_enabled(&ctx.state, id) {
+        return match ctx.clipboard().read_content() {
+            Ok(Some(content)) => crate::ops::attachments::paste(ctx, id, content),
+            Ok(None) => Update::none(),
+            Err(err) => {
+                crate::pane::pty_events::notify_error(ctx, "Paste failed", err.to_string());
+                Update::full()
+            }
+        };
+    }
     let text = match ctx.clipboard().read() {
         Ok(text) => text,
         Err(err) => {

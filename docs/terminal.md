@@ -91,10 +91,32 @@ You can change all of these under [`[clipboard]`](configuration.md#clipboard); c
 the config reloads. If the system has no primary selection, regular clipboard copying still works,
 and primary-only gestures are turned off.
 
-The `v` command key and `Ctrl+V` paste text from the system clipboard as a bracketed paste. When the
-clipboard holds something other than text, `Ctrl+V` pressed directly passes through so the pane
-program can handle it. The prefix, held-modifier, and command-palette paste commands paste text
-only.
+The `v` command key and `Ctrl+V` paste text from the system clipboard as a bracketed paste.
+In a local session, direct `Ctrl+V` passes non-text formats to the pane program;
+the prefix and command-palette paste commands read text.
+
+When your local rozi window is attached to a remote session, `Ctrl+V` and the
+paste command also accept clipboard images and copied files. rozi uploads them
+and pastes their remote paths without submitting the prompt. Codex and Claude
+Code can use the image paths as attachments. Other files arrive as paths for the
+pane program to interpret. An empty clipboard keeps direct `Ctrl+V` available
+to the program.
+
+Copy up to 16 regular files at once from a file manager. Each file may be up to
+16 MiB; clipboard images may be up to 10,000,000 bytes after PNG encoding.
+Directories and symbolic links are rejected. A single absolute PNG, JPEG, GIF,
+WebP, or BMP path dropped into the terminal is also uploaded when it names a
+local file. Paths absent from your computer and other pasted text paths stay text. If the terminal consumes the shortcut before rozi receives it,
+use the `v` command key or the paste command in the command palette.
+
+Uploaded files survive detach and reconnect while the session server runs.
+They are removed when that server stops and are not restored with a saved
+session. A session can retain up to 256 files or 256 MiB of uploads. Reaching a
+limit reports an error. Files copied from your computer remain unchanged.
+
+This transfer works for panes in managed remote sessions. An ordinary `ssh`
+command inside a local pane, another SSH hop inside a remote pane, and programs
+inside containers need their own file transfer or shared filesystem.
 
 Programs can set the system clipboard through OSC 52 while `[clipboard].enable_osc52 = true`, the
 default. Turn it off if pane programs should not control your clipboard. The change applies when the

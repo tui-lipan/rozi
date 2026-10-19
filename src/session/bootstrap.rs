@@ -914,6 +914,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             {
                 Msg::SessionEvicted { epoch, message }
             }
+            ServerMessage::AttachmentAck { .. } => Msg::RefreshPaintLayers,
             ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
             ServerMessage::Renamed { session } => Msg::SessionRenamed { epoch, session },
             ServerMessage::PaneLoggingChanged {

@@ -56,7 +56,7 @@ impl SessionServer {
     }
 
     pub(super) fn pump_clients(&mut self) -> bool {
-        let mut activity = false;
+        let mut activity = self.poll_attachment_work();
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
@@ -934,6 +934,10 @@ impl SessionServer {
                 }
                 Vec::new()
             }
+            ClientMessage::Attachment {
+                transfer_id,
+                operation,
+            } => self.attachment_step(client_id, transfer_id, operation),
             ClientMessage::Rename { name } => {
                 if !self.is_controller(client_id) {
                     return Vec::new();

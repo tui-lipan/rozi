@@ -11,3 +11,4 @@ checks, and sign-off.
 | [Performance archive](performance/README.md) | Dated performance audits and their recorded verdicts |
 | [Performance audit playbook](performance/audit-playbook.md) | Running and recording a new audit |
 | [Release process](release-process.md) | Preparing, signing, publishing, and checking a release |
+| [Image and file paste over SSH](ssh-clipboard-investigation.md) | Clipboard failure trace, Herdr comparison, and a proposed attachment transfer design |

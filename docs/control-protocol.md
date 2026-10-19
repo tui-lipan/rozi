@@ -634,7 +634,7 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":31,"min_protocol_version":31,
+{"type":"session-control","session":"dev","protocol_version":32,"min_protocol_version":32,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 

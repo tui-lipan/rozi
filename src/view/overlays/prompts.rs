@@ -132,6 +132,8 @@ pub(super) struct PromptChrome<'a> {
     dim_behind: bool,
     /// When this prompt stacks on a list overlay, pin it one row below that overlay's top.
     parent_reserve_percent: Option<u16>,
+    /// Layers above the picker it was raised from; see `nest_modal`. Overrides the two above.
+    depth: u16,
 }
 
 impl<'a> PromptChrome<'a> {
@@ -151,6 +153,7 @@ impl<'a> PromptChrome<'a> {
             submit_hints,
             dim_behind: false,
             parent_reserve_percent: None,
+            depth: 0,
         }
     }
 
@@ -164,11 +167,10 @@ impl<'a> PromptChrome<'a> {
         self
     }
 
-    /// For a prompt raised over a picker that stays open beneath it: the picker recedes and the
-    /// prompt pins one row below its top, like every other stacked card.
-    pub(super) fn over_picker(mut self) -> Self {
-        self.dim_behind = true;
-        self.parent_reserve_percent = Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT);
+    /// For a prompt raised over pickers that stay open beneath it, `depth` layers up: everything
+    /// below recedes once more and the prompt pins one row below the top picker's top.
+    pub(super) fn over_picker(mut self, depth: u16) -> Self {
+        self.depth = depth;
         self
     }
 }
@@ -197,6 +199,7 @@ pub(super) fn prompt_overlay(
         submit_hints,
         dim_behind,
         parent_reserve_percent,
+        depth,
     } = chrome;
     let theme = &ctx.state.theme;
     let scroll_up = caption_document
@@ -298,6 +301,7 @@ pub(super) fn prompt_overlay(
         modal =
             modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
     }
+    modal = super::palette::nest_modal(ctx, modal, depth);
     if caption.is_some_and(PromptCaption::arms_chrome) {
         // Recolor the shared modal chrome to the error accent so the whole dialog reads as "armed"
         // (border + title), matching the inline caption. The modal captures focus the moment it

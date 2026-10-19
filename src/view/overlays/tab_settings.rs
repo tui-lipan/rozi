@@ -22,17 +22,39 @@ fn activate_verb(spec: &SettingSpec) -> &'static str {
     }
 }
 
+/// How many pickers the settings list stacks on: Sidebar tabs when it was opened from there, none
+/// when it came from the command palette. A choice list or prompt sits one layer higher.
+fn base_depth(ctx: &Context<AppRoot>) -> u16 {
+    u16::from(ctx.state.sidebar_manager.is_some())
+}
+
+/// The open choice list, stacked on the settings list, if a choice setting is being edited.
+pub(crate) fn tab_setting_choice_overlay(ctx: &Context<AppRoot>) -> Element {
+    let Some(picker) = ctx.state.tab_settings.as_ref() else {
+        return Text::new("").into();
+    };
+    let group = crate::ops::tab_settings::open_group(&ctx.state);
+    let (Some(key), Some(group)) = (&picker.choosing, group) else {
+        return Text::new("").into();
+    };
+    let Some(spec) = group.spec(key) else {
+        return Text::new("").into();
+    };
+    choice_overlay(
+        ctx,
+        &tab_label(ctx, &picker.tab),
+        spec,
+        group.value(key),
+        base_depth(ctx) + 1,
+    )
+}
+
 pub(crate) fn tab_settings_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.tab_settings.as_ref() else {
         return Text::new("").into();
     };
     let label = tab_label(ctx, &picker.tab);
     let group = crate::ops::tab_settings::open_group(&ctx.state);
-    if let (Some(key), Some(group)) = (&picker.choosing, group)
-        && let Some(spec) = group.spec(key)
-    {
-        return choice_overlay(ctx, &label, spec, group.value(key));
-    }
     let specs = group
         .map(|group| group.specs.as_slice())
         .unwrap_or_default();
@@ -115,6 +137,7 @@ pub(crate) fn tab_settings_overlay(ctx: &Context<AppRoot>) -> Element {
     .selected(selected_index)
     .initial_query(picker.query.clone())
     .detail(detail)
+    .nested(base_depth(ctx))
     .on_query_change(
         ctx.link()
             .callback(|query: Arc<str>| Msg::TabSettingsQueryChanged(query.to_string())),
@@ -133,13 +156,14 @@ pub(crate) fn tab_settings_overlay(ctx: &Context<AppRoot>) -> Element {
     palette.render(ctx)
 }
 
-/// A choice setting's values, listed in place of the settings until one is chosen or Esc goes
+/// A choice setting's values, stacked on the settings until one is chosen or Esc goes
 /// back. The current value is highlighted and marked.
 fn choice_overlay(
     ctx: &Context<AppRoot>,
     label: &str,
     spec: &SettingSpec,
     value: Option<&crate::config::SettingValue>,
+    depth: u16,
 ) -> Element {
     let SettingKind::Choice(choices) = &spec.kind else {
         return Text::new("").into();
@@ -175,7 +199,7 @@ fn choice_overlay(
         format!("{label} · {}", spec.label),
         TAB_SETTING_CHOICES_KEY,
         Msg::TabSettingsBack,
-        56,
+        40,
     )
     .entries(entries)
     .actions(vec![
@@ -193,6 +217,7 @@ fn choice_overlay(
         .hint_only(),
     ])
     .placeholder("Search values…")
+    .nested(depth)
     .preserve_groups(false)
     .selected(selected)
     .on_activate(
@@ -220,7 +245,7 @@ pub(crate) fn tab_setting_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
         ctx,
         PromptChrome::new(&title, &placeholder, &[("apply", "enter")])
             .caption(prompt.error.as_deref().map(PromptCaption::Note))
-            .over_picker(),
+            .over_picker(base_depth(ctx) + 1),
         &prompt.input,
         TAB_SETTING_PROMPT_KEY,
         Msg::TabSettingPromptChanged,

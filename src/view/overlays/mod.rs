@@ -87,4 +87,6 @@ pub(in crate::view::overlays) use settings::action_search_palette;
 mod sidebar_manager;
 pub(crate) use sidebar_manager::sidebar_manager_overlay;
 mod tab_settings;
-pub(crate) use tab_settings::{tab_setting_prompt_overlay, tab_settings_overlay};
+pub(crate) use tab_settings::{
+    tab_setting_choice_overlay, tab_setting_prompt_overlay, tab_settings_overlay,
+};

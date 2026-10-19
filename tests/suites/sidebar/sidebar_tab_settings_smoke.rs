@@ -62,6 +62,13 @@ fn saved_files_setting(key: &str) -> Option<toml::Value> {
         .cloned()
 }
 
+/// The row a modal's top border, starting with `title`, is drawn on.
+fn title_row(grid: &str, title: &str) -> usize {
+    grid.lines()
+        .position(|line| line.contains(title))
+        .unwrap_or_else(|| panic!("`{title}` is on screen:\n{grid}"))
+}
+
 fn screen(b: &mut TestBackend<AppRoot>) -> String {
     b.render();
     b.capture_frame().to_fixed_grid_lines().join("\n")
@@ -98,10 +105,14 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
             b.state().tab_settings.as_ref().map(|p| p.tab.as_str()),
             Some("files")
         );
+        // The settings stack on Sidebar tabs, which stays on screen one row higher.
         let grid = screen(&mut b);
-        assert!(grid.contains("Files settings"), "{grid}");
         assert!(grid.contains("Search bar"), "{grid}");
-        assert!(!grid.contains("Sidebar tabs"), "{grid}");
+        assert_eq!(
+            title_row(&grid, "╭Files settings"),
+            title_row(&grid, "╭Sidebar tabs") + 1,
+            "{grid}"
+        );
 
         // A toggle flips on Enter.
         b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
@@ -115,9 +126,14 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         // A choice lists its values; choosing one closes the list.
         b.dispatch(Msg::TabSettingsSelect("root".into())).unwrap();
         b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        // The choice list is a third layer, one row below the settings.
         let grid = screen(&mut b);
-        assert!(grid.contains("Files · Root"), "{grid}");
         assert!(grid.contains("Pane directory"), "{grid}");
+        assert_eq!(
+            title_row(&grid, "╭Files · Root"),
+            title_row(&grid, "╭Files settings") + 1,
+            "{grid}"
+        );
         b.dispatch(Msg::TabSettingsChoose("repo".into())).unwrap();
         assert_eq!(files(&b).root, SidebarTreeRoot::Repo);
         assert!(
@@ -144,6 +160,11 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         b.dispatch(Msg::TabSettingPromptSubmit).unwrap();
         let grid = screen(&mut b);
         assert!(grid.contains("Enter 1 to 10000"), "{grid}");
+        assert_eq!(
+            title_row(&grid, "╭Entry limit"),
+            title_row(&grid, "╭Files settings") + 1,
+            "{grid}"
+        );
         assert_eq!(files(&b).max_entries, 2000);
         set_text(&mut b, "50");
         b.dispatch(Msg::TabSettingPromptSubmit).unwrap();

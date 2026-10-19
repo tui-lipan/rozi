@@ -1629,6 +1629,71 @@ mod tests {
         assert!(rows.iter().any(|row| row.identity.is_none()));
     }
 
+    /// With claude-rozi-sessions listing one row per conversation, Claude Code's report describes
+    /// the conversation on screen, and never adds a row - even while no row is on screen.
+    #[test]
+    fn an_agents_own_program_status_follows_its_conversation_on_screen() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut claude = pane(1, None, false);
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        // msg "Bash"
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
+        claude.terminal.program_status = screen.program_status_snapshot();
+        claude.terminal.published_rows = vec![
+            crate::session::protocol::PublishedRow {
+                title: "fix login".into(),
+                ..row("a", "idle", false)
+            },
+            // Untitled, so nothing but the report says what it is doing.
+            crate::session::protocol::PublishedRow {
+                title: String::new(),
+                ..row("b", "working", true)
+            },
+        ];
+        sync_published_refs(&mut claude);
+        state.current_mut().workspaces[0].panes = vec![claude];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().all(|row| row.identity.is_some()));
+        let on_screen = rows.iter().find(|row| row.slot.as_ref().unwrap().active);
+        assert_eq!(on_screen.unwrap().activity.as_deref(), Some("Bash"));
+        let other = rows.iter().find(|row| !row.slot.as_ref().unwrap().active);
+        assert_eq!(other.unwrap().activity.as_deref(), Some("fix login"));
+
+        for row in &mut state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .published_rows
+        {
+            row.active = false;
+        }
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().all(|row| row.identity.is_some()));
+    }
+
+    /// A report Claude Code left behind when it exited is an activity, named for the agent.
+    #[test]
+    fn a_program_status_without_its_agent_takes_the_agents_name() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut exited = pane(1, None, false);
+        exited.terminal.detected_agent = None;
+        exited.agents.clear();
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=done:app=claude-code\x07");
+        exited.terminal.program_status = screen.program_status_snapshot();
+        state.current_mut().workspaces[0].panes = vec![exited];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].title, "Claude Code");
+        assert!(rows[0].identity.is_none());
+    }
+
     #[test]
     fn a_generic_publisher_beside_a_detected_agent_stays_out_of_the_agents_view() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());

@@ -1066,6 +1066,7 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
         navigation_targets: Vec::new(),
         suggested_keybindings: Vec::new(),
         settings: Default::default(),
+        setting_specs: Default::default(),
         command_details: Vec::new(),
         service_details: Vec::new(),
         command_paths: Default::default(),

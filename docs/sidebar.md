@@ -91,13 +91,13 @@ repository's name, and the branch beside it tells the checkouts apart: when seve
 repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
 repository name shortens. A checkout with no branch shows its short commit.
 
-If you run many worktrees of one repository at once, set `worktrees = "repository"` on the tab to
-name each repository once, with a line per checkout's branch and its agents beneath. A repository
-with one checkout keeps its usual heading, its branch beside its name:
+If you run many worktrees of one repository at once, set the tab's **Worktrees** setting to
+**By repository** to name each repository once, with a line per checkout's branch and its agents
+beneath. A repository with one checkout keeps its usual heading, its branch beside its name:
 
 ```toml
-[sidebar]
-tabs = [{ name = "activity", worktrees = "repository" }, "agents", "panes", "sessions"]
+[sidebar.settings.activity]
+worktrees = "repository"
 ```
 
 ```text
@@ -110,7 +110,7 @@ rozi
   └ ⠋ Claude Code
 ```
 
-The default, `"separate"`, gives each checkout a section of its own.
+The default, **Separate**, gives each checkout a section of its own.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
@@ -250,9 +250,13 @@ not a resolved path, and clicking the row acts on the link itself. With Nerd Fon
 directory has a linked-folder icon and a link to a file has a linked-file icon. A linked directory
 does not expand.
 
-Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Set `show_hidden =
-false` on the tab to leave them out. Entries that Git ignores, such as a `target/` build directory
-and everything in it, are dimmed too.
+Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Turn off the tab's
+**Hidden files** setting to leave them out. Entries that Git ignores, such as a `target/` build
+directory and everything in it, are dimmed too.
+
+Turn on **Search bar** to filter the tree as you type. Files and Git also have **Root**, which
+browses the focused pane's directory or the whole repository containing it, **Line counts**, and
+**Entry limit**. See [Tab settings](#tab-settings).
 
 In a remote session, the listing comes from the remote host, and search covers only directories you
 have already expanded.
@@ -265,8 +269,8 @@ when the pane is in a subdirectory.
 
 When all of a directory's changes are inside one subdirectory, the two share a row, as in
 `src/view/sidebar`. Expanding or collapsing that row acts on the innermost directory. While
-you search the tab, every directory gets its own row again. Set `compact_dirs = false` on the
-`git` tab to always give each directory its own row.
+you search the tab, every directory gets its own row again. Turn off the tab's **Compact
+directories** setting to always give each directory its own row.
 
 In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`, so the
 markers line up at the right edge. Nerd Font status symbols have a one-cell right margin to keep
@@ -390,8 +394,10 @@ rozi remembers which rows you expanded or collapsed until the client exits.
 </CaptureGallery>
 
 Open **Settings… → Bars → Sidebar tabs…** to choose which tabs appear. Search by name and press
-`Enter` to turn a tab on or off; the picker stays open so you can change several. A tab from an
-extension that is not loaded stays listed with a dash and keeps its place for when it returns.
+`Enter` to turn a tab on or off; the picker stays open so you can change several. A tab with
+[settings](#tab-settings) counts them beside its status, as in `Enabled · 5 settings`, and `Ctrl+E`
+opens them. A tab from an extension that is not loaded stays
+listed with a dash and keeps its place for when it returns.
 
 Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a tab on another
 panel's body to add it at the end, or on its tab bar to choose its position. A tab you turn off and
@@ -424,6 +430,28 @@ docks shrink to leave room for your panes, without changing their saved widths.
 
 See [Configuration](configuration.md#sidebar) for defaults, size limits, file tree options, and
 custom tab syntax. A complete example is in [`examples/sidebar.toml`](../examples/sidebar.toml).
+
+### Tab settings
+
+Activity, Files, Git, and extension tabs that offer them have settings of their own. In
+**Sidebar tabs…**, highlight the tab and press `Ctrl+E`, or run **Sidebar tab settings…** from the
+command palette to open the settings of the tab shown in the focused panel. Each row shows a
+setting's current value:
+
+| Setting | Enter |
+| --- | --- |
+| `Enabled` or `Disabled` | Switches it |
+| A choice, such as **Root** | Lists the values; `Enter` applies one |
+| A number or text | Asks for the value; a number outside its range is refused |
+
+`Ctrl+R` puts the highlighted setting back to its default. Each change is saved to `config.toml`
+and takes effect at once; `Esc` returns to **Sidebar tabs…**, or to your panes when you opened the
+settings from the command palette.
+
+A built-in tab's settings are saved in `[sidebar.settings.<tab>]`; see
+[Built-in tab settings](configuration.md#built-in-tab-settings) for the keys. An extension tab's
+settings are the extension's own, saved in `[extensions.<id>]`, and the picker names the extension
+in its header. Changing one restarts the extension's services, as editing the file would.
 
 ## Custom tabs
 
@@ -563,7 +591,8 @@ evaluate it. `{line}` is rejected in `run` and
 
 Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher, command, and
 stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
-disablement, failed loads, updates, removal, and reinstallation. See
+disablement, failed loads, updates, removal, and reinstallation. An extension tab can offer some of
+the extension's settings in [Tab settings](#tab-settings). See
 [Extensions](writing-extensions.md#sidebar-tabs).
 
 ### Security

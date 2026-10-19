@@ -1,12 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig,
-    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
-    SidebarTreeRoot, SidebarTreeView,
+    ActivityWorktrees, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_TREE_MAX_ENTRIES_LIMIT,
+    SidebarActivityConfig, SidebarConfig, SidebarLauncherEntry, SidebarPosition, SidebarTab,
+    SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
 };
+use super::setting_schema::{SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
 
 const BUILTIN_TABS: &[&str] = &[
     "activity",
@@ -19,8 +20,10 @@ const BUILTIN_TABS: &[&str] = &[
     "projects",
 ];
 
-/// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
-/// take no options, so a table naming one is a mistake worth warning about.
+/// A tree tab's setting that is an action rather than a value, so it is written in `config.toml`
+/// and never offered in the settings picker.
+const TREE_ON_CLICK: &str = "on_click";
+
 fn tree_view(name: &str) -> Option<SidebarTreeView> {
     match name {
         "files" => Some(SidebarTreeView::Files),
@@ -29,96 +32,238 @@ fn tree_view(name: &str) -> Option<SidebarTreeView> {
     }
 }
 
-fn build_activity_tab(
-    table: super::file::SidebarTabTableSpec,
-    warnings: &mut Vec<String>,
-) -> SidebarTab {
-    let mut config = crate::config::SidebarActivityConfig::default();
-    if table.entries.is_some()
-        || table.command.is_some()
-        || table.interval.is_some()
-        || table.group_prefix.is_some()
-        || table.format.is_some()
-        || table.stream.is_some()
-        || table.root.is_some()
-        || table.show_hidden.is_some()
-        || table.explorer.is_some()
-        || table.diff_stats.is_some()
-        || table.compact_dirs.is_some()
-        || table.max_entries.is_some()
-    {
-        warnings.push(
-            "Sidebar tab `activity` takes only `worktrees`; ignoring its other options".to_string(),
-        );
-    }
-    if let Some(worktrees) = table.worktrees {
-        match crate::config::ActivityWorktrees::parse(&worktrees) {
-            Some(layout) => config.worktrees = layout,
-            None => warnings.push(format!(
-                "Sidebar tab `activity` worktrees `{worktrees}` is unknown (expected `separate` or `repository`)"
-            )),
-        }
-    }
-    SidebarTab::Activity { config }
+fn builtin_tab(name: &str) -> Option<SidebarTab> {
+    Some(match name {
+        "activity" => SidebarTab::activity(),
+        "agents" => SidebarTab::Agents,
+        "panes" => SidebarTab::Panes,
+        "sessions" => SidebarTab::Sessions,
+        "worktrees" => SidebarTab::Worktrees,
+        "projects" => SidebarTab::Projects,
+        other => SidebarTab::tree(tree_view(other)?),
+    })
 }
 
-fn build_tree_tab(
-    view: SidebarTreeView,
-    table: super::file::SidebarTabTableSpec,
-    warnings: &mut Vec<String>,
-) -> SidebarTab {
-    let name = view.id();
-    let mut config = SidebarTreeConfig::for_view(view);
-    if table.entries.is_some()
-        || table.command.is_some()
-        || table.interval.is_some()
-        || table.group_prefix.is_some()
-        || table.format.is_some()
-        || table.stream.is_some()
-        || table.worktrees.is_some()
-    {
-        warnings.push(format!(
-            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval`/`group_prefix`/`format`/`stream`/`worktrees` (rename the tab to keep those as a custom tab)"
-        ));
-    }
-    if let Some(root) = table.root {
-        match SidebarTreeRoot::parse(&root) {
-            Some(root) => config.root = root,
-            None => warnings.push(format!(
-                "Sidebar tab `{name}` root `{root}` is unknown (expected `cwd` or `repo`)"
-            )),
-        }
-    }
-    if let Some(show_hidden) = table.show_hidden {
-        config.show_hidden = show_hidden;
-    }
-    if let Some(explorer) = table.explorer {
-        config.explorer = explorer;
-    }
-    if let Some(diff_stats) = table.diff_stats {
-        config.diff_stats = diff_stats;
-    }
-    if let Some(compact_dirs) = table.compact_dirs {
-        config.compact_dirs = compact_dirs;
-    }
-    if let Some(max_entries) = table.max_entries {
-        let clamped = max_entries.clamp(1, SIDEBAR_TREE_MAX_ENTRIES_LIMIT);
-        if clamped != max_entries {
-            warnings.push(format!(
-                "Sidebar tab `{name}` max_entries {max_entries} out of range; clamped to {clamped}"
+/// The settings a built-in tab offers, in the order its settings picker lists them. Empty for a
+/// tab with none.
+///
+/// This is the whole contract for a built-in tab's settings: `[sidebar.settings.<tab>]` is checked
+/// against it, the picker is built from it, and the tab's typed config is read out of the values
+/// it admits. A new setting is a line here and the code that reads it.
+pub fn builtin_tab_settings(id: &str) -> Vec<SettingSpec> {
+    let tree = |view: SidebarTreeView| {
+        let defaults = SidebarTreeConfig::for_view(view);
+        let root = match defaults.root {
+            SidebarTreeRoot::Cwd => "cwd",
+            SidebarTreeRoot::Repo => "repo",
+        };
+        let mut specs = vec![
+            SettingSpec::toggle("explorer", "Search bar", defaults.explorer),
+            SettingSpec::toggle("show_hidden", "Hidden files", defaults.show_hidden),
+            SettingSpec::choice(
+                "root",
+                "Root",
+                root,
+                &[("cwd", "Pane directory"), ("repo", "Repository")],
+            ),
+            SettingSpec::toggle("diff_stats", "Line counts", defaults.diff_stats),
+        ];
+        if view == SidebarTreeView::Changes {
+            specs.push(SettingSpec::toggle(
+                "compact_dirs",
+                "Compact directories",
+                defaults.compact_dirs,
             ));
         }
-        config.max_entries = clamped;
+        specs.push(SettingSpec::integer(
+            "max_entries",
+            "Entry limit",
+            defaults.max_entries as i64,
+            1,
+            SIDEBAR_TREE_MAX_ENTRIES_LIMIT as i64,
+        ));
+        specs
+    };
+    match id {
+        "activity" => vec![SettingSpec::choice(
+            "worktrees",
+            "Worktrees",
+            "separate",
+            &[("separate", "Separate"), ("repository", "By repository")],
+        )],
+        other => tree_view(other).map(tree).unwrap_or_default(),
     }
-    if let Some(action) = table.on_click {
+}
+
+/// Read `[sidebar.settings.<tab>]` for one built-in tab against its declared settings.
+///
+/// An unknown key, a value of the wrong type, and an unknown choice are reported and leave the
+/// setting at its default; an integer out of range is clamped. A tree tab's `on_click` action is
+/// returned separately, since it is not a value a picker edits.
+fn builtin_group(
+    id: &str,
+    specs: Vec<SettingSpec>,
+    raw: Option<&toml::Value>,
+    warnings: &mut Vec<String>,
+) -> (SettingsGroup, Option<super::file::UserCommandTableSpec>) {
+    let mut values: BTreeMap<String, SettingValue> = specs
+        .iter()
+        .map(|spec| (spec.key.clone(), spec.default.clone()))
+        .collect();
+    let mut overridden = BTreeSet::new();
+    let mut on_click = None;
+    let section = format!("sidebar.settings.{id}");
+    match raw.map(|raw| raw.as_table()) {
+        None => {}
+        Some(None) => warnings.push(format!("`[{section}]` must be a table; ignored")),
+        Some(Some(table)) => {
+            for (key, value) in table {
+                if key == TREE_ON_CLICK && tree_view(id).is_some() {
+                    match value.clone().try_into() {
+                        Ok(action) => on_click = Some(action),
+                        Err(error) => {
+                            warnings.push(format!("`{section}.{key}` is invalid: {error}"))
+                        }
+                    }
+                    continue;
+                }
+                let Some(spec) = specs.iter().find(|spec| &spec.key == key) else {
+                    warnings.push(format!(
+                        "Sidebar tab `{id}` has no setting `{key}`; ignored"
+                    ));
+                    continue;
+                };
+                overridden.insert(key.clone());
+                if let Some(value) =
+                    spec.check_config_value(value, &format!("{section}.{key}"), warnings)
+                {
+                    values.insert(key.clone(), value);
+                }
+            }
+        }
+    }
+    let group = SettingsGroup {
+        owner: SettingsOwner::SidebarTab(id.to_string()),
+        specs,
+        values,
+        overridden,
+    };
+    (group, on_click)
+}
+
+fn activity_config(group: &SettingsGroup) -> SidebarActivityConfig {
+    let mut config = SidebarActivityConfig::default();
+    if let Some(worktrees) = group
+        .value("worktrees")
+        .and_then(SettingValue::as_str)
+        .and_then(ActivityWorktrees::parse)
+    {
+        config.worktrees = worktrees;
+    }
+    config
+}
+
+fn tree_config(
+    view: SidebarTreeView,
+    group: &SettingsGroup,
+    on_click: Option<super::file::UserCommandTableSpec>,
+    warnings: &mut Vec<String>,
+) -> SidebarTreeConfig {
+    let mut config = SidebarTreeConfig::for_view(view);
+    let flag = |key: &str| group.value(key).and_then(SettingValue::as_bool);
+    if let Some(root) = group
+        .value("root")
+        .and_then(SettingValue::as_str)
+        .and_then(SidebarTreeRoot::parse)
+    {
+        config.root = root;
+    }
+    if let Some(explorer) = flag("explorer") {
+        config.explorer = explorer;
+    }
+    if let Some(show_hidden) = flag("show_hidden") {
+        config.show_hidden = show_hidden;
+    }
+    if let Some(diff_stats) = flag("diff_stats") {
+        config.diff_stats = diff_stats;
+    }
+    if let Some(compact_dirs) = flag("compact_dirs") {
+        config.compact_dirs = compact_dirs;
+    }
+    if let Some(max_entries) = group
+        .value("max_entries")
+        .and_then(SettingValue::as_integer)
+    {
+        config.max_entries = usize::try_from(max_entries).unwrap_or(config.max_entries);
+    }
+    if let Some(action) = on_click {
         config.on_click = parse_sidebar_action(
             action,
-            &format!("Sidebar tab `{name}` on_click"),
+            &format!("Sidebar tab `{}` on_click", view.id()),
             "{path}",
             warnings,
         );
     }
-    SidebarTab::Tree { view, config }
+    config
+}
+
+/// Apply `[sidebar.settings]` to the built-in tabs in `tabs`, returning each configurable tab's
+/// settings group. A table for a tab that is absent or takes no settings is reported.
+pub(crate) fn apply_builtin_settings(
+    tabs: &mut [SidebarTab],
+    raw: &BTreeMap<String, toml::Value>,
+    warnings: &mut Vec<String>,
+) -> BTreeMap<String, SettingsGroup> {
+    let mut groups = BTreeMap::new();
+    for tab in tabs.iter_mut() {
+        let id = tab.id().as_str().to_string();
+        let specs = builtin_tab_settings(&id);
+        if specs.is_empty() {
+            continue;
+        }
+        let (group, on_click) = builtin_group(&id, specs, raw.get(&id), warnings);
+        match tab {
+            SidebarTab::Activity { config } => *config = activity_config(&group),
+            SidebarTab::Tree { view, config } => {
+                *config = tree_config(*view, &group, on_click, warnings);
+            }
+            _ => {}
+        }
+        groups.insert(id, group);
+    }
+    for id in raw.keys() {
+        if groups.contains_key(id) {
+            continue;
+        }
+        if BUILTIN_TABS.contains(&id.as_str()) && builtin_tab_settings(id).is_empty() {
+            warnings.push(format!(
+                "Sidebar tab `{id}` has no settings; ignoring `[sidebar.settings.{id}]`"
+            ));
+        } else if BUILTIN_TABS.contains(&id.as_str()) {
+            // Configured, but not in `tabs`: nothing to apply it to, and nothing wrong either.
+        } else if let Some((extension, _)) = id.split_once('.') {
+            warnings.push(format!(
+                "`[sidebar.settings.\"{id}\"]` is ignored; an extension tab's settings live in `[extensions.{extension}]`"
+            ));
+        } else {
+            warnings.push(format!(
+                "`[sidebar.settings.{id}]` names no built-in tab; ignored"
+            ));
+        }
+    }
+    groups
+}
+
+/// What installed extensions add to the sidebar. Merged inside the sidebar pass rather than after
+/// it, because placement is resolved there and a tab that arrived too late to be placed would be
+/// unreachable.
+#[derive(Default)]
+pub(crate) struct SidebarContributions {
+    pub(crate) tabs: Vec<SidebarTab>,
+    pub(crate) suggestions: BTreeMap<String, super::schema::SidebarTabLocation>,
+    pub(crate) presets: Vec<super::schema::SidebarLayoutPreset>,
+    /// The settings each extension tab offers, by namespaced tab id.
+    pub(crate) tab_settings: BTreeMap<String, SettingsGroup>,
 }
 
 /// Apply the `[sidebar]` table, then let installed extensions add their own tabs.
@@ -130,11 +275,15 @@ fn build_tree_tab(
 pub(super) fn apply_sidebar_config(
     sidebar: &mut SidebarConfig,
     raw: SidebarFileConfig,
-    extension_tabs: Vec<SidebarTab>,
-    suggestions: std::collections::BTreeMap<String, super::schema::SidebarTabLocation>,
-    presets: Vec<super::schema::SidebarLayoutPreset>,
+    contributions: SidebarContributions,
     warnings: &mut Vec<String>,
 ) {
+    let SidebarContributions {
+        tabs: extension_tabs,
+        suggestions,
+        presets,
+        tab_settings: extension_tab_settings,
+    } = contributions;
     sidebar.presets = presets;
     let legacy = raw.visible.is_some()
         || raw.width.is_some()
@@ -165,17 +314,24 @@ pub(super) fn apply_sidebar_config(
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
     }
+    sidebar.tab_settings = apply_builtin_settings(
+        &mut sidebar.tabs,
+        &raw.settings.unwrap_or_default(),
+        warnings,
+    );
     for tab in extension_tabs {
-        if sidebar
-            .tabs
-            .iter()
-            .any(|existing| existing.id() == tab.id())
-        {
+        let id = tab.id();
+        if sidebar.tabs.iter().any(|existing| existing.id() == id) {
             warnings.push(format!(
                 "Sidebar tab `{}` already configured; extension definition skipped",
-                tab.id().as_str()
+                id.as_str()
             ));
         } else {
+            if let Some(group) = extension_tab_settings.get(id.as_str()) {
+                sidebar
+                    .tab_settings
+                    .insert(id.as_str().to_string(), group.clone());
+            }
             sidebar.tabs.push(tab);
         }
     }
@@ -461,24 +617,15 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
     let mut tabs = Vec::new();
     for spec in raw {
         let tab = match spec {
-            SidebarTabSpec::Name(name) => match name.trim().to_ascii_lowercase().as_str() {
-                "activity" => SidebarTab::activity(),
-                "agents" => SidebarTab::Agents,
-                "panes" => SidebarTab::Panes,
-                "sessions" => SidebarTab::Sessions,
-                "worktrees" => SidebarTab::Worktrees,
-                "projects" => SidebarTab::Projects,
-                other => match tree_view(other) {
-                    Some(view) => SidebarTab::Tree {
-                        view,
-                        config: SidebarTreeConfig::for_view(view),
-                    },
+            SidebarTabSpec::Name(name) => {
+                match builtin_tab(name.trim().to_ascii_lowercase().as_str()) {
+                    Some(tab) => tab,
                     None => {
                         warnings.push(format!("Unknown built-in sidebar tab `{name}`; skipped"));
                         continue;
                     }
-                },
-            },
+                }
+            }
             SidebarTabSpec::Table(table) => {
                 let table = *table;
                 let name = table.name.trim().to_string();
@@ -486,29 +633,19 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                     warnings.push("Sidebar tab name must not be empty; skipped".to_string());
                     continue;
                 }
-                // A table naming Activity or a built-in file tree configures it; every other
-                // built-in name is still reserved, since those tabs take no options.
-                if name == "activity" {
-                    let tab = build_activity_tab(table, warnings);
-                    if !seen.insert(tab.id()) {
-                        warnings.push("Duplicate sidebar tab `activity`; skipped".to_string());
-                        continue;
+                // A built-in tab is only ever named. Its settings have a table of their own, which
+                // the settings picker can rewrite without touching the custom tabs listed here.
+                if let Some(tab) = builtin_tab(&name) {
+                    warnings.push(if builtin_tab_settings(&name).is_empty() {
+                        format!("Sidebar tab `{name}` is built in; list it by name, not as a table")
+                    } else {
+                        format!(
+                            "Sidebar tab `{name}` is built in; list it by name and set its options in `[sidebar.settings.{name}]`"
+                        )
+                    });
+                    if seen.insert(tab.id()) {
+                        tabs.push(tab);
                     }
-                    tabs.push(tab);
-                    continue;
-                }
-                if let Some(view) = tree_view(&name) {
-                    let tab = build_tree_tab(view, table, warnings);
-                    let id = tab.id();
-                    if !seen.insert(id.clone()) {
-                        warnings.push(format!("Duplicate sidebar tab `{}`; skipped", id.as_str()));
-                        continue;
-                    }
-                    tabs.push(tab);
-                    continue;
-                }
-                if BUILTIN_TABS.contains(&name.as_str()) {
-                    warnings.push(format!("Sidebar tab name `{name}` is reserved; skipped"));
                     continue;
                 }
                 let parts = CustomTabParts {
@@ -585,9 +722,10 @@ mod tests {
         apply_sidebar_config(
             &mut config,
             raw,
-            extension_tabs,
-            Default::default(),
-            Vec::new(),
+            SidebarContributions {
+                tabs: extension_tabs,
+                ..Default::default()
+            },
             &mut warnings,
         );
         (config, warnings)
@@ -651,12 +789,12 @@ mod tests {
         }
     }
 
-    /// The Activity tab's table form sets how worktrees of one repository are laid out, and warns
+    /// `[sidebar.settings.activity]` sets how worktrees of one repository are laid out, and warns
     /// about anything it cannot honour rather than guessing.
     #[test]
     fn the_activity_tab_takes_a_worktree_layout() {
         let (config, warnings) =
-            parse(r#"tabs = [{ name = "activity", worktrees = "repository" }]"#);
+            parse("tabs = [\"activity\"]\n[settings.activity]\nworktrees = \"repository\"\n");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(
             config.tabs,
@@ -666,11 +804,26 @@ mod tests {
                 },
             }]
         );
-        let (config, _) = parse(r#"tabs = ["activity"]"#);
-        assert_eq!(config.tabs, vec![SidebarTab::activity()]);
+        let group = &config.tab_settings["activity"];
+        assert_eq!(
+            group.owner,
+            crate::config::SettingsOwner::SidebarTab("activity".into())
+        );
+        assert!(group.overridden.contains("worktrees"));
+
+        // The default tab list still reads its settings.
+        let (config, _) = parse("[settings.activity]\nworktrees = \"repository\"\n");
+        assert!(matches!(
+            config.tabs[0],
+            SidebarTab::Activity {
+                config: crate::config::SidebarActivityConfig {
+                    worktrees: crate::config::ActivityWorktrees::Repository,
+                },
+            }
+        ));
 
         let (config, warnings) = parse(
-            r#"tabs = [{ name = "activity", worktrees = "nested", root = "repo" }, "activity"]"#,
+            "tabs = [\"activity\", \"activity\"]\n[settings.activity]\nworktrees = \"nested\"\nroot = \"repo\"\n",
         );
         assert_eq!(
             config.tabs,
@@ -679,7 +832,7 @@ mod tests {
         );
         for expected in [
             "`nested` is unknown",
-            "takes only `worktrees`",
+            "has no setting `root`",
             "Duplicate sidebar tab",
         ] {
             assert!(
@@ -687,6 +840,62 @@ mod tests {
                 "{expected}: {warnings:?}"
             );
         }
+    }
+
+    /// A built-in tab is only named in `tabs`. A table for one keeps the tab where it is, ignores
+    /// its options, and says where they belong.
+    #[test]
+    fn a_builtin_tab_table_points_at_its_settings_table() {
+        let (config, warnings) = parse(
+            r#"tabs = [{ name = "files", explorer = true }, { name = "panes", label = "Mine", command = "ls" }]"#,
+        );
+        assert_eq!(
+            config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
+            [SidebarTabId::new("files"), SidebarTabId::new("panes")]
+        );
+        assert!(!tree(&config, "files").explorer);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("[sidebar.settings.files]")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("not as a table")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn settings_tables_for_other_tabs_are_reported() {
+        let (config, warnings) = parse(
+            "[settings.panes]\nx = 1\n[settings.\"tasks.jobs\"]\ny = 1\n[settings.nope]\nz = 1\n",
+        );
+        assert!(!config.tab_settings.contains_key("panes"));
+        for expected in [
+            "has no settings",
+            "[extensions.tasks]",
+            "names no built-in tab",
+        ] {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(expected)),
+                "{expected}: {warnings:?}"
+            );
+        }
+    }
+
+    /// Every configurable built-in has a group even when nothing is set, so the picker always has
+    /// its settings to show; tabs with none have no group.
+    #[test]
+    fn builtin_groups_exist_at_their_defaults() {
+        let config = SidebarConfig::default();
+        let keys: Vec<_> = config.tab_settings.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["activity", "files", "git"]);
+        let git = &config.tab_settings["git"];
+        assert!(git.overridden.is_empty());
+        assert_eq!(git.values["diff_stats"], SettingValue::Bool(true));
+        assert!(git.spec("compact_dirs").is_some());
+        assert!(config.tab_settings["files"].spec("compact_dirs").is_none());
     }
 
     /// A layout that keeps every tab on the right gets new tabs on the right too, rather than a left
@@ -807,21 +1016,26 @@ mod tests {
     }
 
     #[test]
-    fn file_tree_table_form_overrides_options() {
+    fn file_tree_settings_override_options() {
         let (config, warnings) = parse(
             r#"
-            tabs = [{ name = "files", label = "", show_hidden = false, explorer = true, diff_stats = true, compact_dirs = false, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
+            tabs = ["files", "git"]
+            [settings.files]
+            show_hidden = false
+            explorer = true
+            diff_stats = true
+            max_entries = 50
+            root = "repo"
+            on_click = { send = "nvim {path}\n" }
+            [settings.git]
+            compact_dirs = false
             "#,
         );
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Repo);
         assert!(!files.show_hidden);
         assert!(files.explorer && files.diff_stats);
-        assert!(!files.compact_dirs);
         assert_eq!(files.max_entries, 50);
         assert_eq!(
             files.on_click,
@@ -829,29 +1043,26 @@ mod tests {
                 "nvim {path}\n".into()
             ))
         );
-        // A built-in keeps its own label; the table's empty label is not an error here.
-        assert_eq!(config.tabs[0].label(), "Files");
+        assert!(!tree(&config, "git").compact_dirs);
+        // `on_click` is configuration, not a value the picker edits.
+        assert!(config.tab_settings["files"].spec("on_click").is_none());
+        assert!(!config.tab_settings["files"].overridden.contains("on_click"));
     }
 
     /// `{path}` may only reach the pane as literal keystrokes. A `run`/`popup` command line is
     /// executed, and a filename in the repository must never be able to compose one.
     #[test]
     fn file_tree_rejects_path_placeholder_in_executed_actions() {
-        let (config, warnings) =
-            parse(r#"tabs = [{ name = "files", label = "", on_click = { run = "rm {path}" } }]"#);
+        let (config, warnings) = parse("[settings.files]\non_click = { run = \"rm {path}\" }\n");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("{path}"), "{warnings:?}");
         assert_eq!(tree(&config, "files").on_click, None);
 
         // The supported way to scope a command to the clicked file: the path is referenced through
         // the environment, so nothing is spliced into the command line and it is accepted.
-        let (config, warnings) = parse(
-            r#"tabs = [{ name = "git", label = "", on_click = { run = "lazygit -f \"$ROZI_FILE\"" } }]"#,
-        );
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
+        let (config, warnings) =
+            parse("[settings.git]\non_click = { run = \"lazygit -f \\\"$ROZI_FILE\\\"\" }\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(
             tree(&config, "git").on_click,
             Some(super::super::schema::UserCommandAction::run(
@@ -861,42 +1072,25 @@ mod tests {
     }
 
     #[test]
-    fn file_tree_options_are_validated_and_clamped() {
+    fn file_tree_settings_are_validated_and_clamped() {
         let (config, warnings) = parse(
-            r#"
-            tabs = [
-              { name = "files", label = "", root = "elsewhere", max_entries = 0 },
-              { name = "git", label = "", command = "ls" },
-            ]
-            "#,
+            "[settings.files]\nroot = \"elsewhere\"\nmax_entries = 0\ncompact_dirs = false\nexplorer = \"yes\"\n",
         );
         assert_eq!(tree(&config, "files").root, SidebarTreeRoot::Cwd);
         assert_eq!(tree(&config, "files").max_entries, 1);
-        assert!(
-            warnings.iter().any(|w| w.contains("elsewhere")),
-            "{warnings:?}"
-        );
-        assert!(
-            warnings.iter().any(|w| w.contains("max_entries")),
-            "{warnings:?}"
-        );
-        // A file tree takes no `command`; saying so beats silently ignoring it.
-        assert!(
-            warnings.iter().any(|w| w.contains("built-in file tree")),
-            "{warnings:?}"
-        );
-    }
-
-    /// The other built-ins take no options, so their names stay reserved for the table form.
-    #[test]
-    fn non_tree_builtin_names_remain_reserved() {
-        let (config, warnings) =
-            parse(r#"tabs = ["files", { name = "panes", label = "Mine", command = "ls" }]"#);
-        assert!(
-            warnings.iter().any(|w| w.contains("reserved")),
-            "{warnings:?}"
-        );
-        assert_eq!(config.tabs.len(), 1);
+        assert!(!tree(&config, "files").explorer);
+        for expected in [
+            "`elsewhere` is unknown",
+            "max_entries` 0 is out of range; clamped to 1",
+            // Compact directories only apply to the changes view.
+            "has no setting `compact_dirs`",
+            "is string, but `explorer` is boolean",
+        ] {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(expected)),
+                "{expected}: {warnings:?}"
+            );
+        }
     }
 
     #[test]
@@ -1155,9 +1349,11 @@ mod layout_loading_tests {
         apply_sidebar_config(
             &mut config,
             toml::from_str(text).unwrap(),
-            tabs,
-            suggestions,
-            Vec::new(),
+            SidebarContributions {
+                tabs,
+                suggestions,
+                ..Default::default()
+            },
             &mut warnings,
         );
         (config, warnings)

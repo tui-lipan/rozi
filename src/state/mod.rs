@@ -31,6 +31,7 @@ mod settings;
 mod sidebar;
 mod sidebar_streams;
 mod sidebar_tree;
+mod tab_settings;
 mod workbar;
 mod workspace;
 
@@ -56,6 +57,7 @@ pub use settings::*;
 pub use sidebar::*;
 pub use sidebar_streams::*;
 pub use sidebar_tree::*;
+pub use tab_settings::*;
 pub use workbar::*;
 pub use workspace::*;
 
@@ -283,7 +285,9 @@ pub struct State {
     pub command_palette_handoff_epoch: u64,
     /// The Keybindings overlay, present while it is open.
     pub keybindings: Option<KeybindingsState>,
-    pub sidebar_manager: bool,
+    pub sidebar_manager: Option<SidebarManagerState>,
+    /// A sidebar tab's settings picker, opened from Sidebar tabs or the command palette.
+    pub tab_settings: Option<TabSettingsState>,
     pub show_settings: bool,
     /// Highlighted settings row. Drives the choice card and
     /// `initial_selected_item_index` while the overlay is open.
@@ -660,7 +664,8 @@ impl State {
             command_palette_handoff: None,
             command_palette_handoff_epoch: 0,
             keybindings: None,
-            sidebar_manager: false,
+            sidebar_manager: None,
+            tab_settings: None,
             show_settings: false,
             settings_selected: None,
             settings_navigation: SettingsNavigation::default(),
@@ -1223,7 +1228,14 @@ impl State {
             (self.show_theme_picker, "theme-picker"),
             (self.keybindings.is_some(), "help"),
             (self.extensions.is_some(), "extensions"),
-            (self.sidebar_manager, "sidebar-manager"),
+            (
+                self.tab_settings
+                    .as_ref()
+                    .is_some_and(|picker| picker.prompt.is_some()),
+                "tab-setting-prompt",
+            ),
+            (self.tab_settings.is_some(), "tab-settings"),
+            (self.sidebar_manager.is_some(), "sidebar-manager"),
             (self.show_settings, "settings"),
             (self.show_palette, "palette"),
         ]

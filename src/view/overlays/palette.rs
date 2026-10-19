@@ -299,6 +299,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     item_key: Option<OverlayItemKey<T>>,
     description_wins: Option<Length>,
     detail: Option<Element>,
+    depth: u16,
 }
 
 impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
@@ -332,6 +333,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_key: None,
             description_wins: None,
             detail: None,
+            depth: 0,
         }
     }
 
@@ -353,6 +355,13 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
     /// [`detail_line`](super::common::detail_line).
     pub(crate) fn detail(mut self, detail: Option<Element>) -> Self {
         self.detail = detail;
+        self
+    }
+
+    /// Stack this picker `depth` layers above the one it was opened from, which stays on screen
+    /// beneath it. See [`nest_modal`].
+    pub(crate) fn nested(mut self, depth: u16) -> Self {
+        self.depth = depth;
         self
     }
 
@@ -468,6 +477,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_key,
             description_wins,
             detail,
+            depth,
         } = self;
 
         let confirm = armed_row.as_ref().and_then(|_| {
@@ -564,7 +574,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             body = body.child(overlay_hints(ctx, &actions));
         }
 
-        wrap_palette(ctx, title, header_right, key, close, body, width)
+        wrap_palette(ctx, title, header_right, key, close, body, width, depth)
     }
 }
 
@@ -642,6 +652,7 @@ pub(super) fn apply_item_rendering<T: Clone + PartialEq + 'static>(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn wrap_palette(
     ctx: &Context<AppRoot>,
     title: Cow<'_, str>,
@@ -650,34 +661,54 @@ pub(super) fn wrap_palette(
     close: Msg,
     body: VStack,
     width: u16,
+    depth: u16,
 ) -> Element {
-    let Some(header_right) = header_right else {
-        return action_palette(ctx, &title, key, close, body, width);
+    let modal = match header_right {
+        None => action_palette_modal_with_width(ctx, &title, width).child(body),
+        Some(header_right) => {
+            let panel: Element = Frame::new()
+                .header_left(title.into_owned())
+                .header_right(header_right.into_owned())
+                .header_style(rozi_chrome(&ctx.state.theme).bold())
+                .border_style(overlay_border_style(ctx))
+                .padding(0)
+                .style(Style::new().bg(ctx.state.theme.surface.element))
+                .height(Length::Auto)
+                .child(body)
+                .into();
+            Modal::new()
+                .animation(crate::view::animation::picker_animation(
+                    ctx.state.config.animations,
+                ))
+                .width(Length::Px(width))
+                .height(Length::Auto)
+                .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+                .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+                .border(false)
+                .padding(0)
+                .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+                .child(panel)
+        }
     };
-    let panel: Element = Frame::new()
-        .header_left(title.into_owned())
-        .header_right(header_right.into_owned())
-        .header_style(rozi_chrome(&ctx.state.theme).bold())
-        .border_style(overlay_border_style(ctx))
-        .padding(0)
-        .style(Style::new().bg(ctx.state.theme.surface.element))
-        .height(Length::Auto)
-        .child(body)
-        .into();
-    Modal::new()
-        .animation(crate::view::animation::picker_animation(
-            ctx.state.config.animations,
-        ))
-        .width(Length::Px(width))
-        .height(Length::Auto)
-        .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
-        .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
-        .border(false)
-        .padding(0)
-        .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+    nest_modal(ctx, modal, depth)
         .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(panel)
         .key(key)
+}
+
+/// Stack a picker `depth` layers above the picker it was opened from, like a Settings choice:
+/// each layer drops its top border one row below the one beneath and dims everything under it
+/// once more. Depth 0 is a picker of its own.
+fn nest_modal(ctx: &Context<AppRoot>, modal: Modal, depth: u16) -> Modal {
+    if depth == 0 {
+        return modal;
+    }
+    modal
+        .reserve_height(crate::view::stacked_reserve(
+            ctx,
+            ACTION_PALETTE_MAX_HEIGHT_PERCENT,
+            depth,
+        ))
+        .backdrop_style(receding_backdrop(&ctx.state.theme))
 }
 
 /// Shared category navigation. Query inputs retain keyboard focus while tabs accept clicks.

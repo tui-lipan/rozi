@@ -8,14 +8,43 @@ pub(crate) fn open_manager(ctx: &mut Context<AppRoot>) -> Update {
         .then_some(crate::state::OverlayOrigin::Settings);
     ctx.state.show_settings = false;
     ctx.state.show_palette = false;
-    ctx.state.sidebar_manager = true;
+    ctx.state.sidebar_manager = Some(Default::default());
     ctx.request_focus("sidebar-manager");
     Update::full()
 }
 
 pub(crate) fn manager_back(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.sidebar_manager = false;
+    ctx.state.sidebar_manager = None;
     crate::ops::overlay_return::finish(ctx)
+}
+
+pub(crate) fn manager_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(manager) = ctx.state.sidebar_manager.as_mut() {
+        manager.query = query;
+    }
+    Update::none()
+}
+
+pub(crate) fn manager_select(ctx: &mut Context<AppRoot>, id: String) -> Update {
+    if let Some(manager) = ctx.state.sidebar_manager.as_mut() {
+        manager.selected = Some(id);
+    }
+    // The settings action greys out on a tab without settings.
+    Update::full()
+}
+
+/// Open the highlighted tab's settings. Sidebar tabs stays open underneath, so leaving the settings
+/// returns to it on the same row.
+pub(crate) fn manager_settings(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(tab) = ctx
+        .state
+        .sidebar_manager
+        .as_ref()
+        .and_then(|manager| manager.selected.clone())
+    else {
+        return Update::none();
+    };
+    crate::ops::tab_settings::open(ctx, tab)
 }
 
 pub(crate) fn manager_activate(ctx: &mut Context<AppRoot>, id: String) -> Update {

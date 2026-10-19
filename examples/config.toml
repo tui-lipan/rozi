@@ -382,16 +382,13 @@
 # Catalog of available tabs. Built-ins: activity, agents, panes, sessions, files, git, worktrees,
 # projects.
 #tabs = ["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]
-# A tab may also be a table, which is how built-ins take options and how custom tabs are
-# defined. Fields: name, label, exactly one of entries (a launcher list of
+# A built-in is listed by name; its settings are in [sidebar.settings.<tab>] below.
+# A custom tab is a table. Fields: name, label, exactly one of entries (a launcher list of
 # { label, group, run|send|popup, keep_open }), command (+ interval seconds, format "lines" or
 # "json", and group_prefix), or stream = true, and on_click.
 # An entry's `group` files it under a section header; a command tab's `group_prefix` turns
 # every output line starting with it into one. A `format = "json"` command prints a tree of rows,
 # and programs publish a stream tab's rows with `rozi sidebar publish --tab <name>`.
-# For the files/git trees: root, show_hidden, explorer, diff_stats, compact_dirs (git only),
-# max_entries. For activity: worktrees, "separate" (a section per checkout) or "repository" (a
-# section per repository, with a line per checkout).
 # A table cannot live in this file's `tabs` line without displacing the default above -
 # examples/sidebar.toml is a working two-panel setup using every form.
 # Paint the sidebar with the canvas backdrop instead of the elevated panel fill.
@@ -404,6 +401,34 @@
 #background = true
 # Tab end caps: "padded", "round", or "arrow". Round and arrow need nerd icons.
 #tab_style = "padded"
+
+# Built-in tab settings. Sidebar tabs… → ctrl+e edits these in the app.
+[sidebar.settings.activity]
+# "separate" gives each checkout its own section; "repository" names each repository once, with
+# a line per checkout's branch.
+#worktrees = "separate"
+
+[sidebar.settings.files]
+# Show the search field above the tree.
+#explorer = false
+#show_hidden = true
+# "cwd" browses the focused pane's directory; "repo" the repository containing it.
+#root = "cwd"
+#diff_stats = false
+# 1 to 10000.
+#max_entries = 2000
+# What activating a file does. {path} is replaced in send text; run and popup get $ROZI_FILE.
+#on_click = { send = "{path}" }
+
+[sidebar.settings.git]
+#explorer = false
+#show_hidden = true
+#root = "repo"
+#diff_stats = true
+# Show a directory whose changes are all in one subdirectory on that subdirectory's row.
+#compact_dirs = true
+#max_entries = 2000
+#on_click = { send = "{path}" }
 
 [workbar]
 # Segment kinds: title, workspaces, location, session, clock, layout, activity,

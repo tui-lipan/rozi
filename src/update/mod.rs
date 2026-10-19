@@ -252,6 +252,19 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::SidebarManagerBack => sidebar::manager_back(ctx),
         Msg::SidebarManagerActivate(value) => sidebar::manager_activate(ctx, value),
+        Msg::SidebarManagerQueryChanged(query) => sidebar::manager_query_changed(ctx, query),
+        Msg::SidebarManagerSelect(id) => sidebar::manager_select(ctx, id),
+        Msg::SidebarManagerSettings => sidebar::manager_settings(ctx),
+        Msg::TabSettingsBack => crate::ops::tab_settings::back(ctx),
+        Msg::TabSettingsQueryChanged(query) => crate::ops::tab_settings::query_changed(ctx, query),
+        Msg::TabSettingsSelect(key) => crate::ops::tab_settings::select(ctx, key),
+        Msg::TabSettingsActivate(key) => crate::ops::tab_settings::activate(ctx, key),
+        Msg::TabSettingsReset => crate::ops::tab_settings::reset(ctx),
+        Msg::TabSettingsChoose(value) => crate::ops::tab_settings::choose(ctx, value),
+        Msg::TabSettingsChoiceSelect(value) => crate::ops::tab_settings::choice_select(ctx, value),
+        Msg::TabSettingPromptChanged(event) => crate::ops::tab_settings::prompt_changed(ctx, event),
+        Msg::TabSettingPromptClose => crate::ops::tab_settings::prompt_close(ctx),
+        Msg::TabSettingPromptSubmit => crate::ops::tab_settings::prompt_submit(ctx),
         Msg::SidebarDockPanelsResized { side, event } => {
             sidebar::dock_panels_resized(ctx, side, event)
         }

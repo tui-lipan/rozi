@@ -409,9 +409,31 @@ notify = true
 ignore = ["target", "node_modules"]
 ```
 
-A setting is a string, integer, boolean, or list of strings. Any other type, including floats and
-nested tables, makes the extension invalid. `rozi extensions check` lists the declared settings and
-their defaults.
+A setting is a string, integer, boolean, or list of strings. Any other type, including floats, makes
+the extension invalid. `rozi extensions check` lists the declared settings and their defaults.
+
+To say how a setting reads in rozi's [tab settings](sidebar.md#tab-settings), declare it as a table
+with its `default` and any of these fields:
+
+```toml
+[settings]
+group = { default = "status", label = "Group by", choices = ["status", { value = "repo", label = "Repository" }] }
+rows = { default = 50, label = "Rows", description = "Rows kept per job", min = 1, max = 500 }
+done = { default = false, label = "Show finished" }
+```
+
+| Field | Applies to | Meaning |
+| --- | --- | --- |
+| `default` | every setting | Required. The value when the user sets none, and the setting's type. |
+| `label` | every setting | The setting's name in the picker. Defaults to the key. |
+| `description` | every setting | One line shown under the list while the setting is highlighted. |
+| `choices` | strings | The only values allowed: each a string, or `{ value, label }` to show other words. `default` must be one of them. |
+| `min`, `max` | integers | Bounds. `default` must lie within them. |
+
+A table with an unknown field, choices on a non-string, bounds on a non-integer, or a default
+outside its choices or bounds makes the extension invalid. The value your processes receive is the
+same either way. An older `rozi` rejects the table form; set `min_rozi` to a release with the
+`sidebar-tab-settings` capability (see [Check the installed API](control.md#check-the-installed-api)).
 
 Users override settings per extension in `config.toml`:
 
@@ -428,8 +450,9 @@ Every command, service, and sidebar tab process receives the merged result as co
 {"ignore":["target","node_modules"],"notify":true,"rows":20,"runner":"just"}
 ```
 
-An undeclared key or a value of the wrong type in the user's config is reported and ignored, and the
-extension keeps its default; a leftover line therefore survives an update that drops a setting. A
+An undeclared key, a value of the wrong type, or a value outside its `choices` in the user's config
+is reported and ignored, and the extension keeps its default; a leftover line therefore survives an
+update that drops a setting. An integer outside its `min` and `max` is clamped. A
 `[extensions.<id>]` table for an extension that is not installed is also reported, but a disabled
 extension's table is not. Changing a setting restarts the extension's services with the new value.
 
@@ -498,8 +521,8 @@ suppressed, or conflicting.
 ## Sidebar tabs
 
 An extension can add [sidebar](sidebar.md) tabs with `[[sidebar_tabs]]`. A tab takes the launcher,
-command, and stream forms that [`[sidebar]` tab tables](configuration.md#sidebar) accept, except the
-options that apply only to the built-in `files` and `git` trees.
+command, and stream forms that [`[sidebar]` tab tables](configuration.md#tab-tables) accept, and can
+offer some of the extension's settings with `settings`; see [Tab settings](#tab-settings).
 
 ```toml
 [[sidebar_tabs]]
@@ -532,6 +555,7 @@ on_click = { send = "{line}" }
 | `on_click` | action table | none |
 | `group_prefix` | string | none; line command tabs only |
 | `placement` | `client` or `active-session` | `client`; command tabs only |
+| `settings` | array of setting keys | none |
 
 - `{extension_dir}` is replaced in `command` and in action strings, and the processes they start
   receive the same [`ROZI_EXTENSION*` environment](#runtime-environment) as a command.
@@ -546,6 +570,34 @@ on_click = { send = "{line}" }
   `ROZI_ROW` instead; quote it (`"$ROZI_ROW"`).
 - A command tab with `format = "json"` prints a tree of rows; a clicked row's `id` also arrives in
   `ROZI_ROW_ID`. See [JSON command tabs](sidebar.md#json-command-tabs).
+
+### Tab settings
+
+`settings` lists [settings](#settings) the tab offers in its settings picker, which users open with
+`Ctrl+E` in **Sidebar tabs…** or **Sidebar tab settings…** in the command palette. The picker lists
+them in this order, edits them in `[extensions.<id>]`, and puts one back to its default with
+`Ctrl+R`:
+
+```toml
+[settings]
+group = { default = "status", label = "Group by", choices = ["status", "repo"] }
+done = { default = false, label = "Show finished" }
+
+[[sidebar_tabs]]
+name = "jobs"
+label = "Jobs"
+stream = true
+settings = ["group", "done"]
+```
+
+A boolean shows as `Enabled` or `Disabled`, a string with `choices` as a list of its values, and an
+integer or other string as a typed value. Each key must be a declared setting, listed once, and not
+a list of strings; otherwise the extension is invalid. Several tabs may offer the same setting. An
+older `rozi` rejects `settings` on a tab, as it does the table form above.
+
+A change is the same as the user editing `config.toml`: it reaches every process in
+`ROZI_EXTENSION_CONFIG`, so a command tab's next run reads it and services restart with it. Read the
+value there rather than tracking it per tab.
 
 ### Stream tabs
 
@@ -797,7 +849,8 @@ Extension API 1 is frozen. Within API 1, `rozi` will not break:
 - `--json` diagnostics with `schema_version` `1`.
 
 `rozi` may add manifest keys, control commands, and diagnostic fields within API 1; a manifest that
-does not use them keeps working. Any change that would invalidate a working manifest — a removed
+does not use them keeps working. A manifest that uses a key added later is invalid on an older
+`rozi`, which does not know the key; the page notes the capability each such key comes with. Any change that would invalidate a working manifest — a removed
 key, a narrowed value, a changed default, a renamed environment variable — requires `api = 2`, and
 an extension declaring `api = 1` keeps loading under the API 1 rules.
 

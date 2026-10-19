@@ -92,6 +92,8 @@ pub enum Action {
     ToggleLeftSidebar,
     ToggleRightSidebar,
     SidebarTabs,
+    /// Open the settings of the focused sidebar panel's active tab.
+    SidebarTabSettings,
     ToggleSidebarGap,
     ToggleSidebarBackground,
     ToggleSidebarBackgroundFollowsCanvas,
@@ -231,6 +233,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ToggleLeftSidebar,
     Action::ToggleRightSidebar,
     Action::SidebarTabs,
+    Action::SidebarTabSettings,
     Action::ToggleSidebarGap,
     Action::ToggleSidebarBackground,
     Action::ToggleSidebarBackgroundFollowsCanvas,
@@ -361,6 +364,7 @@ impl Action {
             Action::ToggleLeftSidebar => "toggle-left-sidebar",
             Action::ToggleRightSidebar => "toggle-right-sidebar",
             Action::SidebarTabs => "sidebar-tabs",
+            Action::SidebarTabSettings => "sidebar-tab-settings",
             Action::ToggleSidebarGap => "toggle-sidebar-gap",
             Action::ToggleSidebarBackground => "toggle-sidebar-background",
             Action::ToggleSidebarBackgroundFollowsCanvas => {

@@ -460,6 +460,7 @@ fn execute_action_inner(
             crate::update::sidebar::toggle_dock(ctx, crate::config::SidebarPosition::Right)
         }
         Action::SidebarTabs => crate::update::sidebar::open_manager(ctx),
+        Action::SidebarTabSettings => crate::ops::tab_settings::open_for_active_tab(ctx),
         Action::ToggleSidebarGap => crate::ops::preferences::toggle_sidebar_gap(ctx),
         Action::ToggleSidebarBackground => crate::ops::preferences::toggle_sidebar_background(ctx),
         Action::ToggleSidebarBackgroundFollowsCanvas => {

@@ -10,6 +10,7 @@ mod persist;
 mod rules;
 mod schema;
 mod services;
+mod setting_schema;
 mod sidebar;
 mod theme;
 mod unknown_keys;
@@ -25,9 +26,9 @@ pub use extensions::{
     EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument,
     ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic,
     ExtensionLinkHandlerDiagnostic, ExtensionListDocument, ExtensionNavigationTargetDiagnostic,
-    ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettingValue, ExtensionSettings,
-    ExtensionStatus, ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus,
-    GENERATION_ENV, SETTINGS_ENV,
+    ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettings, ExtensionStatus,
+    ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus, GENERATION_ENV,
+    SETTINGS_ENV,
 };
 pub(crate) use extensions::{
     ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig,
@@ -41,4 +42,5 @@ pub use file::*;
 pub use keymap::*;
 pub use persist::*;
 pub use schema::*;
+pub use setting_schema::*;
 pub use theme::*;

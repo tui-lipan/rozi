@@ -503,13 +503,7 @@ fn apply_program_status(
     if let Some(record) = current.filter(|r| actionable_program_status(r.state)) {
         if previous.as_ref() != Some(&(record.id.clone(), record.state)) {
             pane.terminal.program_status_attention = !attended;
-            // An agent's own prompt is already notified about as that agent being blocked. Its
-            // errors still alert: agent detection does not always see a failure the program reports.
-            if record.state != tui_lipan::ProgramStatusState::Blocked
-                || !pane.program_status_from_agent(&snapshot, record)
-            {
-                alert = Some((pane.display_title(None), record.state, record.msg.clone()));
-            }
+            alert = Some((pane.display_title(None), record.state, record.msg.clone()));
         }
     } else {
         pane.terminal.program_status_attention = false;
@@ -724,10 +718,10 @@ mod tests {
         assert!(!attached.terminal.program_status_attention);
     }
 
-    /// Claude Code's own `blocked` is the detected agent being blocked, which already notifies;
-    /// its `error` still alerts, since detection does not always see the failure.
+    /// An agent's own `blocked` still alerts: while detection reads the agent as working, nothing
+    /// else would say it needs the user.
     #[test]
-    fn an_agents_own_blocked_report_does_not_alert_twice() {
+    fn an_agents_own_blocked_report_alerts_while_detection_says_working() {
         let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
         pane.terminal.detected_agent = Some(DetectedAgent {
             agent: AgentIdentity::new("claude", "Claude Code").into(),
@@ -736,12 +730,8 @@ mod tests {
         let mut screen = TerminalScreen::new(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=blocked:app=claude-code\x07");
-        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_none());
+        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
         assert!(pane.terminal.program_status_attention);
-        screen.process_bytes(b"\x1b]7501;state=error:app=claude-code\x07");
-        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
-        screen.process_bytes(b"\x1b]7501;state=blocked:app=cargo\x07");
-        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
     }
 
     #[test]

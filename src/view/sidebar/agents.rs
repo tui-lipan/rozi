@@ -1674,6 +1674,31 @@ mod tests {
         assert!(rows.iter().all(|row| row.identity.is_some()));
     }
 
+    /// A blocked `cargo` beside a working agent is cargo's own row: it neither hides the agent's
+    /// report nor lends the agent its state.
+    #[test]
+    fn another_programs_urgent_report_stays_off_the_agents_row() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut claude = pane(1, None, false);
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        // msg "Bash"
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
+        screen.process_bytes(b"\x1b]7501;state=blocked:id=build:app=cargo\x07");
+        claude.terminal.program_status = screen.program_status_snapshot();
+        state.current_mut().workspaces[0].panes = vec![claude];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let agent = rows.iter().find(|row| row.identity.is_some()).unwrap();
+        assert_eq!(agent.activity.as_deref(), Some("Bash"));
+        assert_ne!(agent.status.as_deref(), Some("blocked"));
+        let cargo = rows.iter().find(|row| row.identity.is_none()).unwrap();
+        assert_eq!(cargo.title, "cargo");
+        assert_eq!(cargo.status.as_deref(), Some("blocked"));
+    }
+
     /// A report Claude Code left behind when it exited is an activity, named for the agent.
     #[test]
     fn a_program_status_without_its_agent_takes_the_agents_name() {

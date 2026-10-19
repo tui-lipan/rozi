@@ -296,36 +296,54 @@ impl Pane {
     /// The activity projection: everything happening in this pane, agents and activities alike,
     /// for the Activity sidebar.
     ///
-    /// A program status the pane's own agent reports (`app=claude-code` from Claude Code) describes
-    /// that agent, so it rides on the agent's occupant - of several conversations, the one on
-    /// screen - rather than becoming a second row for it.
+    /// Program status records are split by who reports them first. The records an agent in the
+    /// pane reports (`app=claude-code` from Claude Code, and the child records inheriting that app)
+    /// describe that agent, so they ride on its occupant - of several conversations, the one on
+    /// screen - rather than becoming a second row for it. Every other record is an activity, so
+    /// a blocked `cargo` beside a working agent neither hides the agent's report nor takes it on.
     pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {
         let mut occupants = crate::session::protocol::pane_occupants(&self.semantic_runtime());
         let snapshot = &self.terminal.program_status;
-        let Some(record) = crate::session::protocol::program_status_summary(snapshot) else {
+        let agents: Vec<crate::session::protocol::AgentIdentity> = occupants
+            .iter()
+            .filter_map(|occupant| occupant.agent.clone())
+            .collect();
+        let reported_by =
+            |record: &tui_lipan::ProgramStatusRecord,
+             agent: &crate::session::protocol::AgentIdentity| {
+                snapshot
+                    .app_for(record)
+                    .is_some_and(|app| program_status_names_agent(app, agent))
+            };
+        let rows = &self.terminal.published_rows;
+        for occupant in &mut occupants {
+            let Some(agent) = occupant.agent.as_ref() else {
+                continue;
+            };
+            if occupant
+                .slot
+                .as_ref()
+                .is_some_and(|slot| !rows.iter().any(|row| row.has_key(slot) && row.active))
+            {
+                continue;
+            }
+            occupant.program_status = crate::session::protocol::most_urgent_program_status(
+                snapshot
+                    .records
+                    .iter()
+                    .filter(|record| reported_by(record, agent)),
+            )
+            .cloned();
+        }
+        let Some(record) = crate::session::protocol::most_urgent_program_status(
+            snapshot
+                .records
+                .iter()
+                .filter(|record| !agents.iter().any(|agent| reported_by(record, agent))),
+        ) else {
             return occupants;
         };
         let app = snapshot.app_for(record);
-        let reports = |occupant: &crate::session::protocol::PaneOccupant| {
-            occupant
-                .agent
-                .as_ref()
-                .zip(app)
-                .is_some_and(|(identity, app)| program_status_names_agent(app, identity))
-        };
-        if occupants.iter().any(reports) {
-            let rows = &self.terminal.published_rows;
-            if let Some(agent) = occupants.iter_mut().find(|occupant| {
-                reports(occupant)
-                    && occupant
-                        .slot
-                        .as_ref()
-                        .is_none_or(|slot| rows.iter().any(|row| row.has_key(slot) && row.active))
-            }) {
-                agent.program_status = Some(record.clone());
-            }
-            return occupants;
-        }
         let agent = app.and_then(|app| {
             crate::agent_detection::AgentCatalog::shared_builtin()
                 .by_name(app)
@@ -347,20 +365,6 @@ impl Pane {
             program_status: Some(record.clone()),
         });
         occupants
-    }
-
-    /// Whether `record` is one of this pane's agents reporting on itself.
-    pub(crate) fn program_status_from_agent(
-        &self,
-        snapshot: &tui_lipan::ProgramStatusSnapshot,
-        record: &tui_lipan::ProgramStatusRecord,
-    ) -> bool {
-        snapshot.app_for(record).is_some_and(|app| {
-            crate::session::protocol::pane_occupants(&self.semantic_runtime())
-                .iter()
-                .filter_map(|occupant| occupant.agent.as_ref())
-                .any(|identity| program_status_names_agent(app, identity))
-        })
     }
 
     /// Where one of this pane's occupants is working.

@@ -288,6 +288,6 @@ does not change agent detection, keep-awake, or conversation restore. When the r
 agent rozi found in that pane, such as `app=claude-code` from Claude Code, it describes that agent
 instead of adding a row of its own: the agent's row shows the report's message as what it is doing,
 and its title names the run. With one row per conversation, as an extension like
-claude-rozi-sessions publishes, the report describes the conversation on screen. That agent's
-`blocked` notifies you once, as the agent; its `error` notifies as above. A report left behind
-after the agent exits is an activity named after the agent.
+claude-rozi-sessions publishes, the report describes the conversation on screen. Reports from other
+programs in the same pane keep their own row. A report left behind after the agent exits is an
+activity named after the agent.

@@ -606,7 +606,14 @@ pub fn effective_semantic_agent_state(
 pub fn program_status_summary(
     snapshot: &tui_lipan::ProgramStatusSnapshot,
 ) -> Option<&tui_lipan::ProgramStatusRecord> {
-    snapshot.records.iter().min_by_key(|record| {
+    most_urgent_program_status(&snapshot.records)
+}
+
+/// The record among `records` that most wants the user, the newest of equals.
+pub fn most_urgent_program_status<'a>(
+    records: impl IntoIterator<Item = &'a tui_lipan::ProgramStatusRecord>,
+) -> Option<&'a tui_lipan::ProgramStatusRecord> {
+    records.into_iter().min_by_key(|record| {
         (
             match record.state {
                 tui_lipan::ProgramStatusState::Blocked => ActivityState::Blocked,

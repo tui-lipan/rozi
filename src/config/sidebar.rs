@@ -7,7 +7,7 @@ use super::schema::{
     SidebarActivityConfig, SidebarConfig, SidebarLauncherEntry, SidebarPosition, SidebarTab,
     SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
 };
-use super::setting_schema::{Checked, SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
+use super::setting_schema::{SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
 
 const BUILTIN_TABS: &[&str] = &[
     "activity",
@@ -134,21 +134,10 @@ fn builtin_group(
                     continue;
                 };
                 overridden.insert(key.clone());
-                match spec.check(value) {
-                    Ok(Checked::Value(value)) => {
-                        values.insert(key.clone(), value);
-                    }
-                    Ok(Checked::Clamped { value, requested }) => {
-                        warnings.push(format!(
-                            "`{section}.{key}` {requested} is out of range; clamped to {}",
-                            spec.display(&value)
-                        ));
-                        values.insert(key.clone(), value);
-                    }
-                    Err(rejection) => warnings.push(format!(
-                        "`{section}.{key}` {}; ignored",
-                        spec.describe_rejection(&rejection)
-                    )),
+                if let Some(value) =
+                    spec.check_config_value(value, &format!("{section}.{key}"), warnings)
+                {
+                    values.insert(key.clone(), value);
                 }
             }
         }
@@ -229,7 +218,7 @@ pub(crate) fn apply_builtin_settings(
     for tab in tabs.iter_mut() {
         let id = tab.id().as_str().to_string();
         let specs = builtin_tab_settings(&id);
-        if specs.is_empty() || !BUILTIN_TABS.contains(&id.as_str()) {
+        if specs.is_empty() {
             continue;
         }
         let (group, on_click) = builtin_group(&id, specs, raw.get(&id), warnings);

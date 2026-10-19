@@ -184,13 +184,12 @@ pub(crate) fn choose(ctx: &mut Context<AppRoot>, value: String) -> Update {
     write(ctx, &key, Some(SettingValue::String(value)))
 }
 
+fn prompt_mut(ctx: &mut Context<AppRoot>) -> Option<&mut TabSettingPrompt> {
+    ctx.state.tab_settings.as_mut()?.prompt.as_mut()
+}
+
 pub(crate) fn prompt_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
-    if let Some(prompt) = ctx
-        .state
-        .tab_settings
-        .as_mut()
-        .and_then(|picker| picker.prompt.as_mut())
-    {
+    if let Some(prompt) = prompt_mut(ctx) {
         event.apply_to(&mut prompt.input);
         prompt.error = None;
     }
@@ -207,12 +206,7 @@ pub(crate) fn prompt_close(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn prompt_submit(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(prompt) = ctx
-        .state
-        .tab_settings
-        .as_ref()
-        .and_then(|picker| picker.prompt.as_ref())
-    else {
+    let Some(prompt) = prompt_mut(ctx) else {
         return Update::none();
     };
     let key = prompt.key.clone();
@@ -222,18 +216,11 @@ pub(crate) fn prompt_submit(ctx: &mut Context<AppRoot>) -> Update {
     };
     match typed_value(spec, &text) {
         Ok(value) => {
-            if let Some(picker) = ctx.state.tab_settings.as_mut() {
-                picker.prompt = None;
-            }
+            prompt_close(ctx);
             write(ctx, &key, Some(value))
         }
         Err(error) => {
-            if let Some(prompt) = ctx
-                .state
-                .tab_settings
-                .as_mut()
-                .and_then(|picker| picker.prompt.as_mut())
-            {
+            if let Some(prompt) = prompt_mut(ctx) {
                 prompt.error = Some(error);
             }
             ctx.request_focus(TAB_SETTING_PROMPT_KEY);

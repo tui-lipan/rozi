@@ -1098,8 +1098,18 @@ pub(crate) fn nested_action_palette_modal(
     title: &str,
     parent_reserve_percent: u16,
 ) -> Modal {
+    action_palette_modal(ctx, title).reserve_height(stacked_reserve(ctx, parent_reserve_percent, 1))
+}
+
+/// The reserved height that pins a card `layers` rows below the top of the list overlay at the
+/// bottom of the stack, whose band is `parent_reserve_percent`: two rows fewer per layer.
+pub(crate) fn stacked_reserve(
+    ctx: &Context<AppRoot>,
+    parent_reserve_percent: u16,
+    layers: u16,
+) -> Length {
     let parent_band = Length::Percent(parent_reserve_percent).resolve(ctx.viewport().h, 0);
-    action_palette_modal(ctx, title).reserve_height(Length::Px(parent_band.saturating_sub(2)))
+    Length::Px(parent_band.saturating_sub(2 * layers))
 }
 
 pub(crate) fn action_palette_modal_with_width(

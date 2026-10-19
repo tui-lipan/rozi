@@ -197,21 +197,10 @@ pub(crate) fn merge(
             ));
             continue;
         };
-        match spec.check(value) {
-            Ok(crate::config::Checked::Value(value)) => {
-                merged.insert(key.clone(), value);
-            }
-            Ok(crate::config::Checked::Clamped { value, requested }) => {
-                warnings.push(format!(
-                    "`extensions.{id}.{key}` {requested} is out of range; clamped to {}",
-                    spec.display(&value)
-                ));
-                merged.insert(key.clone(), value);
-            }
-            Err(rejection) => warnings.push(format!(
-                "`extensions.{id}.{key}` {}; ignored",
-                spec.describe_rejection(&rejection)
-            )),
+        if let Some(value) =
+            spec.check_config_value(value, &format!("extensions.{id}.{key}"), warnings)
+        {
+            merged.insert(key.clone(), value);
         }
     }
     merged

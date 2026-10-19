@@ -131,14 +131,6 @@ pub enum Checked {
     Clamped { value: SettingValue, requested: i64 },
 }
 
-impl Checked {
-    pub fn into_value(self) -> SettingValue {
-        match self {
-            Self::Value(value) | Self::Clamped { value, .. } => value,
-        }
-    }
-}
-
 /// Why a value cannot stand for a setting. The caller names the setting and says what happens
 /// instead; this only says what was wrong.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,11 +214,6 @@ impl SettingSpec {
         }
     }
 
-    pub fn described(mut self, description: &str) -> Self {
-        self.description = Some(description.to_string());
-        self
-    }
-
     /// Whether a picker can edit this setting. Lists are edited in `config.toml`.
     pub fn editable(&self) -> bool {
         !matches!(self.kind, SettingKind::List)
@@ -236,6 +223,34 @@ impl SettingSpec {
     pub fn check(&self, raw: &toml::Value) -> Result<Checked, Rejection> {
         let value = SettingValue::parse(raw).ok_or(Rejection::Unsupported)?;
         self.accept(value)
+    }
+
+    /// Check the value a user wrote at `path` in `config.toml`, the one way every settings table
+    /// is read: a clamped integer is kept with a warning, and a rejected value is reported and
+    /// dropped so the setting keeps its default.
+    pub fn check_config_value(
+        &self,
+        raw: &toml::Value,
+        path: &str,
+        warnings: &mut Vec<String>,
+    ) -> Option<SettingValue> {
+        match self.check(raw) {
+            Ok(Checked::Value(value)) => Some(value),
+            Ok(Checked::Clamped { value, requested }) => {
+                warnings.push(format!(
+                    "`{path}` {requested} is out of range; clamped to {}",
+                    self.display(&value)
+                ));
+                Some(value)
+            }
+            Err(rejection) => {
+                warnings.push(format!(
+                    "`{path}` {}; ignored",
+                    self.describe_rejection(&rejection)
+                ));
+                None
+            }
+        }
     }
 
     /// Check a value against this setting: its type must match the default's, a choice must be

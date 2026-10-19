@@ -2216,7 +2216,7 @@ impl Default for SidebarConfig {
         // Two panels out of the box: the session's own state and what needs the user on top, the
         // repository below. The trees cost nothing until their tab is the active one, so carrying
         // them by default only spends sidebar rows, not work.
-        let tabs = vec![
+        let mut tabs = vec![
             SidebarTab::activity(),
             SidebarTab::Agents,
             SidebarTab::Panes,
@@ -2226,7 +2226,6 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
             SidebarTab::Projects,
         ];
-        let mut tabs = tabs;
         let tab_settings =
             super::sidebar::apply_builtin_settings(&mut tabs, &Default::default(), &mut Vec::new());
         Self {

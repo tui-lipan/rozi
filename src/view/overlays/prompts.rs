@@ -2,7 +2,13 @@ use super::*;
 
 /// How far a dialog behind another one recedes: the same half-strength Settings fades by behind
 /// the padding editor, so a stack of two dialogs reads the same wherever it occurs.
-pub(super) const BACKDROP_RECESSION: f32 = 0.5;
+const BACKDROP_RECESSION: f32 = 0.5;
+
+/// The backdrop of a dialog stacked on another one: everything already on screen beneath it fades
+/// by [`BACKDROP_RECESSION`] once more.
+pub(super) fn receding_backdrop(theme: &Theme) -> Style {
+    Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION)
+}
 
 /// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save
 /// profile) so they read like the command palette instead of a bare dialog.
@@ -132,8 +138,9 @@ pub(super) struct PromptChrome<'a> {
     dim_behind: bool,
     /// When this prompt stacks on a list overlay, pin it one row below that overlay's top.
     parent_reserve_percent: Option<u16>,
-    /// Layers above the picker it was raised from; see `nest_modal`. Overrides the two above.
-    depth: u16,
+    /// How many cards stack between that list overlay and this prompt, counting the prompt: one
+    /// row lower each. 1 unless the prompt is raised over a picker that is itself stacked.
+    layers: u16,
 }
 
 impl<'a> PromptChrome<'a> {
@@ -153,7 +160,7 @@ impl<'a> PromptChrome<'a> {
             submit_hints,
             dim_behind: false,
             parent_reserve_percent: None,
-            depth: 0,
+            layers: 1,
         }
     }
 
@@ -167,10 +174,13 @@ impl<'a> PromptChrome<'a> {
         self
     }
 
-    /// For a prompt raised over pickers that stay open beneath it, `depth` layers up: everything
-    /// below recedes once more and the prompt pins one row below the top picker's top.
-    pub(super) fn over_picker(mut self, depth: u16) -> Self {
-        self.depth = depth;
+    /// For a prompt raised over a picker that stays open beneath it, `layers` cards above the
+    /// bottom one (see [`Self::layers`]): everything below recedes once more and the prompt pins
+    /// one row below the top picker's top.
+    pub(super) fn over_picker(mut self, layers: u16) -> Self {
+        self.dim_behind = true;
+        self.parent_reserve_percent = Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT);
+        self.layers = layers;
         self
     }
 }
@@ -199,7 +209,7 @@ pub(super) fn prompt_overlay(
         submit_hints,
         dim_behind,
         parent_reserve_percent,
-        depth,
+        layers,
     } = chrome;
     let theme = &ctx.state.theme;
     let scroll_up = caption_document
@@ -290,7 +300,8 @@ pub(super) fn prompt_overlay(
     body = body.child(prompt_hints(ctx, submit_hints, &submit_on_click));
 
     let mut modal = match parent_reserve_percent {
-        Some(parent) => nested_action_palette_modal(ctx, title, parent),
+        Some(parent) => action_palette_modal(ctx, title)
+            .reserve_height(crate::view::stacked_reserve(ctx, parent, layers)),
         None => action_palette_modal(ctx, title),
     }
     .on_close(ctx.link().callback(move |_| close.clone()))
@@ -298,10 +309,8 @@ pub(super) fn prompt_overlay(
     if dim_behind {
         // The same recession the workspace makes for any dialog, applied by the overlay stack, so
         // every layer already on screen fades together rather than one panel at a time.
-        modal =
-            modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
+        modal = modal.backdrop_style(receding_backdrop(theme));
     }
-    modal = super::palette::nest_modal(ctx, modal, depth);
     if caption.is_some_and(PromptCaption::arms_chrome) {
         // Recolor the shared modal chrome to the error accent so the whole dialog reads as "armed"
         // (border + title), matching the inline caption. The modal captures focus the moment it
@@ -345,13 +354,12 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
         PromptChrome {
             caption,
             caption_document,
-            dim_behind: true,
-            parent_reserve_percent: Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT),
             ..PromptChrome::new(
                 "Install extension",
                 "Local path or Git HTTPS/SSH URL",
                 &[("install", "enter")],
             )
+            .over_picker(1)
         },
         &prompt.input,
         extension_install_input_key(),

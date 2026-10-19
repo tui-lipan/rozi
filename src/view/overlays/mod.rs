@@ -79,8 +79,8 @@ pub(in crate::view::overlays) use palette::{
 pub(in crate::view::overlays) use pick::fit_description;
 pub(in crate::view::overlays) use profiles::render_ephemeral_session_item;
 pub(in crate::view::overlays) use prompts::{
-    BACKDROP_RECESSION, PromptCaption, PromptChrome, action_palette, prompt_caption_accent,
-    prompt_detail_row, prompt_highlight_row, prompt_overlay,
+    PromptCaption, PromptChrome, action_palette, prompt_caption_accent, prompt_detail_row,
+    prompt_highlight_row, prompt_overlay, receding_backdrop,
 };
 pub(in crate::view::overlays) use settings::action_search_palette;
 

@@ -698,16 +698,17 @@ pub(super) fn wrap_palette(
 /// Stack a picker `depth` layers above the picker it was opened from, like a Settings choice:
 /// each layer drops its top border one row below the one beneath and dims everything under it
 /// once more. Depth 0 is a picker of its own.
-pub(super) fn nest_modal(ctx: &Context<AppRoot>, modal: Modal, depth: u16) -> Modal {
+fn nest_modal(ctx: &Context<AppRoot>, modal: Modal, depth: u16) -> Modal {
     if depth == 0 {
         return modal;
     }
-    // Portals pin their top at `(viewport - reserve_height) / 2`, so two fewer reserved rows per
-    // layer lower the top edge by one row per layer.
-    let band = Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT).resolve(ctx.viewport().h, 0);
     modal
-        .reserve_height(Length::Px(band.saturating_sub(2 * depth)))
-        .backdrop_style(Style::new().tint_by(ctx.state.theme.surface.backdrop, BACKDROP_RECESSION))
+        .reserve_height(crate::view::stacked_reserve(
+            ctx,
+            ACTION_PALETTE_MAX_HEIGHT_PERCENT,
+            depth,
+        ))
+        .backdrop_style(receding_backdrop(&ctx.state.theme))
 }
 
 /// Shared category navigation. Query inputs retain keyboard focus while tabs accept clicks.

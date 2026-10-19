@@ -83,6 +83,11 @@ fn split_uses_explicit_config_before_cwd_fallback_and_preserves_cwd_override() {
             .find(|pane| pane["id"] == spawned["data"]["id"])
             .unwrap();
         let expected = if override_cwd { &explicit } else { &configured };
-        assert_eq!(pane["cwd"], expected.to_string_lossy().as_ref());
+        // Windows may report a DOS path while canonicalize returns its verbatim form.
+        // Compare the resolved directories rather than their display spelling.
+        assert_eq!(
+            std::fs::canonicalize(pane["cwd"].as_str().unwrap()).unwrap(),
+            expected.canonicalize().unwrap()
+        );
     }
 }

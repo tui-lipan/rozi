@@ -59,9 +59,7 @@ pub(crate) fn update_agent_status_edge(
     let current = pane.agent_status();
     let current = current.as_deref();
     use crate::session::protocol::ActivityState;
-    let generic = pane.detected_agent.is_none()
-        && pane.agent_integration.is_none()
-        && !pane.published_rows.iter().any(|row| row.is_agent());
+    let generic = !pane.has_agent();
     let previous_activity = previous.map(ActivityState::from_status);
     let current_activity = current.map(ActivityState::from_status);
     if current != previous {

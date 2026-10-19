@@ -426,8 +426,14 @@ mod tests {
 
         emit(&state, Event::new(EventKind::PaneExited, vec![]));
 
+        let expected = socket.display().to_string();
         let deadline = Instant::now() + Duration::from_secs(2);
-        while (!first.exists() || !second.exists()) && Instant::now() < deadline {
+        // Shell redirection creates each file before printf writes its contents.
+        while [&first, &second]
+            .iter()
+            .any(|path| std::fs::read_to_string(path).ok().as_deref() != Some(expected.as_str()))
+            && Instant::now() < deadline
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(

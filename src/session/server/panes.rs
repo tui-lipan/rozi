@@ -769,27 +769,20 @@ impl SessionServer {
     /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
     /// base64-ed copy of every pixel. While every attached client shares this machine's
     /// filesystem, the name is forwarded as sent and each client opens the file itself; the
-    /// consuming media (`t=t`, `t=s`) stay off, since the first reader would take the frame from
-    /// the others.
+    /// consuming media (`t=t`, `t=s`) always stay off. Enabling them for remote clients would let
+    /// a child choose a transport that local clients cannot read after the remote client leaves.
     ///
-    /// A client attached over SSH cannot open a path on this machine. The server then reads every
-    /// out-of-band source itself and forwards the pixels inline, so a child that chose files or
-    /// shared memory before that client arrived keeps drawing for everyone.
+    /// A client attached over SSH cannot open a path on this machine. The server then reads the
+    /// file itself and forwards the pixels inline, so a child that chose files before that client
+    /// arrived keeps drawing for everyone.
     pub(super) fn image_media(&self) -> ImageMedia {
         let reachable = self
             .clients
             .iter()
             .all(|client| !client.attached || client.shares_filesystem);
-        if reachable {
-            ImageMedia {
-                policy: GraphicsMediaPolicy::SHARED,
-                relay_inline: false,
-            }
-        } else {
-            ImageMedia {
-                policy: GraphicsMediaPolicy::default(),
-                relay_inline: true,
-            }
+        ImageMedia {
+            policy: GraphicsMediaPolicy::SHARED,
+            relay_inline: !reachable,
         }
     }
 

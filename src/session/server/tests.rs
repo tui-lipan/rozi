@@ -249,7 +249,7 @@ fn session_socket_path_rejects_invalid_names() {
 /// A pane hands a frame over by naming a file only when every client can open it. One client
 /// watching from another machine is enough to change that for all of them, since the panes are
 /// shared and a path from this machine would resolve against that one's files: the server then
-/// reads every out-of-band source itself and forwards the pixels inline.
+/// reads the file itself and forwards the pixels inline.
 #[test]
 fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     let mut server = SessionServer::new_named("dev");
@@ -277,7 +277,7 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     assert_eq!(
         server.image_media(),
         ImageMedia {
-            policy: GraphicsMediaPolicy::default(),
+            policy: GraphicsMediaPolicy::SHARED,
             relay_inline: true,
         }
     );
@@ -303,6 +303,41 @@ fn attach_remote_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
         },
     );
     (remote, stream)
+}
+
+/// A remote client must not offer consuming transports that disappear when it leaves.
+#[test]
+fn consuming_temp_files_stay_unsupported_when_a_remote_client_leaves() {
+    use base64::Engine as _;
+
+    let mut server = SessionServer::new_named("graphics");
+    server.panes.insert(7, test_pane(2));
+    let (_local, _local_stream) = attach_client(&mut server);
+    let (remote, _remote_stream) = attach_remote_client(&mut server);
+
+    for remote_attached in [true, false] {
+        if !remote_attached {
+            server.remove_client(remote);
+        }
+        let source = tempfile::Builder::new()
+            .prefix("tty-graphics-protocol-rozi-refused-")
+            .tempfile()
+            .unwrap();
+        std::fs::write(source.path(), [255, 0, 0]).unwrap();
+        let named = base64::engine::general_purpose::STANDARD
+            .encode(source.path().as_os_str().as_encoded_bytes());
+        let frame = format!("\x1b_Ga=T,f=24,s=1,v=1,t=t,i=7,q=2;{named}\x1b\\");
+        let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+        screen.process_bytes(frame.as_bytes());
+        assert!(
+            source.path().exists(),
+            "a refused temporary-file frame must not be consumed, remote attached: {remote_attached}"
+        );
+        assert!(
+            screen.capture_frame().images.is_empty(),
+            "temporary-file frames must stay unsupported, remote attached: {remote_attached}"
+        );
+    }
 }
 
 /// The pane output the server has queued for a client, in order.

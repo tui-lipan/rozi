@@ -35,9 +35,10 @@ fn prompt_hints(ctx: &Context<AppRoot>, submit: &[(&str, &str)], submit_msg: &Ms
 /// What a prompt has to say about itself, and how loudly.
 ///
 /// The two differ only in whether the modal's own border and title change colour, and that is the
-/// whole distinction: the error accent is rozi's "this destroys something" signal, so spending it
-/// on news the user merely needs to read would make every rejected password look like a warning
-/// about to close their sessions.
+/// whole distinction: the error accent is rozi's "this destroys something, or something is already
+/// lost" signal — an armed prompt here, the Session lost overlay elsewhere. Spending it on news the
+/// user merely needs to read would make every rejected password look like a warning about to close
+/// their sessions.
 #[derive(Clone, Copy)]
 pub(super) enum PromptCaption<'a> {
     /// Something is about to be destroyed or overwritten and a second Enter will do it. Recolors
@@ -55,7 +56,7 @@ impl<'a> PromptCaption<'a> {
         }
     }
 
-    fn arms_chrome(self) -> bool {
+    pub(super) fn arms_chrome(self) -> bool {
         matches!(self, Self::Armed(_))
     }
 }
@@ -312,16 +313,9 @@ pub(super) fn prompt_overlay(
         modal = modal.backdrop_style(receding_backdrop(theme));
     }
     if caption.is_some_and(PromptCaption::arms_chrome) {
-        // Recolor the shared modal chrome to the error accent so the whole dialog reads as "armed"
-        // (border + title), matching the inline caption. The modal captures focus the moment it
-        // opens, so `focus_style` must repeat the accent or the theme focus role repaints the border.
-        let armed_frame = Style::new()
-            .bg(theme.surface.element)
-            .fg(theme.status.error);
-        modal = modal
-            .frame_style(armed_frame)
-            .focus_style(armed_frame)
-            .title_style(Style::new().fg(theme.status.error).bold());
+        // Recolor the shared modal chrome so the whole dialog reads as "armed", matching the
+        // inline caption.
+        modal = crate::view::error_modal_chrome(theme, modal);
     }
     modal.key(format!("rozi-prompts-{title}"))
 }

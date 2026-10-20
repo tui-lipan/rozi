@@ -205,5 +205,8 @@ pub(super) fn dialog_overlay(
     if dim_behind {
         modal = modal.backdrop_style(receding_backdrop(theme));
     }
+    if caption.is_some_and(PromptCaption::arms_chrome) {
+        modal = crate::view::error_modal_chrome(theme, modal);
+    }
     modal.key(format!("rozi-confirm-{title}"))
 }

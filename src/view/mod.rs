@@ -1045,6 +1045,71 @@ mod grouped_search_tests {
             .join()
             .expect("offline modal test completes");
     }
+
+    /// The modal's top-left corner glyph and its title cell, on the row carrying `title`.
+    fn modal_corner_and_title_fg(
+        frame: &tui_lipan::capture::CapturedFrame,
+        title: &str,
+    ) -> (tui_lipan::prelude::Color, tui_lipan::prelude::Color) {
+        let lines = frame.to_fixed_grid_lines();
+        let (row, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| line.contains(title))
+            .unwrap_or_else(|| panic!("expected {title:?}, got:\n{}", lines.join("\n")));
+        let corner = line.chars().position(|ch| ch != ' ').expect("modal corner");
+        let title_byte = line.find(title).expect("modal title");
+        let title_col = line[..title_byte].chars().count();
+        (
+            frame.cell(corner as u16, row as u16).fg,
+            frame.cell(title_col as u16, row as u16).fg,
+        )
+    }
+
+    #[test]
+    fn lost_remote_session_modal_uses_error_chrome() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                backend.set_viewport(tui_lipan::prelude::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let state = backend.state_mut();
+                state.show_session_picker = false;
+                state.session_picker = None;
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().remote_host = Some("workbox".into());
+                state.current_mut().pending_session_attach = None;
+                state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+                let error = state.theme.status.error;
+                backend.render();
+
+                let frame = backend.capture_frame();
+                let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
+                assert_ne!(corner, error, "an offline session keeps the shared chrome");
+                assert_ne!(title, error, "an offline session keeps the shared chrome");
+
+                backend.state_mut().current_mut().remote_session_lost = true;
+                backend.render();
+
+                let frame = backend.capture_frame();
+                assert!(
+                    frame.to_fixed_grid().contains("Session lost"),
+                    "expected lost status, got:\n{}",
+                    frame.to_fixed_grid()
+                );
+                let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
+                assert_eq!(corner, error, "a lost session's border reads as an error");
+                assert_eq!(title, error, "a lost session's title reads as an error");
+            })
+            .expect("spawn lost modal test")
+            .join()
+            .expect("lost modal test completes");
+    }
 }
 
 fn search_palette_active_item_style() -> Style {
@@ -1074,6 +1139,19 @@ pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> M
         .border_style(overlay_border_style(ctx))
         .frame_style(Style::new().bg(theme.surface.element))
         .padding(0)
+}
+
+/// Recolor a modal's chrome (border and title) to the error accent so the whole dialog reads as a
+/// failure or an armed action. The modal captures focus when it opens, so `focus_style` repeats
+/// the accent or the theme focus role repaints the border.
+pub(crate) fn error_modal_chrome(theme: &Theme, modal: Modal) -> Modal {
+    let frame = Style::new()
+        .bg(theme.surface.element)
+        .fg(theme.status.error);
+    modal
+        .frame_style(frame)
+        .focus_style(frame)
+        .title_style(Style::new().fg(theme.status.error).bold())
 }
 
 /// Shared cap for command-palette-shaped overlays (`OverlayPalette`, theme picker, install

@@ -233,6 +233,10 @@ pub struct SharedSessionState {
     /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
     /// `(pane_id, generation)`; drained into the pane once the reconciler adds it.
     orphan_output: OrphanOutputStore,
+    /// The latest server geometry for a pane the layout has not created yet, keyed like
+    /// `orphan_output` and applied before that output is parsed. One entry per pane: a newer
+    /// generation replaces an older one.
+    orphan_geometry: HashMap<PaneId, (u64, PaneGeometry)>,
     /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
     pub layout_commit_scheduled: bool,
 }
@@ -251,6 +255,7 @@ impl SharedSessionState {
             canonical_canvas: None,
             last_committed_layout: None,
             orphan_output: OrphanOutputStore::default(),
+            orphan_geometry: HashMap::new(),
             layout_commit_scheduled: false,
         }
     }
@@ -293,6 +298,41 @@ impl SharedSessionState {
     pub fn orphan_output_stats(&self) -> OrphanOutputStats {
         self.orphan_output.stats()
     }
+
+    /// Hold the server geometry of a pane the layout has not created yet.
+    pub fn hold_orphan_geometry(
+        &mut self,
+        pane_id: PaneId,
+        generation: u64,
+        geometry: PaneGeometry,
+    ) {
+        if self
+            .orphan_geometry
+            .get(&pane_id)
+            .is_some_and(|(held, _)| *held > generation)
+        {
+            return;
+        }
+        self.orphan_geometry.insert(pane_id, (generation, geometry));
+    }
+
+    /// The held geometry for this pane generation, if any. An older generation's is dropped.
+    pub fn take_orphan_geometry(
+        &mut self,
+        pane_id: PaneId,
+        generation: u64,
+    ) -> Option<PaneGeometry> {
+        let (held, geometry) = self.orphan_geometry.remove(&pane_id)?;
+        (held == generation).then_some(geometry)
+    }
+}
+
+/// A pane's size and cell size as the server reports them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneGeometry {
+    pub cols: u16,
+    pub rows: u16,
+    pub cell: Option<tui_lipan::TerminalCellSize>,
 }
 
 /// A pane spawn deferred until a session client is available (see [`super::State::pending_spawns`]).

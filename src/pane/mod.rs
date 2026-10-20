@@ -693,6 +693,19 @@ impl TerminalPane {
         self.cell
     }
 
+    /// Take the server's size and cell size for this pane. The cell size comes first: it is what
+    /// the pane's images are laid out against, the same value the controller gave the child's PTY.
+    /// Returns whether either changed.
+    pub fn apply_server_geometry(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        cell: Option<tui_lipan::TerminalCellSize>,
+    ) -> bool {
+        let cell_changed = cell.is_some_and(|cell| self.apply_session_cell(cell));
+        self.apply_server_resize(cols, rows) || cell_changed
+    }
+
     pub fn apply_server_resize(&mut self, cols: u16, rows: u16) -> bool {
         let cols = cols.max(1);
         let rows = rows.max(1);

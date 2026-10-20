@@ -843,6 +843,60 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
         .expect("resize test thread completes");
 }
 
+/// Taking control of panes whose grid already matches still has to tell the server this client's
+/// cell size: the PTYs otherwise keep reporting the previous controller's pixel geometry.
+#[test]
+fn gaining_control_publishes_this_clients_cells_for_an_unchanged_grid() {
+    use crate::Msg;
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
+    use crate::state::SharedSessionState;
+    use tui_lipan::TestBackend;
+
+    on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, rx) = SessionClient::test_channel();
+        let (pane_id, size) = {
+            let state = backend.state_mut();
+            state.runtime_epoch = 7;
+            state.current_mut().session_client = Some(client);
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(2);
+            state.current_mut().shared = Some(shared);
+            let pane_id = state.current().focused_pane.expect("focused pane");
+            let pane = crate::pane::lifecycle::find_pane_mut(state, pane_id).expect("pane");
+            (pane_id, (pane.terminal.cols, pane.terminal.rows))
+        };
+        assert!(backend.state().current().pending_resizes.is_empty());
+
+        backend
+            .dispatch(Msg::SessionControllerChanged {
+                epoch: 7,
+                controller: Some(1),
+                reason: crate::session::protocol::ControllerChangeReason::Granted,
+            })
+            .expect("dispatch control grant");
+
+        let cell = tui_lipan::host_cell_size();
+        let sent: Vec<_> = rx
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::Resize {
+                    pane_id,
+                    local: false,
+                    cols,
+                    rows,
+                    cell_width,
+                    cell_height,
+                    ..
+                }) => Some((pane_id, (cols, rows), (cell_width, cell_height))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, vec![(pane_id, size, (cell.width, cell.height))]);
+    });
+}
+
 fn on_large_stack(test: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

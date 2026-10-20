@@ -273,26 +273,31 @@ pub(crate) fn resized(
     rows: u16,
     cell: Option<tui_lipan::TerminalCellSize>,
 ) -> Update {
+    let geometry = crate::state::PaneGeometry { cols, rows, cell };
     if epoch != ctx.state.runtime_epoch {
         if local {
             return Update::none();
         }
         // Keep a retained background attachment's screen at the server's size for an instant, correct
         // switch-back.
-        if let Some(pane) = ctx
-            .state
-            .background
-            .get_mut(&epoch)
-            .and_then(|attachment| attachment.find_pane_mut(pane_id))
-            && pane.pty_generation == generation
-        {
-            apply_server_geometry(&mut pane.terminal, cols, rows, cell);
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            apply_or_hold_geometry(attachment, pane_id, generation, geometry);
         }
         return Update::none();
     }
-    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
-        && pane.pty_generation == generation
-        && apply_server_geometry(&mut pane.terminal, cols, rows, cell)
+    if local {
+        let changed =
+            find_pane_in_namespace_mut(&mut ctx.state, pane_id, true).is_some_and(|pane| {
+                pane.pty_generation == generation
+                    && pane.terminal.apply_server_geometry(cols, rows, cell)
+            });
+        return if changed && ctx.state.pane_is_rendered(pane_id) {
+            Update::full()
+        } else {
+            Update::none()
+        };
+    }
+    if apply_or_hold_geometry(ctx.state.current_mut(), pane_id, generation, geometry)
         && ctx.state.pane_is_rendered(pane_id)
     {
         return Update::full();
@@ -300,16 +305,30 @@ pub(crate) fn resized(
     Update::none()
 }
 
-/// Take the server's size and cell size for a pane. The cell size comes first: it is what the
-/// pane's images are laid out against, the same value the controller gave the child's PTY.
-fn apply_server_geometry(
-    terminal: &mut crate::pane::TerminalPane,
-    cols: u16,
-    rows: u16,
-    cell: Option<tui_lipan::TerminalCellSize>,
+/// Apply a shared pane's server geometry, or hold it when the pane's layout commit has not created
+/// the pane yet. Output that arrives in between is buffered the same way, and the held geometry is
+/// applied before that output is parsed, so an early picture is laid out against the session's
+/// cells rather than this client's own. Returns whether a live pane changed.
+fn apply_or_hold_geometry(
+    attachment: &mut crate::state::Attachment,
+    pane_id: PaneId,
+    generation: u64,
+    geometry: crate::state::PaneGeometry,
 ) -> bool {
-    let cell_changed = cell.is_some_and(|cell| terminal.apply_session_cell(cell));
-    terminal.apply_server_resize(cols, rows) || cell_changed
+    match attachment.find_pane_mut(pane_id) {
+        Some(pane) => {
+            pane.pty_generation == generation
+                && pane
+                    .terminal
+                    .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell)
+        }
+        None => {
+            if let Some(shared) = attachment.shared.as_mut() {
+                shared.hold_orphan_geometry(pane_id, generation, geometry);
+            }
+            false
+        }
+    }
 }
 
 /// The server is about to replay a shared pane from its own screen: after an attach, or after this
@@ -367,9 +386,15 @@ fn reset_attachment_pane(
         }
         Some(_) => false,
         None => {
-            // Output buffered before the layout introduced this pane predates the replay.
+            // Output buffered before the layout introduced this pane predates the replay, which is
+            // parsed at the reset's geometry once the layout creates the pane.
             if let Some(shared) = attachment.shared.as_mut() {
                 shared.discard_orphan_output(pane_id, generation);
+                shared.hold_orphan_geometry(
+                    pane_id,
+                    generation,
+                    crate::state::PaneGeometry { cols, rows, cell },
+                );
             }
             false
         }

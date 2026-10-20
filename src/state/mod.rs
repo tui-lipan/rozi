@@ -1315,6 +1315,15 @@ impl State {
         pane
     }
 
+    /// Pane presentation for the active workspace or the local scratchpad.
+    pub(crate) fn active_pane_config(&self) -> crate::config::PaneConfig {
+        if self.scratch_visible {
+            self.config.pane
+        } else {
+            self.workspace_pane_config()
+        }
+    }
+
     fn follower_pane_geometry(&self) -> Option<crate::layout::shared::SharedPaneGeometry> {
         self.follower_canonical_canvas()?;
         self.current()

@@ -362,11 +362,7 @@ fn visible_recording_dot(state: &State) -> bool {
         return true;
     }
     let workspace = state.active_workspace_ref();
-    let pane_config = if state.scratch_visible {
-        state.config.pane
-    } else {
-        state.workspace_pane_config()
-    };
+    let pane_config = state.active_pane_config();
     let chrome = crate::view::pane_chrome_shows_recording(&pane_config);
     // A fullscreen pane covers everything else, the workbar included, so only its chrome shows.
     if let Some(cover) = crate::view::fullscreen_pane(workspace) {
@@ -403,7 +399,7 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     }
     let workspace = state.active_workspace_ref();
     let focused = workspace.focused_pane.or(state.current().focused_pane);
-    let config = &state.workspace_pane_config();
+    let config = &state.active_pane_config();
     let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
     workspace.panes.iter().any(|pane| {
         let focused = focused == Some(pane.id);
@@ -512,6 +508,41 @@ mod tests {
         controller.border_mode = PaneBorderMode::None;
         follow_pane_geometry(&mut state, controller);
         assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn follower_scratch_alert_pulse_uses_only_visible_local_chrome() {
+        for (local_border, controller_border, should_pulse) in [
+            (PaneBorderMode::Separate, PaneBorderMode::None, true),
+            (PaneBorderMode::Separate, PaneBorderMode::Separate, true),
+            (PaneBorderMode::None, PaneBorderMode::Separate, false),
+        ] {
+            let mut state = State::new(Config::default(), Theme::default());
+            state.config.pane.border_mode = local_border;
+            state.config.pane.alert_paint = PaneAlertPaint::Border;
+            state.config.pane.alert_border = AlertMode::Pulse;
+            state.config.workbar.alert.mode = AlertMode::Off;
+            let mut controller = Config::default().pane;
+            controller.border_mode = controller_border;
+            follow_pane_geometry(&mut state, controller);
+            state.scratch.panes.push(blocked_pane(99));
+            assert!(!crate::view::has_pane_alert(&state));
+            assert!(!alert_pulse_should_run(&state));
+
+            state.scratch_visible = true;
+            assert_eq!(crate::view::has_pane_alert(&state), should_pulse);
+            assert_eq!(alert_pulse_should_run(&state), should_pulse);
+
+            state.scratch.panes.clear();
+            state.current_mut().workspaces[0]
+                .panes
+                .push(blocked_pane(2));
+            assert!(
+                !crate::view::has_pane_alert(&state),
+                "the shared alert is behind scratch"
+            );
+            assert!(!alert_pulse_should_run(&state));
+        }
     }
 
     #[test]

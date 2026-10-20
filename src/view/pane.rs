@@ -509,12 +509,12 @@ pub(crate) fn pane_border_alert(
 /// its content. Other workspaces are represented by tab markers, and divider-only/none modes have
 /// no per-pane frame to animate, though the content tint still has the terminal to cover.
 pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
-    let config = &state.workspace_pane_config();
+    let config = &state.active_pane_config();
     let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
     if !frames && !config.alert_paint.paints_content() {
         return false;
     }
-    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let workspace = state.active_workspace_ref();
     let focused = workspace.focused_pane.or(state.current().focused_pane);
     workspace.panes.iter().any(|pane| {
         pane_alert(

@@ -362,7 +362,12 @@ fn visible_recording_dot(state: &State) -> bool {
         return true;
     }
     let workspace = state.active_workspace_ref();
-    let chrome = crate::view::pane_chrome_shows_recording(&state.config.pane);
+    let pane_config = if state.scratch_visible {
+        state.config.pane
+    } else {
+        state.workspace_pane_config()
+    };
+    let chrome = crate::view::pane_chrome_shows_recording(&pane_config);
     // A fullscreen pane covers everything else, the workbar included, so only its chrome shows.
     if let Some(cover) = crate::view::fullscreen_pane(workspace) {
         return chrome
@@ -398,7 +403,7 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     }
     let workspace = state.active_workspace_ref();
     let focused = workspace.focused_pane.or(state.current().focused_pane);
-    let config = &state.config.pane;
+    let config = &state.workspace_pane_config();
     let frames = config.border_mode.draws_frames() && config.alert_paint.paints_border();
     workspace.panes.iter().any(|pane| {
         let focused = focused == Some(pane.id);
@@ -473,6 +478,74 @@ mod tests {
             set_at: 0,
         });
         pane
+    }
+
+    fn follow_pane_geometry(state: &mut State, config: crate::config::PaneConfig) {
+        let mut layout = crate::layout::shared::shared_layout_from_state(state, (80, 24));
+        layout.pane_geometry = crate::layout::shared::SharedPaneGeometry::from_config(config);
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(2);
+        shared.canonical_canvas = Some((80, 24));
+        shared.last_committed_layout = Some(layout);
+        state.current_mut().shared = Some(shared);
+    }
+
+    #[test]
+    fn follower_border_pulse_uses_controller_frames_and_local_alert_preferences() {
+        let mut state = State::new(Config::default(), Theme::default());
+        state.config.pane.border_mode = PaneBorderMode::None;
+        state.config.pane.alert_paint = PaneAlertPaint::Border;
+        state.config.pane.alert_border = AlertMode::Pulse;
+        state.current_mut().workspaces[0]
+            .panes
+            .push(blocked_pane(2));
+        assert!(!alert_pulse_should_run(&state));
+
+        let mut controller = Config::default().pane;
+        controller.border_mode = PaneBorderMode::Separate;
+        controller.alert_border = AlertMode::Off;
+        follow_pane_geometry(&mut state, controller);
+        assert!(alert_pulse_should_run(&state));
+        state.config.pane.alert_border = AlertMode::Off;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.pane.alert_border = AlertMode::Pulse;
+        controller.border_mode = PaneBorderMode::None;
+        follow_pane_geometry(&mut state, controller);
+        assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn follower_recording_dot_and_tab_use_controller_chrome() {
+        let mut state = State::new(Config::default(), Theme::default());
+        state.config.pane.show_titles = true;
+        state.config.pane.border_mode = PaneBorderMode::Separate;
+        state.config.pane.show_workbar = false;
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .recording = true;
+        let mut controller = Config::default().pane;
+        controller.show_titles = false;
+        controller.border_mode = PaneBorderMode::None;
+        follow_pane_geometry(&mut state, controller);
+        assert!(!visible_recording_dot(&state));
+        assert!(crate::view::workspace_tab_shows_recording(&state, 0));
+
+        controller.show_titles = true;
+        state.config.pane.show_titles = false;
+        state.config.pane.border_mode = PaneBorderMode::None;
+        follow_pane_geometry(&mut state, controller);
+        assert!(visible_recording_dot(&state));
+        assert!(!crate::view::workspace_tab_shows_recording(&state, 0));
+
+        controller.show_titles = false;
+        follow_pane_geometry(&mut state, controller);
+        state.config.pane.show_titles = true;
+        state.scratch_visible = true;
+        let mut scratch = blocked_pane(99);
+        scratch.terminal.reported_status = None;
+        scratch.terminal.recording = true;
+        state.scratch.panes.push(scratch);
+        assert!(visible_recording_dot(&state), "scratch chrome stays local");
     }
 
     #[test]

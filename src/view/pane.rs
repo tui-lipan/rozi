@@ -278,11 +278,12 @@ pub(crate) fn pane_frame_chrome(
     effective_focus: Option<PaneId>,
     kind: PaneKind,
 ) -> PaneFrameChrome {
+    let pane_config = ctx.state.pane_config_for(pane.id);
     let theme = &ctx.state.theme;
     let focused = effective_focus == Some(pane.id);
-    let border_mode = ctx.state.config.pane.border_mode;
-    let show_border = border_mode.draws_frames()
-        || (kind.is_special() && ctx.state.config.pane.keep_special_borders);
+    let border_mode = pane_config.border_mode;
+    let show_border =
+        border_mode.draws_frames() || (kind.is_special() && pane_config.keep_special_borders);
     let border_style = match kind {
         PaneKind::Fullscreen => ctx
             .state
@@ -661,9 +662,10 @@ fn status_title(ctx: &Context<AppRoot>, pane: &Pane) -> String {
 }
 
 fn title_parts(ctx: &Context<AppRoot>, pane: &Pane, focused_pane: Option<PaneId>) -> TitleParts {
+    let pane_config = ctx.state.pane_config_for(pane.id);
     let theme = &ctx.state.theme;
     let id = pane.id;
-    let titlebar = ctx.state.config.pane.titlebar;
+    let titlebar = pane_config.titlebar;
     let focused = focused_pane == Some(id);
     let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
     let icon = pane_icon(ctx, pane);
@@ -808,10 +810,11 @@ pub(crate) fn divider_title_element(
     pane: &Pane,
     focused_pane: Option<PaneId>,
 ) -> Option<Element> {
-    if !ctx.state.config.pane.show_titles {
+    let pane_config = ctx.state.pane_config_for(pane.id);
+    if !pane_config.show_titles {
         return None;
     }
-    let titlebar = ctx.state.config.pane.titlebar;
+    let titlebar = pane_config.titlebar;
     if !matches!(
         titlebar,
         PaneTitlebarMode::Border | PaneTitlebarMode::Integrated
@@ -900,7 +903,8 @@ pub(crate) fn seam_title_element(
     pane: &Pane,
     focused_pane: Option<PaneId>,
 ) -> Option<SeamTitle> {
-    if !ctx.state.config.pane.show_titles {
+    let pane_config = ctx.state.pane_config_for(pane.id);
+    if !pane_config.show_titles {
         return None;
     }
     let id = pane.id;
@@ -908,7 +912,7 @@ pub(crate) fn seam_title_element(
     let parts = title_parts(ctx, pane, focused_pane);
     let label = title_spans(&icon_lead(parts.icon), &parts.title);
 
-    match ctx.state.config.pane.titlebar {
+    match pane_config.titlebar {
         // The neighbour above redraws the border line itself, so only the label is missing. Place
         // it where `BorderLabels::padding(1)` puts it: past the corner and its one `─` of padding.
         PaneTitlebarMode::Border => {
@@ -1048,6 +1052,7 @@ pub(crate) fn pane_element(
     hide_frame_border: bool,
     fade: animation::Fade,
 ) -> Element {
+    let pane_config = ctx.state.pane_config_for(pane.id);
     pane.live_title.bound.set(false);
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -1060,7 +1065,7 @@ pub(crate) fn pane_element(
     } else {
         None
     };
-    let border_mode = ctx.state.config.pane.border_mode;
+    let border_mode = pane_config.border_mode;
     let chrome = pane_frame_chrome(ctx, pane, effective_focus, kind);
     let PaneFrameChrome {
         show_border,
@@ -1086,8 +1091,8 @@ pub(crate) fn pane_element(
         focused,
         ctx.state.config.pane.highlight_focused_background,
     );
-    let titlebar = ctx.state.config.pane.titlebar;
-    let show_titles = ctx.state.config.pane.show_titles;
+    let titlebar = pane_config.titlebar;
+    let show_titles = pane_config.show_titles;
     // The inset title is the frame's first interior row, so the frame gives up its own padding to
     // it and the configured padding is re-applied to the terminal below. That keeps the title
     // locked under the top border, at the column `border` would have put it in.
@@ -1381,7 +1386,7 @@ pub(crate) fn pane_element(
         .padding(if inset_title {
             (0, 0, 0, 0)
         } else {
-            ctx.state.config.pane.padding
+            pane_config.padding
         })
         .style(frame_style);
     // An explicit focus style makes frame borders hit-testable, even when not focusable.
@@ -1540,7 +1545,7 @@ pub(crate) fn pane_element(
                 // Unstyled, so the frame's own background shows through the padding it gave up.
                 VStack::new()
                     .align(Align::Stretch)
-                    .padding(ctx.state.config.pane.padding)
+                    .padding(pane_config.padding)
                     .width(Length::Flex(1))
                     .height(Length::Flex(1))
                     .child(terminal),
@@ -1920,8 +1925,13 @@ pub(crate) fn tiled_resize_strips(
         .collect();
 
     let gap = ctx.state.tile_gap();
-    let title_row =
-        ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_outer_row();
+    let pane_config = workspace
+        .panes
+        .first()
+        .map_or(ctx.state.config.pane, |pane| {
+            ctx.state.pane_config_for(pane.id)
+        });
+    let title_row = pane_config.show_titles && pane_config.titlebar.takes_outer_row();
     let (vertical_strips, horizontal_strips) =
         resize_strip_hitboxes(&tiled, gap, master, title_row);
     // Junction segment lookup compares the drag origin against canvas-space starts, so shift by

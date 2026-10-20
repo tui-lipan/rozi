@@ -206,6 +206,7 @@ pub fn layout_committed_message() -> ServerMessage {
 fn large_layout() -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 320,
         canvas_rows: 90,
         workspaces: (0..10)

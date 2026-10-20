@@ -42,6 +42,7 @@ fn detected_blocked_elevates_over_quiescent_reports_but_not_working() {
 fn golden_layout_commit_json_shape() {
     let layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 120,
         canvas_rows: 40,
         workspaces: vec![SharedWorkspace {
@@ -87,7 +88,15 @@ fn golden_layout_commit_json_shape() {
             "rev": 4,
             "author": 3,
             "layout": {
-                "version": 3,
+                "version": 4,
+                "pane_geometry": {
+                    "show_titles": true,
+                    "titlebar": "bar",
+                    "border_mode": "separate",
+                    "keep_special_borders": true,
+                    "padding": [0, 0, 0, 0],
+                    "top_gap": 1
+                },
                 "canvas_cols": 120,
                 "canvas_rows": 40,
                 "workspaces": [{

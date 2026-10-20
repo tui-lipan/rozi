@@ -141,6 +141,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
 
     let layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 23,
         workspaces: vec![SharedWorkspace {

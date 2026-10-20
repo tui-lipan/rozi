@@ -233,17 +233,21 @@ fn mark_workspace_pane_closing(
     kill_server_pane: bool,
     namespace: Option<bool>,
 ) -> Option<u64> {
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let bounds = crate::view::follower_letterbox_bounds(&ctx.state, ctx.viewport());
     let placements = {
-        let attachment = ctx.state.current();
-        let workspace = &attachment.workspaces[attachment.active_workspace];
-        crate::layout::workspace_target_rects(
+        let workspace = ctx
+            .state
+            .current()
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.panes.iter().any(|pane| pane.id == id))?;
+        crate::layout::workspace_target_rects_with_visible_bounds(
             workspace,
             bounds,
+            ctx.state
+                .canvas_bounds_from_terminal_viewport(ctx.viewport()),
             ctx.state.workspace_top_gap(),
-            ctx.state.tile_gap(),
+            ctx.state.tile_gap_for(false),
         )
     };
     let client = ctx.state.current().session_client.clone();
@@ -260,8 +264,13 @@ fn mark_workspace_pane_closing(
     if kill_server_pane && let Some(client) = client {
         client.kill(id, generation, wire_local);
     }
-    pane.floating_rect =
-        crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
+    if let Some(rect) = crate::layout::placement_for(&placements, id) {
+        pane.floating_rect = FloatRect {
+            x: rect.x - bounds.x,
+            y: rect.y - bounds.y,
+            ..rect
+        };
+    }
     pane.opening = false;
     pane.opening_animation = None;
     pane.closing = true;

@@ -73,7 +73,11 @@ makes with the mouse are the exception: a dragged pane, a floating-pane move, a 
 
 The controller's content area sets the terminal size for every pane in the session. Followers show
 that area inside their own window: a larger window leaves unused space, and a smaller one cuts off
-the edges.
+the edges. Floating panes keep their positions within that area.
+
+Followers use the controller's pane padding, titlebar layout, border mode, and workbar gap so
+terminal content has the same dimensions. Colors, border glyphs, and animations use each client's
+own settings. The follower's saved pane settings apply again when it takes control.
 
 Showing or hiding the controller's sidebar changes the shared width and resizes every pane. A
 follower's sidebar is local and does not resize anything.

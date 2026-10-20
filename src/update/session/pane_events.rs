@@ -28,7 +28,7 @@ fn apply_current_pane_output(
     let title_is_local =
         !state.sidebar_shown() && state.sidebar_slide.get() == 0.0 && !state.has_modal_overlay();
     let remote_attached = state.current().remote_target.is_some();
-    let show_titles = state.config.pane.show_titles;
+    let show_titles = state.pane_config_for(pane_id).show_titles;
     let bell_notifications = state.config.notifications.bell;
     // Reassert media policy on every path that can create or feed a pane.
     let policy = if local && crate::scratchpad::contains(state, pane_id) {

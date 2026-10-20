@@ -21,18 +21,63 @@ use crate::state::{PaneId, State};
 pub type ClientId = u64;
 
 /// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes.
-/// Version 3 represents pane launch intent without collapsing direct argv into a shell string.
-pub const SHARED_LAYOUT_VERSION: u32 = 3;
+/// Version 4 includes the controller's pane chrome geometry.
+pub const SHARED_LAYOUT_VERSION: u32 = 4;
 
 /// The complete shared window-manager document for a session. Fractions in [`FracRect`] are
 /// relative to the controller's canonical pane canvas (`canvas_cols` × `canvas_rows`, excluding
-/// the workbar) so followers can rescale floating geometry to their own viewport.
+/// the workbar) so followers place floats inside the same centered canvas.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SharedLayout {
     pub version: u32,
     pub canvas_cols: u16,
     pub canvas_rows: u16,
+    pub pane_geometry: SharedPaneGeometry,
     pub workspaces: Vec<SharedWorkspace>,
+}
+
+/// Geometry-affecting presentation shared with followers so their terminal grids match.
+/// Colors, border glyphs, and animation recipes remain client-local.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SharedPaneGeometry {
+    pub show_titles: bool,
+    pub titlebar: crate::state::PaneTitlebarMode,
+    pub border_mode: crate::state::PaneBorderMode,
+    pub keep_special_borders: bool,
+    pub padding: (u16, u16, u16, u16),
+    pub top_gap: i8,
+}
+
+impl SharedPaneGeometry {
+    pub fn from_config(pane: crate::config::PaneConfig) -> Self {
+        let top_gap = if pane.show_workbar && pane.workbar_gap {
+            if pane.workbar_at_bottom { -1 } else { 1 }
+        } else {
+            0
+        };
+        Self {
+            show_titles: pane.show_titles,
+            titlebar: pane.titlebar,
+            border_mode: pane.border_mode,
+            keep_special_borders: pane.keep_special_borders,
+            padding: pane.padding,
+            top_gap,
+        }
+    }
+
+    pub(crate) fn apply(self, pane: &mut crate::config::PaneConfig) {
+        pane.show_titles = self.show_titles;
+        pane.titlebar = self.titlebar;
+        pane.border_mode = self.border_mode;
+        pane.keep_special_borders = self.keep_special_borders;
+        pane.padding = self.padding;
+    }
+}
+
+impl Default for SharedPaneGeometry {
+    fn default() -> Self {
+        Self::from_config(crate::config::PaneConfig::default())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -86,6 +131,7 @@ pub struct FracRect {
 pub enum SharedLayoutValidationError {
     UnsupportedVersion(u32),
     ZeroCanvasDimensions,
+    InvalidPaneGeometry,
     DuplicateWorkspaceIndex(usize),
     InvalidWorkspaceIndex(usize),
     ReservedPaneId(PaneId),
@@ -121,6 +167,10 @@ impl std::fmt::Display for SharedLayoutValidationError {
         match self {
             Self::UnsupportedVersion(v) => write!(f, "unsupported shared layout version {v}"),
             Self::ZeroCanvasDimensions => write!(f, "canvas dimensions must be positive"),
+            Self::InvalidPaneGeometry => write!(
+                f,
+                "pane padding must not exceed 8 and the workbar gap must be -1, 0, or 1"
+            ),
             Self::DuplicateWorkspaceIndex(i) => write!(f, "duplicate workspace index {i}"),
             Self::InvalidWorkspaceIndex(i) => write!(f, "workspace index {i} out of bounds"),
             Self::ReservedPaneId(id) => {
@@ -182,6 +232,20 @@ impl SharedLayout {
         }
         if self.canvas_cols == 0 || self.canvas_rows == 0 {
             return Err(SharedLayoutValidationError::ZeroCanvasDimensions);
+        }
+
+        let geometry = self.pane_geometry;
+        if [
+            geometry.padding.0,
+            geometry.padding.1,
+            geometry.padding.2,
+            geometry.padding.3,
+        ]
+        .into_iter()
+        .any(|side| side > 8)
+            || !(-1..=1).contains(&geometry.top_gap)
+        {
+            return Err(SharedLayoutValidationError::InvalidPaneGeometry);
         }
 
         let mut seen_workspaces = std::collections::HashSet::new();
@@ -323,6 +387,7 @@ pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayo
         version: SHARED_LAYOUT_VERSION,
         canvas_cols,
         canvas_rows,
+        pane_geometry: SharedPaneGeometry::from_config(state.workspace_pane_config()),
         workspaces: state
             .current()
             .workspaces
@@ -477,8 +542,8 @@ impl crate::layout::TileSource for SharedTileSource<'_> {
 
 /// Where each pane of `workspace` sits on the document's canonical canvas, in cells.
 ///
-/// Gap-free and chrome-free on purpose. Gaps, borders, and the workbar are each client's own
-/// presentation config; this is the arrangement the document itself describes, which is the same
+/// Gap-free and chrome-free on purpose. This is the canonical arrangement automation edits;
+/// rendering adds the controller's shared pane geometry. The arrangement stays the same
 /// whichever client - or none - is looking at it. Scrollable columns may extend past the canvas
 /// edge, because the strip is wider than the viewport that scrolls over it.
 pub(crate) fn shared_workspace_placements(
@@ -931,6 +996,7 @@ struct RebuiltWorkspaces {
     next_pane_id: PaneId,
     next_generation: u64,
     orphan_clipboard_events: Vec<tui_lipan::prelude::TerminalClipboardEvent>,
+    opened: Vec<(PaneId, u64)>,
 }
 
 fn index_incoming_panes(layout: &SharedLayout) -> std::collections::HashMap<PaneId, usize> {
@@ -965,14 +1031,25 @@ fn panes_move_between_workspaces(
 fn drain_existing_panes(
     state: &mut State,
     incoming: &std::collections::HashMap<PaneId, usize>,
+    bounds: FloatRect,
+    visible_bounds: FloatRect,
 ) -> DrainedPanes {
     use crate::state::WORKSPACE_COUNT;
 
     let animations = state.config.animations;
+    let top_gap = state.workspace_top_gap();
+    let tile_gap = state.tile_gap_for(false);
     let mut reusable = std::collections::HashMap::new();
     let mut closing_by_workspace = Vec::with_capacity(WORKSPACE_COUNT);
     let mut pruned = Vec::new();
     for workspace in &mut state.current_mut().workspaces {
+        let placements = crate::layout::workspace_target_rects_with_visible_bounds(
+            workspace,
+            bounds,
+            visible_bounds,
+            top_gap,
+            tile_gap,
+        );
         let mut closing = Vec::new();
         for mut pane in workspace.panes.drain(..) {
             if incoming.contains_key(&pane.id) {
@@ -985,7 +1062,15 @@ fn drain_existing_panes(
                 closing.push(pane);
             } else {
                 // The server already dropped this pane. Re-killing it could race a reused id.
+                if let Some(rect) = crate::layout::placement_for(&placements, pane.id) {
+                    pane.floating_rect = FloatRect {
+                        x: rect.x - bounds.x,
+                        y: rect.y - bounds.y,
+                        ..rect
+                    };
+                }
                 pane.opening = false;
+                pane.opening_animation = None;
                 pane.closing = true;
                 pane.begin_close_animation(animations);
                 pane.terminal.kill();
@@ -1017,6 +1102,13 @@ fn rebuild_shared_workspaces(
     let mut next_generation = ctx.state.current().next_pty_generation;
     let scrollback = ctx.state.config.scrollback;
     let mut orphan_clipboard_events = Vec::new();
+    let mut opened = Vec::new();
+    let animate_additions = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.canonical_canvas.is_some());
     let mut seen_ids = std::collections::HashSet::new();
 
     for shared_workspace in &layout.workspaces {
@@ -1042,6 +1134,7 @@ fn rebuild_shared_workspaces(
                     .current_mut()
                     .take_retired_pane(shared_pane.pane_id, shared_pane.generation)
             });
+            let added = existing.is_none();
             let mut pane = match existing {
                 Some(mut existing) => {
                     // A new generation needs a fresh server backend, but keeps local dimensions.
@@ -1078,6 +1171,12 @@ fn rebuild_shared_workspaces(
             };
 
             apply_shared_pane_fields(&mut pane, shared_pane, float_rect);
+            if added && animate_additions {
+                pane.opening = true;
+                pane.terminal_active = false;
+                pane.begin_open_animation(ctx.state.config.animations);
+                opened.push((pane.id, pane.pty_generation));
+            }
             rebuilt.push(pane);
         }
 
@@ -1116,6 +1215,7 @@ fn rebuild_shared_workspaces(
         next_pane_id,
         next_generation,
         orphan_clipboard_events,
+        opened,
     }
 }
 
@@ -1178,8 +1278,8 @@ fn repair_workspace_focus_and_anchors(state: &mut State) -> [bool; crate::state:
 /// reorders `Pane` structs and rewrites workspace metadata, but never touches a surviving pane's
 /// terminal screen, scrollback, or snapshot - only brand-new panes get a fresh backend, and only
 /// their buffered orphan output is replayed. Local-only state (focus, active workspace, overlays,
-/// mode, theme) is preserved. Removed panes are dropped from application state immediately; the
-/// stable keyed Canvas retains their already-described visual subtree for its exit animation.
+/// mode, theme) is preserved. Removed panes retain their last placement until their close animation
+/// finishes and the prune timer drops them.
 pub(crate) fn apply_shared_layout(
     ctx: &mut Context<crate::AppRoot>,
     layout: &SharedLayout,
@@ -1203,17 +1303,23 @@ pub(crate) fn apply_shared_layout(
         ctx.state.pane_canvas_epoch = ctx.state.pane_canvas_epoch.wrapping_add(1);
     }
 
+    let previous_bounds = crate::view::follower_letterbox_bounds(&ctx.state, ctx.viewport());
+    let visible_bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+
     // Missing panes remain in their workspace until their close animation is pruned.
     let DrainedPanes {
         reusable: mut pool,
         closing_by_workspace: mut closing_by_ws,
         pruned,
-    } = drain_existing_panes(&mut ctx.state, &incoming);
+    } = drain_existing_panes(&mut ctx.state, &incoming, previous_bounds, visible_bounds);
 
     let RebuiltWorkspaces {
         next_pane_id,
         next_generation,
         orphan_clipboard_events,
+        opened,
     } = rebuild_shared_workspaces(
         ctx,
         layout,
@@ -1287,15 +1393,73 @@ pub(crate) fn apply_shared_layout(
                     ctx.state.runtime_frame_rate(),
                 )
             });
-        return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
-            ctx.state.runtime_epoch,
-            pruned,
-            timeout,
-        ));
+        return shared_lifecycle_update(ctx, opened, pruned, timeout);
     }
     ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
 
-    Update::full()
+    shared_lifecycle_update(ctx, opened, pruned, std::time::Duration::ZERO)
+}
+
+fn shared_lifecycle_update(
+    ctx: &Context<crate::AppRoot>,
+    opened: Vec<(PaneId, u64)>,
+    closed: Vec<(PaneId, u64)>,
+    close_delay: std::time::Duration,
+) -> Update {
+    if opened.is_empty() && closed.is_empty() {
+        return Update::full();
+    }
+    let epoch = ctx.state.runtime_epoch;
+    if opened.is_empty() {
+        return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
+            epoch,
+            closed,
+            close_delay,
+        ));
+    }
+    let animations = ctx.state.config.animations;
+    let open_delay = crate::layout::anim::open_delay(animations);
+    let delay = if closed.is_empty() {
+        open_delay
+    } else {
+        open_delay.min(close_delay)
+    };
+    Update::with_command(Command::after(
+        delay,
+        move |link: CommandLink<crate::Msg>| {
+            for (id, generation) in opened {
+                send_lifecycle_after(
+                    &link,
+                    open_delay.saturating_sub(delay),
+                    crate::Msg::FinishOpen(epoch, id, generation),
+                );
+                send_lifecycle_after(
+                    &link,
+                    crate::layout::anim::activation_delay(animations).saturating_sub(delay),
+                    crate::Msg::ActivatePane(epoch, id, generation),
+                );
+            }
+            for (id, generation) in closed {
+                send_lifecycle_after(
+                    &link,
+                    close_delay.saturating_sub(delay),
+                    crate::Msg::PruneClosed(epoch, id, generation),
+                );
+            }
+        },
+    ))
+}
+
+fn send_lifecycle_after(
+    link: &CommandLink<crate::Msg>,
+    delay: std::time::Duration,
+    message: crate::Msg,
+) {
+    if delay.is_zero() {
+        link.send(message);
+    } else {
+        link.send_after(delay, message);
+    }
 }
 
 /// Reborrow the shared-session bookkeeping mutably; used by the reconciler's orphan drain so it can
@@ -1795,7 +1959,7 @@ mod tests {
             runtime.scrollable_width,
             crate::state::DEFAULT_SCROLLABLE_WIDTH
         );
-        assert_eq!(SHARED_LAYOUT_VERSION, 3);
+        assert_eq!(SHARED_LAYOUT_VERSION, 4);
     }
 
     #[test]
@@ -1901,6 +2065,7 @@ mod tests {
         ] {
             let layout = SharedLayout {
                 version: SHARED_LAYOUT_VERSION,
+                pane_geometry: Default::default(),
                 canvas_cols: 80,
                 canvas_rows: 24,
                 workspaces: vec![SharedWorkspace {
@@ -1966,6 +2131,7 @@ mod reconciler_tests {
     fn layout_with_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
         SharedLayout {
             version: SHARED_LAYOUT_VERSION,
+            pane_geometry: Default::default(),
             canvas_cols: 100,
             canvas_rows: 28,
             workspaces: vec![SharedWorkspace {
@@ -2549,6 +2715,7 @@ mod reconciler_tests {
             // Seed scrollable content on workspace 1 while staying active on 0.
             let mut layout = SharedLayout {
                 version: SHARED_LAYOUT_VERSION,
+                pane_geometry: Default::default(),
                 canvas_cols: 100,
                 canvas_rows: 28,
                 workspaces: vec![
@@ -2899,6 +3066,176 @@ mod reconciler_tests {
         });
     }
 
+    fn commit(backend: &mut TestBackend<AppRoot>, rev: u64, layout: SharedLayout) {
+        backend
+            .dispatch(Msg::SessionLayoutCommitted {
+                epoch: 0,
+                rev,
+                author: 2,
+                layout,
+                live: false,
+            })
+            .expect("commit shared layout");
+    }
+
+    fn terminal_rect(backend: &TestBackend<AppRoot>, id: PaneId) -> Rect {
+        let pane = backend.state().current().workspaces[0]
+            .panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .unwrap();
+        backend
+            .capture_ui_snapshot()
+            .widgets
+            .iter()
+            .find(|widget| widget.key.as_ref() == Some(&pane.keys.terminal))
+            .expect("terminal widget")
+            .rect
+    }
+
+    #[test]
+    fn follower_preserves_controller_terminal_heights() {
+        in_stack(|| {
+            let mut controller = TestBackend::new(AppRoot::default());
+            controller.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut controller, client);
+            let mut layout = layout_with_panes(&[(1, 1), (2, 1), (3, 1)]);
+            layout.canvas_rows = controller
+                .state()
+                .canvas_bounds_from_terminal_viewport(VIEWPORT)
+                .h as u16;
+            layout.workspaces[0].layout = SharedLayoutKind::Rows;
+            commit(&mut controller, 1, layout.clone());
+            controller.render();
+            controller.advance(std::time::Duration::from_secs(1));
+            let grids: Vec<_> = (1..=3).map(|id| terminal_rect(&controller, id)).collect();
+            for viewport in [
+                Rect {
+                    w: 140,
+                    h: 45,
+                    ..VIEWPORT
+                },
+                Rect {
+                    w: 141,
+                    h: 46,
+                    ..VIEWPORT
+                },
+                Rect {
+                    w: 81,
+                    h: 23,
+                    ..VIEWPORT
+                },
+            ] {
+                let mut follower = TestBackend::new(AppRoot::default());
+                follower.set_viewport(viewport);
+                follower.state_mut().config.pane.padding = (1, 2, 1, 2);
+                follower.state_mut().config.pane.titlebar =
+                    crate::state::PaneTitlebarMode::Integrated;
+                follower.state_mut().config.pane.border_mode = crate::state::PaneBorderMode::Merged;
+                follower.state_mut().config.pane.workbar_gap = false;
+                let (client, _rx) = SessionClient::test_channel();
+                attach_follower(&mut follower, client);
+                commit(&mut follower, 1, layout.clone());
+                follower.render();
+                follower.advance(std::time::Duration::from_secs(1));
+                assert_eq!(follower.state().config.pane.padding, (1, 2, 1, 2));
+                for (id, expected) in (1..=3).zip(&grids) {
+                    let rect = terminal_rect(&follower, id);
+                    assert_eq!(
+                        (rect.w, rect.h),
+                        (expected.w, expected.h),
+                        "pane {id} at {viewport:?}"
+                    );
+                }
+                follower
+                    .state_mut()
+                    .current_mut()
+                    .shared
+                    .as_mut()
+                    .unwrap()
+                    .controller = Some(1);
+                assert_eq!(
+                    follower.state().workspace_pane_config().padding,
+                    (1, 2, 1, 2)
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn follower_float_uses_letterbox_origin_and_close_keeps_tile_placement() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let viewport = Rect {
+                w: 140,
+                h: 45,
+                ..VIEWPORT
+            };
+            backend.set_viewport(viewport);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            let mut layout = layout_with_panes(&[(1, 1), (2, 1), (3, 1)]);
+            layout.workspaces[0].panes[2].floating = true;
+            layout.workspaces[0].panes[2].rect = Some(FracRect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.4,
+                h: 0.5,
+            });
+            commit(&mut backend, 1, layout.clone());
+            backend.render();
+            backend.advance(std::time::Duration::from_secs(1));
+            let bounds = crate::view::follower_letterbox_bounds(backend.state(), viewport);
+            let before = crate::view::settled_active_pane_rects(backend.state(), viewport);
+            let float = before.iter().find(|(id, _)| *id == 3).unwrap().1;
+            assert_eq!(float.x, bounds.x);
+            assert_eq!(
+                float.y,
+                bounds.y + f32::from(backend.state().content_top_offset())
+            );
+            let tile = before.iter().find(|(id, _)| *id == 2).unwrap().1;
+            layout.workspaces[0].panes.retain(|pane| pane.pane_id != 2);
+            commit(&mut backend, 2, layout);
+            let pane = find_pane(backend.state(), 2).unwrap();
+            assert!(pane.closing);
+            let saved = pane.floating_rect;
+            assert_eq!(
+                (
+                    saved.x + bounds.x,
+                    saved.y + bounds.y + f32::from(backend.state().content_top_offset()),
+                    saved.w,
+                    saved.h
+                ),
+                (tile.x, tile.y, tile.w, tile.h)
+            );
+        });
+    }
+
+    #[test]
+    fn follower_additions_use_open_lifecycle_after_the_initial_seed() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .clear();
+            commit(&mut backend, 1, layout_with_panes(&[(1, 1)]));
+            backend.render();
+            assert!(!find_pane(backend.state(), 1).unwrap().opening);
+            commit(&mut backend, 2, layout_with_panes(&[(1, 1), (2, 1)]));
+            backend.render();
+            let pane = find_pane(backend.state(), 2).unwrap();
+            assert!(pane.opening && pane.opening_animation.is_some() && !pane.terminal_active);
+            backend.dispatch(Msg::FinishOpen(0, 2, 1)).unwrap();
+            assert!(!find_pane(backend.state(), 2).unwrap().opening);
+            backend.dispatch(Msg::ActivatePane(0, 2, 1)).unwrap();
+            assert!(find_pane(backend.state(), 2).unwrap().terminal_active);
+        });
+    }
+
     #[test]
     fn initial_session_layout_is_applied_without_geometry_transition() {
         in_stack(|| {
@@ -3160,6 +3497,19 @@ mod reconciler_tests {
     fn shared_layout_validation_enforces_invariants() {
         let valid = layout_with_panes(&[(1, 1), (2, 1)]);
         assert_eq!(valid.validate(), Ok(()));
+
+        let mut bad = valid.clone();
+        bad.pane_geometry.padding.0 = 9;
+        assert_eq!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::InvalidPaneGeometry)
+        );
+        bad.pane_geometry.padding.0 = 0;
+        bad.pane_geometry.top_gap = 2;
+        assert_eq!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::InvalidPaneGeometry)
+        );
 
         // Unsupported version
         let mut bad = valid.clone();

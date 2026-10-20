@@ -6,8 +6,9 @@ clipboard handling, copy mode and search, links, scrollback, images, and pane lo
 Programs in a pane work as they would in any terminal, including mouse input, titles, clipboard
 access, and resizing. They see rozi as their terminal, whichever terminal rozi itself runs in: each
 pane sets `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=rozi`, and
-`TERM_PROGRAM_VERSION` to the running rozi version. Each pane runs on the session server, so it
-keeps running in a named session after you detach. See [Core concepts](core-concepts.md#sessions-and-clients) and
+`TERM_PROGRAM_VERSION` to the version of rozi running the session, and a program that asks the
+terminal for its name and version gets `rozi` and that same version. Each pane runs on the session
+server, so it keeps running in a named session after you detach. See [Core concepts](core-concepts.md#sessions-and-clients) and
 [Sessions](sessions.md).
 
 ## Choose the shell and starting directory

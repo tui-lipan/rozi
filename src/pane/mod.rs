@@ -185,6 +185,19 @@ use tui_lipan::prelude::*;
 /// the parser evicts images the producer still expects on screen. Allocation remains on demand.
 pub(crate) const PANE_IMAGE_BUDGET_BYTES: usize = 200 * 1024 * 1024;
 
+/// What a pane's programs see as their terminal, in `TERM_PROGRAM` and in the XTVERSION reply.
+///
+/// It is rozi, whichever terminal rozi itself runs in. A program told it is talking to the outer
+/// terminal applies that terminal's habits to the pane - deleting an image before resending it,
+/// for one - which leave a relayed pane blank while the next upload is still arriving.
+pub(crate) const TERMINAL_PROGRAM: &str = "rozi";
+
+/// The XTVERSION identity of this build, `rozi <version>`. The session server answers with its own
+/// build's identity, since it owns the pane's terminal.
+pub(crate) fn terminal_identity() -> String {
+    format!("{TERMINAL_PROGRAM} {}", env!("CARGO_PKG_VERSION"))
+}
+
 /// Build a terminal grid without crossing Alacritty's next history allocation boundary.
 ///
 /// Alacritty grows history storage in 1,000-row blocks. tui-lipan deliberately gives its eviction
@@ -205,6 +218,7 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
         TerminalScreen::new(rows, cols, scrollback)
     };
     screen.set_image_file_storage_enabled(true);
+    screen.set_terminal_identity(terminal_identity());
     screen
 }
 
@@ -1172,6 +1186,19 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
 mod tests {
     use super::*;
     use tui_lipan::utils::{GridPos, GridSelection};
+
+    #[test]
+    fn a_pane_screen_answers_xtversion_as_rozi() {
+        let expected = format!("\x1bP>|rozi {}\x1b\\", env!("CARGO_PKG_VERSION")).into_bytes();
+        let mut screen = new_terminal_screen(4, 20, 1_000);
+        screen.process_bytes(b"\x1b[>0q");
+        assert_eq!(screen.drain_responses(), vec![expected.clone()]);
+
+        // The session server rebuilds a pane's screen on reset; the rebuilt one answers the same.
+        let mut rebuilt = new_terminal_screen(6, 30, 5_000);
+        rebuilt.process_bytes(b"\x1b[>q");
+        assert_eq!(rebuilt.drain_responses(), vec![expected]);
+    }
 
     fn png_bytes(content: CaptureContent) -> Vec<u8> {
         use base64::Engine as _;

@@ -6339,3 +6339,52 @@ fn local_presentation_interest_and_acknowledgements_are_owner_scoped() {
     );
     assert_eq!(server.graphics_presenter(7, 12, Some(first)), None);
 }
+
+/// What a pane's child prints for `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`, spawned through the
+/// server's own PTY configuration with `env` applied afterwards, as a pane's environment is.
+fn child_terminal_program(env: &[(&str, &str)]) -> String {
+    let launch = crate::pane::launch::PaneLaunch::Direct {
+        argv: vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            r#"printf '[%s|%s]' "$TERM_PROGRAM" "$TERM_PROGRAM_VERSION""#.to_string(),
+        ],
+    };
+    let mut config = pty_config(Some(&launch), &[], &[]);
+    for (key, value) in env {
+        config = config.env(*key, *value);
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let _pty = TerminalPty::spawn(config, move |event| {
+        let _ = sender.send(event);
+    })
+    .expect("spawn pane child");
+    let mut output = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while let Ok(event) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
+        match event {
+            TerminalPtyEvent::Output(bytes) => output.extend_from_slice(&bytes),
+            TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_) => break,
+        }
+    }
+    let output = String::from_utf8_lossy(&output).into_owned();
+    let start = output
+        .find('[')
+        .expect("child printed its terminal program");
+    let end = output[start..].find(']').expect("complete line") + start;
+    output[start + 1..end].to_string()
+}
+
+#[test]
+fn the_server_names_itself_as_every_panes_terminal() {
+    assert_eq!(
+        child_terminal_program(&[]),
+        format!("rozi|{}", env!("CARGO_PKG_VERSION"))
+    );
+    // A pane's own environment comes after the server's, so an explicit value still wins.
+    assert_eq!(
+        child_terminal_program(&[("TERM_PROGRAM", "custom"), ("TERM_PROGRAM_VERSION", "9")]),
+        "custom|9"
+    );
+}

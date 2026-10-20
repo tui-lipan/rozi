@@ -307,14 +307,15 @@ pub(crate) fn pane_frame_chrome(
             )
         })
         .flatten();
-    let alert_pulses = alert.is_some_and(|(_, color)| {
-        pane_alert_pulses(
-            theme,
-            color,
-            &ctx.state.config.pane,
-            ctx.state.alert_pulse_armed,
-            ctx.state.config.animations,
-        )
+    let alert_pulses = alert.is_some_and(|(state, color)| {
+        pane_alert_breathes(state, focused)
+            && pane_alert_pulses(
+                theme,
+                color,
+                &ctx.state.config.pane,
+                ctx.state.alert_pulse_armed,
+                ctx.state.config.animations,
+            )
     });
     let alert_calm = alert.is_some_and(|(state, _)| state.is_calm());
     let alert_phase = if alert_calm {
@@ -433,15 +434,16 @@ pub(crate) fn pane_alert(
                 .map(|record| record.state)
         })
         .flatten();
-    // Blocked/working/idle are live conditions the focused pane already shows in its own content,
-    // so marking its border would only ever restate what is on screen and would never clear on its
-    // own. Finished is the exception: it is a latch, raised for news the user has not read yet, and
-    // it stays lit on the focused pane until an input answers it (`acknowledge_pane_if_attended`).
+    // Working/idle are live conditions the focused pane already shows in its own content, so
+    // marking its border would only restate what is on screen and would never clear on its own.
+    // Blocked stays lit on the focused pane, since answering the agent clears it and the prompt may
+    // sit behind another conversation tab; [`pane_alert_breathes`] holds it still there. Finished
+    // is a latch, raised for news the user has not read yet, and it stays lit on the focused pane
+    // until an input answers it (`acknowledge_pane_if_attended`).
     [
         (
             PaneAlert::Blocked,
-            (!focused && pane.awaits_input())
-                || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
+            pane.awaits_input() || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
             colors.blocked,
         ),
         (
@@ -477,6 +479,12 @@ pub(crate) fn pane_alert(
     ]
     .into_iter()
     .find_map(|(alert, active, color)| Some((alert, active.then_some(color).flatten()?)))
+}
+
+/// Whether `alert` breathes on this pane. A blocked focused pane holds its alert still: the prompt
+/// is in front of the user, so a pulse beside the text they are answering would only distract.
+pub(crate) fn pane_alert_breathes(alert: crate::state::PaneAlert, focused: bool) -> bool {
+    !(focused && alert == crate::state::PaneAlert::Blocked)
 }
 
 /// The alert a pane draws on its border: [`pane_alert`], unless the configured paint leaves the
@@ -547,8 +555,10 @@ fn pane_content_alert_tint(
     }
     let target = crate::ops::theme::pane_frame_alert_foreground(theme, color);
     let animations = ctx.state.config.animations;
-    let pulses =
-        config.alert_border == AlertMode::Pulse && animations.enabled && animations.focus_chrome;
+    let pulses = config.alert_border == AlertMode::Pulse
+        && animations.enabled
+        && animations.focus_chrome
+        && pane_alert_breathes(alert, focused);
     let amount = pulses
         .then(|| animation::alert_tint_pulse(ctx, alert.is_calm()))
         .flatten()
@@ -2430,7 +2440,14 @@ mod tests {
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Blocked, BadgeColor::Error))
         );
-        assert_eq!(pane_alert(&pane, true, &config, &Default::default()), None);
+        assert_eq!(
+            pane_alert(&pane, true, &config, &Default::default()),
+            Some((PaneAlert::Blocked, BadgeColor::Error)),
+            "blocked stays lit on the focused pane until the agent is answered"
+        );
+        assert!(!pane_alert_breathes(PaneAlert::Blocked, true));
+        assert!(pane_alert_breathes(PaneAlert::Blocked, false));
+        assert!(pane_alert_breathes(PaneAlert::Finished, true));
         pane.closing = true;
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         pane.closing = false;

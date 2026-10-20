@@ -127,7 +127,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
 }
 
 #[test]
-fn focusing_finished_alert_clears_it_and_focus_keeps_the_active_border() {
+fn focusing_finished_alert_clears_it_and_a_blocked_focused_pane_stays_marked() {
     on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = backend(PaneBorderMode::Separate);
@@ -163,22 +163,23 @@ fn focusing_finished_alert_clears_it_and_focus_keeps_the_active_border() {
 
         block_second(&mut backend);
         backend.render();
-        let active = backend.state().theme.border_active;
+        let warning = backend.state().theme.status.warning;
         assert!(
             backend
                 .capture_frame()
                 .cells
                 .iter()
-                .any(|cell| cell.fg == active)
+                .any(|cell| cell.fg == warning),
+            "a blocked agent marks the focused pane until it is answered"
         );
     });
 }
 
-/// The pane the user is already sitting in still marks a finished run: the run ended while they
-/// were elsewhere, and nothing on screen says so. Its live states stay suppressed there, because a
-/// blocked or working agent is already legible in the pane's own content.
+/// The pane the user is already sitting in still marks a finished run, which ended while they were
+/// elsewhere, and a blocked agent, which may wait behind another conversation tab and clears once
+/// answered.
 #[test]
-fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
+fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
     on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let finished_color = Color::rgb(0, 255, 1);
@@ -218,12 +219,12 @@ fn the_focused_pane_marks_a_finished_run_but_not_its_live_states() {
         }
         blocked.render();
         assert!(
-            !blocked
+            blocked
                 .capture_frame()
                 .cells
                 .iter()
                 .any(|cell| cell.fg == blocked_color),
-            "a blocked focused pane says so in its own content; its border must not"
+            "a blocked agent must mark the focused pane's own border"
         );
     });
 }

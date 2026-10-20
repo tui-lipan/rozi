@@ -281,6 +281,9 @@ Colors for pane alert borders and content tints. Each value is a theme role or `
 | `working` | string | `"off"` |
 | `idle` | string | `"off"` |
 
+The focused pane still shows `blocked` and `finished` alerts. Its blocked alert holds still instead
+of breathing, and clears once you answer the agent.
+
 ## `[animations]`
 
 | Key | Type | Default | Constraints and behavior |

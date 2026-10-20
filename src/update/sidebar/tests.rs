@@ -2398,95 +2398,144 @@ fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change(
     });
 }
 
+fn listed_directories(
+    outbound: &std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+) -> Vec<String> {
+    use crate::session::client::ClientOutbound;
+    use crate::session::protocol::ClientMessage;
+    outbound
+        .try_iter()
+        .filter_map(|message| match message {
+            ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => Some(path),
+            _ => None,
+        })
+        .collect()
+}
+
+fn frame_shows(backend: &mut tui_lipan::TestBackend<AppRoot>, text: &str) -> bool {
+    backend
+        .capture_frame()
+        .to_fixed_grid_lines()
+        .iter()
+        .any(|line| line.contains(text))
+}
+
+/// Run the per-message sync, then draw and drain what the tree asks for.
+fn sync_tree_frame(backend: &mut tui_lipan::TestBackend<AppRoot>) {
+    backend
+        .update_level(crate::Msg::SidebarPointerMoved(0))
+        .unwrap();
+    backend.render();
+    backend.pump().unwrap();
+}
+
+/// A connected remote session showing the Files tab rooted at `/remote/repo`, which lists `file`.
+fn remote_tree_showing(
+    file: &str,
+) -> (
+    tui_lipan::TestBackend<AppRoot>,
+    std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+) {
+    use crate::session::client::SessionClient;
+    use crate::session::protocol::WireDirEntry;
+    let mut backend = settled_backend();
+    let (client, outbound) = SessionClient::test_channel();
+    show_files_tab(&mut backend);
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.sidebar.shown = [true, false];
+        state.current_mut().remote_host = Some("tree-host".into());
+        state.current_mut().session_client = Some(client);
+        let pane = state.current().workspaces[0].panes[0].id;
+        state.current_mut().focused_pane = Some(pane);
+        state.current_mut().workspaces[0].focused_pane = Some(pane);
+        state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/repo".into());
+    }
+    sync_tree_frame(&mut backend);
+    assert_eq!(listed_directories(&outbound), ["/remote/repo"]);
+    backend
+        .dispatch(crate::Msg::SessionDirectoryListing {
+            epoch: backend.state().runtime_epoch,
+            path: "/remote/repo".into(),
+            entries: vec![WireDirEntry {
+                name: file.into(),
+                is_dir: false,
+                is_symlink: false,
+                symlink_target: None,
+                ignored: false,
+                git_staged: None,
+                git_unstaged: None,
+            }],
+            error: None,
+        })
+        .unwrap();
+    assert!(frame_shows(&mut backend, file));
+    (backend, outbound)
+}
+
 /// A remote link that drops and reconnects leaves the tree waiting on requests the dead transport
 /// never answered. Reconnecting must refetch it through the new client instead of leaving the tree
 /// loading until the user moves to another pane.
 #[test]
 fn a_remote_tree_refetches_through_the_client_that_reconnects() {
     on_test_thread(|| {
-        use crate::session::client::{ClientOutbound, SessionClient};
-        use crate::session::protocol::{ClientMessage, WireDirEntry};
-        fn listed(outbound: &std::sync::mpsc::Receiver<ClientOutbound>) -> Vec<String> {
-            outbound
-                .try_iter()
-                .filter_map(|message| match message {
-                    ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => {
-                        Some(path)
-                    }
-                    _ => None,
-                })
-                .collect()
-        }
-        fn shows(backend: &mut tui_lipan::TestBackend<AppRoot>, text: &str) -> bool {
-            backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .iter()
-                .any(|line| line.contains(text))
-        }
-        let mut backend = settled_backend();
-        let (client, outbound) = SessionClient::test_channel();
-        show_files_tab(&mut backend);
-        {
-            let state = backend.state_mut();
-            state.config.animations.enabled = false;
-            state.sidebar.shown = [true, false];
-            state.current_mut().remote_host = Some("tree-host".into());
-            state.current_mut().session_client = Some(client);
-            let pane = state.current().workspaces[0].panes[0].id;
-            state.current_mut().focused_pane = Some(pane);
-            state.current_mut().workspaces[0].focused_pane = Some(pane);
-            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/repo".into());
-        }
-        backend
-            .update_level(crate::Msg::SidebarPointerMoved(0))
-            .unwrap();
-        backend.render();
-        backend.pump().unwrap();
-        assert_eq!(listed(&outbound), ["/remote/repo"]);
-        backend
-            .dispatch(crate::Msg::SessionDirectoryListing {
-                epoch: backend.state().runtime_epoch,
-                path: "/remote/repo".into(),
-                entries: vec![WireDirEntry {
-                    name: "loaded.rs".into(),
-                    is_dir: false,
-                    is_symlink: false,
-                    symlink_target: None,
-                    ignored: false,
-                    git_staged: None,
-                    git_unstaged: None,
-                }],
-                error: None,
-            })
-            .unwrap();
-        assert!(shows(&mut backend, "loaded.rs"));
+        let (mut backend, _) = remote_tree_showing("loaded.rs");
 
-        // The link drops and the reconnect starts under a new epoch, with no client yet.
+        // The link drops and the reconnect starts under a new epoch, with no client yet. The
+        // session stays on screen, so its view revision does not move.
         {
             let state = backend.state_mut();
             state.current_mut().mark_disconnected();
             state.runtime_epoch = state.mint_attachment_id();
             state.current_mut().epoch = state.runtime_epoch;
         }
-        backend
-            .update_level(crate::Msg::SidebarPointerMoved(0))
-            .unwrap();
-        backend.render();
-        backend.pump().unwrap();
+        sync_tree_frame(&mut backend);
         assert!(
-            shows(&mut backend, "loaded.rs"),
+            frame_shows(&mut backend, "loaded.rs"),
             "the last listing stays on screen while the link is down"
         );
 
-        let (client, outbound) = SessionClient::test_channel();
+        let (client, outbound) = crate::session::client::SessionClient::test_channel();
         backend.state_mut().current_mut().session_client = Some(client);
-        backend
-            .update_level(crate::Msg::SidebarPointerMoved(0))
-            .unwrap();
-        backend.render();
-        backend.pump().unwrap();
-        assert_eq!(listed(&outbound), ["/remote/repo"]);
+        sync_tree_frame(&mut backend);
+        assert_eq!(listed_directories(&outbound), ["/remote/repo"]);
+    });
+}
+
+/// Switching to another remote session whose link is already down must not keep the tree of the
+/// session left behind, even where both report the same directory, and must still load its own
+/// tree once it reconnects.
+#[test]
+fn a_remote_session_switched_to_offline_never_shows_the_previous_sessions_tree() {
+    on_test_thread(|| {
+        let (mut backend, _) = remote_tree_showing("loaded-from-a.rs");
+
+        // What switching to a parked session whose link dropped leaves behind: a new epoch and
+        // session view, and no client while its reconnect runs. Its pane reports the same path.
+        {
+            let state = backend.state_mut();
+            state.current_mut().mark_disconnected();
+            state.runtime_epoch = state.mint_attachment_id();
+            state.current_mut().epoch = state.runtime_epoch;
+            state.session_view_revision += 1;
+        }
+        sync_tree_frame(&mut backend);
+        assert!(
+            !frame_shows(&mut backend, "loaded-from-a.rs"),
+            "{}",
+            backend.capture_ui_snapshot().to_markdown()
+        );
+        // Later messages while still offline leave the cleared tree alone.
+        let token = backend.state().sidebar.tree_entry_refresh_token;
+        sync_tree_frame(&mut backend);
+        assert_eq!(backend.state().sidebar.tree_entry_refresh_token, token);
+
+        let (client, outbound) = crate::session::client::SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        sync_tree_frame(&mut backend);
+        assert_eq!(listed_directories(&outbound), ["/remote/repo"]);
+        assert!(!frame_shows(&mut backend, "loaded-from-a.rs"));
     });
 }
 

@@ -280,10 +280,15 @@ fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
 /// re-reporting the same directory on every prompt costs one string comparison.
 pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // A remote tree is served by its session, so while the link is down there is nobody to ask.
-    // Keep the last listing on screen and leave the source unsynced: the first pass after the
-    // session is back sees the new epoch and refetches everything through the live client. Syncing
-    // now would send the tree's requests nowhere, and it would wait on them forever.
-    if ctx.state.current().remote_host.is_some() && ctx.state.current().session_client.is_none() {
+    // A reconnect keeps the session on screen, so its last listing stays until the session is back.
+    // Switching to a session whose link is down drops the previous session's tree and roots none
+    // until this one is back. Either way the source stays unsynced: the first pass with a live
+    // client sees a stale epoch, roots the tree, and the tree asks through that client. A tree
+    // rooted with no client would send its requests nowhere, and it would wait on them forever.
+    let view = ctx.state.session_view_revision;
+    let offline =
+        ctx.state.current().remote_host.is_some() && ctx.state.current().session_client.is_none();
+    if offline && ctx.state.sidebar.tree_source_view == Some(view) {
         return;
     }
     // Compared as a borrow: this runs per message, including output from off-screen panes that the
@@ -291,12 +296,15 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // Under `--remote` the tree roots at the server's path, not a local one, so this follows
     // `server_cwd_ref`. The repository walk stays local-only: `.git` cannot be probed across the
     // link, and `root_for` already falls back to the cwd when there is no repo root.
-    let source_changed = ctx.state.sidebar.tree_source_epoch != Some(ctx.state.runtime_epoch);
+    let source_changed = ctx.state.sidebar.tree_source_epoch != Some(ctx.state.runtime_epoch)
+        || ctx.state.sidebar.tree_source_view != Some(view);
     if source_changed
         || crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state)
             != ctx.state.sidebar.tree_cwd.as_deref()
     {
-        let cwd = crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
+        let cwd = crate::pane::lifecycle::focused_server_cwd_ref(&ctx.state)
+            .filter(|_| !offline)
+            .map(str::to_string);
         ctx.state.sidebar.tree_repo = if ctx.state.current().remote_host.is_some() {
             None
         } else {
@@ -304,7 +312,8 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
                 .and_then(crate::platform::paths::discover_project_root)
         };
         ctx.state.sidebar.tree_cwd = cwd;
-        ctx.state.sidebar.tree_source_epoch = Some(ctx.state.runtime_epoch);
+        ctx.state.sidebar.tree_source_epoch = (!offline).then_some(ctx.state.runtime_epoch);
+        ctx.state.sidebar.tree_source_view = Some(view);
         // A new root invalidates every server-served listing: paths under the old root will never
         // be asked for again, and keeping them would leak one host's tree into another's.
         ctx.state.sidebar.tree_listings.clear();

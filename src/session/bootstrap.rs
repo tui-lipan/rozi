@@ -2,7 +2,7 @@ use tui_lipan::prelude::CommandLink;
 
 use crate::Msg;
 
-use super::protocol::{Frame, ServerMessage};
+use super::protocol::{self, Frame, ServerMessage};
 
 /// Reconnect attempts run on detached worker threads, so changing attachment epochs only makes
 /// their eventual messages stale; it does not stop a blocked SSH child. Keep a small cancellation
@@ -858,6 +858,8 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 generation,
                 cols,
                 rows,
+                cell_width,
+                cell_height,
             } => Msg::SessionResized {
                 epoch,
                 pane_id,
@@ -865,18 +867,22 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 generation,
                 cols,
                 rows,
+                cell: protocol::wire_cell(cell_width, cell_height),
             },
             ServerMessage::PaneReset {
                 pane_id,
                 generation,
                 cols,
                 rows,
+                cell_width,
+                cell_height,
             } => Msg::SessionPaneReset {
                 epoch,
                 pane_id,
                 generation,
                 cols,
                 rows,
+                cell: protocol::wire_cell(cell_width, cell_height),
             },
             ServerMessage::Exited {
                 pane_id,

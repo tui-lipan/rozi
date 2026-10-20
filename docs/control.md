@@ -103,8 +103,8 @@ one that attaches later.
 On Windows, pass the discovery-entry path to the CLI. Do not read the entry or construct a pipe
 name yourself.
 
-Every local pane receives `ROZI=1` and `ROZI_PANE`, plus `ROZI_SOCKET` and `ROZI_BIN` when control
-is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
+Every pane receives `ROZI=1`, `ROZI_PANE`, `TERM_PROGRAM=rozi`, and `TERM_PROGRAM_VERSION`, and a
+local pane also receives `ROZI_SOCKET` and `ROZI_BIN` when control is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
 server it runs in, so a UI holding several sessions can tell whose pane is asking. It is empty in
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
 neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
@@ -405,7 +405,8 @@ A session endpoint refuses `split` when:
 - **The session has panes but no layout.** This happens only if no client ever attached to place
   them.
 
-A pane opened this way receives only `ROZI`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`. It does not get `ROZI_SOCKET` or
+A pane opened this way receives only `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM`, and
+`TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or
 `ROZI_BIN`, since there is no UI, and it does not inherit desktop variables such as `DISPLAY`,
 `WAYLAND_DISPLAY`, or anything `[environment] forward` adds from the short-lived CLI process.
 

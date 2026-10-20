@@ -1314,6 +1314,13 @@ fn drain_orphan_output(
     let Some(shared) = shared else {
         return Vec::new();
     };
+    // Geometry the server reported before this layout created the pane comes first: the buffered
+    // output was written against it, pictures included.
+    if let Some(geometry) = shared.take_orphan_geometry(shared_pane.pane_id, shared_pane.generation)
+    {
+        pane.terminal
+            .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell);
+    }
     if let Some(bytes) = shared.take_orphan_output(shared_pane.pane_id, shared_pane.generation) {
         return pane.terminal.process_server_output(&bytes).clipboard_events;
     }
@@ -2167,6 +2174,147 @@ mod reconciler_tests {
                 crate::layout::anim::GeometryAnimation::TileFloat,
                 "live layout commits should retain geometry transitions"
             );
+        });
+    }
+
+    /// The server can report a new pane's geometry and output before the layout commit that creates
+    /// the pane reaches a follower. The output is buffered; the geometry must be too, so a picture
+    /// in that early output is laid out against the session's cells rather than this client's.
+    #[test]
+    fn geometry_reported_before_the_layout_applies_to_buffered_output() {
+        use base64::Engine as _;
+
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+            let epoch = backend.state().runtime_epoch;
+            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
+            assert_ne!(tui_lipan::host_cell_size(), session_cell);
+
+            backend
+                .dispatch(Msg::SessionResized {
+                    epoch,
+                    pane_id: 2,
+                    local: false,
+                    generation: 5,
+                    cols: 40,
+                    rows: 12,
+                    cell: Some(session_cell),
+                })
+                .expect("dispatch early resize");
+            // 112x128 pixels is 8x4 of the session's 14x32 cells, and stays within the orphan
+            // buffer's per-pane cap.
+            let payload = base64::engine::general_purpose::STANDARD
+                .encode([10u8, 20, 30, 255].repeat(112 * 128));
+            backend
+                .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id: 2,
+                    local: false,
+                    generation: 5,
+                    bytes: format!("\x1b[H\x1b_Ga=T,f=32,s=112,v=128,i=9,q=2;{payload}\x1b\\")
+                        .into_bytes(),
+                })
+                .expect("dispatch early output");
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch,
+                    rev: 1,
+                    author: 2,
+                    layout: layout_with_panes(&[(1, 0), (2, 5)]),
+                    live: false,
+                })
+                .expect("dispatch commit");
+
+            let pane = find_pane(backend.state_mut(), 2).expect("pane 2 created by reconciler");
+            assert_eq!(pane.terminal.cell_size(), session_cell);
+            assert_eq!((pane.terminal.cols, pane.terminal.rows), (40, 12));
+            let snapshot = pane.terminal.snapshot();
+            let placement = snapshot.images.first().expect("buffered image placed");
+            assert_eq!((placement.cols, placement.rows), (8, 4));
+        });
+    }
+
+    /// A respawn replaces a pane's generation, and the server can report the new generation's
+    /// geometry and output before the layout commit that carries it. The geometry is held for the
+    /// new screen, through any commit that still shows the old one, and never applied to the old.
+    #[test]
+    fn geometry_reported_for_a_new_generation_applies_to_its_buffered_output() {
+        use base64::Engine as _;
+
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+            let epoch = backend.state().runtime_epoch;
+            let commit = |backend: &mut TestBackend<AppRoot>, rev, generation| {
+                backend
+                    .dispatch(Msg::SessionLayoutCommitted {
+                        epoch,
+                        rev,
+                        author: 2,
+                        layout: layout_with_panes(&[(1, 0), (2, generation)]),
+                        live: false,
+                    })
+                    .expect("dispatch commit");
+            };
+            commit(&mut backend, 1, 5);
+            let host_cell = find_pane(backend.state_mut(), 2)
+                .expect("pane 2 at generation 5")
+                .terminal
+                .cell_size();
+            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
+            assert_ne!(host_cell, session_cell);
+
+            backend
+                .dispatch(Msg::SessionResized {
+                    epoch,
+                    pane_id: 2,
+                    local: false,
+                    generation: 6,
+                    cols: 40,
+                    rows: 12,
+                    cell: Some(session_cell),
+                })
+                .expect("dispatch early resize");
+            let old = find_pane(backend.state_mut(), 2).expect("pane 2 at generation 5");
+            assert_eq!(old.pty_generation, 5);
+            assert_eq!(
+                old.terminal.cell_size(),
+                host_cell,
+                "the old screen keeps its cells"
+            );
+            // A revision that still shows the old generation must not drop the new one's geometry.
+            commit(&mut backend, 2, 5);
+            // 112x128 pixels is 8x4 of the session's 14x32 cells.
+            let payload = base64::engine::general_purpose::STANDARD
+                .encode([10u8, 20, 30, 255].repeat(112 * 128));
+            backend
+                .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id: 2,
+                    local: false,
+                    generation: 6,
+                    bytes: format!("\x1b[H\x1b_Ga=T,f=32,s=112,v=128,i=9,q=2;{payload}\x1b\\")
+                        .into_bytes(),
+                })
+                .expect("dispatch early output");
+            commit(&mut backend, 3, 6);
+
+            let pane = find_pane(backend.state_mut(), 2).expect("pane 2 at generation 6");
+            assert_eq!(pane.pty_generation, 6);
+            assert_eq!(pane.terminal.cell_size(), session_cell);
+            assert_eq!((pane.terminal.cols, pane.terminal.rows), (40, 12));
+            let snapshot = pane.terminal.snapshot();
+            let placement = snapshot.images.first().expect("buffered image placed");
+            assert_eq!((placement.cols, placement.rows), (8, 4));
         });
     }
 

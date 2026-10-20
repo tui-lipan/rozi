@@ -14,8 +14,10 @@ pub(super) struct PendingAgentWait {
     until: AgentWaitCondition,
     deadline: Option<Instant>,
     require_transition: bool,
+    initial_state: Option<protocol::AgentState>,
     armed: bool,
     reply: ReplyTo,
+    capture: Option<crate::control::CaptureRender>,
 }
 
 /// What a wait is watching.
@@ -34,6 +36,22 @@ enum WaitEvaluation {
     Error(ControlErrorCode, String),
 }
 
+impl PendingAgentWait {
+    fn needs_departure(&self, evaluation: &WaitEvaluation) -> bool {
+        if !self.require_transition || self.armed {
+            return false;
+        }
+        match evaluation {
+            // A turn can go directly from idle to an approval or error. It need not leave
+            // the entire outcome predicate, which would require observing working first.
+            WaitEvaluation::Ready(Some(agent)) if self.until == AgentWaitCondition::Turn => {
+                Some(agent.state) == self.initial_state
+            }
+            _ => true,
+        }
+    }
+}
+
 impl SessionServer {
     pub(super) fn register_agent_wait(
         &mut self,
@@ -43,6 +61,12 @@ impl SessionServer {
         timeout_ms: Option<u64>,
         reply: ReplyTo,
     ) -> Option<ControlResponse> {
+        if until == AgentWaitCondition::Turn {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "turn is a post-prompt condition; use agent-prompt with wait turn",
+            ));
+        }
         let subject = match target {
             AgentTarget::Ref(reference) if until == AgentWaitCondition::Gone => {
                 if reference.pane.session_instance != self.instance_id {
@@ -56,7 +80,9 @@ impl SessionServer {
             AgentTarget::Pane(pane_id) if self.pane_awaits_agent(pane_id) => {
                 if until == AgentWaitCondition::Gone {
                     return Some(ControlResponse::ok(AgentWaitResult {
+                        reference: None,
                         condition: until,
+                        result: None,
                         agent: None,
                     }));
                 }
@@ -73,7 +99,12 @@ impl SessionServer {
         let (subject, evaluation) = self.evaluate_wait_subject(subject, until);
         match evaluation {
             WaitEvaluation::Ready(agent) => Some(ControlResponse::ok(AgentWaitResult {
+                reference: match subject {
+                    WaitSubject::Agent(reference) => Some(reference),
+                    WaitSubject::Pane { .. } => None,
+                },
                 condition: until,
+                result: None,
                 agent: agent.map(|agent| *agent),
             })),
             WaitEvaluation::Error(code, message) => {
@@ -88,7 +119,9 @@ impl SessionServer {
                         deadline: timeout_ms
                             .map(Duration::from_millis)
                             .and_then(|duration| Instant::now().checked_add(duration)),
+                        capture: None,
                         require_transition: false,
+                        initial_state: None,
                         armed: true,
                         reply,
                     },
@@ -165,10 +198,10 @@ impl SessionServer {
             };
             let (subject, mut evaluation) =
                 self.evaluate_wait_subject(wait.subject.clone(), wait.until);
-            let (require_transition, armed) = (wait.require_transition, wait.armed);
+            let needs_departure = wait.needs_departure(&evaluation);
             let wait = self.agent_waits.get_mut(&key).expect("wait read above");
             wait.subject = subject;
-            if require_transition && !armed {
+            if needs_departure {
                 match evaluation {
                     WaitEvaluation::Ready(_) => evaluation = WaitEvaluation::Pending,
                     WaitEvaluation::Pending => wait.armed = true,
@@ -235,15 +268,61 @@ impl SessionServer {
                 continue;
             };
             let response = match evaluation {
-                WaitEvaluation::Ready(agent) => ControlResponse::ok(AgentWaitResult {
-                    condition: wait.until,
-                    agent: agent.map(|agent| *agent),
-                }),
+                WaitEvaluation::Ready(agent) => self.agent_wait_response(
+                    wait.until,
+                    agent,
+                    wait.capture,
+                    match wait.subject {
+                        WaitSubject::Agent(reference) => Some(reference),
+                        WaitSubject::Pane { .. } => None,
+                    },
+                ),
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
             };
             self.answer_held(key.0, &wait.reply, response);
         }
+    }
+
+    fn agent_wait_response(
+        &mut self,
+        condition: AgentWaitCondition,
+        agent: Option<Box<protocol::AgentRuntime>>,
+        render: Option<crate::control::CaptureRender>,
+        reference: Option<protocol::AgentRef>,
+    ) -> ControlResponse {
+        let result = if let (Some(render), Some(agent)) = (render, agent.as_ref()) {
+            let id = agent.reference.pane.pane_id;
+            let pane = self
+                .panes
+                .get_mut(&id)
+                .expect("wait resolved against this pane");
+            let content = match crate::pane::capture_screen(
+                pane.screen_without_change(),
+                None,
+                render,
+                None,
+                false,
+            ) {
+                Ok(content) => content,
+                Err(response) => return response,
+            };
+            Some(crate::control::AgentPromptResult::Terminal {
+                capture: crate::control::PaneCapture {
+                    id,
+                    title: pane.screen().title(),
+                    content,
+                },
+            })
+        } else {
+            None
+        };
+        ControlResponse::ok(AgentWaitResult {
+            reference,
+            condition,
+            agent: agent.map(|agent| *agent),
+            result,
+        })
     }
 
     /// Drop every wait `client_id` holds: its connection is gone.
@@ -265,9 +344,14 @@ impl SessionServer {
         reference: protocol::AgentRef,
         until: AgentWaitCondition,
         timeout_ms: Option<u64>,
+        capture: Option<crate::control::CaptureRender>,
         reply: ReplyTo,
     ) -> std::result::Result<(), ControlResponse> {
         let evaluation = self.evaluate_agent_wait(&reference, until);
+        let initial_state = match &evaluation {
+            WaitEvaluation::Ready(Some(agent)) => Some(agent.state),
+            _ => None,
+        };
         let armed = match evaluation {
             WaitEvaluation::Ready(_) => false,
             WaitEvaluation::Pending => true,
@@ -283,7 +367,9 @@ impl SessionServer {
                 deadline: timeout_ms
                     .map(Duration::from_millis)
                     .and_then(|duration| Instant::now().checked_add(duration)),
+                capture,
                 require_transition: true,
+                initial_state,
                 armed,
                 reply,
             },
@@ -427,6 +513,7 @@ fn condition_matches(until: AgentWaitCondition, state: protocol::AgentState) -> 
         // Stopped for any reason: a script waiting for the end of a turn must not hang on a
         // turn that failed. The answer carries the state, so it can tell which.
         AgentWaitCondition::Quiescent => state.is_stopped(),
+        AgentWaitCondition::Turn => state != protocol::AgentState::Working,
         AgentWaitCondition::Gone => false,
     }
 }
@@ -451,6 +538,7 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
         AgentWaitCondition::Done => "done",
         AgentWaitCondition::Error => "error",
         AgentWaitCondition::Quiescent => "quiescent",
+        AgentWaitCondition::Turn => "turn",
         AgentWaitCondition::Gone => "gone",
     }
 }
@@ -470,6 +558,134 @@ mod tests {
         assert!(!condition_matches(AgentWaitCondition::Quiescent, Working));
         assert!(condition_matches(AgentWaitCondition::Error, Error));
         assert!(!condition_matches(AgentWaitCondition::Done, Error));
+    }
+
+    #[test]
+    fn turn_includes_intervention_without_changing_quiescent() {
+        use protocol::AgentState::*;
+        for state in [Blocked, Done, Error, Idle] {
+            assert!(condition_matches(AgentWaitCondition::Turn, state));
+        }
+        assert!(!condition_matches(AgentWaitCondition::Turn, Working));
+        assert!(!condition_matches(AgentWaitCondition::Quiescent, Blocked));
+    }
+
+    #[test]
+    fn turn_accepts_a_direct_outcome_without_observing_working() {
+        for state in [
+            protocol::DetectedAgentState::Blocked,
+            protocol::DetectedAgentState::Idle,
+        ] {
+            let mut server = server_with_agent(protocol::DetectedAgentState::Idle);
+            let reference = server
+                .resolve_agent_wait_target(AgentTarget::Pane(3))
+                .unwrap();
+            server
+                .register_post_prompt_wait(
+                    1,
+                    reference,
+                    AgentWaitCondition::Turn,
+                    None,
+                    None,
+                    headless(),
+                )
+                .unwrap();
+            server
+                .panes
+                .get_mut(&3)
+                .unwrap()
+                .runtime
+                .detected_agent
+                .as_mut()
+                .unwrap()
+                .state = state;
+            server.resolve_agent_waits();
+            assert_eq!(
+                server.agent_waits.is_empty(),
+                state == protocol::DetectedAgentState::Blocked
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_wait_captures_at_the_blocked_transition_for_both_transports() {
+        for attached in [false, true] {
+            let mut server = server_with_agent(protocol::DetectedAgentState::Idle);
+            let (client, mut stream) = super::super::tests::attach_client(&mut server);
+            let reference = server
+                .resolve_agent_wait_target(AgentTarget::Pane(3))
+                .unwrap();
+            server
+                .register_post_prompt_wait(
+                    client,
+                    reference.clone(),
+                    AgentWaitCondition::Turn,
+                    None,
+                    Some(crate::control::CaptureRender::Text),
+                    if attached {
+                        ReplyTo::Attached { request_id: 42 }
+                    } else {
+                        headless()
+                    },
+                )
+                .unwrap();
+            server.resolve_agent_waits();
+            assert_eq!(
+                server.agent_waits.len(),
+                1,
+                "the initial idle is not this turn's outcome"
+            );
+            server
+                .panes
+                .get_mut(&3)
+                .unwrap()
+                .runtime
+                .detected_agent
+                .as_mut()
+                .unwrap()
+                .state = protocol::DetectedAgentState::Working;
+            server.resolve_agent_waits();
+            let pane = server.panes.get_mut(&3).unwrap();
+            pane.screen_mut().process_bytes(b"Approve the plan?");
+            pane.runtime.detected_agent.as_mut().unwrap().state =
+                protocol::DetectedAgentState::Blocked;
+            server.resolve_agent_waits();
+            assert!(server.agent_waits.is_empty());
+            // Later output cannot change the already queued transaction result.
+            server
+                .panes
+                .get_mut(&3)
+                .unwrap()
+                .screen_mut()
+                .process_bytes(b"later output");
+            server.flush_clients();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let message: ServerMessage = protocol::read_frame(&mut stream).unwrap();
+            let response = match message {
+                ServerMessage::AttachedControlResult {
+                    request_id: 42,
+                    response,
+                } if attached => response,
+                ServerMessage::SessionControlResult { response, .. } if !attached => response,
+                other => panic!("unexpected reply: {other:?}"),
+            };
+            assert!(response.ok, "{response:?}");
+            let result: AgentWaitResult = serde_json::from_value(response.data.unwrap()).unwrap();
+            let agent = result.agent.unwrap();
+            assert_eq!(agent.reference, reference);
+            assert_eq!(agent.state, protocol::AgentState::Blocked);
+            let Some(crate::control::AgentPromptResult::Terminal { capture }) = result.result
+            else {
+                panic!("terminal result required")
+            };
+            let crate::control::CaptureContent::Text { text } = capture.content else {
+                panic!("text required")
+            };
+            assert!(text.contains("Approve the plan?"));
+            assert!(!text.contains("later output"));
+        }
     }
 
     fn server_with_agent(state: protocol::DetectedAgentState) -> SessionServer {
@@ -687,6 +903,7 @@ mod tests {
                 1,
                 reference,
                 AgentWaitCondition::Idle,
+                None,
                 None,
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),

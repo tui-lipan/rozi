@@ -17,18 +17,21 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("rozi [--session <NAME>] record <COMMAND> [OPTIONS]", ""),
+            row(
+                "rozi [--session <NAME> | --here] record <COMMAND> [OPTIONS]",
+                "",
+            ),
             row("rozi record export|play <FILE> [OPTIONS]", ""),
         ],
     },
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "A pane recording runs in the session server. Without --session, the running\n    \
-               rozi passes start, stop, list, and mark to the session it is attached to;\n    \
-               pane needs --session <NAME>. A UI recording runs in the rozi --socket\n    \
-               names, or the one this shell runs in, and writes on its host. export and\n    \
-               play read a file here.",
+        note: "A pane recording runs in the session server. Through a UI, rozi passes\n    \
+               start, stop, list, and mark to the session it is attached to;\n    \
+               pane needs --session <NAME> or --here. A UI recording runs in the rozi\n    \
+               --socket names, or the one this shell runs in, and writes on its host.\n    \
+               export and play read a file here.",
         rows: &[
             row(
                 "start [pane] [--target <PANE>] [--output <FILE>]",
@@ -542,7 +545,9 @@ fn parse_id(value: &str) -> Result<u64, String> {
 /// alone decides whether the path is absolute.
 pub(super) fn check_ui_endpoint(foreground: bool) -> Result<(), String> {
     if foreground {
-        return Err("record pane runs in the foreground and needs --session <NAME>".to_string());
+        return Err(
+            "record pane runs in the foreground and needs --session <NAME> or --here".to_string(),
+        );
     }
     Ok(())
 }

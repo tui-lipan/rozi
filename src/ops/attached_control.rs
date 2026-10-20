@@ -437,6 +437,41 @@ mod tests {
     }
 
     #[test]
+    fn caller_context_distinguishes_the_displayed_and_background_sessions() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().current_mut().session_instance =
+                Some(SessionInstanceId::for_test("screen"));
+            let background = crate::state::Attachment {
+                session_instance: Some(SessionInstanceId::for_test("caller")),
+                ..Default::default()
+            };
+            backend.state_mut().background.insert(99, background);
+            let response = ask_from(
+                &mut backend,
+                ControlCommand::Context,
+                Some(3),
+                Some("caller"),
+            )
+            .try_recv()
+            .unwrap();
+            let data = response.data.unwrap();
+            assert_eq!(data["displayed_session"], "screen");
+            assert!(
+                data["held_sessions"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("caller"))
+            );
+            assert!(
+                data.get("pane").is_none(),
+                "a UI does not verify environment hints as caller identity"
+            );
+        });
+    }
+
+    #[test]
     fn a_record_request_goes_to_the_session_pinned_to_a_pane_and_its_answer_comes_back() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
@@ -542,6 +577,7 @@ mod tests {
                     prompt: "hi".into(),
                     wait: None,
                     timeout_ms: None,
+                    capture: None,
                     allow_working: false,
                 },
             );

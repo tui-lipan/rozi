@@ -61,6 +61,26 @@ struct SessionAgentPrompt<'a> {
     wait: Option<crate::control::AgentWaitCondition>,
     timeout_ms: Option<u64>,
     allow_working: bool,
+    capture: Option<CaptureRender>,
+}
+
+fn validate_prompt_capture(
+    capture: Option<CaptureRender>,
+    wait: Option<crate::control::AgentWaitCondition>,
+) -> std::result::Result<(), ControlResponse> {
+    use crate::control::AgentWaitCondition;
+    match (capture, wait) {
+        (None, _) => Ok(()),
+        (Some(CaptureRender::Text | CaptureRender::Ansi), Some(until))
+            if until != AgentWaitCondition::Gone =>
+        {
+            Ok(())
+        }
+        _ => Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArgument,
+            "prompt capture requires text or ansi and a wait other than gone",
+        )),
+    }
 }
 
 /// Why a control command cannot be served by a session server.
@@ -70,7 +90,8 @@ struct SessionAgentPrompt<'a> {
 /// message has to say that rather than suggest the session is broken.
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
-        ControlCommand::ListPanes
+        ControlCommand::Context
+        | ControlCommand::ListPanes
         | ControlCommand::LayoutGet { .. }
         | ControlCommand::LayoutSet { .. }
         | ControlCommand::PaneSet { .. }
@@ -406,6 +427,7 @@ impl SessionServer {
                     wait,
                     timeout_ms,
                     allow_working,
+                    capture,
                 } => Some(self.register_agent_prompt(
                     client_id,
                     SessionAgentPrompt {
@@ -414,6 +436,7 @@ impl SessionServer {
                         wait: *wait,
                         timeout_ms: *timeout_ms,
                         allow_working: *allow_working,
+                        capture: *capture,
                     },
                     reply.clone(),
                 )),
@@ -483,6 +506,9 @@ impl SessionServer {
         // recording requests, but the CLI drops it for a session endpoint along with `source_pane`,
         // so a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
+            ControlCommand::Context => {
+                self.caller_context(request.source_session.as_ref(), request.source_pane)
+            }
             ControlCommand::ListPanes => {
                 ControlResponse::ok(PaneListPayload(self.session_pane_report()))
             }
@@ -983,6 +1009,51 @@ impl SessionServer {
         })
     }
 
+    fn caller_context(
+        &self,
+        source: Option<&protocol::SessionInstanceId>,
+        id: Option<PaneId>,
+    ) -> ControlResponse {
+        use crate::control::{CallerContext, CallerSession, CallerUi};
+        let pane = id
+            .and_then(|id| {
+                self.panes
+                    .get(&id)
+                    .filter(|pane| pane.exited.is_none())
+                    .map(|pane| (id, pane))
+            })
+            .filter(|_| source == Some(&self.instance_id));
+        let reference = pane.map(|(id, pane)| protocol::PaneRef {
+            session_instance: self.instance_id.clone(),
+            pane_id: id,
+            generation: pane.generation,
+        });
+        let agent = pane.and_then(|(id, pane)| {
+            match protocol::pane_agent(self.agent_runtimes_for(id, pane), &pane.runtime.rows) {
+                protocol::PaneAgent::One(agent) => Some(*agent),
+                _ => None,
+            }
+        });
+        ControlResponse::ok(CallerContext {
+            inside_rozi: reference.is_some(),
+            status: if reference.is_some() {
+                "verified"
+            } else if id.is_none() {
+                "incomplete"
+            } else {
+                "stale-pane"
+            }
+            .into(),
+            session: Some(CallerSession {
+                name: self.session_name.clone(),
+                instance: self.instance_id.clone(),
+            }),
+            pane: reference,
+            agent,
+            ui: CallerUi::default(),
+        })
+    }
+
     fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
         let mut panes: Vec<PaneInfo> = self
@@ -1110,79 +1181,102 @@ impl SessionServer {
             })
     }
 
+    fn prepare_agent_prompt(
+        &self,
+        client_id: ClientId,
+        request: &SessionAgentPrompt<'_>,
+        attached: bool,
+    ) -> std::result::Result<protocol::AgentRef, ControlResponse> {
+        validate_prompt_capture(request.capture, request.wait)?;
+        if request.prompt.is_empty() {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "agent prompt cannot be empty",
+            ));
+        }
+        self.validate_prompt_authority(client_id, attached)?;
+        let reference = self.resolve_agent_wait_target(request.target.clone())?;
+        self.validate_agent_input_reference(&reference)?;
+        let pane = self.panes.get(&reference.pane.pane_id).ok_or_else(|| {
+            ControlResponse::error_with(ControlErrorCode::AgentGone, "agent pane is gone")
+        })?;
+        let runtime = self
+            .agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|runtime| runtime.reference == reference)
+            .ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::AgentReplaced,
+                    "agent incarnation was replaced",
+                )
+            })?;
+        validate_agent_prompt_state(runtime.state, request.allow_working)?;
+        Ok(reference)
+    }
+
+    fn validate_prompt_authority(
+        &self,
+        client_id: ClientId,
+        attached: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        // A forwarded prompt types with its UI's authority. Headless input meets the session's
+        // input lock in `session_write_input`, just as an ordinary headless send does.
+        if !attached || self.client_may_input(client_id) {
+            return Ok(());
+        }
+        Err(if self.client_read_only(client_id) {
+            ControlResponse::error_with(
+                ControlErrorCode::ReadOnly,
+                "this client is attached read-only and cannot prompt an agent",
+            )
+        } else {
+            ControlResponse::error_with(
+                ControlErrorCode::InputLocked,
+                format!(
+                    "session `{}` has input locked; only its controller may prompt",
+                    self.session_name
+                ),
+            )
+        })
+    }
+
+    fn arm_prompt_wait(
+        &mut self,
+        client_id: ClientId,
+        reference: &protocol::AgentRef,
+        request: &SessionAgentPrompt<'_>,
+        reply: ReplyTo,
+    ) -> std::result::Result<(), ControlResponse> {
+        if let Some(until) = request.wait {
+            self.register_post_prompt_wait(
+                client_id,
+                reference.clone(),
+                until,
+                request.timeout_ms,
+                request.capture,
+                reply,
+            )?;
+        }
+        Ok(())
+    }
+
     fn register_agent_prompt(
         &mut self,
         client_id: ClientId,
         request: SessionAgentPrompt<'_>,
         reply: ReplyTo,
     ) -> Option<ControlResponse> {
-        if request.prompt.is_empty() {
-            return Some(ControlResponse::error_with(
-                ControlErrorCode::InvalidArgument,
-                "agent prompt cannot be empty",
-            ));
-        }
         let reply_id = reply.hold_id();
-        // A prompt forwarded by an attached UI types with that client's authority, the same rule
-        // its own keyboard follows: under an input lock only the controller may. A headless caller
-        // keeps the headless rule, which `session_write_input` applies.
         let attached = matches!(reply, ReplyTo::Attached { .. });
-        if attached && !self.client_may_input(client_id) {
-            return Some(if self.client_read_only(client_id) {
-                ControlResponse::error_with(
-                    ControlErrorCode::ReadOnly,
-                    "this client is attached read-only and cannot prompt an agent",
-                )
-            } else {
-                ControlResponse::error_with(
-                    ControlErrorCode::InputLocked,
-                    format!(
-                        "session `{}` has input locked; only its controller may prompt",
-                        self.session_name
-                    ),
-                )
-            });
-        }
-        let reference = match self.resolve_agent_wait_target(request.target) {
+        let reference = match self.prepare_agent_prompt(client_id, &request, attached) {
             Ok(reference) => reference,
             Err(response) => return Some(response),
         };
-        if let Err(response) = self.validate_agent_input_reference(&reference) {
-            return Some(response);
-        }
-        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
-            return Some(ControlResponse::error_with(
-                ControlErrorCode::AgentGone,
-                "agent pane is gone",
-            ));
-        };
-        let Some(runtime) = self
-            .agent_runtimes_for(reference.pane.pane_id, pane)
-            .into_iter()
-            .find(|runtime| runtime.reference == reference)
-        else {
-            return Some(ControlResponse::error_with(
-                ControlErrorCode::AgentReplaced,
-                "agent incarnation was replaced",
-            ));
-        };
-        if let Err(response) = validate_agent_prompt_state(runtime.state, request.allow_working) {
-            return Some(response);
-        }
-
         let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {
             Ok(bytes) => bytes,
             Err(response) => return Some(response),
         };
-        if let Some(until) = request.wait
-            && let Err(response) = self.register_post_prompt_wait(
-                client_id,
-                reference.clone(),
-                until,
-                request.timeout_ms,
-                reply,
-            )
-        {
+        if let Err(response) = self.arm_prompt_wait(client_id, &reference, &request, reply) {
             return Some(response);
         }
 
@@ -1191,8 +1285,7 @@ impl SessionServer {
         } else {
             self.session_write_input(reference.pane.pane_id, bytes)
         };
-        let response = written.map_or_else(|response| response, |()| ControlResponse::empty());
-        if !response.ok {
+        if let Err(response) = written {
             self.agent_waits.remove(&(client_id, reply_id));
             return Some(response);
         }
@@ -2833,6 +2926,7 @@ mod tests {
                     prompt: "hello",
                     wait: None,
                     timeout_ms: None,
+                    capture: None,
                     allow_working: true,
                 },
                 ReplyTo::Headless {
@@ -2947,6 +3041,7 @@ mod tests {
                     prompt: "approve this",
                     wait: None,
                     timeout_ms: None,
+                    capture: None,
                     allow_working: false,
                 },
                 ReplyTo::Headless {

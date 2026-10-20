@@ -365,6 +365,17 @@ pub(crate) fn handle_control_request(
             status,
             reason,
         ),
+        ControlCommand::Context => {
+            let displayed = ctx.state.current().session_instance.clone();
+            let held: Vec<_> = std::iter::once(ctx.state.current())
+                .chain(ctx.state.background.values())
+                .filter_map(|attachment| attachment.session_instance.clone())
+                .collect();
+            ControlResponse::ok(crate::control::UiContextMetadata {
+                displayed_session: displayed,
+                held_sessions: held,
+            })
+        }
         ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
             return crate::ops::attached_control::forward_agent(
                 ctx,

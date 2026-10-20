@@ -26,7 +26,7 @@ A control command talks to one of two places, called its _endpoint_:
 | Endpoint | Selected by | Serves |
 | --- | --- | --- |
 | A running UI | `--socket`, `ROZI_SOCKET`, or discovery | Every command. |
-| A named session server | `--session <NAME>` | The commands a server can answer without a screen. |
+| A named session server | `--session <NAME>` or `--here` | The commands a server can answer without a screen. |
 
 ```sh
 rozi --session dev list-panes
@@ -77,9 +77,40 @@ The remote host needs a rozi that supports forwarding. An older one is reported 
 mismatch rather than a broken command. Run `rozi api describe` there and look for `remote-control`
 in its capabilities.
 
+## Verify caller context
+
+Run `rozi context --format json` to identify the session and pane the command runs in. The
+`data` object contains `inside_rozi`, `status`, `session`, `pane`, `agent`, and `ui`.
+A verified `pane` is a reference containing `session_instance`, `pane_id`, and `generation`.
+`agent` is the pane's current agent record when one can be selected.
+
+`status` is `verified`, `outside`, `incomplete`, `stale-session`, or `stale-pane`. Missing caller
+information is `outside`; partial information is `incomplete`. A retired session instance or a
+pane that has exited is stale. A stale pane has no verified `pane` or `agent`.
+
+`ui.available` says whether the caller's UI can be reached. When the caller's session is known,
+`ui.displays_session` and `ui.holds_session` distinguish the session on screen from an attachment
+held in the background. Those fields are `null` when unknown. A missing or dead `ROZI_SOCKET`
+does not prevent verification of a live caller session.
+
+Put `--here` before a control command to target your own verified session, including a detached
+session or one the UI holds in the background:
+
+```sh
+rozi context --format json
+rozi --here agents list --format json
+rozi --here capture-pane
+rozi --here split --argv cargo test
+```
+
+`--here` refuses absent or stale caller identity. It cannot be combined with `--session`,
+`--socket`, or `--remote`. It supports the same commands as `--session`. For commands with an
+optional pane target, an omitted `--target` means the calling pane. Explicit targets name panes
+in the caller's session. Commands without `--here` keep the usual UI selection rules.
+
 ## Endpoint discovery
 
-Without `--session`, control commands choose a UI endpoint in this order:
+Without `--session` or `--here`, control commands choose a UI endpoint in this order:
 
 1. `--socket PATH`
 2. `ROZI_SOCKET`
@@ -109,7 +140,7 @@ server it runs in, so a UI holding several sessions can tell whose pane is askin
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
 neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
 there is no UI for them to name. Such a pane still reaches its own session with
-`rozi --session <NAME>`, and its agent reports reach it without one.
+`rozi --here`, and its agent reports reach it without one.
 
 ## Target selection
 
@@ -156,6 +187,7 @@ attached.
 
 | Command | Purpose | `--session` |
 | --- | --- | --- |
+| `context [--format text\|json]` | Verify caller identity and report UI availability. | caller only |
 | `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
 | `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
 | `layout set --workspace 1-9 [<LAYOUT>] [--master-ratio R] [--if-revision N]` | Set a workspace's tiling layout, its master share, or both. | yes |
@@ -170,7 +202,7 @@ attached.
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
 | `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
-| `agents prompt TARGET [--wait STATE --timeout DURATION] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
+| `agents prompt TARGET [--wait STATE --timeout DURATION] [--capture text\|ansi] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
@@ -223,8 +255,8 @@ own machine. `record export` and `record play` read a file and take no endpoint.
 
 Control commands reject the launch-only options `--read-only`, `--profile`, `--pick`,
 and `--cwd`. `--config PATH` selects the configuration for `split`; other control commands reject
-it. `--session <NAME>` is the one target they accept, optionally qualified by
-`--remote <HOST>`.
+it. Select a session with `--here` or `--session <NAME>`, optionally qualified by
+`--remote <HOST>` for a named session.
 
 ### Check the installed API
 
@@ -234,11 +266,13 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 20,
+  "schema": 21,
   "session_protocol": 32,
   "capabilities": [
+    "agent-prompt-results",
     "agent-waits",
     "attached-control",
+    "caller-context",
     "capture-render",
     "capture-scale",
     "capture-spans",

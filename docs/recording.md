@@ -50,7 +50,8 @@ rozi record stop
 The recording still runs in the session server, so it carries on after you detach. A scratch or
 popup pane runs outside the session, so it cannot be recorded, and commands run in one need
 `--session`. A pane of a [remote session](remote.md) runs on the other host, where it cannot
-reach your rozi window, so it also uses `--session <NAME>`. A UI attached read-only can list
+reach your rozi window. Use `--here` to record your own verified pane directly, including a
+remote or detached pane, or `--session <NAME>` to select a named session. A UI attached read-only can list
 recordings but not start, stop, or mark one.
 
 ## Record from the command palette
@@ -89,8 +90,8 @@ They have no default keys. Bind `toggle-pane-recording`, `mark-pane-recording`,
 toggle-pane-recording = "shift-r"
 ```
 
-To record only while a command runs in the foreground, use `record pane`, which always needs
-`--session`. It records until you press `Ctrl+C`. If the recording ends on its own first, such as when the pane's program exits, it prints
+To record only while a command runs in the foreground, use `record pane` with
+`--session` or `--here`. It records until you press `Ctrl+C`. If the recording ends on its own first, such as when the pane's program exits, it prints
 how it ended:
 
 ```sh
@@ -222,10 +223,10 @@ exists. It writes into `[recording] dir` from the configuration on the session's
 `recordings` in the state directory there: on Linux, `~/.local/state/rozi/recordings`. A directory
 rozi creates is readable only by you.
 
-With `--output`, the directory must already exist. With `--session`, a relative `--output` is
+With `--output`, the directory must already exist. With `--session` or `--here`, a relative `--output` is
 resolved against the directory you run `rozi` in. With `--remote HOST --session NAME`, the file is
 written on that host and a relative path is resolved against your login directory there, usually
-your home directory. Without `--session`, `--output` must be absolute on the session's host, which
+your home directory. Through a UI, `--output` must be absolute on the session's host, which
 may run a different OS: a Windows session takes `C:\…`, a Linux or macOS one `/…`.
 
 ## Limits and how a recording ends

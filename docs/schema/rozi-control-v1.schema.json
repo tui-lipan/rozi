@@ -146,6 +146,27 @@
       ],
       "type": "object"
     },
+    "AgentPromptResult": {
+      "description": "The requested representation of a prompted turn. Integration messages may be added as\nanother explicit kind without treating a terminal screen as an assistant message.",
+      "oneOf": [
+        {
+          "properties": {
+            "capture": {
+              "$ref": "#/$defs/PaneCapture"
+            },
+            "kind": {
+              "const": "terminal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "capture"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AgentRef": {
       "description": "Exact identity of one semantic agent or published activity.",
       "properties": {
@@ -254,16 +275,25 @@
       ]
     },
     "AgentWaitCondition": {
-      "enum": [
-        "working",
-        "blocked",
-        "idle",
-        "done",
-        "error",
-        "quiescent",
-        "gone"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "working",
+            "blocked",
+            "idle",
+            "done",
+            "error",
+            "quiescent",
+            "gone"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "turn",
+          "description": "A prompted turn finished or needs intervention.",
+          "type": "string"
+        }
+      ]
     },
     "AgentWaitResult": {
       "description": "What a resolved `agents wait` - or an `agents prompt --wait` - answers with.\n\n`agent` is absent when the condition that resolved the wait is the agent no longer being there\n(`gone`), which is the one outcome with nothing left to describe.",
@@ -280,6 +310,26 @@
         },
         "condition": {
           "$ref": "#/$defs/AgentWaitCondition"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentPromptResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -525,6 +575,94 @@
       ],
       "type": "object"
     },
+    "CallerContext": {
+      "description": "Caller identity verified by the session server. Environment hints alone never fill `pane`.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inside_rozi": {
+          "type": "boolean"
+        },
+        "pane": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CallerSession"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "ui": {
+          "$ref": "#/$defs/CallerUi"
+        }
+      },
+      "required": [
+        "inside_rozi",
+        "status",
+        "ui"
+      ],
+      "type": "object"
+    },
+    "CallerSession": {
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/SessionInstanceId"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "instance"
+      ],
+      "type": "object"
+    },
+    "CallerUi": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "displays_session": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "holds_session": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
     "CaptureRender": {
       "description": "What form `capture-pane` returns a pane in, and `capture-ui` the whole client.",
       "oneOf": [
@@ -725,6 +863,19 @@
     },
     "ControlCommand": {
       "oneOf": [
+        {
+          "description": "Verified caller identity on a server; attachment metadata on a UI.",
+          "properties": {
+            "cmd": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "cmd": {
@@ -1676,6 +1827,16 @@
             "allow_working": {
               "default": false,
               "type": "boolean"
+            },
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "cmd": {
               "const": "agent-prompt",
@@ -2176,6 +2337,19 @@
     "ControlRequest": {
       "oneOf": [
         {
+          "description": "Verified caller identity on a server; attachment metadata on a UI.",
+          "properties": {
+            "cmd": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "list-panes",
@@ -3126,6 +3300,16 @@
             "allow_working": {
               "default": false,
               "type": "boolean"
+            },
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "cmd": {
               "const": "agent-prompt",
@@ -7105,6 +7289,31 @@
       ],
       "type": "object"
     },
+    "UiContextMetadata": {
+      "description": "Attachment identities supplied by a UI, independent of verified caller identity.",
+      "properties": {
+        "displayed_session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionInstanceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "held_sessions": {
+          "items": {
+            "$ref": "#/$defs/SessionInstanceId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "held_sessions"
+      ],
+      "type": "object"
+    },
     "UnavailableInfo": {
       "description": "Why something placed is not running.",
       "properties": {
@@ -7193,5 +7402,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 20
+  "x-rozi-schema-version": 21
 }

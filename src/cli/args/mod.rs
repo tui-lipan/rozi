@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::{control, session};
 
 mod agents;
+mod context;
 mod extensions;
 mod layout;
 mod record;
@@ -49,6 +50,7 @@ pub(crate) struct CliArgs {
     /// starts a UI, so reading `rozi dev list-panes` as "talk to the session server called dev"
     /// would let one trailing word change what the command *is*. `--session` says it outright.
     pub(crate) session_flag_target: bool,
+    pub(crate) here: bool,
     /// Force the startup session picker, overriding whatever `[session] startup` selects. A target
     /// wins over it, and `--remote` skips it: the session lives on the far host, which local
     /// discovery does not describe.
@@ -92,6 +94,10 @@ pub(crate) struct ControlCli {
 pub(crate) enum ControlEndpoint {
     /// The local UI endpoint named by `--socket`, `ROZI_SOCKET`, or discovery.
     Ui(Option<PathBuf>),
+    /// Resolve and verify the calling pane before issuing a control command.
+    Here,
+    /// Report caller identity even when its environment is absent or stale.
+    CallerContext,
     /// The named session server, reached with no UI in the picture (`--session <NAME>`).
     Session(String),
     /// A named session server on another host, reached over the SSH transport `--remote` attach
@@ -115,7 +121,7 @@ impl ControlEndpoint {
     pub(crate) fn is_session(&self) -> bool {
         matches!(
             self,
-            Self::Session(_) | Self::Remote { .. } | Self::OwnSession(_)
+            Self::Session(_) | Self::Remote { .. } | Self::OwnSession(_) | Self::Here
         )
     }
 }
@@ -384,6 +390,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     return Ok(parsed);
                 }
             }
+            "--here" => cli.here = true,
+            "context" => return context::parse(&mut iter, cli, socket),
             "worktrees" => return worktrees::parse(&mut iter, &mut cli),
             "extensions" => return extensions::parse(&mut iter, cli.config_path),
             "--server" => {
@@ -1322,6 +1330,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     if cli.cwd.is_some() && cli.profile.is_some() {
         return Err("--cwd cannot be combined with --profile".to_string());
     }
+    if cli.here {
+        return Err("--here requires a control command".into());
+    }
     Ok(ParsedCli::Run(cli))
 }
 
@@ -1613,6 +1624,15 @@ pub(super) fn control_endpoint(
     if !offender.is_empty() {
         return Err(format!("{offender} does not apply to control commands"));
     }
+    if cli.here {
+        if cli.attach_session.is_some() || cli.remote.is_some() || socket.is_some() {
+            return Err("--here cannot be combined with --session, --remote or --socket".into());
+        }
+        if let Some(reason) = crate::session::server::session_control_unsupported(command) {
+            return Err(reason.to_string());
+        }
+        return Ok(ControlEndpoint::Here);
+    }
     let Some(session) = cli.attach_session.as_deref() else {
         if cli.remote.is_some() {
             return Err(
@@ -1723,6 +1743,24 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn here_selects_only_session_control_and_context_describes_only_the_caller() {
+        for args in [
+            vec!["--here"],
+            vec!["--here", "--session", "dev", "list-panes"],
+            vec!["--here", "focus", "--target", "3"],
+            vec!["--session", "dev", "context"],
+        ] {
+            assert!(parse_cli_args(args.into_iter().map(str::to_string).collect()).is_err());
+        }
+        let ParsedCli::Control(context) =
+            parse_cli_args(vec!["context".into(), "--format".into(), "json".into()]).unwrap()
+        else {
+            panic!("context command")
+        };
+        assert_eq!(context.endpoint, ControlEndpoint::CallerContext);
+    }
 
     #[test]
     fn cli_parses_positional_target_and_rejects_removed_flags() {

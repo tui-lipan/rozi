@@ -220,6 +220,7 @@ mod tests {
             prompt: "go".to_string(),
             wait,
             timeout_ms,
+            capture: None,
             allow_working: false,
         };
 

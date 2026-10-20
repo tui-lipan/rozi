@@ -6008,6 +6008,7 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
                     prompt: "go".into(),
                     wait: None,
                     timeout_ms: None,
+                    capture: None,
                     allow_working: true,
                 },
                 source_pane: None,

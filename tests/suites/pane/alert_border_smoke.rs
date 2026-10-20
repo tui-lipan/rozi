@@ -161,7 +161,7 @@ fn focusing_finished_alert_clears_it_and_a_blocked_focused_pane_stays_marked() {
             "finished alert must remain cleared after focus"
         );
 
-        block_second(&mut backend);
+        detect_second_as_blocked(&mut backend);
         backend.render();
         let warning = backend.state().theme.status.warning;
         assert!(
@@ -172,6 +172,17 @@ fn focusing_finished_alert_clears_it_and_a_blocked_focused_pane_stays_marked() {
                 .any(|cell| cell.fg == warning),
             "a blocked agent marks the focused pane until it is answered"
         );
+
+        // A bare `rozi status blocked` names no agent to answer, so focus keeps the active border.
+        backend.state_mut().current_mut().workspaces[0].panes[1]
+            .terminal
+            .detected_agent = None;
+        block_second(&mut backend);
+        backend.render();
+        let frame = backend.capture_frame();
+        assert!(!frame.cells.iter().any(|cell| cell.fg == warning));
+        let active = backend.state().theme.border_active;
+        assert!(frame.cells.iter().any(|cell| cell.fg == active));
     });
 }
 
@@ -211,10 +222,9 @@ fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
             state.theme.status.warning = blocked_color;
             state.current_mut().workspaces[0].panes[0]
                 .terminal
-                .reported_status = Some(rozi::session::protocol::PaneStatus {
-                value: "blocked".into(),
-                reason: None,
-                set_at: 0,
+                .detected_agent = Some(rozi::session::protocol::DetectedAgent {
+                agent: rozi::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+                state: rozi::session::protocol::DetectedAgentState::Blocked,
             });
         }
         blocked.render();
@@ -225,6 +235,28 @@ fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
                 .iter()
                 .any(|cell| cell.fg == blocked_color),
             "a blocked agent must mark the focused pane's own border"
+        );
+
+        let mut generic = backend(PaneBorderMode::Separate);
+        {
+            let state = generic.state_mut();
+            state.theme.status.warning = blocked_color;
+            state.current_mut().workspaces[0].panes[0]
+                .terminal
+                .reported_status = Some(rozi::session::protocol::PaneStatus {
+                value: "blocked".into(),
+                reason: None,
+                set_at: 0,
+            });
+        }
+        generic.render();
+        assert!(
+            !generic
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| cell.fg == blocked_color),
+            "a bare blocked status names no agent to answer; the focused border must not restate it"
         );
     });
 }

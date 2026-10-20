@@ -436,14 +436,17 @@ pub(crate) fn pane_alert(
         .flatten();
     // Working/idle are live conditions the focused pane already shows in its own content, so
     // marking its border would only restate what is on screen and would never clear on its own.
-    // Blocked stays lit on the focused pane, since answering the agent clears it and the prompt may
-    // sit behind another conversation tab; [`pane_alert_breathes`] holds it still there. Finished
+    // An agent's blocked state stays lit on the focused pane, since answering the agent clears it
+    // and the prompt may sit behind another conversation tab; [`pane_alert_breathes`] holds it
+    // still there. A bare `rozi status blocked` names no agent to answer, and only its producer can
+    // clear it, so it stays a live condition. Finished
     // is a latch, raised for news the user has not read yet, and it stays lit on the focused pane
     // until an input answers it (`acknowledge_pane_if_attended`).
     [
         (
             PaneAlert::Blocked,
-            pane.awaits_input() || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
+            (pane.awaits_input() && (!focused || pane.terminal.has_agent()))
+                || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
             colors.blocked,
         ),
         (

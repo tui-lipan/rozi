@@ -530,17 +530,22 @@ impl Pane {
             .or(self.identity.cwd.as_deref())
     }
 
-    /// Whether this pane is blocked and still worth acting on: its own status, or any agent it
-    /// runs. The hooks' report speaks for one conversation only, so another conversation the
-    /// publisher calls blocked must still count.
+    /// Whether this pane is blocked and still worth acting on. See [`Self::agent_blocked`].
     pub fn awaits_input(&self) -> bool {
         !self.closing
             && !matches!(self.terminal.status, ManagedTerminalStatus::Exited(_))
-            && (self.terminal.is_blocked()
-                || self
-                    .agent_runtimes()
-                    .iter()
-                    .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked))
+            && self.agent_blocked()
+    }
+
+    /// Whether anything in this pane waits on the user: its own status, or any agent it runs. The
+    /// hooks' report speaks for one conversation only, so another conversation the publisher calls
+    /// blocked must still count.
+    pub fn agent_blocked(&self) -> bool {
+        self.terminal.is_blocked()
+            || self
+                .agent_runtimes()
+                .iter()
+                .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked)
     }
 }
 

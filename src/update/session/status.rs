@@ -124,12 +124,13 @@ pub(crate) fn apply_pane_runtime_state(
     state: PaneRuntimeState,
 ) -> AppliedPaneRuntime {
     let finished = finished_records(&pane.agents, &agents);
+    // Read under the old records, which name the rows the old runtime published.
+    let previous_blocked = pane.agent_blocked();
     pane.agents = agents;
     let previous_status = pane.terminal.reported_status.clone();
     let previous_agent_status = pane.terminal.agent_status();
     // Sampled before the incoming runtime state overwrites the status it dates.
     let previous_age = pane.terminal.status_age();
-    let previous_blocked = pane.terminal.is_blocked();
     // Replacing a detected agent establishes a new lifecycle baseline: its loading screen is
     // not the previous run finishing. A first detection still alerts if it needs attention.
     let relaunched =
@@ -167,6 +168,8 @@ pub(crate) fn apply_pane_runtime_state(
         previous_blocked,
         finished.contains(&None),
     );
+    // A conversation the hooks do not follow can block too; it is news all the same.
+    edges.became_blocked = !previous_blocked && pane.agent_blocked();
     if relaunched {
         edges.finished = false;
         edges.became_blocked = false;

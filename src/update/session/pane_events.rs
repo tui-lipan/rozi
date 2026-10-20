@@ -306,9 +306,9 @@ pub(crate) fn resized(
 }
 
 /// Apply a shared pane's server geometry, or hold it when the pane's layout commit has not created
-/// the pane yet. Output that arrives in between is buffered the same way, and the held geometry is
-/// applied before that output is parsed, so an early picture is laid out against the session's
-/// cells rather than this client's own. Returns whether a live pane changed.
+/// the pane, or its new generation, yet. Output that arrives in between is buffered the same way,
+/// and the held geometry is applied before that output is parsed, so an early picture is laid out
+/// against the session's cells rather than this client's own. Returns whether a live pane changed.
 fn apply_or_hold_geometry(
     attachment: &mut crate::state::Attachment,
     pane_id: PaneId,
@@ -316,13 +316,14 @@ fn apply_or_hold_geometry(
     geometry: crate::state::PaneGeometry,
 ) -> bool {
     match attachment.find_pane_mut(pane_id) {
-        Some(pane) => {
-            pane.pty_generation == generation
-                && pane
-                    .terminal
-                    .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell)
+        Some(pane) if pane.pty_generation == generation => {
+            pane.terminal
+                .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell)
         }
-        None => {
+        Some(pane) if pane.pty_generation > generation => false,
+        // No pane yet, or the one shown is an older generation the layout will replace: the
+        // geometry belongs to a screen this client does not have, never to the old one.
+        _ => {
             if let Some(shared) = attachment.shared.as_mut() {
                 shared.hold_orphan_geometry(pane_id, generation, geometry);
             }
@@ -384,10 +385,10 @@ fn reset_attachment_pane(
             pane.terminal.reset_for_replay(cols, rows);
             true
         }
-        Some(_) => false,
-        None => {
-            // Output buffered before the layout introduced this pane predates the replay, which is
-            // parsed at the reset's geometry once the layout creates the pane.
+        Some(pane) if pane.pty_generation > generation => false,
+        _ => {
+            // Output buffered before the layout introduced this pane, or its new generation,
+            // predates the replay, which is parsed at the reset's geometry once the layout creates it.
             if let Some(shared) = attachment.shared.as_mut() {
                 shared.discard_orphan_output(pane_id, generation);
                 shared.hold_orphan_geometry(

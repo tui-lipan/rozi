@@ -316,13 +316,18 @@ impl SharedSessionState {
         self.orphan_geometry.insert(pane_id, (generation, geometry));
     }
 
-    /// The held geometry for this pane generation, if any. An older generation's is dropped.
+    /// The held geometry for this pane generation, if any. An older generation's is dropped and a
+    /// newer one's kept, like `orphan_output`.
     pub fn take_orphan_geometry(
         &mut self,
         pane_id: PaneId,
         generation: u64,
     ) -> Option<PaneGeometry> {
-        let (held, geometry) = self.orphan_geometry.remove(&pane_id)?;
+        let (held, _) = *self.orphan_geometry.get(&pane_id)?;
+        if held > generation {
+            return None;
+        }
+        let (_, geometry) = self.orphan_geometry.remove(&pane_id)?;
         (held == generation).then_some(geometry)
     }
 }

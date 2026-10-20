@@ -1854,7 +1854,7 @@ fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
     let mut source = TerminalScreen::new(6, 30, 100);
     source.process_bytes(b"shell before app\r\n");
     source.process_bytes(
-        b"\x1b[?1049h\x1b[Hdead app\r\nwaiting for input\x1b[3;9H\
+        b"\x1b[?1049h\x1b[H\x1b[1;38;2;12;34;56;48;5;22mdead app\x1b[0m\r\nwaiting for input\x1b[3;9H\
           \x1b[?25l\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1h",
     );
     let replay = source.export_replay_bytes();
@@ -1874,16 +1874,85 @@ fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
     assert_eq!(snapshot.mouse_mode, tui_lipan::MouseModeState::default());
     assert_eq!(snapshot.key_modes, tui_lipan::TerminalKeyModes::default());
 
+    let frame = restored.capture_frame();
+    let app_cell = frame
+        .cells
+        .iter()
+        .find(|cell| cell.symbol == "d")
+        .expect("restored app text");
+    assert_eq!(app_cell.fg, tui_lipan::Color::Rgb(12, 34, 56));
+    assert_eq!(app_cell.bg, tui_lipan::Color::Indexed(22));
+    assert!(app_cell.modifiers.bold);
+
     restored.process_bytes(b"$ ");
     let prompt = restored.render_snapshot();
     assert_eq!(prompt.cursor_row, 5);
     assert_eq!(prompt.cursor_col, 2);
     assert!(prompt.text.contains("dead app"));
+    let frame = restored.capture_frame();
+    let prompt_cell = &frame.row(5)[0];
+    assert_eq!(prompt_cell.fg, tui_lipan::Color::Reset);
+    assert_eq!(prompt_cell.bg, tui_lipan::Color::Reset);
+    assert!(!prompt_cell.modifiers.bold);
 
     // Recovery already left the alternate screen. A redundant reset must not make the retained
     // transcript disappear.
     restored.process_bytes(b"\x1b[?1049l");
     assert!(restored.render_snapshot().text.contains("dead app"));
+}
+
+#[test]
+fn resurrected_alternate_screen_keeps_style_only_changes() {
+    let mut source = TerminalScreen::new(4, 12, 100);
+    source.process_bytes(b"same text");
+    source.process_bytes(b"\x1b[?1049h\x1b[H\x1b[1;31msame text\x1b[0m");
+    let replay = source.export_replay_bytes();
+
+    let mut restored = TerminalScreen::new(4, 12, 100);
+    super::panes::recover_restored_screen(&mut restored, &replay);
+    let frame = restored.capture_frame();
+    let retained = frame
+        .cells
+        .iter()
+        .rfind(|cell| cell.symbol == "s")
+        .expect("retained alternate screen text");
+    assert_eq!(retained.fg, tui_lipan::Color::Red);
+    assert!(retained.modifiers.bold);
+}
+
+#[test]
+fn resurrected_scrollback_keeps_styles_after_new_output() {
+    for alternate in [false, true] {
+        let mut source = TerminalScreen::new(4, 12, 100);
+        if alternate {
+            source.process_bytes(b"\x1b[?1049h");
+        }
+        // Include a wide glyph and a row that fills the terminal width.
+        source.process_bytes(b"\x1b[3;32m123456789012\x1b[0m\r\n");
+        source.process_bytes("\x1b[38;5;200m界 colored\x1b[0m".as_bytes());
+        let replay = source.export_replay_bytes();
+        let mut restored = TerminalScreen::new(4, 12, 100);
+        super::panes::recover_restored_screen(&mut restored, &replay);
+        restored.process_bytes(b"new\r\nnew\r\nnew\r\nnew\r\n");
+
+        let mut found_number = false;
+        let mut found_wide = false;
+        for offset in 0..=restored.total_scrollback_rows() {
+            restored.set_scrollback(offset);
+            for cell in &restored.capture_frame().cells {
+                if cell.symbol == "1" {
+                    assert_eq!(cell.fg, tui_lipan::Color::Green);
+                    assert!(cell.modifiers.italic);
+                    found_number = true;
+                }
+                if cell.symbol == "界" {
+                    assert_eq!(cell.fg, tui_lipan::Color::Indexed(200));
+                    found_wide = true;
+                }
+            }
+        }
+        assert!(found_number && found_wide, "alternate screen: {alternate}");
+    }
 }
 
 #[test]

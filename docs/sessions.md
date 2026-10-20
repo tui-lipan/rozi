@@ -289,7 +289,7 @@ Restoring recreates:
 - pane commands and working directories
 - commands running inside a shell pane, including their arguments
 - pane titles and terminal palette
-- saved terminal history
+- saved terminal history, including its colors and text styling
 
 Processes themselves are not saved. Each command starts again in a fresh terminal, with the saved
 history shown above the new output. A missing directory, a missing history file, or a command that

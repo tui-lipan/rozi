@@ -984,17 +984,19 @@ impl SessionServer {
 ///
 /// A replay deliberately preserves alternate-screen state and every input mode for a live process.
 /// Resurrection is different: the process that owned those modes is gone. If it died on the
-/// alternate screen, copy that visible grid into the primary screen as plain transcript text before
+/// alternate screen, copy that visible grid into the primary screen as styled transcript text before
 /// placing the replacement on a fresh row beneath it. The old UI remains readable without
 /// masquerading as the still-running foreground application.
 pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) {
     screen.process_bytes(seed);
     let restored_view = screen.render_snapshot().text.clone();
+    let restored_frame = screen.capture_frame();
 
     screen.process_bytes(SHELL_MODE_RECOVERY);
-    let primary_view = screen.render_snapshot().text.clone();
-    if restored_view != primary_view {
-        append_plain_transcript(screen, &restored_view);
+    // Equal text can still hide different colors or modifiers on the alternate screen.
+    // Compare cells only: recovery deliberately changes cursor and input modes.
+    if restored_frame.cells != screen.capture_frame().cells {
+        append_styled_transcript(screen, &restored_view, &restored_frame.to_ansi_text());
     }
 
     place_replacement_cursor(screen);
@@ -1002,19 +1004,17 @@ pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) 
     screen.drain_clipboard_events();
 }
 
-fn append_plain_transcript(screen: &mut TerminalScreen, text: &str) {
+fn append_styled_transcript(screen: &mut TerminalScreen, text: &str, ansi: &str) {
     let lines: Vec<_> = text.lines().collect();
     let Some(last) = lines.iter().rposition(|line| !line.trim().is_empty()) else {
         return;
     };
 
     screen.process_bytes(b"\x1b[999;1H\r\n");
-    for (index, line) in lines[..=last].iter().enumerate() {
-        let safe: String = line
-            .chars()
-            .map(|ch| if ch.is_control() { ' ' } else { ch })
-            .collect();
-        screen.process_bytes(safe.as_bytes());
+    // The capture emits only cell text and SGR, so replaying it cannot restore the dead
+    // application's input modes. Each row ends with an SGR reset for the replacement shell.
+    for (index, line) in ansi.lines().take(last + 1).enumerate() {
+        screen.process_bytes(line.as_bytes());
         if index != last {
             screen.process_bytes(b"\r\n");
         }

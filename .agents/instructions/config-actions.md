@@ -33,7 +33,9 @@ instead of adding an unlinked snippet.
   bare `source_pane` without it.
   Agent reports and releases carrying it also route to the caller's current or background
   attachment instead of the session on screen.
-- Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SOCKET`, and `ROZI_BIN`. Remote panes suppress
+- Spawned panes receive `ROZI=1`, `ROZI_PANE`, `TERM_PROGRAM=rozi`, `TERM_PROGRAM_VERSION`,
+  `ROZI_SOCKET`, and `ROZI_BIN`. The `TERM_PROGRAM` pair replaces whatever terminal started the
+  server, so programs never apply that terminal's protocol habits to a pane. Remote panes suppress
   local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
   `rozi --session <NAME> split` or restored by resurrection, which has no UI to name.
 - `agents report`/`release` with no `--target`, `--socket`, `--session`, or `ROZI_SOCKET` go to the

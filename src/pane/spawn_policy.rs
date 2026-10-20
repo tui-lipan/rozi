@@ -115,6 +115,15 @@ pub(crate) fn spawn_environment(
     env.extend([
         ("ROZI".to_string(), "1".to_string()),
         ("ROZI_PANE".to_string(), pane_id.to_string()),
+        // The pane's terminal is rozi, not whichever terminal started the server. A program that
+        // reads an inherited `TERM_PROGRAM=ghostty` uses that terminal's protocol habits, such as
+        // deleting an image before resending it, which leave a relayed pane blank until the
+        // upload arrives.
+        ("TERM_PROGRAM".to_string(), "rozi".to_string()),
+        (
+            "TERM_PROGRAM_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        ),
     ]);
     if let SpawnOrigin::Client {
         control_socket,
@@ -214,6 +223,11 @@ mod tests {
             vec![
                 ("ROZI".to_string(), "1".to_string()),
                 ("ROZI_PANE".to_string(), "4".to_string()),
+                ("TERM_PROGRAM".to_string(), "rozi".to_string()),
+                (
+                    "TERM_PROGRAM_VERSION".to_string(),
+                    env!("CARGO_PKG_VERSION").to_string()
+                ),
             ]
         );
 
@@ -230,6 +244,50 @@ mod tests {
         assert!(remote.iter().all(|(key, _)| key != "ROZI_SOCKET"));
         assert!(remote.iter().all(|(key, _)| key != "ROZI_BIN"));
         assert!(remote.contains(&("EXTRA".to_string(), "1".to_string())));
+    }
+
+    #[test]
+    fn every_pane_names_rozi_as_its_terminal_unless_the_spawn_overrides_it() {
+        let origins = [
+            SpawnOrigin::Headless,
+            SpawnOrigin::Client {
+                control_socket: None,
+                forward: &[],
+                remote: true,
+            },
+            SpawnOrigin::Client {
+                control_socket: None,
+                forward: &[],
+                remote: false,
+            },
+        ];
+        for origin in origins {
+            let env = spawn_environment(origin, 1, &[]);
+            let value = |key: &str| {
+                env.iter()
+                    .rev()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value("TERM_PROGRAM"), Some("rozi"));
+            assert_eq!(
+                value("TERM_PROGRAM_VERSION"),
+                Some(env!("CARGO_PKG_VERSION"))
+            );
+        }
+
+        // A per-spawn value is applied last, so a caller can still choose another identity.
+        let env = spawn_environment(
+            SpawnOrigin::Headless,
+            1,
+            &[("TERM_PROGRAM".to_string(), "custom".to_string())],
+        );
+        let last = env
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "TERM_PROGRAM")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(last, Some("custom"));
     }
 
     #[test]

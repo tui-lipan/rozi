@@ -1,3 +1,4 @@
+use super::panes::ImageMedia;
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -246,13 +247,18 @@ fn session_socket_path_rejects_invalid_names() {
 }
 
 /// A pane hands a frame over by naming a file only when every client can open it. One client
-/// watching from another machine is enough to take the offer off the table for all of them, since
-/// the panes are shared and a path from this machine would resolve against that one's files.
+/// watching from another machine is enough to change that for all of them, since the panes are
+/// shared and a path from this machine would resolve against that one's files: the server then
+/// reads the file itself and forwards the pixels inline.
 #[test]
-fn a_client_that_cannot_reach_the_filesystem_withdraws_out_of_band_graphics() {
+fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     let mut server = SessionServer::new_named("dev");
     let (_local, _stream) = attach_client(&mut server);
-    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::SHARED);
+    let shared = ImageMedia {
+        policy: GraphicsMediaPolicy::SHARED,
+        relay_inline: false,
+    };
+    assert_eq!(server.image_media(), shared);
 
     let (remote, _remote_stream) = add_client(&mut server);
     server.handle_message(
@@ -268,10 +274,168 @@ fn a_client_that_cannot_reach_the_filesystem_withdraws_out_of_band_graphics() {
             expected_server_nonce: None,
         },
     );
-    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::NONE);
+    assert_eq!(
+        server.image_media(),
+        ImageMedia {
+            policy: GraphicsMediaPolicy::SHARED,
+            relay_inline: true,
+        }
+    );
 
     server.remove_client(remote);
-    assert_eq!(server.image_media_policy(), GraphicsMediaPolicy::SHARED);
+    assert_eq!(server.image_media(), shared);
+}
+
+/// Attach a client that is looking at this session from another machine.
+fn attach_remote_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
+    let (remote, stream) = add_client(server);
+    server.handle_message(
+        remote,
+        ClientMessage::Attach {
+            capabilities: None,
+            session: server.session_name.clone(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "over-ssh".into(),
+            read_only: false,
+            shares_filesystem: false,
+            expected_server_nonce: None,
+        },
+    );
+    (remote, stream)
+}
+
+/// A remote client must not offer consuming transports that disappear when it leaves.
+#[test]
+fn consuming_temp_files_stay_unsupported_when_a_remote_client_leaves() {
+    use base64::Engine as _;
+
+    let mut server = SessionServer::new_named("graphics");
+    server.panes.insert(7, test_pane(2));
+    let (_local, _local_stream) = attach_client(&mut server);
+    let (remote, _remote_stream) = attach_remote_client(&mut server);
+
+    for remote_attached in [true, false] {
+        if !remote_attached {
+            server.remove_client(remote);
+        }
+        let source = tempfile::Builder::new()
+            .prefix("tty-graphics-protocol-rozi-refused-")
+            .tempfile()
+            .unwrap();
+        std::fs::write(source.path(), [255, 0, 0]).unwrap();
+        let named = base64::engine::general_purpose::STANDARD
+            .encode(source.path().as_os_str().as_encoded_bytes());
+        let frame = format!("\x1b_Ga=T,f=24,s=1,v=1,t=t,i=7,q=2;{named}\x1b\\");
+        let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+        screen.process_bytes(frame.as_bytes());
+        assert!(
+            source.path().exists(),
+            "a refused temporary-file frame must not be consumed, remote attached: {remote_attached}"
+        );
+        assert!(
+            screen.capture_frame().images.is_empty(),
+            "temporary-file frames must stay unsupported, remote attached: {remote_attached}"
+        );
+    }
+}
+
+/// The pane output the server has queued for a client, in order.
+fn sent_pane_output(server: &mut SessionServer, client: ClientId) -> Vec<u8> {
+    let client = server.client_mut(client).unwrap();
+    let mut forwarded = Vec::new();
+    while let Some(queued) = client.outbox.pop_front() {
+        let mut decoder = protocol::FrameDecoder::default();
+        decoder
+            .read_from_status(&mut queued.bytes.as_ref())
+            .unwrap();
+        while let Ok(Some(frame)) = decoder.next_frame::<ServerMessage>() {
+            if let Frame::PaneOutput { bytes, .. } = frame {
+                forwarded.extend_from_slice(&bytes);
+            }
+        }
+    }
+    forwarded
+}
+
+/// A child that chose `t=f` while only local clients were attached keeps drawing after a client
+/// arrives over SSH: the server reads the file and every client receives the pixels inline. Once
+/// that client leaves, the name is forwarded again.
+#[test]
+fn a_file_frame_reaches_a_remote_client_as_inline_pixels() {
+    use base64::Engine as _;
+
+    let mut server = SessionServer::new_named("graphics");
+    let mut pane = test_pane(2);
+    pane.screen_without_change()
+        .set_output_transaction_recording(true);
+    server.panes.insert(7, pane);
+    let (local, _local_stream) = attach_client(&mut server);
+    let (remote, _remote_stream) = attach_remote_client(&mut server);
+    server.client_mut(local).unwrap().outbox.clear();
+    server.client_mut(remote).unwrap().outbox.clear();
+
+    let pixels: Vec<u8> = (0u8..12).collect();
+    let path = std::env::temp_dir().join(format!(
+        "tty-graphics-protocol-rozi-relay-{}",
+        std::process::id()
+    ));
+    std::fs::write(&path, &pixels).unwrap();
+    let named =
+        base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
+    let frame = format!("\x1b_Ga=T,f=24,s=2,v=2,t=f,i=7,p=9,C=1,q=2;{named}\x1b\\");
+    let send = |server: &mut SessionServer| {
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(frame.as_bytes());
+        server.send_outbound(
+            None,
+            &ServerOutbound::PaneOutput {
+                metadata: protocol::OutputMetadata::default(),
+                pane_id: 7,
+                local: false,
+                generation: 2,
+                bytes: frame.as_bytes().to_vec(),
+            },
+        );
+    };
+
+    send(&mut server);
+    let forwarded = sent_pane_output(&mut server, remote);
+    let text = String::from_utf8_lossy(&forwarded);
+    assert!(
+        !text.contains("t=f"),
+        "a path reached the remote client: {text}"
+    );
+    let mut receiver = TerminalScreen::new(5, 20, 100);
+    receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
+    receiver.process_bytes(&forwarded);
+    let capture = receiver.capture_frame();
+    let image = capture
+        .images
+        .first()
+        .expect("the remote client received no image");
+    // The capture lays the 2x2 picture on its cell's canvas; compare its two rows there.
+    let stride = image.width as usize * 4;
+    let rgba = |rgb: &[u8]| -> Vec<u8> {
+        rgb.chunks(3)
+            .flat_map(|px| [px[0], px[1], px[2], 255])
+            .collect()
+    };
+    assert_eq!(
+        (&image.rgba[..8], &image.rgba[stride..stride + 8]),
+        (&rgba(&pixels[..6])[..], &rgba(&pixels[6..])[..]),
+        "the remote client must receive the file's pixels"
+    );
+    assert_eq!(sent_pane_output(&mut server, local), forwarded);
+
+    server.remove_client(remote);
+    send(&mut server);
+    assert_eq!(sent_pane_output(&mut server, local), frame.as_bytes());
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

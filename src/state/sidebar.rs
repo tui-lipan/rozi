@@ -407,6 +407,12 @@ pub struct SidebarState {
     /// Attachment identity that produced the current roots and remote listings. Paths alone are
     /// insufficient: two retained or remote sessions may report the same cwd on different hosts.
     pub tree_source_epoch: Option<crate::state::AttachmentId>,
+    /// [`State::session_view_revision`] the current roots and listings were taken in. A reconnect
+    /// keeps the session on screen and its revision, which is what tells it apart from switching
+    /// to another session whose link is down too.
+    ///
+    /// [`State::session_view_revision`]: crate::state::State::session_view_revision
+    pub tree_source_view: Option<u64>,
     /// Directories the user has expanded in each file-tree tab, so expansion survives the tree
     /// unmounting. It remounts constantly: the tab keys on its root, so focusing a pane in another
     /// directory, switching tabs, or hiding the sidebar all discard the widget's own expansion.

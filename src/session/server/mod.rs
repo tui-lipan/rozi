@@ -2099,7 +2099,7 @@ fn pty_config(
 
     let env = crate::platform::command::ShellEnv::from_process();
 
-    match launch {
+    let config = match launch {
         Some(crate::pane::launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
             let runner = ShellCommand::from_argv(command_shell)
                 .unwrap_or_else(|| crate::platform::command::resolve_command_shell(None, &env));
@@ -2125,7 +2125,13 @@ fn pty_config(
             }
             config
         }
-    }
+    };
+    // The server owns the pane's terminal, so it names it, in its own version. Whatever started
+    // the server would otherwise show through. A pane's own environment is applied after this, so
+    // a per-spawn value still wins.
+    config
+        .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
+        .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {

@@ -176,8 +176,8 @@ guides or arrows, and one cell between file icons and labels.
 Migration: remove `icons` from Files/Git tab tables. The global `nerd_icons` switch now controls
 file icons and Git marks.
 
-New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, and, when available,
-`ROZI_SOCKET` and `ROZI_BIN`.
+New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM=rozi`,
+`TERM_PROGRAM_VERSION`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
 See [Scripting](scripting.md) and [Control CLI](control.md).
 
 <a id="shell-integration-settings"></a>

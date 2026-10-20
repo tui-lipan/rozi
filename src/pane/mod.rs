@@ -306,6 +306,11 @@ pub struct TerminalPane {
     /// client on the machine that wrote them, so a `--remote` attachment allows none of it and a
     /// path arriving anyway must not be opened here.
     media_policy: GraphicsMediaPolicy,
+    /// The cell size this pane's images are laid out against. It starts as this host's own and
+    /// becomes the pane's session cell size once the server reports one: the controller's, which
+    /// is what the child's PTY reports. A follower with smaller cells then still covers the same
+    /// cells with a picture, scaled down, rather than drawing it at its pixel size in fewer cells.
+    cell: tui_lipan::TerminalCellSize,
     image_budget_bytes: usize,
     seen_bell_count: u64,
     scrollback_limit: usize,
@@ -444,8 +449,9 @@ impl TerminalPane {
         let mut screen = new_terminal_screen(rows, cols, scrollback);
         // Images the child draws are sized in cells against this. The same value rides to the
         // server with every resize, so the PTY reports it to the child and both ends agree on how
-        // many rows a picture takes.
-        screen.set_cell_size(tui_lipan::host_cell_size());
+        // many rows a picture takes. A follower takes the controller's value from the server.
+        let cell = tui_lipan::host_cell_size();
+        screen.set_cell_size(cell);
         screen.set_image_media_policy(GraphicsMediaPolicy::SHARED);
         screen.set_image_budget(PANE_IMAGE_BUDGET_BYTES);
         Self {
@@ -487,6 +493,7 @@ impl TerminalPane {
             program_status_notification_at: None,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
+            cell,
             image_budget_bytes: PANE_IMAGE_BUDGET_BYTES,
             seen_bell_count: 0,
             scrollback_limit: scrollback,
@@ -590,7 +597,7 @@ impl TerminalPane {
     fn reset_screen(&mut self) {
         let mut screen = self.screen.borrow_mut();
         *screen = new_terminal_screen(self.rows, self.cols, self.scrollback_limit);
-        screen.set_cell_size(tui_lipan::host_cell_size());
+        screen.set_cell_size(self.cell);
         screen.set_image_media_policy(self.media_policy);
         screen.set_image_budget(self.image_budget_bytes);
         self.seen_bell_count = screen.bell_count();
@@ -684,6 +691,35 @@ impl TerminalPane {
     /// Resize the client-side parser. The server owns the PTY, so this only reshapes the local
     /// screen; it is driven by the server's ordered `Resized` broadcast so both parsers reshape
     /// at the same byte position.
+    /// Adopt the cell size the server reports for this pane, which its images are laid out
+    /// against. Returns whether it changed.
+    pub fn apply_session_cell(&mut self, cell: tui_lipan::TerminalCellSize) -> bool {
+        if cell == self.cell {
+            return false;
+        }
+        self.cell = cell;
+        self.screen.borrow_mut().set_cell_size(cell);
+        true
+    }
+
+    /// The cell size this pane's images are laid out against.
+    pub fn cell_size(&self) -> tui_lipan::TerminalCellSize {
+        self.cell
+    }
+
+    /// Take the server's size and cell size for this pane. The cell size comes first: it is what
+    /// the pane's images are laid out against, the same value the controller gave the child's PTY.
+    /// Returns whether either changed.
+    pub fn apply_server_geometry(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        cell: Option<tui_lipan::TerminalCellSize>,
+    ) -> bool {
+        let cell_changed = cell.is_some_and(|cell| self.apply_session_cell(cell));
+        self.apply_server_resize(cols, rows) || cell_changed
+    }
+
     pub fn apply_server_resize(&mut self, cols: u16, rows: u16) -> bool {
         let cols = cols.max(1);
         let rows = rows.max(1);
@@ -699,7 +735,7 @@ impl TerminalPane {
             // geometry. A width resize rebuilds Alacritty's rows and drops the one spare slot
             // installed by `new_terminal_screen`, so reconstruct while the parser is still empty.
             let mut screen = new_terminal_screen(rows, cols, self.scrollback_limit);
-            screen.set_cell_size(tui_lipan::host_cell_size());
+            screen.set_cell_size(self.cell);
             screen.set_image_media_policy(self.media_policy);
             screen.set_image_budget(self.image_budget_bytes);
             if let Some(palette) = self.last_palette {

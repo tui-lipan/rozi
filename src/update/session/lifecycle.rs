@@ -317,6 +317,8 @@ pub(crate) fn attached(
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
         flush_pending_spawns(ctx);
+        // Attaching in control of panes another client sized: publish this client's cells.
+        crate::pane::pty_events::resize::publish_controller_geometry(ctx);
         let generation = ctx.state.current().resize_flush_generation;
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         Update::full()
@@ -326,6 +328,7 @@ pub(crate) fn attached(
         apply_attached_panes(ctx, panes);
         ctx.state.animation = GeometryAnimation::None;
         flush_pending_spawns(ctx);
+        crate::pane::pty_events::resize::publish_controller_geometry(ctx);
         let generation = ctx.state.current().resize_flush_generation;
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         Update::full()

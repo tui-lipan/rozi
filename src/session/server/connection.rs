@@ -334,7 +334,8 @@ impl SessionServer {
             pane.generation == generation
                 && (pane.cols != cols.max(1)
                     || pane.rows != rows.max(1)
-                    || cell_size(cell_width, cell_height).is_some_and(|cell| cell != pane.cell))
+                    || protocol::wire_cell(cell_width, cell_height)
+                        .is_some_and(|cell| cell != pane.cell))
         });
         if boundary {
             if let Some(pane) = self.pane_mut(owner, pane_id) {
@@ -359,7 +360,7 @@ impl SessionServer {
         }
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             let (cols, rows) = (cols.max(1), rows.max(1));
-            let reported_cell = cell_size(cell_width, cell_height);
+            let reported_cell = protocol::wire_cell(cell_width, cell_height);
             let dimensions_changed = cols != pane.cols || rows != pane.rows;
             let cell_changed = reported_cell.is_some_and(|cell| cell != pane.cell);
             if !dimensions_changed && !cell_changed {
@@ -409,6 +410,8 @@ impl SessionServer {
                     generation,
                     cols: pane.cols,
                     rows: pane.rows,
+                    cell_width: pane.cell.width,
+                    cell_height: pane.cell.height,
                 },
             )];
         }
@@ -750,7 +753,7 @@ impl SessionServer {
                     palette,
                     shell,
                     command_shell,
-                    cell: cell_size(cell_width, cell_height),
+                    cell: protocol::wire_cell(cell_width, cell_height),
                 });
                 if initial_seed && matches!(message, ServerMessage::SpawnResult { ok: true, .. }) {
                     self.origin_seed_client = Some(client_id);

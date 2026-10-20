@@ -8,6 +8,11 @@ use crate::session::protocol::pane_runtime::{
 };
 use crate::state::PaneId;
 
+/// A cell size as the wire carries it. Zero in either dimension means the sender had none.
+pub fn wire_cell(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize> {
+    (width > 0 && height > 0).then(|| tui_lipan::TerminalCellSize::new(width, height))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub id: ClientId,
@@ -577,6 +582,12 @@ pub enum ServerMessage {
         generation: u64,
         cols: u16,
         rows: u16,
+        /// The pane's cell size in pixels, as its controller reported it. Every client parses the
+        /// pane against it, so an image covers the same cells for a follower whose own cells
+        /// differ. Zero when no client has reported one.
+        cell_width: u16,
+        /// See `cell_width`.
+        cell_height: u16,
     },
     /// Discard this client's parsed screen for a shared pane and start a fresh one at the given
     /// geometry. The pane's replay follows, so the client ends up where the server's screen was
@@ -587,6 +598,10 @@ pub enum ServerMessage {
         generation: u64,
         cols: u16,
         rows: u16,
+        /// The pane's cell size in pixels. See [`ServerMessage::Resized`]'s `cell_width`.
+        cell_width: u16,
+        /// See `cell_width`.
+        cell_height: u16,
     },
     Exited {
         pane_id: PaneId,

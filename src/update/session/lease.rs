@@ -46,7 +46,7 @@ pub(crate) fn controller_changed(
         ),
     );
     apply_controller_transition(ctx, was_controller, now_controller, controller);
-    flush_controller_pending_resizes(ctx, now_controller);
+    flush_controller_pending_resizes(ctx, was_controller, now_controller);
     ctx.state.commands_dirty = true;
     Update::full()
 }
@@ -110,8 +110,15 @@ fn apply_controller_transition(
     }
 }
 
-fn flush_controller_pending_resizes(ctx: &mut Context<AppRoot>, now_controller: bool) {
-    if now_controller && !ctx.state.current().pending_resizes.is_empty() {
+fn flush_controller_pending_resizes(
+    ctx: &mut Context<AppRoot>,
+    was_controller: bool,
+    now_controller: bool,
+) {
+    if now_controller && !was_controller {
+        // The new controller's cells may differ even where the grid does not.
+        crate::pane::pty_events::resize::publish_controller_geometry(ctx);
+    } else if now_controller && !ctx.state.current().pending_resizes.is_empty() {
         let generation = ctx.state.current().resize_flush_generation;
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
     }

@@ -836,6 +836,9 @@ pub enum Msg {
         generation: u64,
         cols: u16,
         rows: u16,
+        /// The pane's cell size, which its images are laid out against. `None` when the server
+        /// has none.
+        cell: Option<tui_lipan::TerminalCellSize>,
     },
     SessionPaneReset {
         epoch: u64,
@@ -843,6 +846,8 @@ pub enum Msg {
         generation: u64,
         cols: u16,
         rows: u16,
+        /// See [`Msg::SessionResized`]'s `cell`.
+        cell: Option<tui_lipan::TerminalCellSize>,
     },
     SessionExited {
         epoch: u64,

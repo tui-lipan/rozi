@@ -78,8 +78,12 @@ the edges.
 Showing or hiding the controller's sidebar changes the shared width and resizes every pane. A
 follower's sidebar is local and does not resize anything.
 
-When control moves, the new controller's size applies. Full-screen programs may redraw for the new
-size.
+Images in a pane cover the same cells on every client. Programs size images for the controller's
+cell size, in pixels, so a follower whose font has different cell dimensions scales each image to
+fit those cells.
+
+When control moves, the new controller's size and cell dimensions apply, even when its terminal has
+the same number of rows and columns. Full-screen programs may redraw for the new size.
 
 Dragging a pane does not resize the programs in it. The tiles reflow on screen during the drag, but
 each affected pane is resized once, when the pane lands.

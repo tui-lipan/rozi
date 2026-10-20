@@ -203,6 +203,37 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>, generation: u64)
     }
 }
 
+/// Publish every shared pane's current size, with this client's cell size, as the new controller.
+///
+/// A follower never reports shared pane sizes, and the widget reports a viewport only when it
+/// changes. So a client that takes control of panes whose grid already matches its own would never
+/// tell the server its cell size, and the PTYs would keep the previous controller's pixel geometry.
+/// Queuing the current size of every pane without a pending one sends exactly that: the server
+/// ignores an unchanged size and cell, and otherwise adopts this client's cells.
+pub(crate) fn publish_controller_geometry(ctx: &mut Context<AppRoot>) {
+    if !ctx.state.is_controller() {
+        return;
+    }
+    let attachment = ctx.state.current_mut();
+    let sizes: Vec<_> = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .map(|pane| (pane.id, (pane.terminal.cols, pane.terminal.rows)))
+        .collect();
+    for (id, size) in sizes {
+        attachment
+            .pending_resizes
+            .entry((false, id))
+            .or_insert(size);
+    }
+    if attachment.pending_resizes.is_empty() {
+        return;
+    }
+    let generation = attachment.resize_flush_generation;
+    flush_pending_resizes(ctx, generation);
+}
+
 /// Complete a timer that followed its attachment into the background. Parking releases the server
 /// lease, so preserve shared geometry until this attachment returns and regains control.
 pub(crate) fn flush_background_resizes(

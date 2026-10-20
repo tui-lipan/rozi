@@ -850,9 +850,11 @@ fn golden_server_messages_json_shape() {
             generation: 2,
             cols: 80,
             rows: 24,
+            cell_width: 14,
+            cell_height: 32,
         })
         .unwrap(),
-        serde_json::json!({"type":"resized","pane_id":1,"local":false,"generation":2,"cols":80,"rows":24})
+        serde_json::json!({"type":"resized","pane_id":1,"local":false,"generation":2,"cols":80,"rows":24,"cell_width":14,"cell_height":32})
     );
     assert_eq!(
         serde_json::to_value(ServerMessage::Error {

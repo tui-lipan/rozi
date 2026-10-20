@@ -281,6 +281,10 @@ Colors for pane alert borders and content tints. Each value is a theme role or `
 | `working` | string | `"off"` |
 | `idle` | string | `"off"` |
 
+The focused pane still shows a finished run, and an agent waiting on you in any of its
+conversations. That blocked alert holds still instead of breathing, and clears once you answer the
+agent. A plain `rozi status blocked` marks a pane only while it is not focused.
+
 ## `[animations]`
 
 | Key | Type | Default | Constraints and behavior |

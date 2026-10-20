@@ -1106,6 +1106,63 @@ fn agent_edges_report_reported_only_blocked_once() {
     assert!(pane.detected_agent.is_none());
 }
 
+/// The hooks follow one conversation; another one the publisher reports blocked is the same news,
+/// so its `working -> blocked` transition must raise the edge that notifies and plays the sound.
+#[test]
+fn a_conversation_the_hooks_do_not_follow_raises_the_blocked_edge() {
+    use crate::session::protocol::{
+        AgentIdentity, AgentIntegrationReport, AgentRecord, AgentRef, AgentState, PublishedRow,
+        PublisherKind, RowKey,
+    };
+    let row = |id: &str, status: &str, active: bool| PublishedRow {
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: id.into(),
+        title: id.into(),
+        status: status.into(),
+        reason: None,
+        active,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some(format!("native-{id}")),
+    };
+    let runtime = |behind: &str| PaneRuntimeState {
+        rows: vec![row("shown", "idle", true), row("behind", behind, false)],
+        integration: Some(Box::new(AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            reference: AgentRef::for_test(1, 1, None),
+            state: AgentState::Done,
+            reason: None,
+            native_session: Some("native-shown".into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        })),
+        ..PaneRuntimeState::default()
+    };
+    let records = || -> Vec<AgentRecord> {
+        ["shown", "behind"]
+            .into_iter()
+            .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("sessions", id))).into())
+            .collect()
+    };
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+
+    let working = apply_pane_runtime_state(&mut pane, records(), runtime("working"));
+    assert!(!working.edges.became_blocked);
+    let blocked = apply_pane_runtime_state(&mut pane, records(), runtime("blocked"));
+    assert!(!pane.terminal.is_blocked(), "the hooks' row is done");
+    assert!(blocked.edges.became_blocked);
+    let standing = apply_pane_runtime_state(&mut pane, records(), runtime("blocked"));
+    assert!(
+        !standing.edges.became_blocked,
+        "a standing prompt is not new"
+    );
+}
+
 #[test]
 fn hold_on_exit_excludes_disabled_and_closing_panes() {
     assert!(should_hold_on_exit(true, false));

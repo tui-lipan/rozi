@@ -143,7 +143,7 @@ impl SessionServer {
         // Kitty image state as a client parser even though it never renders those pixels itself.
         screen.set_image_storage_enabled(true);
         screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
-        screen.set_image_media_policy(self.image_media_policy());
+        self.image_media().apply(&mut screen);
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.
         screen.set_palette(request.palette.into());
@@ -764,34 +764,43 @@ impl SessionServer {
             .filter(|pane| pane.generation == generation && pane.exited.is_none())
     }
 
-    /// Which out-of-band graphics media this session may offer its children.
+    /// How this session's panes take out-of-band graphics from their children.
     ///
     /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
-    /// base64-ed copy of every pixel, but it only works when the client that draws it can open the
-    /// file. Two things rule it out: a client attached over SSH, which is looking at panes on
-    /// another machine, and the consuming media (`t=t`, `t=s`), which are claimed by being read -
-    /// with several clients attached to one session, the first reader would take the frame and
-    /// leave the rest with nothing.
-    pub(super) fn image_media_policy(&self) -> GraphicsMediaPolicy {
+    /// base64-ed copy of every pixel. While every attached client shares this machine's
+    /// filesystem, the name is forwarded as sent and each client opens the file itself; the
+    /// consuming media (`t=t`, `t=s`) stay off, since the first reader would take the frame from
+    /// the others.
+    ///
+    /// A client attached over SSH cannot open a path on this machine. The server then reads every
+    /// out-of-band source itself and forwards the pixels inline, so a child that chose files or
+    /// shared memory before that client arrived keeps drawing for everyone.
+    pub(super) fn image_media(&self) -> ImageMedia {
         let reachable = self
             .clients
             .iter()
             .all(|client| !client.attached || client.shares_filesystem);
         if reachable {
-            GraphicsMediaPolicy::SHARED
+            ImageMedia {
+                policy: GraphicsMediaPolicy::SHARED,
+                relay_inline: false,
+            }
         } else {
-            GraphicsMediaPolicy::NONE
+            ImageMedia {
+                policy: GraphicsMediaPolicy::default(),
+                relay_inline: true,
+            }
         }
     }
 
     /// Re-answer the capability question for every live pane after the set of clients changed.
     pub(super) fn sync_image_media_policy(&mut self) {
-        let policy = self.image_media_policy();
+        let media = self.image_media();
         for pane in self.panes.values_mut() {
-            pane.screen_without_change().set_image_media_policy(policy);
+            media.apply(pane.screen_without_change());
         }
         for pane in self.local_panes.values_mut() {
-            pane.screen_without_change().set_image_media_policy(policy);
+            media.apply(pane.screen_without_change());
         }
     }
 
@@ -1136,5 +1145,20 @@ mod tests {
             effective_spawn_cwd(Some("/no/such/path/rozi-should-not-exist")).expect("fallback");
         assert!(std::path::Path::new(&resolved).is_dir());
         assert_ne!(resolved, "/no/such/path/rozi-should-not-exist");
+    }
+}
+
+/// What a pane screen reads out of band, and whether its forwarded output carries the pixels
+/// in place of the source's name. See [`SessionServer::image_media`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ImageMedia {
+    pub(super) policy: GraphicsMediaPolicy,
+    pub(super) relay_inline: bool,
+}
+
+impl ImageMedia {
+    pub(super) fn apply(self, screen: &mut TerminalScreen) {
+        screen.set_image_media_policy(self.policy);
+        screen.set_image_inline_relay(self.relay_inline);
     }
 }

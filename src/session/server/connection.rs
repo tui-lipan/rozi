@@ -329,7 +329,7 @@ impl SessionServer {
             return Vec::new();
         }
         let scrollback = self.settings.scrollback;
-        let image_media_policy = self.image_media_policy();
+        let image_media = self.image_media();
         let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
             pane.generation == generation
                 && (pane.cols != cols.max(1)
@@ -392,7 +392,7 @@ impl SessionServer {
                 screen.set_cell_size(pane.cell);
                 screen.set_image_storage_enabled(true);
                 screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
-                screen.set_image_media_policy(image_media_policy);
+                image_media.apply(&mut screen);
                 screen.set_palette(pane.palette.into());
                 pane.replace_empty_screen(screen);
             } else if cell_changed {

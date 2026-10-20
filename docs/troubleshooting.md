@@ -203,6 +203,16 @@ In a remote session, OSC 52 and mouse selection use your local clipboard. A remo
 calls a clipboard tool directly uses the remote host's clipboard. See
 [Select, copy, and paste](terminal.md#select-copy-and-paste).
 
+### Image paste reports that the clipboard is unavailable
+
+In a managed remote session, use `Ctrl+V`, the `v` command key, or the paste
+command to transfer your local image. A clipboard error inside the agent means
+it tried to read the remote desktop clipboard. A command you run as plain `ssh`
+inside a pane does not provide file transfer; attach the local rozi window to a
+remote rozi session instead. Containers and additional SSH hops also need a
+shared filesystem or separate transfer. See
+[Select, copy, and paste](terminal.md#select-copy-and-paste).
+
 ## Remote hosts
 
 ### Remote connection keeps reconnecting

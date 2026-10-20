@@ -23,6 +23,7 @@ use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
 use crate::state::PaneId;
 
 mod agent_summary;
+mod attachments;
 mod browse;
 mod capture_waits;
 mod connection;
@@ -160,6 +161,7 @@ pub struct SessionServer {
     clients: Vec<ClientConn>,
     agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
+    attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
     recordings: recordings::Recordings,
     /// `record-stop` requests waiting for the files of the recordings they stopped.
@@ -1636,6 +1638,7 @@ impl SessionServer {
             clients: Vec::new(),
             agent_waits: HashMap::new(),
             capture_waits: HashMap::new(),
+            attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),
             recording_stops: Vec::new(),
             next_recording_id: 0,

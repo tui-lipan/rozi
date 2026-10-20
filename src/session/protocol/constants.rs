@@ -8,7 +8,7 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 31;
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
@@ -47,3 +47,7 @@ pub(crate) const PANE_OUTPUT_METADATA_LEN: usize = 37;
 
 /// Complete v30 output frame overhead including semantic metadata.
 pub const PANE_OUTPUT_FRAME_OVERHEAD: usize = PANE_FRAME_OVERHEAD + PANE_OUTPUT_METADATA_LEN;
+
+/// Regular-file attachment limits; chunks are base64 inside bounded control frames.
+pub const MAX_ATTACHMENT_BYTES: u64 = 16 * 1024 * 1024;
+pub const ATTACHMENT_CHUNK_BYTES: usize = 256 * 1024;

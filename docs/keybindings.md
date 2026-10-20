@@ -59,9 +59,11 @@ field, are reminders only.
 | Focus left, down, up, right | `h/j/k/l`, or arrows |
 | Cycle focus forward or backward | `Tab` or `Shift+Tab` |
 
-`Ctrl+V` pressed directly, without the prefix, pastes only when the clipboard holds text. For other
-clipboard formats, it passes through to the pane. The prefix and held-modifier forms always paste
-text.
+`Ctrl+V` pastes text. In a local session, other clipboard formats pass through to
+the pane program and prefix or held-modifier paste commands read text. In a
+managed remote session, these paste commands also upload clipboard images and
+copied files, then insert their remote paths. See
+[Select, copy, and paste](terminal.md#select-copy-and-paste).
 
 ### Layout and workspaces
 

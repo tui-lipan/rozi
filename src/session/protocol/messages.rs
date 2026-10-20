@@ -304,6 +304,11 @@ pub enum ClientMessage {
         bytes: Vec<u8>,
         token: u64,
     },
+    /// Upload a regular file and paste its server-side path into a fixed pane generation.
+    Attachment {
+        transfer_id: u64,
+        operation: AttachmentOperation,
+    },
     Rename {
         name: String,
     },
@@ -488,6 +493,11 @@ pub enum ControllerChangeReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMessage {
+    /// Acknowledges one upload step. The final acknowledgement follows path insertion.
+    AttachmentAck {
+        transfer_id: u64,
+        error: Option<String>,
+    },
     Error {
         code: String,
         message: String,
@@ -709,4 +719,22 @@ pub enum ServerMessage {
     RecordingEnded {
         stopped: crate::control::RecordingStopped,
     },
+}
+
+/// One acknowledged step of a bounded attachment upload.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum AttachmentOperation {
+    Begin {
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        name: String,
+        size: u64,
+    },
+    Chunk {
+        data: String,
+    },
+    Finish,
+    Cancel,
 }

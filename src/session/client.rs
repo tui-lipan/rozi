@@ -1,5 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
+pub(crate) mod attachments;
+
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
@@ -135,6 +137,7 @@ pub struct SessionClient {
     #[allow(dead_code)]
     transport: Option<Arc<ClientTransport>>,
     outbound: Arc<ByteQueue<ClientOutbound>>,
+    attachment_replies: Arc<attachments::Replies>,
     transport_failed: Arc<AtomicBool>,
     inbound: Option<Arc<InboundMailbox>>,
     latest_server_metrics: Arc<Mutex<Option<TimedServerRuntimeMetrics>>>,
@@ -256,6 +259,7 @@ impl SessionClient {
             Self {
                 transport: None,
                 outbound: Arc::clone(&outbound),
+                attachment_replies: Arc::new(attachments::Replies::default()),
                 transport_failed: Arc::new(AtomicBool::new(false)),
                 inbound: None,
                 latest_server_metrics: Arc::new(Mutex::new(None)),
@@ -524,6 +528,8 @@ impl SessionClient {
         let metrics_request_pending = Arc::new(AtomicBool::new(false));
         let reader_metrics_request_pending = Arc::clone(&metrics_request_pending);
         let reader_shutdown_signal = Arc::clone(&shutdown_signal);
+        let attachment_replies = Arc::new(attachments::Replies::default());
+        let reader_attachment_replies = Arc::clone(&attachment_replies);
         thread::spawn(move || {
             forward_inbound(
                 &mut reader,
@@ -534,12 +540,14 @@ impl SessionClient {
                 metrics_enabled,
                 Some(&reader_shutdown_signal),
                 HEARTBEAT_TIMEOUT,
+                Some(&reader_attachment_replies),
             );
             reader_outbound.close();
         });
         let client = Self {
             transport: Some(transport),
             outbound,
+            attachment_replies,
             transport_failed: Arc::new(AtomicBool::new(false)),
             inbound: client_inbound,
             latest_server_metrics,
@@ -1369,6 +1377,7 @@ fn forward_inbound<R: std::io::Read>(
     request_metrics_on_heartbeat: bool,
     shutdown_signal: Option<&Arc<AtomicBool>>,
     heartbeat_timeout: Duration,
+    attachment_replies: Option<&attachments::Replies>,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
     let mut watchdog = SilenceWatchdog::new(
@@ -1402,6 +1411,14 @@ fn forward_inbound<R: std::io::Read>(
             }
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(frame)) => {
+                    if let Frame::Control(ServerMessage::AttachmentAck { transfer_id, error }) =
+                        &frame
+                    {
+                        if let Some(replies) = attachment_replies {
+                            replies.acknowledge(*transfer_id, error.clone());
+                        }
+                        continue;
+                    }
                     match handle_transport_frame(
                         &frame,
                         outbound,
@@ -1425,6 +1442,9 @@ fn forward_inbound<R: std::io::Read>(
         if would_block {
             thread::sleep(Duration::from_millis(1));
         }
+    }
+    if let Some(replies) = attachment_replies {
+        replies.disconnect();
     }
     inbound.disconnected();
 }
@@ -1497,6 +1517,7 @@ mod tests {
             false,
             None,
             HEARTBEAT_TIMEOUT,
+            None,
         );
         assert_eq!(
             inbound_rx
@@ -1548,6 +1569,7 @@ mod tests {
             false,
             None,
             HEARTBEAT_TIMEOUT,
+            None,
         );
 
         assert_eq!(
@@ -1671,6 +1693,7 @@ mod tests {
             false,
             None,
             Duration::from_millis(40),
+            None,
         );
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -1708,6 +1731,7 @@ mod tests {
         let client = SessionClient {
             transport: None,
             outbound: Arc::clone(&outbound),
+            attachment_replies: Arc::new(attachments::Replies::default()),
             transport_failed: Arc::new(AtomicBool::new(false)),
             inbound: None,
             latest_server_metrics: Arc::new(Mutex::new(None)),

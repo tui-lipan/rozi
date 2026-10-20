@@ -229,6 +229,7 @@ terminal row. The script repeats body-only mode to check drift, at 200×60 and 4
 cargo build --locked --release
 python3 tools/tui-cpu-probe.py target/release/rozi
 # Run the same command with a saved before binary for comparison.
+python3 tools/tui-cpu-probe.py target/release/rozi --sidebar --panes 2 --viewport 475x116
 ```
 
 Output is JSON lines with CPU percentages of one core, not the whole machine. The default sample
@@ -237,6 +238,15 @@ resurrection are disabled. Host output goes to a scratch file, so the probe excl
 terminal rendering. Run before and after serially, without Cargo or other heavy work during the
 measurements. `--keep-scratch` retains synthetic logs for diagnosis; otherwise the owned session,
 clients, and scratch files are cleaned up.
+
+`--sidebar` compares Activity and Projects closed, open with working-status
+spinners, and open with idle statuses. It repeats the working and closed cases,
+then compares closed/open/closed with 10 Hz pane output. `--panes` creates the
+requested number of synthetic panes; it does not launch real coding agents.
+`--viewport WIDTHxHEIGHT` selects a size and can be repeated. With `--keep-scratch`,
+sidebar cases also save a PNG after each measurement. The probe verifies sidebar
+visibility before sampling; capture and status-command overhead is outside the
+measurement window.
 
 ## Linux process-memory harness
 

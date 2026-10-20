@@ -264,8 +264,29 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 .agent
                                 .as_ref()
                                 .map_or("", |identity| identity.label.as_str());
+                            // What the agent itself reports through OSC 7501: its conversation as
+                            // the title, what it is doing as the message.
+                            let reported = occupant
+                                .program_status
+                                .as_ref()
+                                .filter(|_| occupant.is_agent());
+                            let reported_text = |text: Option<&str>| {
+                                text.map(crate::session::protocol::program_status_display)
+                                    .map(|text| text.trim().to_string())
+                                    .filter(|text| {
+                                        !text.is_empty() && !text.eq_ignore_ascii_case(kind_label)
+                                    })
+                            };
+                            let reported_msg =
+                                reported_text(reported.and_then(|record| record.msg.as_deref()));
+                            let reported_title =
+                                reported_text(reported.and_then(|record| record.title.as_deref()));
                             let (title, status, activity, age, run, finished_unseen, slot) =
-                                if let Some(record) = &occupant.program_status {
+                                if let Some(record) = occupant
+                                    .program_status
+                                    .as_ref()
+                                    .filter(|_| reported.is_none())
+                                {
                                     let message = occupant.reason.as_deref().unwrap_or("");
                                     let detail = record.progress.map_or_else(
                                         || message.to_string(),
@@ -312,7 +333,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                             published_row.title.clone()
                                         },
                                         published_row.status.clone(),
-                                        row_activity(published_row, kind_label),
+                                        row_activity(published_row, kind_label)
+                                            .or_else(|| reported_msg.clone())
+                                            .or_else(|| reported_title.clone()),
                                         pane.terminal.row_age(published_row),
                                         ui.and_then(|ui| ui.last_run),
                                         pane.row_finished_unseen(&key, &state.agent_attention),
@@ -335,7 +358,11 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                         semantic_activity_text(
                                             &pane.terminal,
                                             kind_label,
-                                            occupant.reason.as_deref(),
+                                            occupant
+                                                .reason
+                                                .as_deref()
+                                                .or(reported_msg.as_deref())
+                                                .or(reported_title.as_deref()),
                                         ),
                                         pane.terminal.status_age(),
                                         pane.terminal.last_run,
@@ -372,13 +399,17 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 subpath,
                                 finished_unseen,
                                 slot,
-                                task: occupant.agent.as_ref().and_then(|identity| {
-                                    crate::session::protocol::occupant_task(
-                                        &pane.terminal.published_rows,
-                                        occupant.slot.as_ref(),
-                                        &identity.label,
-                                    )
-                                }),
+                                task: occupant
+                                    .agent
+                                    .as_ref()
+                                    .and_then(|identity| {
+                                        crate::session::protocol::occupant_task(
+                                            &pane.terminal.published_rows,
+                                            occupant.slot.as_ref(),
+                                            &identity.label,
+                                        )
+                                    })
+                                    .or(reported_title),
                                 reason: occupant.reason.clone(),
                                 identity: occupant.agent.clone(),
                                 order,
@@ -1521,7 +1552,7 @@ mod tests {
         let before = pane.agent_runtimes();
         let mut screen = TerminalScreen::new(24, 80, 100);
         screen.set_program_status_enabled(true);
-        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code\x07\x1b]7501;state=error:id=build:msg=ZmFpbGVk:progress=20\x07");
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code\x07\x1b]7501;state=error:id=build:app=cargo:msg=ZmFpbGVk:progress=20\x07");
         pane.terminal.program_status = screen.program_status_snapshot();
         let occupants = pane.occupants();
         assert_eq!(occupants.len(), 2);
@@ -1563,6 +1594,129 @@ mod tests {
         assert_eq!(pane.occupants().len(), 2);
         assert_eq!(pane.terminal.published_rows, published);
         assert_eq!(pane.agent_runtimes(), agents);
+    }
+
+    /// Claude Code reports its conversation and current tool through OSC 7501 as
+    /// `app=claude-code`: that is the detected agent describing itself, not a second activity.
+    #[test]
+    fn an_agents_own_program_status_folds_into_its_row() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut claude = pane(1, None, false);
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        // title "Fix login", msg "Bash"
+        screen.process_bytes(
+            b"\x1b]7501;state=working:app=claude-code:title=Rml4IGxvZ2lu:msg=QmFzaA==\x07",
+        );
+        claude.terminal.program_status = screen.program_status_snapshot();
+        state.current_mut().workspaces[0].panes = vec![claude];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].title, "Claude Code");
+        assert!(rows[0].identity.is_some());
+        assert_eq!(rows[0].activity.as_deref(), Some("Bash"));
+        assert_eq!(rows[0].task.as_deref(), Some("Fix login"));
+
+        // Another program's report in the same pane is still an activity of its own.
+        screen.process_bytes(b"\x1b]7501;state=error:id=build:app=cargo\x07");
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .program_status = screen.program_status_snapshot();
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().any(|row| row.identity.is_none()));
+    }
+
+    /// With claude-rozi-sessions listing one row per conversation, Claude Code's report describes
+    /// the conversation on screen, and never adds a row - even while no row is on screen.
+    #[test]
+    fn an_agents_own_program_status_follows_its_conversation_on_screen() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut claude = pane(1, None, false);
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        // msg "Bash"
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
+        claude.terminal.program_status = screen.program_status_snapshot();
+        claude.terminal.published_rows = vec![
+            crate::session::protocol::PublishedRow {
+                title: "fix login".into(),
+                ..row("a", "idle", false)
+            },
+            // Untitled, so nothing but the report says what it is doing.
+            crate::session::protocol::PublishedRow {
+                title: String::new(),
+                ..row("b", "working", true)
+            },
+        ];
+        sync_published_refs(&mut claude);
+        state.current_mut().workspaces[0].panes = vec![claude];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().all(|row| row.identity.is_some()));
+        let on_screen = rows.iter().find(|row| row.slot.as_ref().unwrap().active);
+        assert_eq!(on_screen.unwrap().activity.as_deref(), Some("Bash"));
+        let other = rows.iter().find(|row| !row.slot.as_ref().unwrap().active);
+        assert_eq!(other.unwrap().activity.as_deref(), Some("fix login"));
+
+        for row in &mut state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .published_rows
+        {
+            row.active = false;
+        }
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().all(|row| row.identity.is_some()));
+    }
+
+    /// A blocked `cargo` beside a working agent is cargo's own row: it neither hides the agent's
+    /// report nor lends the agent its state.
+    #[test]
+    fn another_programs_urgent_report_stays_off_the_agents_row() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut claude = pane(1, None, false);
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        // msg "Bash"
+        screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
+        screen.process_bytes(b"\x1b]7501;state=blocked:id=build:app=cargo\x07");
+        claude.terminal.program_status = screen.program_status_snapshot();
+        state.current_mut().workspaces[0].panes = vec![claude];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let agent = rows.iter().find(|row| row.identity.is_some()).unwrap();
+        assert_eq!(agent.activity.as_deref(), Some("Bash"));
+        assert_ne!(agent.status.as_deref(), Some("blocked"));
+        let cargo = rows.iter().find(|row| row.identity.is_none()).unwrap();
+        assert_eq!(cargo.title, "cargo");
+        assert_eq!(cargo.status.as_deref(), Some("blocked"));
+    }
+
+    /// A report Claude Code left behind when it exited is an activity, named for the agent.
+    #[test]
+    fn a_program_status_without_its_agent_takes_the_agents_name() {
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().session_name = Some("dev".into());
+        let mut exited = pane(1, None, false);
+        exited.terminal.detected_agent = None;
+        exited.agents.clear();
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=done:app=claude-code\x07");
+        exited.terminal.program_status = screen.program_status_snapshot();
+        state.current_mut().workspaces[0].panes = vec![exited];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].title, "Claude Code");
+        assert!(rows[0].identity.is_none());
     }
 
     #[test]

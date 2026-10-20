@@ -80,6 +80,8 @@ command = "open-url"
 [settings]
 protected = ["main", "master"]
 confirm = true
+# The table form also says how the tab settings picker shows a setting.
+sort = { default = "recent", label = "Sort by", choices = ["recent", { value = "name", label = "Name" }] }
 
 [[services]]
 name = "watch"
@@ -105,6 +107,8 @@ label = "Agents"
 entries = [
   { label = "rozi", group = "claude", run = "cd ~/Projects/rozi && claude" },
 ]
+# Optional: declared settings this tab offers in its settings picker (Ctrl+E in Sidebar tabs).
+settings = ["sort", "confirm"]
 ```
 
 - Keep the extension `id` stable. IDs match `[a-z0-9_-]+`; do not derive identity from the
@@ -143,8 +147,8 @@ entries = [
   scope a `working` rule to `footer` or a transcript quoting its own hints reads as a live run. Full
   format in `docs/agents.md`. Publish rows with `rozi publish --kind agent` instead when the
   program knows its own agents' state.
-- `[[sidebar_tabs]]` takes the launcher and command forms `[sidebar]` tab tables accept, minus the
-  `files`/`git` tree options. Ids are namespaced `<extension>.<name>`, so a tab can only be added,
+- `[[sidebar_tabs]]` takes the launcher, command, and stream forms `[sidebar]` tab tables accept.
+  Ids are namespaced `<extension>.<name>`, so a tab can only be added,
   never substituted for a built-in one, and a `config.toml` tab of the same id wins. Out-of-range
   values are clamped silently here rather than warned about. Full format in `docs/extensions.md`.
 - A user may drag an extension tab anywhere; that placement is persisted and survives the extension
@@ -163,8 +167,12 @@ entries = [
   newline unless a stray click should execute.
 - `[settings]` values are strings, integers, booleans, or string lists. Read them from
   `ROZI_EXTENSION_CONFIG` (compact JSON, `{}` when none are declared), never from a file the
-  extension writes into its own directory. A user's unknown key or wrong type is reported and
-  ignored, so always code against your declared default being present.
+  extension writes into its own directory. A user's unknown key, wrong type, or unknown choice is
+  reported and ignored, so always code against your declared default being present.
+- A setting may be a table, `{ default, label, description, choices, min, max }`; the value your
+  processes receive is the same. A tab's `settings` list offers declared, non-list settings in the
+  tab settings picker, which writes `[extensions.<id>]` exactly as a hand edit would: services
+  restart and command tabs see the new value on their next run. Do not store per-tab state for it.
 - A command's `key` is a suggestion inside `<prefix> x`, never a bare key and never the held
   modifier. It loses to any existing binding, including a chord it merely extends, and losing is
   a warning rather than a failure. Do not assume it was granted.

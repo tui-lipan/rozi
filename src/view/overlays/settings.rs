@@ -1052,7 +1052,7 @@ pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
         );
     nested_action_palette_modal(ctx, editor.title, SETTINGS_MAX_HEIGHT_PERCENT)
         .width(Length::Px(SETTINGS_CHOICE_WIDTH))
-        .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION))
+        .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::SettingsChoiceCancel))
         .child(palette)

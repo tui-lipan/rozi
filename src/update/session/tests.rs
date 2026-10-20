@@ -667,6 +667,78 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
         .expect("bell focus lifecycle test completes");
 }
 
+#[test]
+fn agent_bell_leaves_the_mark_to_the_agent_state() {
+    assert!(!unwatched_bell_marks(|terminal| {
+        terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: crate::session::protocol::DetectedAgentState::Idle,
+        });
+    }));
+}
+
+#[test]
+fn generic_activity_bell_still_marks_the_pane() {
+    assert!(unwatched_bell_marks(|terminal| {
+        terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: crate::session::protocol::pane_status::WORKING.into(),
+            reason: Some("running tests".into()),
+            set_at: 1,
+        });
+    }));
+}
+
+/// Rings BEL in a pane nobody is watching, after `configure` sets up its terminal, and returns
+/// whether the bell marked the pane. The bell event and unseen output fire either way.
+fn unwatched_bell_marks(
+    configure: impl FnOnce(&mut crate::pane::TerminalPane) + Send + 'static,
+) -> bool {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            let pane_id = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("fresh pane focus");
+            let generation = 42;
+            {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(pane_id, generation);
+                configure(&mut pane.terminal);
+            }
+            let events = backend
+                .state()
+                .event_hub
+                .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+
+            backend
+                .set_window_focused(false)
+                .expect("lose host-window focus");
+            backend
+                .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id,
+                    local: false,
+                    generation,
+                    bytes: vec![7],
+                })
+                .expect("deliver BEL while unfocused");
+            assert!(events.recv().unwrap().contains("\"pane\""));
+            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+            assert!(pane.activity.has_unseen_output);
+            pane.activity.bell
+        })
+        .expect("spawn unwatched bell test")
+        .join()
+        .expect("unwatched bell test completes")
+}
+
 fn finished_record(
     pane_id: crate::state::PaneId,
     generation: u64,

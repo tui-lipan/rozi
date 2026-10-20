@@ -487,7 +487,7 @@ host, or when rozi was installed from a distribution package or in a way it does
 | `pane_exit_error` | bool | `true` | Notifies when a pane exits on its own with a nonzero status. |
 | `pane_blocked` | bool | `true` | Notifies when an unattended pane becomes blocked. |
 | `pane_done` | bool | `false` | Notifies when a pane you have not looked at goes from working to finished. |
-| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL). Works even when `enabled` is off. |
+| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless the pane is running an agent, whose finished or blocked mark covers it. Works even when `enabled` is off. |
 
 Desktop notifications go through the platform's notification service and are best effort.
 
@@ -609,6 +609,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
 | `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
+| `settings.<tab>` | table | none | A built-in tab's settings. See [Built-in tab settings](#built-in-tab-settings). |
 
 Unplaced tabs join the first panel of the left dock, or of the right dock when only it holds tabs;
 Files, Git, Worktrees, and Projects join that dock's second panel. Extension
@@ -618,9 +619,9 @@ for arranging tabs and panels.
 
 ### Tab tables
 
-An entry in `tabs` can be a table instead of an ID. A table can configure the built-in `activity`
-tab or the `files` or `git` tree tab, or define a custom tab: a launcher tab with fixed rows, a command tab that lists a
-command's output, or a stream tab that programs publish rows to.
+An entry in `tabs` can be a table instead of an ID. A table defines a custom tab: a launcher tab
+with fixed rows, a command tab that lists a command's output, or a stream tab that programs publish
+rows to.
 
 | Tab key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
@@ -631,15 +632,8 @@ command's output, or a stream tab that programs publish rows to.
 | `format` | string | `"lines"` | `"lines"` or `"json"`. Command tabs only. See [JSON command tabs](sidebar.md#json-command-tabs). |
 | `stream` | bool | `false` | A tab programs publish rows to. See [Stream tabs](sidebar.md#stream-tabs). |
 | `interval` | integer seconds | `30` | Minimum `5`. Command tabs only. |
-| `on_click` | action table | none; tree tabs type `{path}` | Action for a command or tree row. |
+| `on_click` | action table | none | Action for a command tab's row. |
 | `group_prefix` | string | none | Line command tabs only. Output lines starting with it become section headers. |
-| `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` or `"repo"`. Tree tabs only. |
-| `show_hidden` | bool | `true` | Tree tabs only. |
-| `explorer` | bool | `false` | Tree tabs only. |
-| `diff_stats` | bool | `false` for files, `true` for git | Tree tabs only. |
-| `compact_dirs` | bool | `true` | Git only. Shows a directory whose changes are all in one subdirectory on that subdirectory's row, as in `src/view/sidebar`. |
-| `max_entries` | integer | `2000` | Clamped to `1..=10000`. Tree tabs only. |
-| `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. Activity only. See [Activity](sidebar.md#activity). |
 
 A launcher entry takes a `label`, exactly one of `run`, `send`, or `popup`, an optional `keep_open`
 (default `true`), and an optional `group`. An `on_click` action takes an optional `label`, exactly
@@ -648,6 +642,35 @@ changes how the command is presented.
 
 An extension can add the same kinds of tab from its manifest; see
 [Extensions](writing-extensions.md#sidebar-tabs).
+
+### Built-in tab settings
+
+Built-in tabs are listed in `tabs` by name only. Activity, Files, and Git take settings in a table
+of their own, `[sidebar.settings.<tab>]`. **Sidebar tabs…** edits the same tables; see
+[Tab settings](sidebar.md#tab-settings).
+
+```toml
+[sidebar.settings.activity]
+worktrees = "repository"
+
+[sidebar.settings.files]
+explorer = true
+show_hidden = false
+```
+
+| Tab | Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- | --- |
+| `activity` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. See [Activity](sidebar.md#activity). |
+| `files`, `git` | `explorer` | bool | `false` | Shows a search field above the tree. |
+| `files`, `git` | `show_hidden` | bool | `true` | Lists entries whose names start with a dot. |
+| `files`, `git` | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` for the focused pane's directory, `"repo"` for the repository containing it. |
+| `files`, `git` | `diff_stats` | bool | `false` for files, `true` for git | Shows line-change counts beside Git marks. |
+| `git` | `compact_dirs` | bool | `true` | Shows a directory whose changes are all in one subdirectory on that subdirectory's row, as in `src/view/sidebar`. |
+| `files`, `git` | `max_entries` | integer | `2000` | Clamped to `1..=10000`. |
+| `files`, `git` | `on_click` | action table | `{ send = "{path}" }` | What activating a file does. Not shown in **Sidebar tabs…**. |
+
+A key a tab does not have, a value of the wrong type, or an unknown choice is reported and the
+setting keeps its default.
 
 ### Grouping rows into sections
 
@@ -685,12 +708,11 @@ Tree `run`, `popup`, and `exec` actions receive the selected path in `ROZI_FILE`
 reject `{path}`, and `exec` does not expand it. Quote the variable for your command shell:
 
 ```toml
-[sidebar]
-tabs = [
-  "activity",
-  { name = "files", label = "", on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' } },
-  { name = "git", label = "", on_click = { popup = '''git diff -- "$ROZI_FILE"''', keep_open = false } },
-]
+[sidebar.settings.files]
+on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' }
+
+[sidebar.settings.git]
+on_click = { popup = '''git diff -- "$ROZI_FILE"''', keep_open = false }
 ```
 
 rozi never inserts a selected path into a command string. See [Sidebar files](sidebar.md#files).

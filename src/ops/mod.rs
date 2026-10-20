@@ -32,6 +32,7 @@ pub(crate) mod session;
 pub(crate) mod sidebar_memory;
 pub(crate) mod sidebar_streams;
 pub(crate) mod sound;
+pub(crate) mod tab_settings;
 pub(crate) mod theme;
 pub(crate) mod ui_recording;
 pub(crate) mod update_check;

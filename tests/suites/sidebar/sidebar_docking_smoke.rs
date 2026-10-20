@@ -164,7 +164,7 @@ fn tabs_picker_toggles_visibility_without_moving_tabs_or_closing() {
                 hidden
             );
             assert_eq!(b.state().config.sidebar.layout.location("left1"), location);
-            assert!(b.state().sidebar_manager);
+            assert!(b.state().sidebar_manager.is_some());
             assert!(!b.state().sidebar.focused);
             let snapshot = b.capture_ui_snapshot().to_markdown();
             assert!(!snapshot.contains("Locate tab"));
@@ -188,7 +188,7 @@ fn tabs_picker_toggles_visibility_without_moving_tabs_or_closing() {
             .unwrap();
         assert_eq!(b.state().config.sidebar.layout.location("left1"), location);
         b.dispatch(Msg::SidebarManagerBack).unwrap();
-        assert!(!b.state().sidebar_manager);
+        assert!(b.state().sidebar_manager.is_none());
     });
 }
 

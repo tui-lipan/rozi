@@ -47,6 +47,9 @@ workspace = 0                # 0 runs in the current workspace, 1-9 pins it to o
 `rozi extensions check <path>` lists these with their defaults. An unknown key or a wrong type is
 reported and ignored, so the extension always has a usable value.
 
+The Tasks tab offers `pane`, `keep_open`, and `workspace` in its settings: highlight it in
+**Sidebar tabs…** and press `Ctrl+E`.
+
 ## How task discovery works
 
 The project root is the nearest directory at or above the pane's working directory containing a

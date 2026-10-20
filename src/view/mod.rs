@@ -436,8 +436,29 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_palette {
         root = root.child(palette_overlay(ctx));
     }
-    if ctx.state.sidebar_manager {
+    // A tab's settings stack on Sidebar tabs like a Settings choice: each layer, the choice list
+    // included, sits one row lower and dims everything beneath it.
+    if ctx.state.sidebar_manager.is_some() {
         root = root.child(overlays::sidebar_manager_overlay(ctx));
+    }
+    if ctx.state.tab_settings.is_some() {
+        root = root.child(overlays::tab_settings_overlay(ctx));
+    }
+    if ctx
+        .state
+        .tab_settings
+        .as_ref()
+        .is_some_and(|picker| picker.choosing.is_some())
+    {
+        root = root.child(overlays::tab_setting_choice_overlay(ctx));
+    }
+    if ctx
+        .state
+        .tab_settings
+        .as_ref()
+        .is_some_and(|picker| picker.prompt.is_some())
+    {
+        root = root.child(overlays::tab_setting_prompt_overlay(ctx));
     }
     if ctx.state.show_settings {
         root = root.child(settings_overlay(ctx));
@@ -1077,8 +1098,18 @@ pub(crate) fn nested_action_palette_modal(
     title: &str,
     parent_reserve_percent: u16,
 ) -> Modal {
+    action_palette_modal(ctx, title).reserve_height(stacked_reserve(ctx, parent_reserve_percent, 1))
+}
+
+/// The reserved height that pins a card `layers` rows below the top of the list overlay at the
+/// bottom of the stack, whose band is `parent_reserve_percent`: two rows fewer per layer.
+pub(crate) fn stacked_reserve(
+    ctx: &Context<AppRoot>,
+    parent_reserve_percent: u16,
+    layers: u16,
+) -> Length {
     let parent_band = Length::Percent(parent_reserve_percent).resolve(ctx.viewport().h, 0);
-    action_palette_modal(ctx, title).reserve_height(Length::Px(parent_band.saturating_sub(2)))
+    Length::Px(parent_band.saturating_sub(2 * layers))
 }
 
 pub(crate) fn action_palette_modal_with_width(

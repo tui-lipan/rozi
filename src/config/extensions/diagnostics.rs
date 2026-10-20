@@ -348,9 +348,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::config::{
-        ExtensionCommandDiagnostic, ExtensionServiceDiagnostic, ExtensionSettingValue,
-    };
+    use crate::config::{ExtensionCommandDiagnostic, ExtensionServiceDiagnostic, SettingValue};
 
     fn info() -> ExtensionInfo {
         ExtensionInfo {
@@ -384,10 +382,11 @@ mod tests {
             }],
             settings: [(
                 "runner".to_string(),
-                ExtensionSettingValue::String("auto".to_string()),
+                SettingValue::String("auto".to_string()),
             )]
             .into_iter()
             .collect(),
+            setting_specs: Default::default(),
             command_details: vec![ExtensionCommandDiagnostic {
                 id: "tasks.run".to_string(),
                 launch: ExtensionLaunchDiagnostic::Send {
@@ -419,7 +418,7 @@ mod tests {
     fn report_sections_have_the_planned_order_and_actionable_row_kinds() {
         let merged = [(
             "runner".to_string(),
-            ExtensionSettingValue::String("just".to_string()),
+            SettingValue::String("just".to_string()),
         )]
         .into_iter()
         .collect();

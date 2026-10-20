@@ -59,9 +59,7 @@ pub(crate) fn update_agent_status_edge(
     let current = pane.agent_status();
     let current = current.as_deref();
     use crate::session::protocol::ActivityState;
-    let generic = pane.detected_agent.is_none()
-        && pane.agent_integration.is_none()
-        && !pane.published_rows.iter().any(|row| row.is_agent());
+    let generic = !pane.has_agent();
     let previous_activity = previous.map(ActivityState::from_status);
     let current_activity = current.map(ActivityState::from_status);
     if current != previous {
@@ -716,6 +714,22 @@ mod tests {
         attached.terminal.program_status = blocked.clone();
         assert!(apply_program_status(&mut attached, blocked, false).is_none());
         assert!(!attached.terminal.program_status_attention);
+    }
+
+    /// An agent's own `blocked` still alerts: while detection reads the agent as working, nothing
+    /// else would say it needs the user.
+    #[test]
+    fn an_agents_own_blocked_report_alerts_while_detection_says_working() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Working,
+        });
+        let mut screen = TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=blocked:app=claude-code\x07");
+        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
+        assert!(pane.terminal.program_status_attention);
     }
 
     #[test]

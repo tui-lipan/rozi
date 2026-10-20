@@ -946,6 +946,14 @@ impl TerminalPane {
         .map(str::to_string)
     }
 
+    /// Whether an agent runs here: detected on screen, integrated, or publishing an agent row. A
+    /// bare `rozi status` names a generic activity, so [`Self::agent_status`] alone cannot tell.
+    pub fn has_agent(&self) -> bool {
+        self.detected_agent.is_some()
+            || self.agent_integration.is_some()
+            || self.published_rows.iter().any(|row| row.is_agent())
+    }
+
     /// Whether this pane's agent is waiting on the user, under the same authority rule as
     /// [`Self::agent_status`].
     pub fn is_blocked(&self) -> bool {

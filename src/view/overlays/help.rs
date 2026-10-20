@@ -1187,7 +1187,7 @@ fn keybinding_change_overlay(ctx: &Context<AppRoot>) -> Element {
             .child(keybinding_change_hints(ctx, &change));
     nested_action_palette_modal(ctx, heading.title, HELP_MAX_HEIGHT_PERCENT)
         .width(Length::Px(KEYBINDING_CARD_WIDTH))
-        .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION))
+        .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::KeybindingCancelCapture))
         .child(body)
@@ -1301,7 +1301,7 @@ fn keybinding_modifier_overlay(ctx: &Context<AppRoot>) -> Element {
         .child(hints);
     nested_action_palette_modal(ctx, "Change modifier", HELP_MAX_HEIGHT_PERCENT)
         .width(Length::Px(KEYBINDING_CARD_WIDTH))
-        .backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION))
+        .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)
         .on_close(ctx.link().callback(|_| Msg::KeybindingCancelCapture))
         .child(body)

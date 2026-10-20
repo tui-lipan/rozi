@@ -312,14 +312,17 @@ pub(super) struct SidebarFileConfig {
     pub(super) gap: Option<bool>,
     pub(super) background: Option<bool>,
     pub(super) tab_style: Option<String>,
+    /// `[sidebar.settings.<tab>]`: each built-in tab's settings, checked against the settings the
+    /// tab declares.
+    pub(super) settings: Option<std::collections::BTreeMap<String, toml::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(super) enum SidebarTabSpec {
     Name(String),
-    // Boxed: the table form carries every built-in file-tree option, so inlining it would make each
-    // bare tab name in the list as large as the fullest table.
+    // Boxed: a custom tab's table carries every launcher and command field, so inlining it would
+    // make each bare tab name in the list as large as the fullest table.
     Table(Box<SidebarTabTableSpec>),
 }
 
@@ -338,15 +341,6 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) format: Option<String>,
     /// A tab fed by `rozi sidebar publish` streams.
     pub(super) stream: Option<bool>,
-    // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
-    pub(super) root: Option<String>,
-    pub(super) show_hidden: Option<bool>,
-    pub(super) explorer: Option<bool>,
-    pub(super) diff_stats: Option<bool>,
-    pub(super) compact_dirs: Option<bool>,
-    pub(super) max_entries: Option<usize>,
-    /// Activity only: `separate` or `repository`.
-    pub(super) worktrees: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -855,9 +849,12 @@ fn load_config_from_text_with_extensions(
         apply_sidebar_config(
             &mut config.sidebar,
             SidebarFileConfig::default(),
-            contributions.sidebar_tabs,
-            contributions.sidebar_locations,
-            contributions.sidebar_presets,
+            super::sidebar::SidebarContributions {
+                tabs: contributions.sidebar_tabs,
+                suggestions: contributions.sidebar_locations,
+                presets: contributions.sidebar_presets,
+                tab_settings: contributions.sidebar_tab_settings,
+            },
             &mut warnings,
         );
         let resolved = super::extensions::resolve_suggested_keybindings(
@@ -1338,9 +1335,12 @@ fn load_config_from_text_with_extensions(
     apply_sidebar_config(
         &mut config.sidebar,
         parsed.sidebar,
-        contributions.sidebar_tabs,
-        contributions.sidebar_locations,
-        contributions.sidebar_presets,
+        super::sidebar::SidebarContributions {
+            tabs: contributions.sidebar_tabs,
+            suggestions: contributions.sidebar_locations,
+            presets: contributions.sidebar_presets,
+            tab_settings: contributions.sidebar_tab_settings,
+        },
         &mut warnings,
     );
     config.rules = build_rules(parsed.rules, &mut warnings);
@@ -3424,11 +3424,87 @@ command = "open"
         assert!(loaded.config.installed_extensions.contains("git-tools"));
     }
 
+    /// An extension tab's settings are a view onto the extension's own: the picker edits
+    /// `[extensions.<id>]`, the values are the merged ones its processes see, and a setting the tab
+    /// does not name stays out of it.
+    #[test]
+    fn an_extension_tab_offers_the_settings_it_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("tasks");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("extension.toml"),
+            "[extension]\nid = \"tasks\"\napi = 1\n\
+             [settings]\n\
+             group = { default = \"status\", label = \"Group by\", choices = [\"status\", \"repo\"] }\n\
+             rows = { default = 50, min = 1, max = 100 }\n\
+             token = \"\"\n\
+             [[sidebar_tabs]]\nname = \"jobs\"\nlabel = \"Jobs\"\nstream = true\n\
+             settings = [\"rows\", \"group\"]\n",
+        )
+        .unwrap();
+
+        let loaded = load_config_from_text_with_extensions(
+            "[extensions.tasks]\ngroup = \"repo\"\n",
+            Path::new("config.toml"),
+            super::super::extensions::scan_extensions_in(temp.path()),
+            Vec::new(),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let group = &loaded.config.sidebar.tab_settings["tasks.jobs"];
+        assert_eq!(
+            group.owner,
+            crate::config::SettingsOwner::Extension("tasks".into())
+        );
+        let keys: Vec<_> = group.specs.iter().map(|spec| spec.key.as_str()).collect();
+        assert_eq!(keys, ["rows", "group"]);
+        assert_eq!(
+            group.values["group"],
+            crate::config::SettingValue::String("repo".into())
+        );
+        assert!(group.overridden.contains("group"));
+        assert!(!group.overridden.contains("rows"));
+    }
+
+    #[test]
+    fn an_extension_tab_cannot_offer_a_setting_it_does_not_declare() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("tasks");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("extension.toml"),
+            "[extension]\nid = \"tasks\"\napi = 1\n\
+             [settings]\nignore = [\"target\"]\n\
+             [[sidebar_tabs]]\nname = \"jobs\"\nlabel = \"Jobs\"\nstream = true\n\
+             settings = [\"missing\", \"ignore\"]\n",
+        )
+        .unwrap();
+        let scan = super::super::extensions::scan_extensions_in(temp.path());
+        let errors = &scan.extensions[0].info.errors;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("does not declare")),
+            "{errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("string list")),
+            "{errors:?}"
+        );
+        assert_eq!(
+            scan.extensions[0].info.status,
+            crate::config::ExtensionStatus::Invalid
+        );
+    }
+
     #[test]
     fn activity_repository_worktrees_load_without_warnings() {
         let loaded = load_config_from_text(
             r#"[sidebar]
-                tabs = [{ name = "activity", worktrees = "repository" }]
+                tabs = ["activity"]
+
+                [sidebar.settings.activity]
+                worktrees = "repository"
             "#,
             Path::new("config.toml"),
         );

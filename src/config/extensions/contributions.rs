@@ -17,6 +17,8 @@ pub(crate) struct ExtensionContributions {
     pub(crate) sidebar_tabs: Vec<SidebarTab>,
     pub(crate) sidebar_locations: BTreeMap<String, crate::config::SidebarTabLocation>,
     pub(crate) sidebar_presets: Vec<crate::config::SidebarLayoutPreset>,
+    /// The settings each extension sidebar tab offers, by namespaced tab id.
+    pub(crate) sidebar_tab_settings: BTreeMap<String, crate::config::SettingsGroup>,
     pub(crate) navigation_targets: Vec<NavigationTargetContribution>,
     pub(crate) suggested_keybindings: Vec<SuggestedKeybindingContribution>,
     pub(crate) active_ids: HashSet<String>,
@@ -44,6 +46,7 @@ pub(super) fn build(
     let mut sidebar_tabs = Vec::new();
     let mut sidebar_locations = BTreeMap::new();
     let mut sidebar_presets = Vec::new();
+    let mut sidebar_tab_settings = BTreeMap::new();
     let mut navigation_targets = Vec::new();
     let mut suggested_keybindings = Vec::new();
     let mut active_ids = HashSet::new();
@@ -105,7 +108,7 @@ pub(super) fn build(
                 if let Some(placed) = extension_placements {
                     placements.insert(id.clone(), placed);
                 }
-                active_ids.insert(id);
+                active_ids.insert(id.clone());
             }
             commands.extend(extension_commands);
             link_handlers.extend(extension.link_handlers);
@@ -114,6 +117,18 @@ pub(super) fn build(
             sidebar_tabs.extend(extension_tabs);
             sidebar_locations.extend(extension.sidebar_locations);
             sidebar_presets.extend(extension.sidebar_presets);
+            for (tab, keys) in &extension.sidebar_tab_settings {
+                sidebar_tab_settings.insert(
+                    tab.clone(),
+                    settings::tab_group(
+                        &extension.settings,
+                        keys,
+                        &id,
+                        &merged,
+                        user_settings.get(&id),
+                    ),
+                );
+            }
             navigation_targets.extend(extension.navigation_targets);
             suggested_keybindings.extend(extension.suggested_keybindings);
         } else if extension.info.status != ExtensionStatus::Disabled {
@@ -145,6 +160,7 @@ pub(super) fn build(
         sidebar_tabs,
         sidebar_locations,
         sidebar_presets,
+        sidebar_tab_settings,
         navigation_targets,
         suggested_keybindings,
         active_ids,

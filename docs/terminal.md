@@ -170,7 +170,9 @@ Programs set the pane title with OSC 0 or OSC 2. A custom title set with the `N`
 precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
 
 With `[notifications] bell = true`, a bell from a pane you are not watching marks its workspace. You
-are watching a pane only when both the terminal window and the pane have focus.
+are watching a pane only when both the terminal window and the pane have focus. A bell from a pane
+running an agent does not mark it: the agent's own finished or blocked mark covers it. A pane with
+only a `rozi status` activity is not running an agent, so its bell still marks it.
 
 Switching to a workspace preserves its panes' attention marks, including finished-agent marks,
 even when a marked pane is selected automatically. Click or explicitly focus the pane, scroll
@@ -284,4 +286,10 @@ error colors. Override or turn off those colors with the `blocked` and `error` k
 `working`, `done`, and progress updates never notify.
 
 A program status report is not an agent, even when it says `app=codex` or `app=claude-code`: it
-does not change agent detection, keep-awake, or conversation restore.
+does not change agent detection, keep-awake, or conversation restore. When the report names an
+agent rozi found in that pane, such as `app=claude-code` from Claude Code, it describes that agent
+instead of adding a row of its own: the agent's row shows the report's message as what it is doing,
+and its title names the run. With one row per conversation, as an extension like
+claude-rozi-sessions publishes, the report describes the conversation on screen. Reports from other
+programs in the same pane keep their own row. A report left behind after the agent exits is an
+activity named after the agent.

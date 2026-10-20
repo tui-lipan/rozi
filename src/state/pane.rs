@@ -295,26 +295,75 @@ impl Pane {
 
     /// The activity projection: everything happening in this pane, agents and activities alike,
     /// for the Activity sidebar.
+    ///
+    /// Program status records are split by who reports them first. The records an agent in the
+    /// pane reports (`app=claude-code` from Claude Code, and the child records inheriting that app)
+    /// describe that agent, so they ride on its occupant - of several conversations, the one on
+    /// screen - rather than becoming a second row for it. Every other record is an activity, so
+    /// a blocked `cargo` beside a working agent neither hides the agent's report nor takes it on.
     pub fn occupants(&self) -> Vec<crate::session::protocol::PaneOccupant> {
         let mut occupants = crate::session::protocol::pane_occupants(&self.semantic_runtime());
-        if let Some(record) =
-            crate::session::protocol::program_status_summary(&self.terminal.program_status)
-        {
-            occupants.push(crate::session::protocol::PaneOccupant {
-                slot: None,
-                agent: None,
-                label: record
-                    .title
-                    .as_deref()
-                    .or_else(|| self.terminal.program_status.app_for(record))
-                    .unwrap_or("")
-                    .to_string(),
-                state: crate::session::protocol::ActivityState::from_status(record.state.as_str()),
-                reason: record.msg.as_deref().map(str::to_string),
-                source: crate::session::protocol::AgentAuthority::Reported,
-                program_status: Some(record.clone()),
-            });
+        let snapshot = &self.terminal.program_status;
+        let agents: Vec<crate::session::protocol::AgentIdentity> = occupants
+            .iter()
+            .filter_map(|occupant| occupant.agent.clone())
+            .collect();
+        let reported_by =
+            |record: &tui_lipan::ProgramStatusRecord,
+             agent: &crate::session::protocol::AgentIdentity| {
+                snapshot
+                    .app_for(record)
+                    .is_some_and(|app| program_status_names_agent(app, agent))
+            };
+        let rows = &self.terminal.published_rows;
+        for occupant in &mut occupants {
+            let Some(agent) = occupant.agent.as_ref() else {
+                continue;
+            };
+            if occupant
+                .slot
+                .as_ref()
+                .is_some_and(|slot| !rows.iter().any(|row| row.has_key(slot) && row.active))
+            {
+                continue;
+            }
+            occupant.program_status = crate::session::protocol::most_urgent_program_status(
+                snapshot
+                    .records
+                    .iter()
+                    .filter(|record| reported_by(record, agent)),
+            )
+            .cloned();
         }
+        let Some(record) = crate::session::protocol::most_urgent_program_status(
+            snapshot
+                .records
+                .iter()
+                .filter(|record| !agents.iter().any(|agent| reported_by(record, agent))),
+        ) else {
+            return occupants;
+        };
+        let app = snapshot.app_for(record);
+        let agent = app.and_then(|app| {
+            crate::agent_detection::AgentCatalog::shared_builtin()
+                .by_name(app)
+                .map(|definition| definition.identity.label.clone())
+        });
+        occupants.push(crate::session::protocol::PaneOccupant {
+            slot: None,
+            agent: None,
+            label: record
+                .title
+                .as_deref()
+                .or(agent.as_deref())
+                .or(app)
+                .unwrap_or("")
+                .to_string(),
+            state: crate::session::protocol::ActivityState::from_status(record.state.as_str()),
+            reason: record.msg.as_deref().map(str::to_string),
+            source: crate::session::protocol::AgentAuthority::Reported,
+            program_status: Some(record.clone()),
+        });
         occupants
     }
 
@@ -493,6 +542,15 @@ impl Pane {
                     .iter()
                     .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked))
     }
+}
+
+/// Whether an OSC 7501 `app` names `agent`: its definition ID, or a name the agent catalog knows it
+/// by (`claude-code` for `claude`).
+fn program_status_names_agent(app: &str, agent: &crate::session::protocol::AgentIdentity) -> bool {
+    agent.id.eq_ignore_ascii_case(app)
+        || crate::agent_detection::AgentCatalog::shared_builtin()
+            .by_name(app)
+            .is_some_and(|definition| definition.id() == agent.id)
 }
 
 #[cfg(test)]

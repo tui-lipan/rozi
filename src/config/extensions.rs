@@ -37,7 +37,7 @@ pub(crate) use runtime::{
     provenance_is_active, reconcile_generations,
 };
 pub(crate) use settings::merge as merge_extension_settings;
-pub use settings::{ExtensionSettingValue, ExtensionSettings};
+pub use settings::{ExtensionSettingSpecs, ExtensionSettings};
 pub(crate) use validation::is_extension_scoped_id;
 use validation::{
     validate_command, validate_extension_id, validate_navigation_target, validate_service,
@@ -116,6 +116,9 @@ pub struct ExtensionInfo {
     /// Settings the manifest declares, at their default values. What the user's `config.toml`
     /// overrides them to is not known here: a scan reads the extension, not the user.
     pub settings: ExtensionSettings,
+    /// What the manifest declares about each setting: its label, kind, choices, and bounds.
+    #[serde(skip)]
+    pub setting_specs: ExtensionSettingSpecs,
     pub command_details: Vec<ExtensionCommandDiagnostic>,
     pub service_details: Vec<ExtensionServiceDiagnostic>,
     pub command_paths: BTreeMap<String, String>,
@@ -243,7 +246,9 @@ pub(crate) struct DiscoveredExtension {
     sidebar_presets: Vec<super::schema::SidebarLayoutPreset>,
     navigation_targets: Vec<super::schema::NavigationTargetContribution>,
     suggested_keybindings: Vec<SuggestedKeybindingContribution>,
-    settings: ExtensionSettings,
+    settings: ExtensionSettingSpecs,
+    /// The settings each of this extension's sidebar tabs offers, by namespaced tab id.
+    sidebar_tab_settings: BTreeMap<String, Vec<String>>,
     placements: Option<placement::ExtensionPlacements>,
 }
 
@@ -414,6 +419,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         navigation_targets: Vec::new(),
         suggested_keybindings: Vec::new(),
         settings: ExtensionSettings::new(),
+        setting_specs: ExtensionSettingSpecs::new(),
         command_details: Vec::new(),
         service_details: Vec::new(),
         command_paths: BTreeMap::new(),
@@ -444,7 +450,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
-                settings: ExtensionSettings::new(),
+                settings: ExtensionSettingSpecs::new(),
+                sidebar_tab_settings: BTreeMap::new(),
                 placements: None,
             };
         }
@@ -464,7 +471,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
-                settings: ExtensionSettings::new(),
+                settings: ExtensionSettingSpecs::new(),
+                sidebar_tab_settings: BTreeMap::new(),
                 placements: None,
             };
         }
@@ -485,7 +493,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 sidebar_presets: Vec::new(),
                 navigation_targets: Vec::new(),
                 suggested_keybindings: Vec::new(),
-                settings: ExtensionSettings::new(),
+                settings: ExtensionSettingSpecs::new(),
+                sidebar_tab_settings: BTreeMap::new(),
                 placements: None,
             };
         }
@@ -600,7 +609,9 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         });
     }
     let declared_settings = settings::declared(manifest.settings, &mut info.errors);
-    info.settings = declared_settings.clone();
+    let mut sidebar_tab_settings = BTreeMap::new();
+    info.settings = settings::defaults(&declared_settings);
+    info.setting_specs = declared_settings.clone();
     let mut sidebar_tabs = Vec::new();
     let mut sidebar_locations = BTreeMap::new();
     let mut seen_sidebar_tabs = HashSet::new();
@@ -625,6 +636,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut info,
             &mut sidebar_tabs,
             &mut placed,
+            &declared_settings,
+            &mut sidebar_tab_settings,
         );
     }
     let mut sidebar_presets = manifest.sidebar_presets;
@@ -738,6 +751,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         info.navigation_targets.clear();
         info.suggested_keybindings.clear();
         info.settings.clear();
+        info.setting_specs.clear();
         info.command_details.clear();
         info.service_details.clear();
         info.command_paths.clear();
@@ -844,6 +858,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         navigation_targets,
         suggested_keybindings,
         settings: declared_settings,
+        sidebar_tab_settings,
         placements,
     }
 }
@@ -1088,7 +1103,7 @@ fn clean_optional(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ServiceLaunch;
+    use crate::config::{ServiceLaunch, SettingValue};
     use std::path::PathBuf;
 
     fn write_manifest(root: &Path, directory: &str, text: &str) -> PathBuf {
@@ -2140,7 +2155,7 @@ mod tests {
         assert_eq!(entry.status, ExtensionStatus::Loaded);
         assert_eq!(
             entry.settings["runner"],
-            ExtensionSettingValue::String("auto".to_string())
+            SettingValue::String("auto".to_string())
         );
 
         let defaults = scan_extensions_in(temp.path()).into_contributions(&[], &Default::default());
@@ -2340,8 +2355,13 @@ mod tests {
                 "name",
                 "on_click",
                 "placement",
+                "settings",
                 "suggested_location"
             ]
+        );
+        assert_eq!(
+            keys(&properties["settings"]["additionalProperties"]["oneOf"][1]["properties"]),
+            ["choices", "default", "description", "label", "max", "min"]
         );
         assert_eq!(
             keys(

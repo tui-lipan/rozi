@@ -16,6 +16,8 @@ mod sidebar_sessions_smoke;
 mod sidebar_slide_smoke;
 #[path = "suites/sidebar/sidebar_tab_scroll_interaction_smoke.rs"]
 mod sidebar_tab_scroll_interaction_smoke;
+#[path = "suites/sidebar/sidebar_tab_settings_smoke.rs"]
+mod sidebar_tab_settings_smoke;
 #[path = "suites/sidebar/sidebar_toggle_smoke.rs"]
 mod sidebar_toggle_smoke;
 #[path = "suites/sidebar/sidebar_tree_smoke.rs"]

@@ -203,8 +203,7 @@ pub(super) fn dialog_overlay(
     .on_close(ctx.link().callback(move |_| close.clone()))
     .child(body);
     if dim_behind {
-        modal =
-            modal.backdrop_style(Style::new().tint_by(theme.surface.backdrop, BACKDROP_RECESSION));
+        modal = modal.backdrop_style(receding_backdrop(theme));
     }
     modal.key(format!("rozi-confirm-{title}"))
 }

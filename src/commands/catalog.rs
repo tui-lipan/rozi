@@ -670,6 +670,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::SidebarTabSettings,
+        label: "Sidebar tab settings…",
+        category: "Sidebar",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ToggleSidebarGap,
         label: "Sidebar gap",
         category: "Settings",

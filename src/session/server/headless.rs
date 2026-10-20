@@ -734,6 +734,7 @@ impl SessionServer {
             Some(layout) => Ok(layout.clone()),
             None if self.panes.is_empty() => Ok(SharedLayout {
                 version: SHARED_LAYOUT_VERSION,
+                pane_geometry: Default::default(),
                 canvas_cols: HEADLESS_SPAWN_COLS,
                 canvas_rows: HEADLESS_SPAWN_ROWS,
                 workspaces: Vec::new(),
@@ -1791,6 +1792,7 @@ impl SessionServer {
     ) -> Option<SharedLayout> {
         let mut layout = self.layout.clone().unwrap_or_else(|| SharedLayout {
             version: SHARED_LAYOUT_VERSION,
+            pane_geometry: Default::default(),
             canvas_cols: HEADLESS_SPAWN_COLS,
             canvas_rows: HEADLESS_SPAWN_ROWS,
             workspaces: Vec::new(),
@@ -2027,6 +2029,7 @@ mod tests {
     fn one_pane_layout(pane_id: PaneId) -> SharedLayout {
         SharedLayout {
             version: SHARED_LAYOUT_VERSION,
+            pane_geometry: Default::default(),
             canvas_cols: 80,
             canvas_rows: 24,
             workspaces: vec![SharedWorkspace {
@@ -4029,6 +4032,7 @@ mod tests {
         // A document from a future build: the server can hold it, and must not extend it.
         server.layout = Some(SharedLayout {
             version: SHARED_LAYOUT_VERSION + 1,
+            pane_geometry: Default::default(),
             canvas_cols: 80,
             canvas_rows: 24,
             workspaces: Vec::new(),

@@ -274,7 +274,14 @@ pub fn workspace_target_rects_excluding_with_visible_and_float_bounds<W: TileSou
     workspace.for_each_floating(&mut |id, rect| {
         placements.push(PanePlacement {
             id,
-            rect: clamp_floating_rect(rect, float_bounds),
+            rect: clamp_floating_rect(
+                FloatRect {
+                    x: rect.x + float_bounds.x,
+                    y: rect.y + float_bounds.y,
+                    ..rect
+                },
+                float_bounds,
+            ),
         });
     });
 

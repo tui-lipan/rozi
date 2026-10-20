@@ -3279,6 +3279,7 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
     };
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 100,
         canvas_rows: 28,
         workspaces: vec![SharedWorkspace {

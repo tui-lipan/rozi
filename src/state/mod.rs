@@ -1306,11 +1306,50 @@ impl State {
         }
     }
 
+    /// Pane presentation for the shared workspace, keeping local paint preferences.
+    pub fn workspace_pane_config(&self) -> crate::config::PaneConfig {
+        let mut pane = self.config.pane;
+        if let Some(geometry) = self.follower_pane_geometry() {
+            geometry.apply(&mut pane);
+        }
+        pane
+    }
+
+    /// Pane presentation for the active workspace or the local scratchpad.
+    pub(crate) fn active_pane_config(&self) -> crate::config::PaneConfig {
+        if self.scratch_visible {
+            self.config.pane
+        } else {
+            self.workspace_pane_config()
+        }
+    }
+
+    fn follower_pane_geometry(&self) -> Option<crate::layout::shared::SharedPaneGeometry> {
+        self.follower_canonical_canvas()?;
+        self.current()
+            .shared
+            .as_ref()?
+            .last_committed_layout
+            .as_ref()
+            .map(|layout| layout.pane_geometry)
+    }
+
+    pub fn pane_config_for(&self, id: PaneId) -> crate::config::PaneConfig {
+        if crate::pane::lifecycle::pane_is_local(self, id) {
+            self.config.pane
+        } else {
+            self.workspace_pane_config()
+        }
+    }
+
     /// Signed inset (in cells) that keeps the panes clear of the workbar. Positive insets the top
     /// edge of the tile area (workbar above the panes); negative insets the bottom edge (workbar
     /// below the panes), so the gap always lands between the panes and the workbar. Zero when
     /// there is no gap.
     pub fn workspace_top_gap(&self) -> f32 {
+        if let Some(geometry) = self.follower_pane_geometry() {
+            return f32::from(geometry.top_gap);
+        }
         if self.config.pane.show_workbar && self.config.pane.workbar_gap {
             if self.config.pane.workbar_at_bottom {
                 -OUTER_GAP
@@ -1324,13 +1363,20 @@ impl State {
 
     /// Per-axis gap between adjacent tiled panes for the selected border presentation.
     pub fn tile_gap(&self) -> TileGap {
-        match self.config.pane.border_mode {
+        self.tile_gap_for(self.scratch_visible)
+    }
+
+    pub(crate) fn tile_gap_for(&self, local: bool) -> TileGap {
+        let pane = if local {
+            self.config.pane
+        } else {
+            self.workspace_pane_config()
+        };
+        match pane.border_mode {
             PaneBorderMode::Separate => TileGap::DEFAULT,
             PaneBorderMode::Merged => TileGap {
                 horizontal: -1.0,
-                vertical: if self.config.pane.show_titles
-                    && self.config.pane.titlebar.takes_outer_row()
-                {
+                vertical: if pane.show_titles && pane.titlebar.takes_outer_row() {
                     0.0
                 } else {
                     -1.0

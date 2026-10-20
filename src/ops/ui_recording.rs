@@ -1474,6 +1474,40 @@ mod tests {
     }
 
     #[test]
+    fn follower_recording_uses_overlay_when_controller_hides_fullscreen_titles() {
+        on_large_stack(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut backend = backend();
+            started(
+                &mut backend,
+                &dir.path().join("follower-chip.rozirec"),
+                None,
+            );
+            let state = backend.state_mut();
+            state.config.pane.show_titles = true;
+            state.config.animations.enabled = false;
+            state.current_mut().workspaces[0].panes[0].fullscreen = true;
+            let mut layout = crate::layout::shared::shared_layout_from_state(state, (80, 24));
+            layout.pane_geometry.show_titles = false;
+            let mut shared = crate::state::SharedSessionState::new(1);
+            shared.controller = Some(2);
+            shared.canonical_canvas = Some((80, 24));
+            shared.last_committed_layout = Some(layout);
+            state.current_mut().shared = Some(shared);
+
+            assert_eq!(
+                crate::view::ui_recording_chip(backend.state()),
+                Some(crate::view::UiRecordingChip::Overlay)
+            );
+            backend.render();
+            let top = backend.capture_frame().to_fixed_grid_lines().remove(0);
+            assert!(top.trim_end().ends_with("REC"), "{top:?}");
+            assert!(backend.state().config.pane.show_titles);
+            stopped(&mut backend);
+        });
+    }
+
+    #[test]
     fn the_indicator_says_rec_blinks_its_dot_and_survives_a_hidden_workbar() {
         on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();

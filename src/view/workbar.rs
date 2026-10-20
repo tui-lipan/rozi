@@ -165,7 +165,9 @@ pub(crate) fn ui_recording_chip(state: &crate::state::State) -> Option<UiRecordi
     let cover = super::fullscreen_pane(state.active_workspace_ref());
     Some(match cover {
         None if state.config.pane.show_workbar => UiRecordingChip::Workbar,
-        Some(cover) if state.config.pane.show_titles => UiRecordingChip::Title(cover.id),
+        Some(cover) if state.pane_config_for(cover.id).show_titles => {
+            UiRecordingChip::Title(cover.id)
+        }
         _ => UiRecordingChip::Overlay,
     })
 }
@@ -886,7 +888,7 @@ pub(crate) fn workspace_tab_shows_recording(state: &crate::state::State, index: 
         .any(|pane| pane.terminal.recording && !pane.closing);
     recording
         && (index != state.current().active_workspace
-            || !super::pane::pane_chrome_shows_recording(&state.config.pane))
+            || !super::pane::pane_chrome_shows_recording(&state.workspace_pane_config()))
 }
 
 /// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,

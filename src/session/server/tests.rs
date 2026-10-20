@@ -2370,6 +2370,7 @@ fn profile_origin_claim_is_ignored_without_seeded_panes() {
     let mut server = SessionServer::new_named("dev");
     server.layout = Some(SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -2637,6 +2638,7 @@ fn non_controller_commit_is_ignored() {
     let (follower, _s2) = attach_client(&mut server);
     let layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -2659,6 +2661,7 @@ fn controller_commit_increments_rev_and_broadcasts_author() {
     let (controller, _s1) = attach_client(&mut server);
     let layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -2690,6 +2693,7 @@ fn controller_commit_relays_live_mark() {
     for (base_rev, live) in [(0, true), (1, false)] {
         let layout = SharedLayout {
             version: SHARED_LAYOUT_VERSION,
+            pane_geometry: Default::default(),
             canvas_cols: 80 + base_rev as u16,
             canvas_rows: 24,
             workspaces: Vec::new(),
@@ -2717,6 +2721,7 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
     let (controller, _s1) = attach_client(&mut server);
     let layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -2759,6 +2764,7 @@ fn malformed_layout_commit_is_rejected() {
     let (controller, _s1) = attach_client(&mut server);
     let invalid_layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 0, // invalid 0 canvas
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -2790,6 +2796,7 @@ fn malformed_layout_commit_is_rejected() {
 fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: vec![crate::layout::shared::SharedWorkspace {
@@ -2831,6 +2838,7 @@ fn layout_commit_requires_the_exact_live_pane_set_and_generations() {
     assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[])));
     assert!(!server.validate_shared_layout_against_panes(&SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -4581,6 +4589,7 @@ fn attach_reports_layout_and_panes() {
     server.panes.insert(4, pane);
     server.layout = Some(SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 20,
         canvas_rows: 5,
         workspaces: Vec::new(),
@@ -4869,6 +4878,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     }
     server.layout = Some(SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 20,
         canvas_rows: 5,
         workspaces: Vec::new(),

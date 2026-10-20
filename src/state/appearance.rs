@@ -54,7 +54,8 @@ pub fn rozi_style(theme: &Theme) -> Style {
 /// the frame; `Border` and `Integrated` reuse the frame's top border row; `Inset` writes the title
 /// inside the frame, on the first interior row beneath the top border. Visibility is controlled
 /// independently by `pane.show_titles`, so toggling it never loses the selected layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PaneTitlebarMode {
     Bar,
     Border,
@@ -144,7 +145,8 @@ pub enum PaneBorderStyle {
 
 /// Structural presentation of pane borders. Glyph shape remains independently controlled by
 /// `PaneBorderStyle`; this mode decides whether pane frames or internal split dividers are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PaneBorderMode {
     Separate,
     Merged,

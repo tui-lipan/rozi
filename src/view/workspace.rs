@@ -170,7 +170,12 @@ pub(crate) fn render_workspace_panes(
     let bounds = layer.bounds;
     let top_offset = ctx.state.content_top_offset();
     let top_gap = layer.top_gap;
-    let tile_gap = ctx.state.tile_gap();
+    let tile_gap = ctx.state.tile_gap_for(layer.scratch);
+    let pane_config = if layer.scratch {
+        ctx.state.config.pane
+    } else {
+        ctx.state.workspace_pane_config()
+    };
     // A drag belongs to the current attachment. Match it against this layer's panes so the
     // dropdown does not exclude a workspace pane, nor the workspace a scratch pane.
     let moving_here = |id: PaneId| workspace.panes.iter().any(|pane| pane.id == id);
@@ -197,8 +202,8 @@ pub(crate) fn render_workspace_panes(
     // merging with it or having a divider painted over their terminal content. Each vec keeps
     // `ordered_panes` relative order while the focused pane stays last; divider title ids are kept
     // separately because a reveal must keep its title inside the effected pane frame.
-    let merge_layering = ctx.state.config.pane.border_mode.merges_frames();
-    let divider_mode = ctx.state.config.pane.border_mode.draws_dividers();
+    let merge_layering = pane_config.border_mode.merges_frames();
+    let divider_mode = pane_config.border_mode.draws_dividers();
     let mut divider_panes = Vec::new();
     let mut divider_title_panes = Vec::new();
     let mut divider_alerts = Vec::new();
@@ -227,7 +232,9 @@ pub(crate) fn render_workspace_panes(
             ..pane.floating_rect
         };
         let base_rect = placement_for(&placements, pane.id).unwrap_or_else(|| {
-            if pane.floating {
+            if pane.closing {
+                floating_rect
+            } else if pane.floating {
                 clamp_floating_rect(floating_rect, layer.floating_bounds)
             } else {
                 clamp_float_rect(floating_rect, bounds)
@@ -312,8 +319,8 @@ pub(crate) fn render_workspace_panes(
         // With merged borders, a bar title must keep its left edge off a neighbor's right border,
         // or its background would cover the seam. Compact titlebars live in the frame border and
         // do not need this spacer.
-        let left_seam = ctx.state.config.pane.show_titles
-            && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
+        let left_seam = pane_config.show_titles
+            && pane_config.titlebar == crate::state::PaneTitlebarMode::Bar
             && tile_gap.horizontal < 0.0
             && !pane.floating
             && !pane.fullscreen
@@ -355,8 +362,8 @@ pub(crate) fn render_workspace_panes(
         let (seam_left_bg, seam_right_bg) = if merge_layering
             && !pane.floating
             && !pane.fullscreen
-            && ctx.state.config.pane.show_titles
-            && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
+            && pane_config.show_titles
+            && pane_config.titlebar == crate::state::PaneTitlebarMode::Bar
             && ctx
                 .state
                 .config
@@ -376,9 +383,9 @@ pub(crate) fn render_workspace_panes(
         // row separately, after the neighbor that shares it.
         let title_row_shared_with_tile_above = !pane.floating
             && !pane.fullscreen
-            && ctx.state.config.pane.show_titles
+            && pane_config.show_titles
             && matches!(
-                ctx.state.config.pane.titlebar,
+                pane_config.titlebar,
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             )
             && pane_has_tile_above(&placements, pane.id, tile_gap.vertical);
@@ -509,9 +516,9 @@ pub(crate) fn render_workspace_panes(
         } else {
             normal_style
         };
-        let title_on_dividers = ctx.state.config.pane.show_titles
+        let title_on_dividers = pane_config.show_titles
             && matches!(
-                ctx.state.config.pane.titlebar,
+                pane_config.titlebar,
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             );
         // Quiet seams first, alerting seams next, focused contacts last so junctions inherit the
@@ -549,7 +556,7 @@ pub(crate) fn render_workspace_panes(
                         && let Some(pane) = workspace.panes.iter().find(|pane| pane.id == below)
                         && let Some(label) = divider_title_element(ctx, pane, focused_pane)
                     {
-                        line = match ctx.state.config.pane.titlebar {
+                        line = match pane_config.titlebar {
                             // Embed the title in the line, like a Frame border header: one leading
                             // `─` after any `├` junction, and no trailing gap before the line
                             // continues. Horizontal dividers extend one cell into a vertical for
@@ -968,7 +975,7 @@ pub(crate) fn settled_active_pane_rects(
         Some(boxes.local_bounds),
         None,
         state.workspace_top_gap(),
-        state.tile_gap(),
+        state.tile_gap_for(false),
     );
     let top_offset = state.content_top_offset();
     let left_offset = f32::from(state.terminal_content_left_offset(viewport));

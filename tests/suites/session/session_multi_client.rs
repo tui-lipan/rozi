@@ -409,6 +409,7 @@ fn attached_client_id(message: &ServerMessage) -> u64 {
 fn empty_layout(cols: u16) -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: cols,
         canvas_rows: 24,
         workspaces: Vec::new(),
@@ -418,6 +419,7 @@ fn empty_layout(cols: u16) -> SharedLayout {
 fn pane_layout() -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 23,
         workspaces: vec![SharedWorkspace {

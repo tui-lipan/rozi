@@ -275,6 +275,7 @@ fn wait_for_snapshot(snapshot: &std::path::Path) {
 fn pane_layout() -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
+        pane_geometry: Default::default(),
         canvas_cols: 80,
         canvas_rows: 23,
         workspaces: vec![SharedWorkspace {

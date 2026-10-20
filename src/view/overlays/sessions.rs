@@ -273,7 +273,10 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         .unwrap_or("session");
     let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable;
     let lost = ctx.state.current().remote_session_lost;
-    let modal = styled_modal(ctx, &format!("Session · {name}"), 42).dismiss_on_escape(false);
+    let mut modal = styled_modal(ctx, &format!("Session · {name}"), 42).dismiss_on_escape(false);
+    if offline && lost {
+        modal = crate::view::error_modal_chrome(&ctx.state.theme, modal);
+    }
     let actions = if offline {
         vec![
             OverlayAction::new(
@@ -302,8 +305,9 @@ pub(crate) fn reconnecting_overlay(ctx: &Context<AppRoot>) -> Element {
         )]
     };
     let status: Element = if offline {
+        let status = &ctx.state.theme.status;
         Text::new(if lost { "Session lost" } else { "Offline" })
-            .style(Style::new().fg(ctx.state.theme.status.warning))
+            .style(Style::new().fg(if lost { status.error } else { status.warning }))
             .into()
     } else {
         Spinner::new()

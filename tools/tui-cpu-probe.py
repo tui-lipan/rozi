@@ -57,9 +57,36 @@ def await_value(read, description):
     raise RuntimeError(f"timed out waiting for {description}")
 
 
-def run_probe(args):
-    binary = str(Path(args.binary).resolve(strict=True))
-    root = Path(tempfile.mkdtemp(prefix="rozi-cpu-"))
+def cases(sidebar):
+    if sidebar:
+        return [
+            ("idle", False, "working"), ("idle", True, "working"),
+            ("idle", True, "idle"), ("idle", True, "working"),
+            ("idle", False, "working"), ("body", False, "working"),
+            ("body", True, "working"), ("body", False, "working"),
+        ]
+    return [(mode, None, None) for mode in ["idle", "body", "both", "title", "body", "dense"]]
+
+
+def verify_sidebar(text, visible, status):
+    lines = text.splitlines()
+    if not lines or ("Activity" in lines[0]) != visible:
+        raise RuntimeError("sidebar toggle did not reach the expected state")
+    spinning = any(glyph in text for glyph in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+    if visible and spinning != (status == "working"):
+        raise RuntimeError("sidebar status did not reach the expected spinner state")
+
+
+def populate_panes(command, session, count, shell):
+    # A fresh server can be empty until its first client attaches.
+    for _ in range(count):
+        panes = json.loads(command("--session", session, "list-panes", "--format", "json"))["data"]
+        if len(panes) >= count:
+            return
+        command("--session", session, "split", "--argv", *shell)
+
+
+def isolated_environment(root):
     env = {key: value for key, value in os.environ.items() if not key.startswith("ROZI")}
     for key, directory in (
         ("HOME", "home"), ("XDG_CONFIG_HOME", "config"),
@@ -70,6 +97,13 @@ def run_probe(args):
         path.mkdir()
         env[key] = str(path)
     env.update(ROZI_CONFIG=str(root / "config/config.toml"), TERM="xterm-256color", SHELL="/bin/sh")
+    return env
+
+
+def run_probe(args):
+    binary = str(Path(args.binary).resolve(strict=True))
+    root = Path(tempfile.mkdtemp(prefix="rozi-cpu-", dir=os.environ.get("TMPDIR")))
+    env = isolated_environment(root)
     (root / "work.py").write_text(WORKLOAD)
     (root / "mode").write_text("idle")
     # JSON strings are valid TOML basic strings for these paths.
@@ -86,6 +120,17 @@ resurrect = false
 kill_session = false
 [animations]
 enabled = false
+''')
+    if args.sidebar:
+        with (root / "config/config.toml").open("a") as config:
+            config.write('''
+[keys]
+toggle-sidebar = "ctrl-a b"
+[sidebar]
+tabs = ["activity", "projects"]
+[sidebar.layout.left]
+panel_count = 2
+panels = [{ tabs = ["activity"], weight = 0.5 }, { tabs = ["projects"], weight = 0.5 }]
 ''')
     server = wrapper = None
     client_pid = None
@@ -110,6 +155,36 @@ enabled = false
                 wrapper.wait(timeout=10)
             wrapper = None
 
+    def measure_cases(cols, rows, panes, socket):
+        sidebar_open = False
+        for case, (mode, visible, status) in enumerate(cases(args.sidebar)):
+            if visible is not None and visible != sidebar_open:
+                wrapper.stdin.write(b"\x01b")
+                wrapper.stdin.flush()
+                sidebar_open = visible
+            if status is not None:
+                for pane in panes:
+                    command("--session", session, "status", "--target", str(pane["id"]), status)
+            (root / "next-mode").write_text(mode)
+            (root / "next-mode").replace(root / "mode")
+            time.sleep(1)
+            if args.sidebar:
+                capture = json.loads(command("--socket", str(socket), "capture-ui", "--format", "json"))
+                verify_sidebar(capture["data"]["text"], sidebar_open, status)
+            before = [cpu_ticks(client_pid), cpu_ticks(server.pid)]
+            start = time.monotonic()
+            time.sleep(args.seconds)
+            elapsed = time.monotonic() - start
+            after = [cpu_ticks(client_pid), cpu_ticks(server.pid)]
+            scale = 100 / os.sysconf("SC_CLK_TCK") / elapsed
+            print(json.dumps({"cols": cols, "rows": rows, "mode": mode, "seconds": elapsed,
+                              "panes": args.panes, "sidebar": visible, "status": status,
+                              "client_cpu": (after[0] - before[0]) * scale,
+                              "server_cpu": (after[1] - before[1]) * scale}), flush=True)
+            if args.sidebar and args.keep_scratch:
+                command("--socket", str(socket), "capture-ui", "--render", "png",
+                        "--output", str(root / f"ui-{cols}-{case}.png"))
+
     try:
         print(json.dumps({"binary": binary, "version": command("--version").strip(),
                           "sample_seconds": args.seconds, "updates_per_second": 10}), flush=True)
@@ -117,7 +192,9 @@ enabled = false
             server = subprocess.Popen([binary, "--session", session, "--fresh-server"],
                                       env=env, stdout=log, stderr=log)
         await_value(lambda: list((root / "runtime/rozi").glob("session-*.sock")), "server socket")
-        for cols, rows in [(200, 60), (475, 116)]:
+        if args.panes > 1:
+            populate_panes(command, session, args.panes, [sys.executable, str(root / "work.py")])
+        for cols, rows in args.viewport or [(200, 60), (475, 116)]:
             with (root / f"client-{cols}.log").open("wb") as log:
                 # The binary path is shell quoted because script's command is interpreted by sh.
                 launch = f"stty rows {rows} cols {cols}; exec {shlex.quote(binary)} sessions attach {session}"
@@ -129,23 +206,13 @@ enabled = false
             # The UI's temporary startup pane can precede server attachment. Resolve the live id
             # at the server, then use its wait rather than fencing a temporary client generation.
             panes = await_value(lambda: json.loads(command("--session", session, "list-panes", "--format", "json"))["data"], "server pane")
-            pane = str(panes[0]["id"])
+            if len(panes) != args.panes:
+                raise RuntimeError(f"expected {args.panes} synthetic panes, got {len(panes)}")
             (root / "start").touch()
-            command("--session", session, "capture-pane", "--target", pane,
-                    "--wait-for", "READY", "--timeout", "15s")
-            for mode in ["idle", "body", "both", "title", "body", "dense"]:
-                (root / "next-mode").write_text(mode)
-                (root / "next-mode").replace(root / "mode")
-                time.sleep(1)
-                before = [cpu_ticks(client_pid), cpu_ticks(server.pid)]
-                start = time.monotonic()
-                time.sleep(args.seconds)
-                elapsed = time.monotonic() - start
-                after = [cpu_ticks(client_pid), cpu_ticks(server.pid)]
-                scale = 100 / os.sysconf("SC_CLK_TCK") / elapsed
-                print(json.dumps({"cols": cols, "rows": rows, "mode": mode, "seconds": elapsed,
-                                  "client_cpu": (after[0] - before[0]) * scale,
-                                  "server_cpu": (after[1] - before[1]) * scale}), flush=True)
+            for pane in panes:
+                command("--session", session, "capture-pane", "--target", str(pane["id"]),
+                        "--wait-for", "READY", "--timeout", "15s")
+            measure_cases(cols, rows, panes, socket)
             if args.keep_scratch:
                 # Capture after measurement, so PNG encoding cannot contaminate CPU samples.
                 command("--socket", str(socket), "capture-ui", "--render", "png",
@@ -170,12 +237,25 @@ def main():
     parser.add_argument("binary", help="already built release binary to measure")
     parser.add_argument("--seconds", type=float, default=15, help="sample window per case (default: 15)")
     parser.add_argument("--keep-scratch", action="store_true", help="retain synthetic logs and config")
+    parser.add_argument("--sidebar", action="store_true", help="compare Activity/Projects hidden, spinning and idle, with static and 10 Hz pane content")
+    parser.add_argument("--panes", type=int, choices=range(1, 17), default=1, help="owned synthetic panes (default: 1)")
+    parser.add_argument("--viewport", type=parse_viewport, action="append", help="WIDTHxHEIGHT; repeat for several (default: 200x60 and 475x116)")
     args = parser.parse_args()
     if sys.platform != "linux" or not shutil.which("script"):
         parser.error("requires Linux /proc and util-linux script")
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be positive")
     run_probe(args)
+
+
+def parse_viewport(value):
+    try:
+        cols, rows = map(int, value.split("x"))
+        if cols >= 80 and rows >= 24:
+            return cols, rows
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT, at least 80x24")
 
 
 if __name__ == "__main__":

@@ -1899,6 +1899,25 @@ fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
 }
 
 #[test]
+fn resurrected_alternate_screen_keeps_style_only_changes() {
+    let mut source = TerminalScreen::new(4, 12, 100);
+    source.process_bytes(b"same text");
+    source.process_bytes(b"\x1b[?1049h\x1b[H\x1b[1;31msame text\x1b[0m");
+    let replay = source.export_replay_bytes();
+
+    let mut restored = TerminalScreen::new(4, 12, 100);
+    super::panes::recover_restored_screen(&mut restored, &replay);
+    let frame = restored.capture_frame();
+    let retained = frame
+        .cells
+        .iter()
+        .rfind(|cell| cell.symbol == "s")
+        .expect("retained alternate screen text");
+    assert_eq!(retained.fg, tui_lipan::Color::Red);
+    assert!(retained.modifiers.bold);
+}
+
+#[test]
 fn resurrected_scrollback_keeps_styles_after_new_output() {
     for alternate in [false, true] {
         let mut source = TerminalScreen::new(4, 12, 100);

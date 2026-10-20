@@ -993,8 +993,9 @@ pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) 
     let restored_frame = screen.capture_frame();
 
     screen.process_bytes(SHELL_MODE_RECOVERY);
-    let primary_view = screen.render_snapshot().text.clone();
-    if restored_view != primary_view {
+    // Equal text can still hide different colors or modifiers on the alternate screen.
+    // Compare cells only: recovery deliberately changes cursor and input modes.
+    if restored_frame.cells != screen.capture_frame().cells {
         append_styled_transcript(screen, &restored_view, &restored_frame.to_ansi_text());
     }
 

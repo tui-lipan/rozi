@@ -465,7 +465,7 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
         SidebarTab::Panes => "No panes",
         SidebarTab::Activity { .. } => "No activity",
         SidebarTab::Agents => "No agents need attention",
-        SidebarTab::Projects => "No projects",
+        SidebarTab::Projects => "No sessions in Git",
         SidebarTab::Sessions => "No sessions discovered",
         // No repository to list: same one-cell inset `placeholder` uses on every other empty tab.
         SidebarTab::Worktrees => ctx

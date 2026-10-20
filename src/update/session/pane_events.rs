@@ -262,6 +262,7 @@ pub(crate) fn output(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resized(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
@@ -270,6 +271,7 @@ pub(crate) fn resized(
     generation: u64,
     cols: u16,
     rows: u16,
+    cell: Option<tui_lipan::TerminalCellSize>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if local {
@@ -284,18 +286,30 @@ pub(crate) fn resized(
             .and_then(|attachment| attachment.find_pane_mut(pane_id))
             && pane.pty_generation == generation
         {
-            pane.terminal.apply_server_resize(cols, rows);
+            apply_server_geometry(&mut pane.terminal, cols, rows, cell);
         }
         return Update::none();
     }
     if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
-        && pane.terminal.apply_server_resize(cols, rows)
+        && apply_server_geometry(&mut pane.terminal, cols, rows, cell)
         && ctx.state.pane_is_rendered(pane_id)
     {
         return Update::full();
     }
     Update::none()
+}
+
+/// Take the server's size and cell size for a pane. The cell size comes first: it is what the
+/// pane's images are laid out against, the same value the controller gave the child's PTY.
+fn apply_server_geometry(
+    terminal: &mut crate::pane::TerminalPane,
+    cols: u16,
+    rows: u16,
+    cell: Option<tui_lipan::TerminalCellSize>,
+) -> bool {
+    let cell_changed = cell.is_some_and(|cell| terminal.apply_session_cell(cell));
+    terminal.apply_server_resize(cols, rows) || cell_changed
 }
 
 /// The server is about to replay a shared pane from its own screen: after an attach, or after this
@@ -308,14 +322,21 @@ pub(crate) fn pane_reset(
     generation: u64,
     cols: u16,
     rows: u16,
+    cell: Option<tui_lipan::TerminalCellSize>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
-            reset_attachment_pane(attachment, pane_id, generation, cols, rows);
+            reset_attachment_pane(attachment, pane_id, generation, (cols, rows), cell);
         }
         return Update::none();
     }
-    if !reset_attachment_pane(ctx.state.current_mut(), pane_id, generation, cols, rows) {
+    if !reset_attachment_pane(
+        ctx.state.current_mut(),
+        pane_id,
+        generation,
+        (cols, rows),
+        cell,
+    ) {
         return Update::none();
     }
     if let Some(update) = crate::ops::search::restart_search_after_pane_output(ctx, pane_id) {
@@ -332,11 +353,15 @@ fn reset_attachment_pane(
     attachment: &mut crate::state::Attachment,
     pane_id: PaneId,
     generation: u64,
-    cols: u16,
-    rows: u16,
+    (cols, rows): (u16, u16),
+    cell: Option<tui_lipan::TerminalCellSize>,
 ) -> bool {
     match attachment.find_pane_mut(pane_id) {
         Some(pane) if pane.pty_generation == generation => {
+            // The replay is parsed against the pane's own cell size, so set it before the reset.
+            if let Some(cell) = cell {
+                pane.terminal.apply_session_cell(cell);
+            }
             pane.terminal.reset_for_replay(cols, rows);
             true
         }

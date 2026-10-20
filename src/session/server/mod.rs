@@ -2002,11 +2002,6 @@ struct SpawnRequest {
     cell: Option<tui_lipan::TerminalCellSize>,
 }
 
-/// A reported cell size, or `None` when the peer sent none (pre-17 clients send zeroes).
-fn cell_size(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize> {
-    (width > 0 && height > 0).then(|| tui_lipan::TerminalCellSize::new(width, height))
-}
-
 impl ServerPane {
     /// The pane's terminal, for reading.
     pub(super) fn screen(&self) -> &TerminalScreen {

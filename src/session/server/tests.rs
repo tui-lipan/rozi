@@ -731,6 +731,7 @@ fn pending_resize_deltas_and_snapshot_geometry_precede_replay() {
                         generation: 2,
                         cols: 41,
                         rows: 12,
+                        ..
                     })
             )
         })
@@ -761,6 +762,8 @@ fn resize_during_replay_waits_behind_the_last_snapshot_chunk() {
         generation: key.generation,
         cols: 55,
         rows: 14,
+        cell_width: 0,
+        cell_height: 0,
     });
     for _ in 0..4 {
         server.pump_attach_seeds();
@@ -3945,6 +3948,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
                 generation: 2,
                 cols: 80,
                 rows: 24,
+                ..
             }
         )]
     ));
@@ -3966,7 +3970,7 @@ fn resize_adopts_the_controllers_cell_size() {
     let (controller, _s1) = attach_client(&mut server);
     server.panes.insert(1, status_test_pane(2, None));
 
-    server.handle_message(
+    let responses = server.handle_message(
         controller,
         ClientMessage::Resize {
             pane_id: 1,
@@ -3978,6 +3982,18 @@ fn resize_adopts_the_controllers_cell_size() {
             cell_height: 18,
         },
     );
+    // Followers lay the pane's images out against the same cells, whatever their own size.
+    assert!(matches!(
+        responses.as_slice(),
+        [(
+            Target::Broadcast,
+            ServerMessage::Resized {
+                cell_width: 9,
+                cell_height: 18,
+                ..
+            }
+        )]
+    ));
     let pane = server.panes.get(&1).unwrap();
     // The PTY reports this to the child in pixels, and the client that rendered the resize sizes
     // images against the same cell - a mismatch is images overlapping the text below them.

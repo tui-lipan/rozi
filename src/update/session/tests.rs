@@ -161,6 +161,7 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
                 pane.terminal.process_server_output(b"stale transcript");
             }
 
+            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
             for stale_generation in [generation + 1, generation] {
                 backend
                     .dispatch(Msg::SessionPaneReset {
@@ -169,6 +170,7 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
                         generation: stale_generation,
                         cols: 41,
                         rows: 13,
+                        cell: Some(session_cell),
                     })
                     .expect("dispatch pane reset");
                 let pane =
@@ -182,6 +184,7 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
                     "only the pane's own generation is reset"
                 );
                 assert_eq!((pane.terminal.cols, pane.terminal.rows) == (41, 13), reset);
+                assert_eq!(pane.terminal.cell_size() == session_cell, reset);
             }
 
             backend
@@ -200,6 +203,74 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
         .expect("spawn pane reset test")
         .join()
         .expect("pane reset test completes");
+}
+
+/// A follower's cells can differ from the controller's, whose cell size the child's PTY reports. An
+/// image the child sized for the controller must cover the same cells in the follower, not its
+/// pixel size measured in the follower's cells.
+#[test]
+fn a_pane_lays_images_out_in_the_cells_the_server_reports() {
+    use base64::Engine as _;
+
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let epoch = backend.state().runtime_epoch;
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            let generation = 4;
+            let host_cell = {
+                let pane =
+                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                pane.pty_generation = generation;
+                pane.terminal.bind_session(target, generation);
+                pane.terminal.cell_size()
+            };
+            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
+            assert_ne!(
+                host_cell, session_cell,
+                "the test needs a follower's own cells"
+            );
+
+            backend
+                .dispatch(Msg::SessionResized {
+                    epoch,
+                    pane_id: target,
+                    local: false,
+                    generation,
+                    cols: 40,
+                    rows: 12,
+                    cell: Some(session_cell),
+                })
+                .expect("dispatch resize");
+            // 224x256 pixels is 16x8 of the controller's 14x32 cells.
+            let payload = base64::engine::general_purpose::STANDARD
+                .encode([10u8, 20, 30, 255].repeat(224 * 256));
+            backend
+                .dispatch(Msg::SessionOutput {
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id: target,
+                    local: false,
+                    generation,
+                    bytes: format!("\x1b[H\x1b_Ga=T,f=32,s=224,v=256,i=9,q=2;{payload}\x1b\\")
+                        .into_bytes(),
+                })
+                .expect("dispatch image");
+
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            assert_eq!(pane.terminal.cell_size(), session_cell);
+            let snapshot = pane.terminal.snapshot();
+            let placement = snapshot.images.first().expect("image placement");
+            assert_eq!((placement.cols, placement.rows), (16, 8));
+        })
+        .expect("spawn session cell test")
+        .join()
+        .expect("session cell test completes");
 }
 
 /// What `clear; icat` writes: the clear, then a 40x40 RGBA image in 4096-byte Kitty chunks.
@@ -2731,6 +2802,7 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                     generation: 1,
                     cols: 40,
                     rows: 12,
+                    cell: None,
                 })
                 .expect("shared resize");
             backend
@@ -2741,6 +2813,7 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
                     generation: 1,
                     cols: 20,
                     rows: 8,
+                    cell: None,
                 })
                 .expect("local resize");
             assert_eq!(

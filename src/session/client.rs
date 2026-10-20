@@ -1893,6 +1893,8 @@ mod tests {
             generation: 2,
             cols: 80,
             rows: 24,
+            cell_width: 0,
+            cell_height: 0,
         };
         push(Frame::Control(control.clone()));
         push(Frame::PaneOutput {

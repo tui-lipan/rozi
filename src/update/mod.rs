@@ -795,14 +795,16 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             generation,
             cols,
             rows,
-        } => session::resized(ctx, epoch, pane_id, local, generation, cols, rows),
+            cell,
+        } => session::resized(ctx, epoch, pane_id, local, generation, cols, rows, cell),
         Msg::SessionPaneReset {
             epoch,
             pane_id,
             generation,
             cols,
             rows,
-        } => session::pane_reset(ctx, epoch, pane_id, generation, cols, rows),
+            cell,
+        } => session::pane_reset(ctx, epoch, pane_id, generation, cols, rows, cell),
         Msg::SessionExited {
             epoch,
             pane_id,
@@ -1372,6 +1374,8 @@ mod tests {
                     generation: 1,
                     cols: 80,
                     rows: 24,
+                    cell_width: 0,
+                    cell_height: 0,
                 }))
                 .expect("test control frame must fit in the inbound mailbox");
             seed_stale_search(&mut backend);

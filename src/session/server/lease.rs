@@ -1118,6 +1118,7 @@ impl SessionServer {
             .map(|pane| {
                 let cols = pane.cols;
                 let rows = pane.rows;
+                let cell = pane.cell;
                 let screen = pane.screen_without_change();
                 let mut writer = ReplaySpoolWriter::new();
                 let replay = screen
@@ -1128,9 +1129,9 @@ impl SessionServer {
                         let len = bytes.len() as u64;
                         (PaneReplayStorage::Memory(Cursor::new(bytes)), len)
                     });
-                (replay.0, replay.1, cols, rows)
+                (replay.0, replay.1, cols, rows, cell)
             });
-        let replay_len = snapshot.as_ref().map_or(0, |(_, len, _, _)| *len);
+        let replay_len = snapshot.as_ref().map_or(0, |(_, len, ..)| *len);
         if snapshot.is_some() {
             let export_us = crate::runtime_metrics::duration_micros(export_started.elapsed());
             self.resync_totals.last_export_us = export_us;
@@ -1141,7 +1142,7 @@ impl SessionServer {
             .and_then(|client| client.seed.as_mut())
             .expect("active seed");
         let resync_export = snapshot.is_some() && seed.kind == SeedKind::Resync;
-        if let Some((spool, remaining, cols, rows)) = snapshot {
+        if let Some((spool, remaining, cols, rows, cell)) = snapshot {
             seed.manifest.insert(key, PaneSeedState::Replaying);
             seed.exported.insert(key);
             seed.replay = Some(PaneSeedReplay {
@@ -1151,6 +1152,8 @@ impl SessionServer {
                     generation: key.generation,
                     cols,
                     rows,
+                    cell_width: cell.width,
+                    cell_height: cell.height,
                 }),
                 spool,
                 remaining,

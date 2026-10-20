@@ -279,6 +279,13 @@ fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
 /// The ancestor walk only runs when the directory actually changed, which is user-paced — a shell
 /// re-reporting the same directory on every prompt costs one string comparison.
 pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
+    // A remote tree is served by its session, so while the link is down there is nobody to ask.
+    // Keep the last listing on screen and leave the source unsynced: the first pass after the
+    // session is back sees the new epoch and refetches everything through the live client. Syncing
+    // now would send the tree's requests nowhere, and it would wait on them forever.
+    if ctx.state.current().remote_host.is_some() && ctx.state.current().session_client.is_none() {
+        return;
+    }
     // Compared as a borrow: this runs per message, including output from off-screen panes that the
     // session handler deliberately makes free, so the steady state must not allocate.
     // Under `--remote` the tree roots at the server's path, not a local one, so this follows

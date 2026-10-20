@@ -2398,6 +2398,98 @@ fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change(
     });
 }
 
+/// A remote link that drops and reconnects leaves the tree waiting on requests the dead transport
+/// never answered. Reconnecting must refetch it through the new client instead of leaving the tree
+/// loading until the user moves to another pane.
+#[test]
+fn a_remote_tree_refetches_through_the_client_that_reconnects() {
+    on_test_thread(|| {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::{ClientMessage, WireDirEntry};
+        fn listed(outbound: &std::sync::mpsc::Receiver<ClientOutbound>) -> Vec<String> {
+            outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::ListDirectory { path, .. }) => {
+                        Some(path)
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+        fn shows(backend: &mut tui_lipan::TestBackend<AppRoot>, text: &str) -> bool {
+            backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .any(|line| line.contains(text))
+        }
+        let mut backend = settled_backend();
+        let (client, outbound) = SessionClient::test_channel();
+        show_files_tab(&mut backend);
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.sidebar.shown = [true, false];
+            state.current_mut().remote_host = Some("tree-host".into());
+            state.current_mut().session_client = Some(client);
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/repo".into());
+        }
+        backend
+            .update_level(crate::Msg::SidebarPointerMoved(0))
+            .unwrap();
+        backend.render();
+        backend.pump().unwrap();
+        assert_eq!(listed(&outbound), ["/remote/repo"]);
+        backend
+            .dispatch(crate::Msg::SessionDirectoryListing {
+                epoch: backend.state().runtime_epoch,
+                path: "/remote/repo".into(),
+                entries: vec![WireDirEntry {
+                    name: "loaded.rs".into(),
+                    is_dir: false,
+                    is_symlink: false,
+                    symlink_target: None,
+                    ignored: false,
+                    git_staged: None,
+                    git_unstaged: None,
+                }],
+                error: None,
+            })
+            .unwrap();
+        assert!(shows(&mut backend, "loaded.rs"));
+
+        // The link drops and the reconnect starts under a new epoch, with no client yet.
+        {
+            let state = backend.state_mut();
+            state.current_mut().mark_disconnected();
+            state.runtime_epoch = state.mint_attachment_id();
+            state.current_mut().epoch = state.runtime_epoch;
+        }
+        backend
+            .update_level(crate::Msg::SidebarPointerMoved(0))
+            .unwrap();
+        backend.render();
+        backend.pump().unwrap();
+        assert!(
+            shows(&mut backend, "loaded.rs"),
+            "the last listing stays on screen while the link is down"
+        );
+
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        backend
+            .update_level(crate::Msg::SidebarPointerMoved(0))
+            .unwrap();
+        backend.render();
+        backend.pump().unwrap();
+        assert_eq!(listed(&outbound), ["/remote/repo"]);
+    });
+}
+
 #[test]
 fn remote_directory_requests_reject_old_sessions_but_survive_configuration_changes() {
     on_test_thread(|| {

@@ -669,9 +669,9 @@ function RoziScene(props) {
     const shellOp = MOTION.fade(1, 0, G, G + 0.35)(T);
     const sessOp = MOTION.fade(0, 1, G + 0.45, G + 0.8)(T);
     /* Attending to a blocked pane is what stops it asking. Focus lands on it
-       as it floats out, so the alert stands down and the frame goes from the
-       pulsing red to the ordinary focused accent - which is what rozi does,
-       since a focused pane does not alert. */
+       as it floats out and the scene treats that as the answer, so the alert
+       stands down and the frame goes from the pulsing red to the ordinary
+       focused accent. */
     const attOn =
         clamp((T - (G + 2.45)) / 0.25, 0, 1) * MOTION.fade(1, 0, F, F + 0.4)(T);
     const attPulse = attOn * (0.5 + 0.5 * Math.sin((T - (G + 2.45)) * 5.2));

@@ -530,11 +530,22 @@ impl Pane {
             .or(self.identity.cwd.as_deref())
     }
 
-    /// Whether this pane is blocked and still worth acting on.
+    /// Whether this pane is blocked and still worth acting on. See [`Self::agent_blocked`].
     pub fn awaits_input(&self) -> bool {
         !self.closing
             && !matches!(self.terminal.status, ManagedTerminalStatus::Exited(_))
-            && self.terminal.is_blocked()
+            && self.agent_blocked()
+    }
+
+    /// Whether anything in this pane waits on the user: its own status, or any agent it runs. The
+    /// hooks' report speaks for one conversation only, so another conversation the publisher calls
+    /// blocked must still count.
+    pub fn agent_blocked(&self) -> bool {
+        self.terminal.is_blocked()
+            || self
+                .agent_runtimes()
+                .iter()
+                .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked)
     }
 }
 
@@ -669,5 +680,63 @@ mod tests {
         pane.closing = false;
         pane.terminal.status = ManagedTerminalStatus::Exited(0);
         assert!(!pane.awaits_input());
+    }
+
+    /// The hooks follow one conversation and speak only for its row, so another conversation the
+    /// publisher calls blocked still leaves the pane waiting on the user.
+    #[test]
+    fn a_blocked_conversation_beside_the_one_the_hooks_follow_awaits_input() {
+        use crate::session::protocol::{
+            AgentIdentity, AgentIntegrationReport, AgentRef, AgentState, PaneRef, PublishedRow,
+            PublisherKind, SessionInstanceId,
+        };
+        let row = |id: &str, status: &str, active: bool| PublishedRow {
+            publisher: "sessions".into(),
+            kind: PublisherKind::Agent,
+            live_session: None,
+            reported: false,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("native-{id}")),
+        };
+        let reference = |slot, incarnation| AgentRef {
+            pane: PaneRef {
+                session_instance: SessionInstanceId::for_test("server"),
+                pane_id: 1,
+                generation: 0,
+            },
+            slot,
+            incarnation,
+        };
+        let mut pane = pane();
+        let _ = pane.terminal.apply_rows(
+            vec![row("shown", "idle", true), row("behind", "blocked", false)],
+            Some(Box::new(AgentIntegrationReport {
+                integration: "hook".into(),
+                identity: AgentIdentity::new("claude", "Claude Code"),
+                reference: reference(None, 9),
+                state: AgentState::Done,
+                reason: None,
+                native_session: Some("native-shown".into()),
+                seq: 1,
+                reported_at_unix_ms: 1,
+            })),
+        );
+        pane.agents = pane
+            .terminal
+            .published_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| reference(Some(row.key()), index as u64 + 2).into())
+            .collect();
+
+        assert!(!pane.terminal.is_blocked(), "the hooks' row is done");
+        assert!(pane.awaits_input());
     }
 }

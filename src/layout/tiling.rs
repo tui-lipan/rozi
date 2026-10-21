@@ -1159,16 +1159,6 @@ pub fn focused_is_first_in_nearest_axis_split(
     }
 }
 
-/// Tree path to the nearest split on `target_axis` containing `focused`. Equal paths identify the
-/// same split, allowing a geometric junction to deduplicate representatives from adjacent panes.
-pub fn nearest_axis_split_path(
-    tree: &DwindleTree,
-    focused: PaneId,
-    target_axis: SplitAxis,
-) -> Option<Vec<bool>> {
-    axis_split_path(tree, focused, target_axis, None)
-}
-
 /// Tree path to the nearest split on `target_axis` that faces the requested pane edge.
 /// Equal paths identify the same grabbed divider at a geometric junction.
 pub fn axis_split_path_for_edge(

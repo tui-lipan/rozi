@@ -715,12 +715,6 @@ impl SidebarState {
         self.panels.get(panel)?.active_tab.as_ref()
     }
 
-    pub fn active_tabs(&self) -> impl Iterator<Item = &SidebarTabId> {
-        self.panels
-            .iter()
-            .filter_map(|panel| panel.active_tab.as_ref())
-    }
-
     pub fn cycle(&mut self, panel: usize, forward: bool) {
         let Some(panel) = self.panels.get_mut(panel) else {
             return;
@@ -781,10 +775,6 @@ impl SidebarState {
         self.panels[to_panel].tabs.insert(to, tab.clone());
         self.panels[to_panel].active_tab = Some(tab);
         true
-    }
-
-    pub fn panel_ids(&self) -> Vec<Vec<SidebarTabId>> {
-        self.panels.iter().map(|panel| panel.tabs.clone()).collect()
     }
 
     /// tui-lipan requires monotonically increasing weight revisions, rather than a signature hash.

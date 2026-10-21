@@ -94,13 +94,3 @@ pub fn attach_message_with_server_nonce(
         expected_server_nonce,
     }
 }
-
-/// Query message using this build's supported protocol range.
-pub fn query_message(session: impl Into<String>) -> ClientMessage {
-    ClientMessage::Query {
-        capabilities: None,
-        session: session.into(),
-        protocol_version: PROTOCOL_VERSION,
-        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-    }
-}

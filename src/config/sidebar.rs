@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    ActivityWorktrees, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_TREE_MAX_ENTRIES_LIMIT,
-    SidebarActivityConfig, SidebarConfig, SidebarLauncherEntry, SidebarPosition, SidebarTab,
-    SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
+    ActivityWorktrees, SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS,
+    SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarActivityConfig, SidebarConfig,
+    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
+    SidebarTreeRoot, SidebarTreeView,
 };
 use super::setting_schema::{SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
 
@@ -378,7 +379,7 @@ pub(super) fn apply_sidebar_config(
                 .split_ratio
                 .filter(|r| r.is_finite())
                 .unwrap_or(0.4)
-                .clamp(0.15, 0.85);
+                .clamp(SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MAX_SPLIT_RATIO);
             dock.panels[0].weight = ratio;
             dock.panels[1].weight = 1.0 - ratio;
         }

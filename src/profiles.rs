@@ -6,9 +6,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::layout::tiling::DwindleTree;
 use crate::layout::tiling::append_tiled_window;
-use crate::layout::tree_ser::{
-    SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
-};
+use crate::layout::tree_ser::{SerializedLayoutKind, SerializedTree, from_dwindle, to_dwindle};
 use crate::state::{Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
 
 pub fn load_profile(path: &Path) -> Result<Profile, String> {
@@ -855,12 +853,11 @@ impl From<ProfileRect> for FloatRect {
 }
 
 pub type ProfileLayoutKind = SerializedLayoutKind;
-#[allow(dead_code)]
-pub type ProfileSplitAxis = SerializedSplitAxis;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::tree_ser::SerializedSplitAxis;
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
@@ -919,7 +916,7 @@ mod tests {
                 split_ratios: vec![0.4],
                 focused_pane: Some(2),
                 tree: Some(ProfileTree::Split {
-                    axis: ProfileSplitAxis::Vertical,
+                    axis: SerializedSplitAxis::Vertical,
                     ratio: 0.375,
                     first: Box::new(ProfileTree::Leaf { pane: 2 }),
                     second: Box::new(ProfileTree::Leaf { pane: 9 }),
@@ -1037,7 +1034,7 @@ mod tests {
                 index: 0,
                 focused_pane: Some(1),
                 tree: Some(ProfileTree::Split {
-                    axis: ProfileSplitAxis::Horizontal,
+                    axis: SerializedSplitAxis::Horizontal,
                     ratio: 0.42,
                     first: Box::new(ProfileTree::Leaf { pane: 0 }),
                     second: Box::new(ProfileTree::Leaf { pane: 1 }),
@@ -1503,7 +1500,7 @@ mod tests {
                 split_ratios: vec![0.61, 0.39],
                 focused_pane: Some(1),
                 tree: Some(ProfileTree::Split {
-                    axis: ProfileSplitAxis::Horizontal,
+                    axis: SerializedSplitAxis::Horizontal,
                     ratio: 0.58,
                     first: Box::new(ProfileTree::Leaf { pane: 0 }),
                     second: Box::new(ProfileTree::Leaf { pane: 1 }),

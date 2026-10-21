@@ -917,14 +917,6 @@ impl SessionClient {
         }
     }
 
-    /// Explicit local transport teardown: closes the outbound queue, signals reader/writer
-    /// threads, and shuts down the local socket/pipe without requesting server termination.
-    pub fn disconnect_transport(&self) {
-        if let Some(transport) = &self.transport {
-            transport.disconnect();
-        }
-    }
-
     fn send_control(&self, message: ClientMessage) {
         self.send(ClientOutbound::Control(message));
     }

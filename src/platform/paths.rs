@@ -245,12 +245,6 @@ pub fn managed_command_path(env: &PlatformEnv) -> PathBuf {
     }
 }
 
-/// Alias kept intentionally descriptive for call sites that refer to the stable command rather
-/// than the managed-installation implementation detail.
-pub fn default_command_path(env: &PlatformEnv) -> PathBuf {
-    managed_command_path(env)
-}
-
 fn xdg_style_dir(
     xdg_override: Option<&PathBuf>,
     home: &Option<PathBuf>,

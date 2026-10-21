@@ -1580,7 +1580,8 @@ mod tests {
 
     #[test]
     fn failed_manual_reconnect_invalidates_snapshots_but_keeps_live_project_work() {
-        for with_live_work in [false, true] {
+        for parked in [None, Some(false), Some(true)] {
+            let with_live_work = parked.is_some();
             with_backend(move |backend| {
                 use crate::session::protocol::{
                     AgentRecord, AgentRef, AgentState, AgentSummary, ProjectSummary,
@@ -1635,6 +1636,15 @@ mod tests {
                         .observe(&stale.reference, 0, FirstSighting::Baseline);
                     if with_live_work {
                         let mut pane = Pane::new(41, 100, Default::default());
+                        pane.terminal.detected_agent =
+                            Some(crate::session::protocol::DetectedAgent {
+                                agent: crate::session::protocol::AgentIdentity::new(
+                                    "codex", "Codex",
+                                )
+                                .into(),
+                                state: crate::session::protocol::DetectedAgentState::Idle,
+                            });
+                        pane.terminal.cwd = Some("/srv/live".into());
                         pane.terminal.project_root = Some("/srv/live".into());
                         pane.terminal.git_branch = Some("main".into());
                         let reference = AgentRef::for_test(41, 1, None);
@@ -1650,6 +1660,9 @@ mod tests {
                         current.remote_target = Some(target.clone());
                         current.connection = ConnectionState::Connected;
                         current.workspaces[0].panes.push(pane);
+                        if parked == Some(true) {
+                            state.park_current(42, crate::state::Attachment::new());
+                        }
                     }
                 }
                 assert!(
@@ -1715,6 +1728,14 @@ mod tests {
                     sections[0].rows[0].content.description.as_deref(),
                     Some(status)
                 );
+                let agents = crate::view::agents::global_agent_rows(state);
+                assert_eq!(agents.len(), usize::from(with_live_work));
+                if let Some(agent) = agents.first() {
+                    assert_eq!(agent.session, "attached");
+                    assert_eq!(agent.project.as_deref(), Some("live"));
+                    assert!(agent.finished_unseen);
+                    assert_eq!(agent.is_here(), parked == Some(false));
+                }
             });
         }
     }

@@ -371,7 +371,8 @@ row shows or hides what is under it.
 Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
 lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
 are not listed. With none to show, the tab reads `No sessions in Git`. If a remote host becomes
-unreachable, its heading shows its connection state while its unavailable work is hidden.
+unreachable, its heading shows its connection state while its unavailable work is hidden. Sessions
+still connected to this client remain listed, including those held in the background.
 
 ### Expand and collapse
 

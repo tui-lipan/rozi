@@ -10,8 +10,8 @@
 //! host → repository → checkout (branch) → session
 //! ```
 //!
-//! The session on screen is read from its live panes. Every other session — local or on a connected
-//! host — comes from the project summaries the host monitors already collect alongside their agent
+//! The session on screen and connected background attachments are read from their panes. Other
+//! sessions come from the project summaries the host monitors collect alongside their agent
 //! summaries, so nothing here runs Git or contacts a machine. Each level carries the state of the
 //! most urgent agent below it.
 
@@ -32,7 +32,10 @@ struct Work<'a> {
 impl State {
     /// The Projects tab's sections: one per host with work or a failed connection to show.
     pub fn project_sections(&self) -> Vec<TreeSection> {
-        let live = live_project_summaries(self);
+        let live: Vec<_> = self
+            .navigation_attachments()
+            .map(|attachment| (attachment, live_project_summaries(attachment)))
+            .collect();
         let work = project_work(self, &live);
         let agents = crate::view::agents::global_agent_rows(self);
         let hosts = project_hosts(self, &work);
@@ -44,18 +47,24 @@ impl State {
     }
 }
 
-/// Prefer the current session's live panes to the monitors' older copies.
-fn project_work<'a>(state: &'a State, live: &'a [ProjectSummary]) -> Vec<Work<'a>> {
-    let here_target = state.current().remote_target.as_ref();
-    let here_session = state.current().session_name.as_deref();
-    let is_here = |host: Option<&RemoteTarget>, session: &str| {
-        host == here_target && here_session == Some(session)
+/// Prefer pane-backed session data to the monitors' older copies, including empty attachments.
+fn project_work<'a>(
+    state: &'a State,
+    live: &'a [(&crate::state::Attachment, Vec<ProjectSummary>)],
+) -> Vec<Work<'a>> {
+    let is_live = |host: Option<&RemoteTarget>, session: &str| {
+        live.iter().any(|(attachment, _)| {
+            attachment.remote_target.as_ref() == host
+                && attachment.session_name.as_deref() == Some(session)
+        })
     };
     let mut work: Vec<_> = live
         .iter()
-        .map(|summary| Work {
-            summary,
-            host: here_target,
+        .flat_map(|(attachment, summaries)| {
+            summaries.iter().map(|summary| Work {
+                summary,
+                host: attachment.remote_target.as_ref(),
+            })
         })
         .collect();
     if let Some(snapshot) = &state.local_agent_snapshot {
@@ -63,7 +72,7 @@ fn project_work<'a>(state: &'a State, live: &'a [ProjectSummary]) -> Vec<Work<'a
             snapshot
                 .projects
                 .iter()
-                .filter(|summary| !is_here(None, &summary.session))
+                .filter(|summary| !is_live(None, &summary.session))
                 .map(|summary| Work {
                     summary,
                     host: None,
@@ -74,7 +83,7 @@ fn project_work<'a>(state: &'a State, live: &'a [ProjectSummary]) -> Vec<Work<'a
         work.extend(
             summaries
                 .iter()
-                .filter(|summary| !is_here(Some(target), &summary.session))
+                .filter(|summary| !is_live(Some(target), &summary.session))
                 .map(|summary| Work {
                     summary,
                     host: Some(target),
@@ -150,15 +159,13 @@ fn project_section(
     }
 }
 
-/// The session on screen's checkouts, from its live panes: what its server would report, without
-/// waiting for a poll.
-fn live_project_summaries(state: &State) -> Vec<ProjectSummary> {
-    let Some(session) = state.current().session_name.clone() else {
+/// An attachment's checkouts, from its panes, without waiting for a host poll.
+fn live_project_summaries(attachment: &crate::state::Attachment) -> Vec<ProjectSummary> {
+    let Some(session) = attachment.session_name.clone() else {
         return Vec::new();
     };
     let mut summaries: Vec<ProjectSummary> = Vec::new();
-    let mut panes: Vec<_> = state
-        .current()
+    let mut panes: Vec<_> = attachment
         .workspaces
         .iter()
         .flat_map(|workspace| &workspace.panes)

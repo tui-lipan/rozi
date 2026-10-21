@@ -99,7 +99,7 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
     if let Some(description) = content.description {
         row = row
             .priority(Priority::Balanced)
-            .badge_text(description, muted);
+            .badge_text(description, muted.dim());
     }
     if let Some(meta) = content.meta {
         row = row.meta(meta, color.map_or(muted, |color| Style::new().fg(color)));

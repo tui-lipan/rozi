@@ -200,6 +200,10 @@ pub fn code_digest(root: &Path) -> Option<String> {
             _ if is_link => continue,
             _ => return None,
         };
+        // Checked before reading, so one huge file is refused rather than loaded to be counted.
+        if size.saturating_add(metadata.len()) > MAX_BUNDLE_BYTES {
+            return None;
+        }
         let contents = std::fs::read(&path).ok()?;
         size = size.saturating_add(contents.len() as u64);
         if size > MAX_BUNDLE_BYTES {
@@ -519,6 +523,17 @@ mod tests {
 
         write(temp.path(), "bin/watch", b"run again");
         assert_ne!(code_digest(temp.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn code_digest_refuses_an_oversized_file_without_reading_it() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "bin/watch", b"run");
+        // Sparse: it claims more than the limit while taking almost no disk, and reading it would
+        // allocate the whole claimed size.
+        let big = std::fs::File::create(temp.path().join("asset.bin")).unwrap();
+        big.set_len(MAX_BUNDLE_BYTES + 1).unwrap();
+        assert_eq!(code_digest(temp.path()), None);
     }
 
     #[cfg(unix)]

@@ -2085,6 +2085,24 @@ fn agent_catalog(
     }
 }
 
+/// Environment a pane must not inherit from the server process itself.
+///
+/// A server started from inside a pane carries that pane's identity, its UI's socket and binary,
+/// and any extension context it ran in. None of it describes the new pane: the spawn policy sets
+/// whatever does, and a headless pane must have no UI socket at all rather than a stranger's.
+const INHERITED_ENV_REMOVED: &[&str] = &[
+    "ROZI_PANE",
+    crate::session::protocol::SESSION_INSTANCE_ENV,
+    "ROZI_SOCKET",
+    "ROZI_BIN",
+    "ROZI_EXTENSION",
+    "ROZI_EXTENSION_DIR",
+    "ROZI_EXTENSION_GENERATION",
+    "ROZI_EXTENSION_CONFIG",
+    crate::state::CREDENTIAL_ENV,
+    "ROZI_SERVICE",
+];
+
 fn pty_config(
     launch: Option<&crate::pane::launch::PaneLaunch>,
     shell: &[String],
@@ -2123,8 +2141,10 @@ fn pty_config(
     };
     // The server owns the pane's terminal, so it names it, in its own version. Whatever started
     // the server would otherwise show through. A pane's own environment is applied after this, so
-    // a per-spawn value still wins.
-    config
+    // a per-spawn value still wins, including over a removal.
+    INHERITED_ENV_REMOVED
+        .iter()
+        .fold(config, |config, key| config.env_remove(*key))
         .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))
 }

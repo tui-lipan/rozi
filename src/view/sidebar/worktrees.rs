@@ -151,7 +151,13 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
         // part; the lock is lifted on the way.
         item = item.armed_prompt("Stale lock · again to remove");
     }
-    let sidebar_row = SidebarRow::item(item, RowTarget::Worktree(tree.path.clone()));
+    // A checkout being removed cannot be opened: a session started in it would outlive the directory.
+    let target = if row.removing {
+        RowTarget::Inert
+    } else {
+        RowTarget::Worktree(tree.path.clone())
+    };
+    let sidebar_row = SidebarRow::item(item, target);
     if row.closable {
         sidebar_row.closable(crate::state::SidebarClose::Worktree {
             path: tree.path.clone(),

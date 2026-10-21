@@ -203,6 +203,12 @@ pub enum Msg {
         panel: usize,
         index: usize,
     },
+    /// Ctrl+click or Ctrl+Enter on a Worktrees row, which opens what a plain activation does not.
+    /// Every other row treats it as a plain activation.
+    SidebarRowCtrlActivate {
+        panel: usize,
+        index: usize,
+    },
     /// The pointer entered or left a sidebar row, which is what reveals the ✕. Nested regions keep
     /// their parent hovered, so the row is the sole owner of this state.
     SidebarRowHover {

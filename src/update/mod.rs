@@ -273,6 +273,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SidebarWidthResized(event) => sidebar::width_resized(ctx, event),
         Msg::SidebarPointerMoved(panel) => sidebar::pointer_moved(ctx, panel),
         Msg::SidebarRowActivate { panel, index } => sidebar::row_activate(ctx, panel, index),
+        Msg::SidebarRowCtrlActivate { panel, index } => {
+            sidebar::row_ctrl_activate(ctx, panel, index)
+        }
         Msg::SidebarRowHover {
             panel,
             index,

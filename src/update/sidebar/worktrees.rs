@@ -647,6 +647,119 @@ mod tests {
             assert_eq!(forced, Some(true));
         });
     }
+    /// The directories of the panes the client asked its server to spawn.
+    fn spawned_pane_dirs(outbound: &Receiver<ClientOutbound>) -> Vec<Option<String>> {
+        outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::SpawnPane { cwd, .. }) => Some(cwd),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A checkout opens as a session or as a pane; Ctrl+click and Ctrl+Enter open the other.
+    #[test]
+    fn a_checkout_opens_as_the_configured_kind_and_ctrl_opens_the_other() {
+        use crate::config::WorktreeOpen;
+        on_large_stack(|| {
+            for (default, plain_pane, ctrl_pane) in [
+                (WorktreeOpen::Session, false, true),
+                (WorktreeOpen::Pane, true, false),
+            ] {
+                let (mut backend, outbound) = backend();
+                backend.state_mut().config.worktrees.sidebar_open = default;
+                nudge(&mut backend);
+                let (id, _) = sent_worktree_requests(&outbound).remove(0);
+                list(&mut backend, id);
+                // Rows: header, primary, linked checkout, "New worktree".
+                let activate = |index| Msg::SidebarRowActivate { panel: 0, index };
+                let ctrl = |index| Msg::SidebarRowCtrlActivate { panel: 0, index };
+                let panes = |backend: &mut TestBackend<AppRoot>, msg: Msg| {
+                    drop(spawned_pane_dirs(&outbound));
+                    backend.dispatch(msg).unwrap();
+                    spawned_pane_dirs(&outbound)
+                };
+
+                let plain = panes(&mut backend, activate(2));
+                assert_eq!(
+                    plain,
+                    plain_pane
+                        .then(|| Some(LINKED.to_string()))
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    "{default:?} click"
+                );
+                let alternate = panes(&mut backend, ctrl(2));
+                assert_eq!(
+                    alternate,
+                    ctrl_pane
+                        .then(|| Some(LINKED.to_string()))
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    "{default:?} ctrl-click"
+                );
+            }
+        });
+    }
+
+    /// Ctrl+Enter on the focused sidebar's cursor row is the keyboard form of Ctrl+click.
+    #[test]
+    fn ctrl_enter_on_a_checkout_opens_the_other_kind() {
+        use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 16,
+            });
+            backend.state_mut().config.animations.enabled = false;
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            backend.render();
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::FocusSidebar))
+                .unwrap();
+            backend.render();
+            assert!(backend.state().sidebar.focused);
+            backend
+                .dispatch(Msg::SidebarRowSelected { panel: 0, index: 2 })
+                .unwrap();
+            backend.render();
+            drop(spawned_pane_dirs(&outbound));
+
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Enter,
+                    mods: KeyMods::CTRL,
+                })
+                .unwrap();
+            assert_eq!(spawned_pane_dirs(&outbound), vec![Some(LINKED.to_string())]);
+        });
+    }
+
+    /// Ctrl+click has no second meaning on a row that is not a checkout.
+    #[test]
+    fn ctrl_activating_another_row_does_what_a_plain_activation_does() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            backend
+                .dispatch(Msg::SidebarRowCtrlActivate { panel: 0, index: 3 })
+                .unwrap();
+            assert!(
+                backend.state().worktree_picker.is_some(),
+                "the New worktree row opens its form"
+            );
+            assert!(spawned_pane_dirs(&outbound).is_empty());
+        });
+    }
+
     /// A click on the body of a row that is being removed must not open the vanishing checkout.
     #[test]
     fn a_checkout_being_removed_cannot_be_opened() {

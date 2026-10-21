@@ -77,6 +77,16 @@ fn with_cursor_row(
 /// list — the same pure function of `State` the view rendered from — so both gestures land on the
 /// same handler and a row list that changed underneath simply resolves to nothing.
 pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
+    activate(ctx, panel, index, false)
+}
+
+/// Ctrl+click or Ctrl+Enter: a checkout opens as whichever of session and pane a plain activation
+/// does not. Any other row does what a plain activation does.
+pub(crate) fn row_ctrl_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
+    activate(ctx, panel, index, true)
+}
+
+fn activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize, alternate: bool) -> Update {
     let Some(tab) = ctx.state.active_sidebar_tab(panel).cloned() else {
         return Update::none();
     };
@@ -113,7 +123,7 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
         }
         RowTarget::NewPane { workspace } => spawn_new_pane(ctx, workspace),
         RowTarget::ConnectHost => crate::ops::session::open_new_host_flow(ctx),
-        RowTarget::Worktree(path) => crate::ops::worktrees::open_from_sidebar(ctx, path),
+        RowTarget::Worktree(path) => crate::ops::worktrees::open_from_sidebar(ctx, path, alternate),
         RowTarget::NewWorktree => crate::ops::worktrees::open_form_from_sidebar(ctx),
         RowTarget::Launcher {
             config_epoch,

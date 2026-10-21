@@ -427,7 +427,11 @@ fn discovered_sessions(
 }
 
 /// A checkout row in the Worktrees tab was activated.
-pub(crate) fn open_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Update {
+pub(crate) fn open_from_sidebar(
+    ctx: &mut Context<AppRoot>,
+    path: String,
+    alternate: bool,
+) -> Update {
     let listing = &ctx.state.sidebar.worktrees;
     let Some((target, _)) = listing.source.clone() else {
         return Update::none();
@@ -444,6 +448,13 @@ pub(crate) fn open_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Upd
     else {
         return Update::none();
     };
+    let mut open = ctx.state.config.worktrees.sidebar_open;
+    if alternate {
+        open = open.other();
+    }
+    if open == crate::config::WorktreeOpen::Pane {
+        return open_pane_from_sidebar(ctx, tree, target);
+    }
     let checkouts = listing
         .entries
         .iter()
@@ -451,6 +462,34 @@ pub(crate) fn open_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Upd
         .collect();
     let known = discovered_sessions(ctx, target.as_ref());
     enter_checkout(ctx, tree, target, checkouts, known)
+}
+
+/// Open a shell in a sidebar checkout as a new pane of the current session.
+fn open_pane_from_sidebar(
+    ctx: &mut Context<AppRoot>,
+    tree: crate::git::worktrees::WorktreeInfo,
+    target: Option<crate::session::remote::RemoteTarget>,
+) -> Update {
+    if target != ctx.state.current().remote_target || tree.bare {
+        return Update::none();
+    }
+    if tree.prunable {
+        crate::pane::pty_events::notify_error(ctx, "Open failed", "The checkout is missing");
+        return Update::full();
+    }
+    if !can_spawn_pane(&ctx.state) {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Open failed",
+            "A pane cannot be opened in this session",
+        );
+        return Update::full();
+    }
+    if operation_in_flight(ctx) {
+        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
+        return Update::full();
+    }
+    spawn_pane_at(ctx, tree.path)
 }
 
 /// The Worktrees tab's "New worktree" row: the new-worktree form on its own, with no list behind
@@ -493,7 +532,8 @@ pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
     tree.map_or(Update::none(), |tree| enter_tree(ctx, tree))
 }
 
-pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
+/// Whether this client may add a pane to the session it shows.
+fn can_spawn_pane(state: &crate::state::State) -> bool {
     state.is_controller()
         && !state.scratch_visible
         && state.current().session_client.is_some()
@@ -502,6 +542,10 @@ pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
             .shared
             .as_ref()
             .is_none_or(|shared| !shared.read_only)
+}
+
+pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
+    can_spawn_pane(state)
         && state.worktree_picker.as_ref().is_some_and(|picker| {
             picker.form.is_none()
                 && picker.target == state.current().remote_target
@@ -518,6 +562,11 @@ pub(crate) fn open_pane(ctx: &mut Context<AppRoot>) -> Update {
     }
     let picker = ctx.state.worktree_picker.as_ref().unwrap();
     let path = picker.entries[picker.selected].path.clone();
+    spawn_pane_at(ctx, path)
+}
+
+/// Spawn an ordinary interactive pane in `path`, a path on the session's host.
+fn spawn_pane_at(ctx: &mut Context<AppRoot>, path: String) -> Update {
     let workspace = ctx.state.current().active_workspace;
     let source = ctx.state.current().workspaces[workspace].focused_pane;
     ctx.state.worktree_picker = None;

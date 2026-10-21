@@ -232,6 +232,34 @@ pub struct ProfileConfig {
     pub default: Option<String>,
 }
 
+/// What activating a checkout in the Worktrees sidebar tab opens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorktreeOpen {
+    /// The checkout's session, or a new one rooted in it.
+    #[default]
+    Session,
+    /// A shell in the checkout, as a new pane of the current session.
+    Pane,
+}
+
+impl WorktreeOpen {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "session" => Some(Self::Session),
+            "pane" => Some(Self::Pane),
+            _ => None,
+        }
+    }
+
+    /// What Ctrl+click and Ctrl+Enter open instead.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Session => Self::Pane,
+            Self::Pane => Self::Session,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorktreesConfig {
     /// Profile seeding a new worktree session. Its pane directories inside the repository are
@@ -242,6 +270,8 @@ pub struct WorktreesConfig {
     pub directory: Option<String>,
     /// Which copies of a removed checkout's branch to delete too, when merged.
     pub delete_branch: crate::git::worktrees::BranchDeletion,
+    /// What a plain click or Enter on a checkout in the sidebar opens.
+    pub sidebar_open: WorktreeOpen,
 }
 
 #[derive(Clone, Copy, Debug)]

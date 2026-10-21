@@ -16,6 +16,7 @@ fn request(command: ControlCommand) -> ControlRequest {
         source_pane: None,
         source_session: None,
         extension: None,
+        caller_context: None,
         credential: None,
     }
 }
@@ -226,32 +227,40 @@ fn here_prompt_returns_the_exact_agent_outcome_and_terminal_from_the_server() {
     );
     let id = spawned["id"].as_u64().unwrap() as u32;
     let deadline = Instant::now() + crate::common::io_timeout();
-    loop {
+    let detected = loop {
         let agents = run_session_control(server.session(), request(ControlCommand::AgentsList))
             .unwrap()
             .data
             .unwrap();
-        if !agents.as_array().unwrap().is_empty() {
-            break;
+        if let Some(agent) = agents.as_array().unwrap().first() {
+            break agent["ref"].clone();
         }
         assert!(Instant::now() < deadline, "test child was not detected");
         std::thread::sleep(Duration::from_millis(10));
-    }
-    let report = |state, reason: Option<&str>, seq| {
-        let response = run_session_control(
-            server.session(),
-            request(ControlCommand::AgentReport {
-                target: Some(id),
-                agent: "turn-test".into(),
-                integration: "transaction-test".into(),
-                state,
-                reason: reason.map(str::to_string),
-                native_session: None,
-                seq,
-            }),
-        )
-        .unwrap();
-        assert!(response.ok, "{response:?}");
+    };
+    let instance = detected["pane"]["session_instance"].as_str().unwrap();
+    let report = |state: AgentState, reason: Option<&str>, seq: u64| {
+        let mut command = cli();
+        command
+            .env("ROZI_PANE", id.to_string())
+            .env("ROZI_SESSION_INSTANCE", instance)
+            .args([
+                "--here",
+                "agents",
+                "report",
+                "--agent",
+                "turn-test",
+                "--integration",
+                "transaction-test",
+                "--state",
+                state.as_str(),
+                "--seq",
+                &seq.to_string(),
+            ]);
+        if let Some(reason) = reason {
+            command.args(["--reason", reason]);
+        }
+        data(command.output().unwrap());
     };
     report(AgentState::Idle, None, 1);
     let listed = run_session_control(server.session(), request(ControlCommand::AgentsList))
@@ -326,4 +335,144 @@ fn here_prompt_returns_the_exact_agent_outcome_and_terminal_from_the_server() {
             .unwrap()
             .contains("REPLY:hello-transaction")
     );
+    data(
+        cli()
+            .env("ROZI_PANE", id.to_string())
+            .env("ROZI_SESSION_INSTANCE", instance)
+            .args([
+                "--here",
+                "agents",
+                "release",
+                "--integration",
+                "transaction-test",
+                "--seq",
+                "3",
+            ])
+            .output()
+            .unwrap(),
+    );
+}
+
+/// A UI transport stub verifies CLI routing; component tests exercise the real UI handler and
+/// server tests cover attachment authority. Keep all IPC behind the platform transport helpers.
+fn caller_ui_stub(
+    caller: rozi::session::protocol::PaneRef,
+    displayed: bool,
+    refuse: bool,
+) -> (
+    rozi::platform::ipc::IpcEndpoint,
+    std::thread::JoinHandle<()>,
+) {
+    use rozi::platform::ipc::EndpointRegistry;
+    use std::io::{BufRead, BufReader, Write};
+    let endpoint = EndpointRegistry::extension_bridge_endpoint(
+        &rozi::control::runtime_dir().unwrap(),
+        &common::unique_session_name(),
+    );
+    let listener = endpoint.bind().unwrap().into_listener();
+    let thread = std::thread::spawn(move || {
+        for probe in [true, false]
+            .into_iter()
+            .take(if displayed { 2 } else { 1 })
+        {
+            let mut stream = listener.accept().unwrap();
+            stream.set_read_timeout(Some(common::io_timeout())).unwrap();
+            stream
+                .set_write_timeout(Some(common::io_timeout()))
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: ControlRequest = serde_json::from_str(&line).unwrap();
+            let response = if probe {
+                assert_eq!(request.command, ControlCommand::Context);
+                serde_json::json!({"ok": true, "data": {
+                    "displayed_session": if displayed { caller.session_instance.as_str() } else { "another-session" },
+                    "held_sessions": [caller.session_instance]
+                }})
+            } else {
+                assert!(matches!(request.command, ControlCommand::NewPane { .. }));
+                assert_eq!(request.caller_context.as_deref(), Some(&caller));
+                assert_eq!(request.source_pane, Some(caller.pane_id));
+                if refuse {
+                    serde_json::json!({"ok": false, "code": "out-of-scope", "error": "UI switched sessions"})
+                } else {
+                    serde_json::json!({"ok": true, "data": {"id": 999, "accepted": true, "pty_ready": true}})
+                }
+            };
+            writeln!(stream, "{response}").unwrap();
+        }
+    });
+    (endpoint, thread)
+}
+
+#[test]
+fn here_prefers_its_displayed_ui_and_falls_back_only_before_a_mutation() {
+    rozi::test_support::isolate_user_dirs();
+    for (displayed, refuse) in [(true, false), (true, true), (false, false)] {
+        let server = spawn_listener(ServerSettings::default());
+        data(
+            cli()
+                .args(["--session", server.session(), "split"])
+                .output()
+                .unwrap(),
+        );
+        let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+            .unwrap()
+            .data
+            .unwrap();
+        let caller: rozi::session::protocol::PaneRef =
+            serde_json::from_value(panes[0]["reference"].clone()).unwrap();
+        // When displayed, the UI holds the server's controller lease. Direct splits must fail.
+        let _controller = if displayed {
+            let controller =
+                common::attach_client(server.endpoint(), server.session(), "caller-ui");
+            let direct = cli()
+                .args(["--session", server.session(), "split"])
+                .output()
+                .unwrap();
+            let reply: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
+            assert_eq!(reply["code"], "not-controller");
+            Some(controller)
+        } else {
+            None
+        };
+        let (endpoint, ui) = caller_ui_stub(caller.clone(), displayed, refuse);
+        let output = cli()
+            .env("ROZI_SOCKET", endpoint.path())
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str())
+            .args([
+                "--here",
+                "split",
+                "--keep-open",
+                "--argv",
+                env!("CARGO_BIN_EXE_rozi"),
+                "--version",
+            ])
+            .output()
+            .unwrap();
+        ui.join().unwrap();
+        endpoint.remove_stale();
+        if refuse {
+            assert!(!output.status.success());
+            let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                reply["code"], "out-of-scope",
+                "a submitted mutation must not retry headlessly"
+            );
+        } else {
+            let accepted = data(output);
+            assert_eq!(accepted["id"] == 999, displayed);
+        }
+        let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+            .unwrap()
+            .data
+            .unwrap();
+        assert_eq!(
+            panes.as_array().unwrap().len(),
+            if displayed { 1 } else { 2 }
+        );
+    }
 }

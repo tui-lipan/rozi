@@ -42,7 +42,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `name`, published rows' `publisher`, `kind`, `live_session`, and `reported`, and an agent
 /// reference's structured `slot`, and version 20 with `sidebar-publish` and the sidebar snapshot,
 /// row, action, and stream event shapes, `agents-overview`, and `agent-go`, and version 21
-/// with `context`, post-prompt `turn` waits, and terminal prompt results.
+/// with `context`, caller routing fences, post-prompt `turn` waits, and terminal prompt results.
 pub const API_SCHEMA_VERSION: u32 = 21;
 
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
@@ -163,6 +163,10 @@ pub struct ControlRequest {
     /// Absent when the caller is not a shared pane of a session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_session: Option<crate::session::protocol::SessionInstanceId>,
+    /// Verified caller session and pane generation. A UI must still display this session when it
+    /// executes the command; the session server also checks the pane generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_context: Option<Box<crate::session::protocol::PaneRef>>,
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -171,6 +175,23 @@ pub struct ControlRequest {
     /// and replaces `extension` with what the credential was issued for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+}
+
+impl ControlCommand {
+    pub(crate) fn uses_ui_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::NewPane { .. }
+                | Self::LayoutSet { .. }
+                | Self::PaneSet { .. }
+                | Self::PaneMove { .. }
+                | Self::PaneSwap { .. }
+                | Self::PaneClose { .. }
+                | Self::SendText { .. }
+                | Self::SendKeys { .. }
+                | Self::AgentPrompt { .. }
+        )
+    }
 }
 
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
@@ -3273,6 +3294,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3291,6 +3313,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         assert_eq!(
@@ -3753,6 +3776,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3827,6 +3851,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
@@ -3840,6 +3865,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
@@ -3863,6 +3889,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3883,6 +3910,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3917,6 +3945,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();

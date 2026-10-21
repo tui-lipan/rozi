@@ -434,6 +434,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         }
     }

@@ -544,13 +544,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
                 let command = &request.command;
-                if endpoint.is_session()
-                    && matches!(
-                        command,
-                        control::ControlCommand::AgentReport { target: None, .. }
-                            | control::ControlCommand::AgentRelease { target: None, .. }
-                    )
-                {
+                if matches!(
+                    endpoint,
+                    ControlEndpoint::Session(_) | ControlEndpoint::Remote { .. }
+                ) && matches!(
+                    command,
+                    control::ControlCommand::AgentReport { target: None, .. }
+                        | control::ControlCommand::AgentRelease { target: None, .. }
+                ) {
                     return Err(
                         "agents report/release with --session requires --target; inherited ROZI_PANE belongs to a different namespace"
                             .to_string(),
@@ -1734,6 +1735,7 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
             .ok()
             .and_then(|v| crate::session::protocol::SessionInstanceId::from_env_value(&v)),
         extension: crate::config::provenance_from_process(),
+        caller_context: None,
         credential: std::env::var(crate::state::CREDENTIAL_ENV)
             .ok()
             .filter(|credential| !credential.is_empty()),
@@ -1743,6 +1745,44 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn here_agent_reports_pin_the_caller_while_named_sessions_require_targets() {
+        for tail in [
+            vec![
+                "agents",
+                "report",
+                "--agent",
+                "codex",
+                "--integration",
+                "test",
+                "--state",
+                "idle",
+                "--seq",
+                "1",
+            ],
+            vec!["agents", "release", "--integration", "test", "--seq", "2"],
+        ] {
+            for prefix in [
+                vec!["--here"],
+                vec!["--session", "dev"],
+                vec!["--remote", "host", "--session", "dev"],
+            ] {
+                let result = parse_cli_args(
+                    prefix
+                        .iter()
+                        .chain(tail.iter())
+                        .map(|arg| (*arg).to_string())
+                        .collect(),
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    prefix == vec!["--here"],
+                    "{prefix:?}: {result:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn here_selects_only_session_control_and_context_describes_only_the_caller() {
@@ -1887,6 +1927,7 @@ mod tests {
                 source_pane: pane,
                 source_session: shared.then(|| instance.clone()),
                 extension: None,
+                caller_context: None,
                 credential: None,
             }
         };

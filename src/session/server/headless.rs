@@ -393,6 +393,21 @@ impl SessionServer {
         self.serve_control(client_id, &reply, request)
     }
 
+    fn caller_context_refusal(&self, request: &ControlRequest) -> Option<ControlResponse> {
+        let caller = request.caller_context.as_ref()?;
+        let valid = caller.session_instance == self.instance_id
+            && self
+                .panes
+                .get(&caller.pane_id)
+                .is_some_and(|pane| pane.generation == caller.generation && pane.exited.is_none());
+        (!valid).then(|| {
+            ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                "the verified caller pane was replaced, removed, or belongs to another session",
+            )
+        })
+    }
+
     /// Serve one control request whose answer goes to `reply`.
     ///
     /// Returns the answer plus whatever the command changed for everyone else. A command that
@@ -408,6 +423,8 @@ impl SessionServer {
             Some(Some(ControlResponse::error(
                 unverifiable_extension_provenance(provenance),
             )))
+        } else if let Some(response) = self.caller_context_refusal(&request) {
+            Some(Some(response))
         } else {
             match &request.command {
                 ControlCommand::AgentWait {
@@ -1993,6 +2010,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         }
     }
@@ -2757,14 +2775,15 @@ mod tests {
 
     #[test]
     fn a_headless_request_from_an_incompatible_build_is_refused_at_the_handshake() {
+        const { assert!(protocol::MIN_SUPPORTED_PROTOCOL > 34) };
         let mut server = SessionServer::new_named("dev");
         let messages = server.handle_session_control(
             1,
             "dev".to_string(),
-            PROTOCOL_VERSION.saturating_sub(1),
-            PROTOCOL_VERSION.saturating_sub(1),
+            34,
+            34,
             None,
-            request(ControlCommand::ListPanes),
+            request(ControlCommand::Context),
         );
         assert!(matches!(
             messages.as_slice(),
@@ -3927,6 +3946,7 @@ mod tests {
                 source_pane: Some(3),
                 source_session: None,
                 extension: None,
+                caller_context: None,
                 credential: None,
             },
         );
@@ -4054,6 +4074,7 @@ mod tests {
                         id: "git-tools".to_string(),
                         generation: "whatever-the-caller-claims".to_string(),
                     }),
+                    caller_context: None,
                     credential: None,
                 },
             );

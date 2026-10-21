@@ -308,6 +308,7 @@ fn command_visibility_follows_the_extension_generation_inner() {
                         id: "visibility".to_string(),
                         generation: generation.to_string(),
                     }),
+                    caller_context: None,
                     credential: None,
                 },
                 reply,

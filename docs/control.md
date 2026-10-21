@@ -103,9 +103,16 @@ rozi --here capture-pane
 rozi --here split --argv cargo test
 ```
 
+For splits, layout changes, pane close, and input, `--here` uses the caller's UI when that UI
+displays the verified session. This preserves its controller, input-lock, and read-only rules.
+A session switch before execution refuses the command. An absent, dead, or background UI uses
+direct session control; layout control must then be free and input locks still apply. Other
+commands use direct session control.
+
 `--here` refuses absent or stale caller identity. It cannot be combined with `--session`,
 `--socket`, or `--remote`. It supports the same commands as `--session`. For commands with an
-optional pane target, an omitted `--target` means the calling pane. Explicit targets name panes
+optional pane target, including `agents report` and `agents release`, an omitted `--target`
+means the calling pane. Explicit targets name panes
 in the caller's session. Commands without `--here` keep the usual UI selection rules.
 
 ## Endpoint discovery
@@ -267,7 +274,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 21,
-  "session_protocol": 32,
+  "session_protocol": 35,
   "capabilities": [
     "agent-prompt-results",
     "agent-waits",

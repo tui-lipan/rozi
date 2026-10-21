@@ -625,12 +625,14 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
                 );
                 std::process::exit(2);
             }
-            super::context::pin_here_target(
-                &mut request.command,
-                context.pane.expect("verified pane").pane_id,
-            );
-            let instance = context.session.expect("verified session").instance;
-            ask_own_session_endpoint(&instance, request)?
+            let caller = context.pane.expect("verified pane");
+            super::context::pin_here_target(&mut request.command, caller.pane_id);
+            request.caller_context = Some(Box::new(caller.clone()));
+            if let Some(socket) = super::context::authority_ui(&request, &caller) {
+                ask_ui_endpoint(Some(socket), &request)?
+            } else {
+                ask_own_session_endpoint(&caller.session_instance, request)?
+            }
         }
         ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &request)?,
         ControlEndpoint::Session(session) => ask_session_endpoint(&session, request)?,

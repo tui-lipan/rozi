@@ -3762,6 +3762,17 @@
         }
       ],
       "properties": {
+        "caller_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Verified caller session and pane generation. A UI must still display this session when it\nexecutes the command; the session server also checks the pane generation."
+        },
         "credential": {
           "description": "The worker credential of a placed extension process, from `ROZI_EXTENSION_CREDENTIAL`.\nAutomatically attached by the CLI. When present, the UI identifies the caller from it alone\nand replaces `extension` with what the credential was issued for.",
           "type": [

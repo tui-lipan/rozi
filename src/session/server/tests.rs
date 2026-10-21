@@ -5784,6 +5784,7 @@ fn agent_report(
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         },
     );
@@ -5998,6 +5999,11 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
     server.input_locked = true;
     pane_with_session_rows(&mut server, 7);
 
+    let caller_context = protocol::PaneRef {
+        session_instance: server.instance_id.clone(),
+        pane_id: 7,
+        generation: server.panes[&7].generation,
+    };
     let mut prompt = |client| {
         let messages = server.handle_attached_control(
             client,
@@ -6014,6 +6020,7 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                caller_context: Some(Box::new(caller_context.clone())),
                 credential: None,
             },
         );

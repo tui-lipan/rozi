@@ -181,6 +181,9 @@ others, even a lone background one, need their `--ref` from `agents list`. From 
 `agents` pane-number target addresses the session on screen. Use `--here` to target your own
 verified session, or `--session <NAME>` for a named one. `rozi context --format json` verifies
 your caller pane and session and reports stale identity. It works without a UI socket.
+`--here` uses your displayed UI's authority for splits, layout changes, pane close, and input.
+Detached or background callers use direct session control, where layout control must be free
+and input locks apply. A UI session switch before execution refuses the command.
 `--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done,
 or error), or `gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the
 user visits its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn; check the

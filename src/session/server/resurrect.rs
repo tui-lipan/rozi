@@ -742,6 +742,15 @@ impl SessionServer {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         let mut restored = 0;
         let mut resumed = std::collections::HashSet::new();
+        // Restore has no client to inject integration into the shell's argv and environment.
+        // Without it, prompt readiness never arrives and every command waits for the fallback.
+        let (shell, integration_env) =
+            crate::platform::shell_integration::resolve_interactive_shell(
+                Some(&self.settings.shell),
+                &crate::platform::command::ShellEnv::from_process(),
+                self.settings.shell_integration,
+                &crate::platform::shell_integration::InjectionEnv::from_process(),
+            );
         for saved in meta.panes {
             let generation = self.next_generation;
             self.next_generation += 1;
@@ -769,10 +778,10 @@ impl SessionServer {
                     env: crate::pane::spawn_policy::spawn_environment(
                         crate::pane::spawn_policy::SpawnOrigin::Headless,
                         saved.pane_id,
-                        &[],
+                        &integration_env,
                     ),
                     palette: saved.palette,
-                    shell: self.settings.shell.clone(),
+                    shell: shell.as_argv(),
                     command_shell: self.settings.command_shell.clone(),
                     // Resurrect predates any client attaching; the first controller resize
                     // reports the real cell size.
@@ -2380,6 +2389,90 @@ mod tests {
             server.restore_action(saved, &mut std::collections::HashSet::new()),
             RestoreAction::Nothing
         ));
+    }
+
+    /// Resurrection must inject integration itself because no client prepares the shell launch.
+    #[cfg(unix)]
+    #[test]
+    fn restored_shell_reports_readiness_without_the_foreground_fallback() {
+        if std::process::Command::new("bash")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping Bash restore check: bash is unavailable");
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(".bashrc"), "PS1='$ '\n").unwrap();
+        // Keep the real Bash parser and PTY, but isolate its startup files in a minimal HOME.
+        // The executable basename also exercises Bash integration detection during restore.
+        let bash = root.path().join("bash");
+        fs::write(
+            &bash,
+            format!(
+                "#!/bin/sh\nexport HOME={}\nexec bash \"$@\"\n",
+                crate::pane::launch::shell_quote(&root.path().to_string_lossy())
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&bash, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut server = SessionServer::new_named_with_settings(
+            "prompt-ready",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.path().join("snapshots")),
+                shell: vec![bash.to_string_lossy().into_owned(), "--noprofile".into()],
+                resurrect_foreground: crate::config::ForegroundRestore::Hold,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(
+            1,
+            running(
+                "printf",
+                &["restored-command"],
+                protocol::PaneCommandPhase::Executing,
+            ),
+        );
+        server.mark_dirty();
+        server.snapshot_before_shutdown().unwrap();
+        server.panes.clear();
+        assert_eq!(server.restore().unwrap(), 1);
+        assert_eq!(server.pending_foreground.len(), 1);
+
+        // Wait for semantic readiness, without flushing the queue or allowing its timeout to
+        // stand in for integration. This checks the cause rather than asserting startup speed.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while server.panes[&1].runtime.command_phase != protocol::PaneCommandPhase::Input {
+            server.drain_pty_events();
+            assert!(
+                Instant::now() < deadline,
+                "restored Bash never reported input readiness"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.flush_pending_foreground();
+        assert!(server.pending_foreground.is_empty());
+        while !server
+            .panes
+            .get_mut(&1)
+            .unwrap()
+            .screen_without_change()
+            .render_snapshot()
+            .text
+            .contains("restored-command")
+        {
+            server.drain_pty_events();
+            assert!(Instant::now() < deadline, "restored command was not echoed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            server.panes[&1].runtime.command_phase,
+            protocol::PaneCommandPhase::Input
+        );
+        assert!(server.panes[&1].launch.is_none());
     }
 
     /// A command is typed only once the restored shell says it is reading the terminal. Writing it

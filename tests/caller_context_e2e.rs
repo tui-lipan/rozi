@@ -621,6 +621,7 @@ mv "$4.tmp" "$4"
 
 /// A server started from inside a pane inherits that pane's rozi environment. None of it may reach
 /// the panes the server spawns: their identity, socket, and binary come from the spawn policy alone.
+/// An exported integration marker also belongs to that starting shell, not the new pane's shell.
 #[cfg(unix)]
 #[test]
 fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
@@ -645,6 +646,7 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         ("ROZI_BIN", "/planted/rozi"),
         ("ROZI_EXTENSION", "planted-extension"),
         ("ROZI_EXTENSION_CREDENTIAL", "planted-credential"),
+        ("ROZI_SHELL_INTEGRATION_LOADED", "1"),
     ];
     let mut command = cli();
     command
@@ -708,6 +710,7 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         "ROZI_BIN",
         "ROZI_EXTENSION",
         "ROZI_EXTENSION_CREDENTIAL",
+        "ROZI_SHELL_INTEGRATION_LOADED",
     ] {
         assert!(!env.contains_key(key), "{key} is set in a headless pane");
     }

@@ -305,7 +305,8 @@ running that command again.
 
 A plain shell pane restores as a shell. If a command was running in it when the snapshot was taken —
 an agent, an editor, a log tail, or a build typed at the prompt — rozi records the command with its
-arguments and types it back into the new shell. When the command exits, you are left at the shell.
+arguments and types it back when the new shell's prompt is ready. When the command exits, you are
+left at the shell.
 A pane sitting at a prompt records nothing, and prompt hooks such as directory jumpers are not
 recorded as commands.
 

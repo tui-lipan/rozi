@@ -117,8 +117,8 @@ activity.
 When an agent runs more than once in one project, such as Claude Code with background sessions or
 in two panes, its runs are listed beneath one row for the agent, titled by what each works on. A
 run with no title is named after its terminal title or the agent, numbered when two would read the
-same. The agent's row shows its most urgent run's state, and selecting it goes to that run; its
-arrow collapses it. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
+same. The agent's row shows its most urgent run's state, and selecting it collapses or expands the
+runs. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
 out. When the runs are on different workspaces, each one shows its workspace number. Runs in a
 pane with no known directory are grouped only with other sessions in the same pane.
 

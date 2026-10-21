@@ -619,6 +619,100 @@ mv "$4.tmp" "$4"
         .unwrap();
 }
 
+/// A server started from inside a pane inherits that pane's rozi environment. None of it may reach
+/// the panes the server spawns: their identity, socket, and binary come from the spawn policy alone.
+#[cfg(unix)]
+#[test]
+fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    rozi::test_support::isolate_user_dirs();
+    let files = tempfile::tempdir().unwrap();
+    let session = format!("inherited-env-{}", std::process::id());
+    let planted = [
+        ("ROZI_PANE", "4242"),
+        ("ROZI_SESSION_INSTANCE", "planted-instance"),
+        ("ROZI_SOCKET", "/planted/ui.sock"),
+        ("ROZI_BIN", "/planted/rozi"),
+        ("ROZI_EXTENSION", "planted-extension"),
+        ("ROZI_EXTENSION_CREDENTIAL", "planted-credential"),
+    ];
+    let mut command = cli();
+    command
+        .args(["--server", &session])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    for (key, value) in planted {
+        command.env(key, value);
+    }
+    let _server = Server(command.spawn().unwrap());
+
+    let deadline = Instant::now() + common::io_timeout();
+    while run_session_control(&session, request(ControlCommand::ListPanes)).is_err() {
+        assert!(Instant::now() < deadline, "session server did not start");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let dump = files.path().join("env");
+    let spawned = run_session_control(
+        &session,
+        request(ControlCommand::NewPane {
+            command: None,
+            argv: Some(vec![
+                "sh".into(),
+                "-c".into(),
+                r#"env > "$1.tmp" && mv "$1.tmp" "$1""#.into(),
+                "pane".into(),
+                dump.to_string_lossy().into_owned(),
+            ]),
+            local_cwd: None,
+            cwd: None,
+            title: None,
+            keep_open: true,
+            focus: false,
+            workspace: None,
+            size: None,
+        }),
+    )
+    .unwrap();
+    assert!(spawned.ok, "{spawned:?}");
+    while !dump.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "pane did not report its environment"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let dumped = std::fs::read_to_string(&dump).unwrap();
+    let env: HashMap<&str, &str> = dumped
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    assert_eq!(env.get("ROZI"), Some(&"1"));
+    for (key, value) in planted {
+        assert_ne!(env.get(key), Some(&value), "{key} leaked into the pane");
+    }
+    // A headless pane has no UI, so it names none rather than the one that started its server.
+    for key in [
+        "ROZI_SOCKET",
+        "ROZI_BIN",
+        "ROZI_EXTENSION",
+        "ROZI_EXTENSION_CREDENTIAL",
+    ] {
+        assert!(!env.contains_key(key), "{key} is set in a headless pane");
+    }
+}
+
 /// Discoverable control endpoints accept liveness connections as well as context probes.
 struct DiscoveryUi {
     endpoint: rozi::platform::ipc::IpcEndpoint,

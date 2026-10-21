@@ -647,6 +647,50 @@ mod tests {
             assert_eq!(forced, Some(true));
         });
     }
+    /// A click on the body of a row that is being removed must not open the vanishing checkout.
+    #[test]
+    fn a_checkout_being_removed_cannot_be_opened() {
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            let linked_row = 2;
+            let target_of_row = |backend: &TestBackend<AppRoot>| {
+                let state = backend.state();
+                let tab = state.active_sidebar_tab(0).cloned().expect("a tab");
+                state.sidebar_rows(&tab).swap_remove(linked_row).target
+            };
+            assert!(matches!(
+                target_of_row(&backend),
+                crate::state::RowTarget::Worktree(_)
+            ));
+
+            let close = Msg::SidebarRowClose {
+                panel: 0,
+                index: linked_row,
+            };
+            backend.dispatch(close.clone()).unwrap();
+            backend.dispatch(close).unwrap();
+            assert!(backend.state().worktree_removing(LINKED, None));
+            assert!(matches!(
+                target_of_row(&backend),
+                crate::state::RowTarget::Inert
+            ));
+
+            let sent = sent_worktree_requests(&outbound);
+            assert_eq!(sent.len(), 1, "only the removal was sent: {sent:?}");
+            backend
+                .dispatch(Msg::SidebarRowActivate {
+                    panel: 0,
+                    index: linked_row,
+                })
+                .unwrap();
+            assert!(sent_worktree_requests(&outbound).is_empty());
+            assert!(backend.state().worktree_picker.is_none());
+        });
+    }
+
     #[test]
     fn a_failed_sidebar_refresh_keeps_checkouts_visible_and_schedules_a_retry() {
         on_large_stack(|| {

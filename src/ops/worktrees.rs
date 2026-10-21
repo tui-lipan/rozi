@@ -432,6 +432,10 @@ pub(crate) fn open_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Upd
     let Some((target, _)) = listing.source.clone() else {
         return Update::none();
     };
+    if ctx.state.worktree_removing(&path, target.as_ref()) {
+        return Update::none();
+    }
+    let listing = &ctx.state.sidebar.worktrees;
     let Some(tree) = listing
         .entries
         .iter()

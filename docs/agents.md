@@ -136,6 +136,7 @@ session. After updating rozi, restart running sessions to pick up its new built-
 | `match.paths` | one match field | Substrings of executable paths or argument tokens. |
 | `states` | no | Screen or title rules. |
 | `resume.argv` | no | Native resume command; see [Declare native resume support](#declare-native-resume-support). |
+| `resume.attach` | no | Command for a conversation that is still running; see the same section. |
 
 A new definition needs at least one name or path. Only an override of a built-in may omit `match`.
 A second definition with the same `id` in the same file is ignored.
@@ -263,6 +264,21 @@ argv = ["mca", "--resume", "{session}"]
 argument, and not as the program. rozi puts the session reference directly into the argument list
 without a shell, so spaces and shell characters in it stay literal. An invalid `resume` is ignored
 with a warning, and the agent's detection rules still work.
+
+Some agents refuse to resume a conversation that is still running elsewhere and offer another
+command to reach it. Declare that command as `attach`:
+
+```toml
+[agents.resume]
+argv = ["mca", "--resume", "{session}"]
+attach = ["mca", "attach", "{short_session}"]
+```
+
+`attach` follows the same rules as `argv`. Its placeholder is `{session}` or `{short_session}`,
+the first eight characters of the reference. With `resurrect_foreground = "hold"`, the line left at
+the prompt is `argv || attach`, so the shell tries `attach` when resuming fails. A shell that rozi
+does not recognize gets the `argv` command alone. Claude Code declares `attach`
+for its background sessions.
 
 An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.

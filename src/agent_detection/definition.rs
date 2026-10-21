@@ -202,6 +202,20 @@ pub struct AgentDefinition {
     /// Argument vector used to resume an explicitly reported native session. The opaque session
     /// value replaces one whole `{session}` element; no shell parses it.
     pub resume_argv: Option<Vec<String>>,
+    /// What reaches a conversation `resume_argv` refuses because it is still running elsewhere.
+    /// `{session}` is the whole reference and `{short_session}` its first eight characters.
+    pub attach_argv: Option<Vec<String>>,
+}
+
+/// Put the session reference into the whole-argument placeholders of `argv`.
+fn fill_session(argv: &[String], session: &str) -> Vec<String> {
+    argv.iter()
+        .map(|argument| match argument.as_str() {
+            "{session}" => session.to_string(),
+            "{short_session}" => session.chars().take(8).collect(),
+            _ => argument.clone(),
+        })
+        .collect()
 }
 
 impl AgentDefinition {
@@ -216,17 +230,15 @@ impl AgentDefinition {
     }
 
     pub fn resume_command(&self, session: &str) -> Option<Vec<String>> {
-        self.resume_argv.as_ref().map(|argv| {
-            argv.iter()
-                .map(|argument| {
-                    if argument == "{session}" {
-                        session.to_string()
-                    } else {
-                        argument.clone()
-                    }
-                })
-                .collect()
-        })
+        self.resume_argv
+            .as_ref()
+            .map(|argv| fill_session(argv, session))
+    }
+
+    pub fn attach_command(&self, session: &str) -> Option<Vec<String>> {
+        self.attach_argv
+            .as_ref()
+            .map(|argv| fill_session(argv, session))
     }
 
     /// Whether `value` names this agent's executable.
@@ -343,6 +355,7 @@ mod tests {
             base: true,
             states,
             resume_argv: None,
+            attach_argv: None,
         }
     }
 

@@ -1979,6 +1979,9 @@ pub(super) struct AgentResumeLaunch {
     /// The agent's display label, for the notice shown if the resume command fails.
     pub(super) label: String,
     pub(super) launch: crate::pane::launch::PaneLaunch,
+    /// What reaches the conversation when `launch` is refused because it is still running
+    /// elsewhere. Only a line held at a shell's prompt can fall back to it.
+    pub(super) attach: Option<Vec<String>>,
 }
 
 struct SpawnRequest {

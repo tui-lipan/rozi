@@ -164,6 +164,27 @@ impl PromptQuoting {
         }
     }
 
+    /// Whether the shell a pane runs reads `a || b` as "run `b` if `a` fails". Only the shells
+    /// named here are known to; an unrecognized one, such as Nushell, gets no chained line.
+    pub fn chains_with_or(shell: Option<&str>) -> bool {
+        let name = shell.map(crate::platform::command::normalized_program_name);
+        matches!(
+            name.as_deref(),
+            Some(
+                "sh" | "bash"
+                    | "zsh"
+                    | "dash"
+                    | "ksh"
+                    | "ash"
+                    | "busybox"
+                    | "fish"
+                    | "powershell"
+                    | "pwsh"
+                    | "cmd"
+            )
+        )
+    }
+
     /// Characters that need no quoting in any of these shells.
     fn is_plain(self, ch: char) -> bool {
         if ch.is_ascii_alphanumeric() {

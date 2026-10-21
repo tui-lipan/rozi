@@ -5135,6 +5135,7 @@ fn a_resume_command_that_cannot_start_still_leaves_a_working_shell() {
                 "opaque-session-123".to_string(),
             ])
             .expect("resume argv"),
+            attach: None,
         }),
         cwd: None,
         title: None,
@@ -5194,6 +5195,7 @@ fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
                 "printf 'no conversation with that id\\n' >&2; exit 1".to_string(),
             ])
             .expect("resume argv"),
+            attach: None,
         }),
         cwd: None,
         title: None,

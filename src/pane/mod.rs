@@ -947,23 +947,6 @@ impl TerminalPane {
         self.cwd.clone()
     }
 
-    /// Return the working directory only when it belongs to this client's host.
-    pub fn local_working_directory(&self) -> Option<String> {
-        self.cwd.clone().filter(|_| self.cwd_host.is_none())
-    }
-
-    /// The command name of the process currently in the foreground of the pane's terminal
-    /// (e.g. `bash` at a prompt, `nvim` while editing).
-    ///
-    /// Server-authoritative (cross-platform plan Phase 6/7), same rationale as
-    /// [`working_directory`](Self::working_directory). This is the reconciled logical identity used
-    /// for display and replay; split-aware navigation uses
-    /// [`foreground_commands`](Self::foreground_commands) because a POSIX foreground group may
-    /// contain multiple eligible input readers.
-    pub fn foreground_command(&self) -> Option<String> {
-        self.foreground_program.clone()
-    }
-
     pub fn foreground_commands(&self) -> impl Iterator<Item = &str> {
         self.foreground_programs
             .iter()

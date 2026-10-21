@@ -922,17 +922,6 @@ pub fn geometry_transition(duration: Duration) -> TransitionConfig {
     }
 }
 
-/// Geometry for a pane that is closing. `EaseInOutCubic` ramps in slowly, which is right for a
-/// pane settling into a new tile but wrong here: the fade riding on top of the scale is
-/// `EaseOutQuad`, so a slow-starting scale is still near full size when the pane has already gone
-/// transparent, and the shrink is never actually seen. Match the fade instead.
-pub fn close_geometry_transition(duration: Duration) -> TransitionConfig {
-    TransitionConfig {
-        duration,
-        easing: Easing::EaseOutQuad,
-    }
-}
-
 /// Slide progress for an opening or closing pane.
 ///
 /// Ease-out with no overshoot, deliberately. A sliding pane is clipped to its destination tile, so

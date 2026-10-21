@@ -222,11 +222,13 @@ pub fn remove(
     delete_branch: bool,
 ) -> Result<Option<BranchOutcome>, String> {
     let worktree = linked_worktree(cwd, path)?;
-    let primary = if delete_branch {
-        list(cwd)?.into_iter().next().map(|tree| tree.path)
-    } else {
-        None
-    };
+    // `cwd` may be the checkout being removed, which Windows will not delete while a process runs
+    // in it, and which is gone for the branch delete afterwards. Run from the primary checkout.
+    let home = list(cwd)?
+        .into_iter()
+        .next()
+        .map_or_else(|| cwd.to_path_buf(), |tree| PathBuf::from(tree.path));
+    let cwd = home.as_path();
     if let Some(lock) = &worktree.lock {
         if !(unlock_stale && lock.stale) {
             return Err(locked_error(lock));
@@ -247,12 +249,10 @@ pub fn remove(
         let _ = lock_path(cwd, &worktree.path, &lock.reason);
     }
     removed?;
-    let Some(branch) = worktree.branch.filter(|_| delete_branch) else {
-        return Ok(None);
-    };
-    // `cwd` may be the checkout just removed, so the branch is deleted from one that survives.
-    let survivor = primary.map_or_else(|| cwd.to_path_buf(), PathBuf::from);
-    Ok(Some(delete_merged_branch(&survivor, branch)))
+    Ok(worktree
+        .branch
+        .filter(|_| delete_branch)
+        .map(|branch| delete_merged_branch(cwd, branch)))
 }
 
 /// Delete a branch whose checkout is gone, unless another checkout (the primary's included) still

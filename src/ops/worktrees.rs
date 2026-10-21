@@ -1051,7 +1051,10 @@ pub(crate) fn apply_result(
                 if picker_here {
                     return refresh(ctx);
                 }
-                crate::pane::pty_events::notify_info(ctx, format!("Removed worktree {path}"));
+                // The sidebar row disappearing is the feedback; a toast would repeat it.
+                if !sidebar_here {
+                    crate::pane::pty_events::notify_info(ctx, format!("Removed worktree {path}"));
+                }
             }
             (WorktreeOperationKind::Unlock { .. }, WorktreeResult::Unlocked { path }) => {
                 if picker_here {

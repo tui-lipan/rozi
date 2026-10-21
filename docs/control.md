@@ -111,6 +111,13 @@ It preserves controller, input-lock, and read-only rules. A session switch befor
 refuses the command. If no unique matching UI is found, it uses direct session control; layout
 control must then be free and input locks still apply. Other commands use direct session control.
 
+UI authority is available only through a UI on the same host as the command. Inside a remotely
+attached pane, `--here` verifies and targets the remote session, but cannot borrow the local UI's
+controller or input-lock authority across SSH. If that authority is required and no usable UI is
+on the session host, it returns `unsupported` with guidance. Run the mutation through the UI's
+socket on the UI host, detach the controller for layout changes, or unlock input for sends and
+prompts. Read operations and mutations allowed by direct session control still work.
+
 `--here` refuses absent or stale caller identity. It cannot be combined with `--session`,
 `--socket`, or `--remote`. It supports the same commands as `--session`. For commands with an
 optional pane target, including `agents report` and `agents release`, an omitted `--target`

@@ -441,8 +441,16 @@ fn ask_own_session_endpoint(
             std::process::exit(2);
         }
     };
+    let explain_authority = request.caller_context.is_some() && request.command.uses_ui_authority();
     match crate::session::headless::run_session_control(&session, request) {
-        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
+        Ok(response) => {
+            let response = if explain_authority {
+                super::context::explain_missing_ui_authority(response)
+            } else {
+                response
+            };
+            Ok(serde_json::to_value(response).unwrap_or_default())
+        }
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(2);

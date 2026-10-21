@@ -186,6 +186,11 @@ If `ROZI_SOCKET` is absent, stale, or displays another session, it searches for 
 UI displaying your verified session. If none or several match, it uses direct session control,
 where layout control must be free and input locks apply. A UI session switch before execution
 refuses the command.
+UI authority cannot cross hosts. Inside a remotely attached pane, `--here` uses direct session
+control unless a suitable UI runs on the session host. When the remote attachment holds the
+required authority, `--here` returns `unsupported`. Submit the mutation through the UI socket on
+the UI host, detach the controller for layout changes, or unlock input for sends and prompts.
+Read operations still work.
 `--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done,
 or error), or `gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the
 user visits its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn; check the

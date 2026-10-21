@@ -128,6 +128,24 @@ fn ui_displays(
     probe_ui_at(path).is_some_and(|metadata| metadata.displayed_session.as_ref() == Some(session))
 }
 
+/// A verified caller cannot impersonate an attachment when no suitable UI is reachable locally.
+/// Keep ordinary session refusals unchanged; only the `--here` direct fallback uses this advice.
+pub(super) fn explain_missing_ui_authority(
+    mut response: control::ControlResponse,
+) -> control::ControlResponse {
+    let recovery = match response.code {
+        Some(control::ControlErrorCode::NotController) => "detach the controlling UI",
+        Some(control::ControlErrorCode::InputLocked) => "unlock input in the controlling UI",
+        _ => return response,
+    };
+    let refusal = response.error.unwrap_or_default();
+    response.code = Some(control::ControlErrorCode::Unsupported);
+    response.error = Some(format!(
+        "--here found no usable UI for this session on this host; borrowing UI authority across hosts is unsupported. Run the command through the controlling UI on its host, or {recovery} and retry. Server refusal: {refusal}"
+    ));
+    response
+}
+
 fn probe_ui_at(path: &std::path::Path) -> Option<control::UiContextMetadata> {
     let mut stream = IpcEndpoint::at_path(path).connect().ok()?;
     stream

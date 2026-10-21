@@ -5,6 +5,12 @@ computer. The shells and programs in the panes run on the remote host; the theme
 overlays, and clipboard stay local. This page covers connecting, managing hosts, SSH setup,
 installing rozi on the host, and what happens when a connection drops.
 
+Inside a remote pane, `rozi context` and `rozi --here` target that pane's session on the remote
+host. `--here` cannot borrow your local UI's authority across SSH. Layout mutations require the
+controller to detach, and input locks must be unlocked, unless the command is submitted through
+the controlling UI's socket on the UI host. When direct session control requires that authority,
+`--here` returns `unsupported`. See [caller context](control.md#verify-caller-context).
+
 ## Connect
 
 ```bash

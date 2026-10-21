@@ -741,7 +741,8 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
     let ambiguous = ask().output().unwrap();
     assert!(!ambiguous.status.success());
     let reply: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
-    assert_eq!(reply["code"], "not-controller");
+    assert_eq!(reply["code"], "unsupported");
+    assert!(reply["error"].as_str().unwrap().contains("no usable UI"));
     assert_eq!(matching.mutations(), 3);
     assert_eq!(duplicate.mutations(), 0);
     // An inherited UI that still matches remains the preferred attachment.
@@ -756,4 +757,92 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
     );
     assert_eq!(matching.mutations(), 4);
     assert_eq!(duplicate.mutations(), 0);
+}
+
+#[test]
+fn here_explains_authority_held_by_an_attachment_without_a_local_ui() {
+    use rozi::session::protocol::{ClientMessage, Frame, ServerMessage};
+    rozi::test_support::isolate_user_dirs();
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
+    let server = spawn_listener(ServerSettings::default());
+    data(
+        cli()
+            .args(["--session", server.session(), "split"])
+            .output()
+            .unwrap(),
+    );
+    let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+        .unwrap()
+        .data
+        .unwrap();
+    let caller: rozi::session::protocol::PaneRef =
+        serde_json::from_value(panes[0]["reference"].clone()).unwrap();
+    // Model the session side of an SSH attachment: an attached controller, no shared filesystem,
+    // and no control endpoint on the session host. No socket forwarding or authority delegation.
+    let mut controller = common::TestConnection::connect(server.endpoint());
+    let mut attach = common::attach_message(server.session(), "UI on another host");
+    if let ClientMessage::Attach {
+        shares_filesystem, ..
+    } = &mut attach
+    {
+        *shares_filesystem = false;
+    }
+    controller.write_control(&attach);
+    common::read_until(&mut controller, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    let ask = || {
+        let mut command = cli();
+        command
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str());
+        command
+    };
+    let assert_refusal = |output: Output, recovery: &str| {
+        assert!(!output.status.success());
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["code"], "unsupported", "{reply}");
+        let error = reply["error"].as_str().unwrap();
+        assert!(error.contains("across hosts is unsupported"), "{error}");
+        assert!(error.contains(recovery), "{error}");
+    };
+    assert_refusal(
+        ask().args(["--here", "split"]).output().unwrap(),
+        "detach the controlling UI",
+    );
+    let named = cli()
+        .args(["--session", server.session(), "split"])
+        .output()
+        .unwrap();
+    let named: serde_json::Value = serde_json::from_slice(&named.stdout).unwrap();
+    assert_eq!(
+        named["code"], "not-controller",
+        "ordinary named-session errors retain their meaning"
+    );
+    controller.write_control(&ClientMessage::SetInputLock { locked: true });
+    common::read_until(&mut controller, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ClientsChanged {
+                input_locked: true,
+                ..
+            })
+        )
+    });
+    assert_refusal(
+        ask()
+            .args(["--here", "send-text", "must not arrive"])
+            .output()
+            .unwrap(),
+        "unlock input",
+    );
+    let capture = data(ask().args(["--here", "capture-pane"]).output().unwrap());
+    assert_eq!(capture["id"], caller.pane_id);
+    assert_eq!(
+        data(ask().args(["--here", "list-panes"]).output().unwrap())
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }

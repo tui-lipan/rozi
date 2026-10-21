@@ -256,13 +256,14 @@ fn collect_paths(root: &Path, directory: &Path, paths: &mut Vec<(String, PathBuf
         {
             continue;
         }
-        if paths.len() >= MAX_BUNDLE_FILES {
-            return None;
-        }
         let relative = path.strip_prefix(root).ok()?.to_str()?.replace('\\', "/");
         // The manifest's process-facing fields are fingerprinted already; its title, description,
-        // and version are presentation and must not restart a service.
+        // and version are presentation and must not restart a service. It is not counted either,
+        // wherever the directory listing happens to put it.
         if relative != "extension.toml" {
+            if paths.len() >= MAX_BUNDLE_FILES {
+                return None;
+            }
             paths.push((relative, path));
         }
     }
@@ -523,6 +524,18 @@ mod tests {
 
         write(temp.path(), "bin/watch", b"run again");
         assert_ne!(code_digest(temp.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn code_digest_counts_every_file_but_the_manifest_against_the_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "extension.toml", b"");
+        for index in 0..MAX_BUNDLE_FILES {
+            write(temp.path(), &format!("files/{index}"), b"");
+        }
+        assert!(code_digest(temp.path()).is_some());
+        write(temp.path(), "files/one-more", b"");
+        assert_eq!(code_digest(temp.path()), None);
     }
 
     #[test]

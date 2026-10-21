@@ -160,7 +160,8 @@ When the pane prints new output, an open search runs again so its results stay a
 The `u` command key starts hint mode. It labels visible URLs, paths with optional line numbers, Git
 commit ids, and your `[[hints]]` patterns, including ones that wrap across lines. Type a lowercase
 label to copy the target, or end the label with an uppercase character to open it when it can be
-opened. URL hints use the same handlers as clicked links. A configured `file` handler enables
+opened. After each key, labels show only the keys left to press. URL hints use the same handlers
+as clicked links. A configured `file` handler enables
 path hints; custom patterns can define `on_open` commands. See
 [Link handlers](configuration.md#links-handlers).
 

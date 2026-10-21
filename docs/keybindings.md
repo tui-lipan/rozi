@@ -201,7 +201,8 @@ Prompt jumps and last-output copying need shell integration. See
 After the `u` command key, rozi labels visible URLs, paths, Git commit ids, and your custom
 `[[hints]]` patterns.
 
-- Type a lowercase label to copy its target.
+- Type a lowercase label to copy its target. Each key you type hides the labels it rules out and
+  drops off the front of the rest, so a label always shows the keys left to press.
 - Type the label with an uppercase final character to open an eligible URL or custom target.
 - `Esc` or `q` exits.
 

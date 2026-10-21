@@ -1716,12 +1716,13 @@ fn terminal_hint_decorations(
     let snapshot = pane.terminal.snapshot();
     let mut decorations = Vec::new();
     for (index, matched) in hints.matches.iter().enumerate() {
-        let Some(label) = hints.labels.get(index) else {
+        let Some(label) = hints
+            .labels
+            .get(index)
+            .and_then(|label| hint_label_remainder(label, &hints.input))
+        else {
             continue;
         };
-        if !label.starts_with(&hints.input) {
-            continue;
-        }
         // One highlight per row: a match long enough to have been wrapped covers several.
         for span in &matched.spans {
             decorations.push(TerminalDecoration::highlight(
@@ -1734,7 +1735,7 @@ fn terminal_hint_decorations(
         decorations.push(TerminalDecoration::overlay(
             row,
             col,
-            Span::new(label.as_str()).style(hint_label_style()),
+            Span::new(label).style(hint_label_style()),
         ));
     }
     decorations
@@ -1862,6 +1863,14 @@ fn search_match_style() -> Style {
         .fg(Color::White)
         .bg(Color::rgb(92, 64, 8))
         .contrast_policy(ContrastPolicy::BlackOrWhite)
+}
+
+/// The part of a hint label still to be typed, or `None` once the input rules the hint out.
+///
+/// Typed keys drop off the front of every label they match, so each one shows exactly the keys
+/// that select it from here: after `s`, `sg` reads `g`.
+fn hint_label_remainder<'a>(label: &'a str, input: &str) -> Option<&'a str> {
+    label.strip_prefix(input)
 }
 
 /// Where a hint's label is painted: the row the match ends on, in the columns just past its last
@@ -2711,6 +2720,13 @@ mod tests {
         assert!(app_allows_cursor(None, 7, false, false));
         assert!(!app_allows_cursor(None, 7, true, false));
         assert!(!app_allows_cursor(Some(7), 7, true, false));
+    }
+
+    #[test]
+    fn hint_labels_show_only_the_keys_left_to_type() {
+        assert_eq!(hint_label_remainder("sg", ""), Some("sg"));
+        assert_eq!(hint_label_remainder("sg", "s"), Some("g"));
+        assert_eq!(hint_label_remainder("ag", "s"), None);
     }
 
     #[test]

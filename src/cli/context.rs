@@ -91,8 +91,8 @@ fn probe_ui_context() -> Option<control::UiContextMetadata> {
     probe_ui_at(&discover_socket(None).ok()?)
 }
 
-/// Only the caller's named UI may lend its attachment authority. Do not pick an unrelated UI
-/// through discovery when a detached or remote pane has no UI endpoint in its environment.
+/// Use the same UI discovery as `context`, then verify the displayed session before borrowing
+/// attachment authority. A headless-created pane can discover a UI that attached after pane creation.
 pub(super) fn authority_ui(
     request: &control::ControlRequest,
     caller: &crate::session::protocol::PaneRef,
@@ -100,9 +100,7 @@ pub(super) fn authority_ui(
     if !request.command.uses_ui_authority() {
         return None;
     }
-    let path = std::env::var_os("ROZI_SOCKET")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)?;
+    let path = discover_socket(None).ok()?;
     let metadata = probe_ui_at(&path)?;
     (metadata.displayed_session.as_ref() == Some(&caller.session_instance)).then_some(path)
 }

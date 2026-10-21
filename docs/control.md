@@ -104,7 +104,9 @@ rozi --here split --argv cargo test
 ```
 
 For splits, layout changes, pane close, and input, `--here` uses the caller's UI when that UI
-displays the verified session. This preserves its controller, input-lock, and read-only rules.
+displays the verified session. Without `ROZI_SOCKET`, it discovers a UI using the usual
+[socket discovery rules](#endpoint-discovery) and verifies its displayed session. This also works
+for panes created before the UI attached. It preserves controller, input-lock, and read-only rules.
 A session switch before execution refuses the command. An absent, dead, or background UI uses
 direct session control; layout control must then be free and input locks still apply. Other
 commands use direct session control.

@@ -182,6 +182,8 @@ others, even a lone background one, need their `--ref` from `agents list`. From 
 verified session, or `--session <NAME>` for a named one. `rozi context --format json` verifies
 your caller pane and session and reports stale identity. It works without a UI socket.
 `--here` uses your displayed UI's authority for splits, layout changes, pane close, and input.
+Without `ROZI_SOCKET`, it uses normal UI discovery and verifies the displayed session, including
+for panes created while detached.
 Detached or background callers use direct session control, where layout control must be free
 and input locks apply. A UI session switch before execution refuses the command.
 `--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done,
